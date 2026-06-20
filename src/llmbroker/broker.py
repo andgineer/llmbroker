@@ -182,8 +182,15 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
     async def _add_to_pool(self, cfg: LLMConfig) -> None:
         is_new = cfg.name not in self._configs
         self._configs[cfg.name] = cfg
-        with contextlib.suppress(KeyError):
+        try:
             self._resolved_keys[cfg.name] = await self._secrets.resolve(cfg.api_key_ref)
+        except KeyError:
+            logger.warning(
+                "LLM %s: api_key_ref %r could not be resolved — calls will fail"
+                " until the env var / secret is set",
+                cfg.name,
+                cfg.api_key_ref,
+            )
         if is_new:
             self._queue.put_nowait(cfg)
 
@@ -248,20 +255,23 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
         wait: float | None = None,
     ) -> AsyncResult:
         await self.ensure_started()
-        tried_error = False
         while True:
             try:
                 config = await self._acquire(wait)
             except (asyncio.QueueEmpty, TimeoutError) as exc:
-                if tried_error:
-                    raise AllLLMsFailedError("all LLMs failed to serve the request") from exc
                 raise NoLLMAvailableError("no LLM slot came free within wait") from exc
 
             if config.name not in self._configs:
                 # Removed since enqueued — drop the stale slot, try next.
                 continue
 
-            api_key = self._resolved_keys.get(config.name, "")
+            if config.name not in self._resolved_keys:
+                self._queue.put_nowait(config)
+                raise AllLLMsFailedError(
+                    f"{config.name}: api_key_ref {config.api_key_ref!r} not resolved"
+                    " — set the env var or configure a secrets backend",
+                )
+            api_key = self._resolved_keys[config.name]
             call_id = str(uuid.uuid4())
             t0 = time.monotonic()
             status = CallStatus.OK
@@ -341,7 +351,6 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
                         usage=usage,
                     ),
                 )
-                tried_error = True
                 raise AllLLMsFailedError(f"{config.name} returned HTTP {code}") from exc
             except (httpx.TimeoutException, httpx.ConnectError, OSError) as exc:
                 status = CallStatus.ERROR
@@ -360,7 +369,6 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
                         usage=usage,
                     ),
                 )
-                tried_error = True
                 raise AllLLMsFailedError(f"{config.name} network error ({error_detail})") from exc
 
     async def _acquire(self, wait: float | None) -> LLMConfig:
@@ -373,8 +381,11 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
     async def _cool_down(self, config: LLMConfig, headers) -> None:  # noqa: ANN001
         delay = retry_after_seconds(headers, _DEFAULT_RATE_LIMIT_SEC)
         cooldown_until = datetime.now(UTC) + timedelta(seconds=delay)
-        fail_count = self._state.fail_count(config.name)
-        self._state.set_cooling(config.name, cooldown_until, fail_count)
+        self._state.set_cooling(
+            config.name,
+            cooldown_until,
+            self._state.fail_count(config.name) + 1,
+        )
         if self._shared_state is not None:
             await self._shared_state.write(config.name, self._state.get_state(config.name))
         loop = asyncio.get_running_loop()

@@ -1,0 +1,108 @@
+# llmbroker — current architecture
+
+`llmbroker` routes LLM calls over a configured pool of endpoints
+(`base_url + model + api_key`). When an endpoint returns 429 or 503, the broker
+cools it down and retries the next available one. The caller gets a result or an
+exception — never silence.
+
+---
+
+## Four-port model
+
+Every host wires up to four things; only the registry is required:
+
+| Port | Interface | Default battery | What it is |
+|---|---|---|---|
+| **config** | `RegistryProtocol` | `Registry(path)` (file: `.toml`/`.json`) | where LLM configurations are stored |
+| **secrets** | `SecretsProtocol` | `Secrets()` (env vars) | how `api_key_ref` names resolve to real keys |
+| **shared state** | `SharedStateProtocol` | absent — single-process only | cross-instance cooldown sync (cluster only) |
+| **telemetry** | `TelemetryProtocol` | `Telemetry()` (Python logging) | append-only call journal |
+
+**Naming convention — one rule for all ports:**
+- Bare name = the zero-dep default battery you construct directly (`Registry`, `Secrets`, `Telemetry`)
+- Descriptive prefix = a zero-dep variant (`DictSecrets`, `NoTelemetry`, `JsonlTelemetry`)
+- `Protocol` suffix = the structural interface to implement (`RegistryProtocol`, `TelemetryProtocol`, …)
+- Submodule = a battery that carries an external dependency (`llmbroker.sqlite.Registry`, `llmbroker.sqlite.Telemetry`)
+
+**Battery classification — one rule:** if a battery has no external dependency it is
+top-level (`import llmbroker` only); if it does it is a submodule you import
+explicitly (`import llmbroker.sqlite`). There is no list to memorize: the submodule
+import is the dependency declaration.
+
+---
+
+## What is implemented (v0.0.4)
+
+### Core
+
+- `AsyncBroker` — async engine. One `asyncio.Queue` slot per LLM; at most one
+  in-flight request per LLM. On 429/503: cooldown via `loop.call_later` re-enqueue.
+  Lazy start (no `start()` call required). `aclose()` / `async with` lifecycle.
+- `Broker` — synchronous wrapper over `AsyncBroker` on a dedicated background
+  event-loop thread. First-class shipped surface, not an afterthought.
+- `optimize` parameter shape (`bool | Optimizer`) is locked. `optimize=True` (default)
+  is a reservation — the control loop does not run until Phase 4. In the current
+  version `optimize=True/False` has no effect on routing.
+
+### Batteries
+
+| Port | Implemented batteries |
+|---|---|
+| Registry | `Registry(path)` (file, `.toml`/`.json`), `llmbroker.sqlite.Registry` (CRUD-capable) |
+| Secrets | `Secrets()` (env), `DictSecrets(mapping)` (test double), `llmbroker.sqlite.Secrets` |
+| Shared state | `SharedStateProtocol` seam is defined; **no backends** (Phase 3) |
+| Telemetry | `Telemetry()` (log), `NoTelemetry()`, `JsonlTelemetry(path)`, `llmbroker.sqlite.Telemetry` |
+
+### CLI
+
+- `python -m llmbroker env <config>` — emit a `.env` skeleton of `api_key_ref` names
+- `python -m llmbroker sync <config> --into sqlite:<path> [--policy mirror|add|if_empty]` — reconcile a TOML into a sqlite DB
+- `python -m llmbroker preset <name>` — **Phase 2, not yet implemented**
+
+### DB schema
+
+`llmbroker.sqlite` self-manages its tables via `ensure_schema`: creates on first
+use, applies additive data-preserving migrations on upgrade. Every DB object is
+`llmbroker_`-prefixed so the host's migration tool can ignore them by prefix.
+
+### Host migration coexistence
+
+`llmbroker.alembic.include_object` — a predicate for Alembic's `include_object`
+hook that excludes every `llmbroker_*` object from autogenerate. Zero Alembic
+dependency: the hook inspects the object name only.
+
+---
+
+## Preset distribution
+
+Curated LLM lists live in `presets/` at the repository root — not in the wheel.
+A list update is a plain commit, independent of any package version. The
+`preset <name>` CLI command (Phase 2) fetches from the repository default branch:
+
+```
+https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/<name>.toml
+```
+
+---
+
+## Provider seeding
+
+The broker never auto-seeds. The operator seeds the sqlite registry once with:
+
+```bash
+python -m llmbroker sync .deploy/llm_providers.toml --into sqlite:<path> --policy if_empty
+```
+
+After that, `add`/`remove` through the admin API survive restarts. Pulling an
+updated preset without clobbering admin edits: re-run with `--policy add`.
+
+---
+
+## Not yet implemented
+
+| Feature | Phase |
+|---|---|
+| `preset` CLI command (URL-fetch from repo) | P2 |
+| `SharedState` backends (redis, postgres, mongodb) | P3 |
+| Optimizer control loop (delay tuning, routing, offline/probe FSM) | P4 |
+| LLM-as-judge quality scoring | P5 |

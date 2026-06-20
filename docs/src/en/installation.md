@@ -1,11 +1,19 @@
 # Installation
-It is recommended to use Astral's `uv tool` for installation to prevent conflicts with system Python packages.
 
-### Install `uv`
-[Installing `uv`](https://docs.astral.sh/uv/getting-started/installation/)
+## Install uv
 
-### Install Application
+[Installing uv](https://docs.astral.sh/uv/getting-started/installation/)
+
+## Install llmbroker
 
 ```bash
-uv tool install llmbroker --upgrade --python 3.13
+uv pip install llmbroker
 ```
+
+To use the SQLite backend, install with the optional dependency:
+
+```bash
+uv pip install "llmbroker[sqlite]"
+```
+
+Requires Python 3.12+.

@@ -2,7 +2,33 @@
 [![Coverage](https://raw.githubusercontent.com/andgineer/llmbroker/python-coverage-comment-action-data/badge.svg)](https://htmlpreview.github.io/?https://github.com/andgineer/llmbroker/blob/python-coverage-comment-action-data/htmlcov/index.html)
 # llmbroker
 
+Route LLM calls over a **pool of free endpoints** with automatic round-robin and
+429/503 cooldown. No LangChain, no heavy deps — stdlib core, two lines to start.
 
+```python
+import llmbroker
+
+llms = llmbroker.Broker(registry=llmbroker.Registry("llms.toml"))
+print(llms.ask("Summarize this receipt").text)
+```
+
+`llms.toml` is a plain list of `[[llms]]` entries (base\_url, model, api\_key\_ref).
+Grab the [freetier preset](presets/freetier.toml) from this repo to start with a
+maintained list of free LLM endpoints.
+
+**Why llmbroker:**
+
+- **Round-robin with automatic failover** — 429/503 cools an endpoint and tries
+  the next; the caller never sees a rate-limit error unless *every* endpoint fails.
+- **No heavy deps** — stdlib-only core; optional backends (`sqlite`, `redis`,
+  `postgres`) are submodules you import only when you need them.
+- **Dead-simple to start** — a TOML file and env vars, one constructor line, done.
+- **Fully customisable** — swap registry, secrets, and telemetry backends
+  independently: any DB, any secrets manager (AWS, Vault, …), any storage.
+- **Cluster-ready** — add `shared_state=llmbroker.redis.SharedState(...)` to sync
+  cooldown state across instances; omit for single-process.
+- **Sync and async** — `llmbroker.Broker` for scripts; `llmbroker.AsyncBroker` for
+  FastAPI, agents, and async workers.
 
 # Documentation
 

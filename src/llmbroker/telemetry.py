@@ -6,6 +6,7 @@ on the log/jsonl batteries appends a distinct quality record, never a Call.
 Queryable backends (sqlite, …) implement ``QueryableTelemetryProtocol``.
 """
 
+import asyncio
 import json
 import logging
 from dataclasses import asdict
@@ -70,12 +71,14 @@ class JsonlTelemetry:
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
 
-    async def record(self, call: Call) -> None:
-        line = json.dumps({"kind": "call", **_call_to_jsonable(call)})
+    def _append(self, line: str) -> None:
         with self._path.open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
 
+    async def record(self, call: Call) -> None:
+        line = json.dumps({"kind": "call", **_call_to_jsonable(call)})
+        await asyncio.to_thread(self._append, line)
+
     async def record_quality(self, call_id: str, score: float) -> None:
         line = json.dumps({"kind": "quality", "call_id": call_id, "score": score})
-        with self._path.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+        await asyncio.to_thread(self._append, line)

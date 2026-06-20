@@ -9,6 +9,7 @@ import pytest
 from llmbroker.broker import AllLLMsFailedError, AsyncBroker, NoLLMAvailableError
 from llmbroker.models import LLMConfig
 from llmbroker.registry import Registry as FileRegistry
+from llmbroker.secrets import DictSecrets
 from llmbroker.telemetry import NoTelemetry
 
 
@@ -131,9 +132,15 @@ def test_async_llm_metrics_no_queryable_telemetry(tmp_path):
     asyncio.run(run())
 
 
+def _secrets() -> DictSecrets:
+    return DictSecrets({"K": "test"})
+
+
 def test_chat_happy_path(tmp_path):
     async def run():
-        async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+        async with AsyncBroker(
+            registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+        ) as broker:
             with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_ok("world")):
                 result = await broker.chat([{"role": "user", "content": "hi"}])
                 assert result.text == "world"
@@ -143,7 +150,9 @@ def test_chat_happy_path(tmp_path):
 
 def test_ask_delegates_to_chat(tmp_path):
     async def run():
-        async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+        async with AsyncBroker(
+            registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+        ) as broker:
             with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_ok("yes")):
                 result = await broker.ask("prompt")
                 assert result.text == "yes"
@@ -151,9 +160,20 @@ def test_ask_delegates_to_chat(tmp_path):
     asyncio.run(run())
 
 
-def test_chat_429_wait0_raises_no_llm_available(tmp_path):
+def test_chat_missing_key_raises_all_llms_failed(tmp_path):
     async def run():
         async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+            with pytest.raises(AllLLMsFailedError, match="api_key_ref"):
+                await broker.chat([{"role": "user", "content": "hi"}])
+
+    asyncio.run(run())
+
+
+def test_chat_429_wait0_raises_no_llm_available(tmp_path):
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+        ) as broker:
             with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_error(429)):
                 with pytest.raises(NoLLMAvailableError):
                     await broker.chat([{"role": "user", "content": "hi"}], wait=0)
@@ -161,9 +181,28 @@ def test_chat_429_wait0_raises_no_llm_available(tmp_path):
     asyncio.run(run())
 
 
+def test_chat_429_increments_fail_count(tmp_path):
+    async def run():
+        from llmbroker.models import LifecyclePhase
+
+        async with AsyncBroker(
+            registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+        ) as broker:
+            with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_error(429)):
+                with pytest.raises(NoLLMAvailableError):
+                    await broker.chat([{"role": "user", "content": "hi"}], wait=0)
+            state = await broker["p1"].state()
+            assert state.fail_count == 1
+            assert state.phase is LifecyclePhase.COOLING
+
+    asyncio.run(run())
+
+
 def test_chat_500_raises_all_llms_failed(tmp_path):
     async def run():
-        async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+        async with AsyncBroker(
+            registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+        ) as broker:
             with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_error(500)):
                 with pytest.raises(AllLLMsFailedError):
                     await broker.chat([{"role": "user", "content": "hi"}])
@@ -184,7 +223,9 @@ def test_chat_empty_pool_wait0_raises_no_llm_available(tmp_path):
 
 def test_result_record_quality_does_not_raise(tmp_path):
     async def run():
-        async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+        async with AsyncBroker(
+            registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+        ) as broker:
             with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_ok("hi")):
                 result = await broker.chat([{"role": "user", "content": "x"}])
                 await result.record_quality(1.0)
