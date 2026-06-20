@@ -1,0 +1,20 @@
+# Curated free-tier LLM pool (all OpenAI-compatible).
+# Fill the api_key_ref env vars: `python -m llmbroker env presets/freetier.toml > .env`
+
+[[llms]]
+name        = "groq-llama-3.3-70b"
+base_url    = "https://api.groq.com/openai/v1"
+model       = "llama-3.3-70b-versatile"
+api_key_ref = "GROQ_API_KEY"
+
+[[llms]]
+name        = "openrouter-gpt-oss-120b"
+base_url    = "https://openrouter.ai/api/v1"
+model       = "openai/gpt-oss-120b:free"
+api_key_ref = "OPENROUTER_API_KEY"
+
+[[llms]]
+name        = "google-gemini-2.5-flash"
+base_url    = "https://generativelanguage.googleapis.com/v1beta/openai"
+model       = "gemini-2.5-flash"
+api_key_ref = "GEMINI_API_KEY"
