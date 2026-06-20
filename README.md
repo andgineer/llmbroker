@@ -2,8 +2,10 @@
 [![Coverage](https://raw.githubusercontent.com/andgineer/llmbroker/python-coverage-comment-action-data/badge.svg)](https://htmlpreview.github.io/?https://github.com/andgineer/llmbroker/blob/python-coverage-comment-action-data/htmlcov/index.html)
 # llmbroker
 
-Route LLM calls over a **pool of free endpoints** with automatic round-robin and
-429/503 cooldown. No LangChain, no heavy deps — stdlib core, two lines to start.
+Route LLM calls over a **pool of free LLMs** with automatic round-robin and
+cooldown.
+
+No LangChain, no heavy deps.
 
 ```python
 import llmbroker

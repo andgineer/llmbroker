@@ -15,5 +15,3 @@ To use the SQLite backend, install with the optional dependency:
 ```bash
 uv pip install "llmbroker[sqlite]"
 ```
-
-Requires Python 3.12+.

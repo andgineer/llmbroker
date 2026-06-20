@@ -39,7 +39,7 @@ print(reply.text)
 
 # Полный messages API
 reply = llms.chat([
-    {"role": "system", "content": "Ты краткий помощник."},
+    {"role": "system", "content": "Ты специалист по краткому обьяснению."},
     {"role": "user",   "content": "Что такое Python?"},
 ])
 print(reply.text)

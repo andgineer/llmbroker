@@ -15,5 +15,3 @@ uv pip install llmbroker
 ```bash
 uv pip install "llmbroker[sqlite]"
 ```
-
-Требуется Python 3.12+.

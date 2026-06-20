@@ -1,11 +1,13 @@
 # llmbroker
 
-Route LLM calls over a **pool of endpoints** with automatic round-robin and
-429/503 cooldown. No heavy deps — stdlib-only core.
+Route LLM calls over a **free LLM pool** with automatic round-robin and
+cooldown.
+
+No heavy deps like LangChain etc.
 
 ## Quick start
 
-Create `llms.toml` with your LLM endpoints (or grab the
+Create `llms.toml` with your LLMs (or grab the
 [freetier preset](https://github.com/andgineer/llmbroker/blob/main/presets/freetier.toml)
 from the repository):
 
