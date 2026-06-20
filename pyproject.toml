@@ -9,7 +9,7 @@ description = ""
 keywords = [ "one", "two", ]
 classifiers = [ "Programming Language :: Python :: 3", "License :: OSI Approved :: MIT License", "Operating System :: OS Independent",]
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"  # tomllib (stdlib) and `from datetime import UTC` require 3.11+
 dependencies = [
     "aiosqlite>=0.22.1",
     "click>=8.2.0",

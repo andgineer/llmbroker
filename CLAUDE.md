@@ -1,0 +1,64 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Setup
+
+```bash
+. ./activate.sh   # creates .venv and installs deps via uv; re-run after pulling
+```
+
+## Common commands
+
+| Task | Command |
+|---|---|
+| Run tests | `python -m pytest` |
+| Run single test | `pytest -k 'test_name'` |
+| Lint + format + type-check | `invoke pre` |
+| Preview docs (English) | `invoke docs-en` |
+| Bump version | `invoke ver-release` / `invoke ver-bug` / `invoke ver-feature` |
+| Upgrade deps | `invoke reqs` |
+
+**Never call ruff directly.** Always use `invoke pre` — it runs ruff, ruff-format, pyrefly, and pre-commit hygiene hooks in the correct order. Never bypass hooks with `--no-verify`.
+
+## Non-negotiable done gate
+
+Before claiming anything is done, both must be green:
+
+1. `invoke pre` → no errors from ruff or pyrefly
+2. `python -m pytest` → `N passed` with zero failures or errors
+
+Run `invoke pre` after each discrete batch of changes, not only at the end.
+
+## Testing quirks
+
+- `pytest.ini` sets `addopts = --doctest-modules`, so doctests in source files run automatically — keep them up to date.
+- Tests are excluded from ruff linting (format-only); strict ruff rules apply only to `src/`.
+- Every new function needs tests in the same session. Never skip.
+
+## Code style
+
+- **Formatter**: `ruff format` (line length 99)
+- **Linter**: ruff with a broad ruleset — run `invoke pre` to catch issues before committing
+- **Type checker**: `pyrefly` (not mypy) — excludes `tests/`
+
+## Code conventions
+
+### Language
+- All comments, docstrings, plan files, and in-repo docs: **English only**.
+
+### Imports
+- **No local (in-function) imports.** All imports at module top level, always.
+- **No `from __future__ import annotations`** — use `X | Y` union syntax directly (Python 3.11+).
+- **No re-export patterns** — when a symbol moves, update importers to point at the new module instead of leaving a shim re-export.
+
+### Plan and spec files
+- Never reference plan file paths or step numbers inside code comments or docstrings.
+- Specs in `specs/` capture architectural decisions and business requirements only — not implementation details (no function signatures, field names, or internal class structure).
+
+## Architecture notes
+
+- Python 3.11+ required: uses `tomllib` (stdlib) and `from datetime import UTC`
+- Secrets are pluggable via `src/llmbroker/secrets.py` (env vars, AWS, Vault)
+- State backends are optional submodules: SQLite (default), Redis, Postgres
+- LLM registry is TOML-based (`presets/freetier.toml`); `api_key_ref` fields point to env var names
