@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from llmbroker.broker import AllLLMsFailedError
+from llmbroker.models import LifecyclePhase
 from llmbroker.registry import Registry as FileRegistry
 from llmbroker.secrets import DictSecrets
 from llmbroker.sync import Broker
@@ -108,8 +109,6 @@ def test_result_record_quality_does_not_raise(tmp_path):
 
 
 def test_llm_state_is_available(tmp_path):
-    from llmbroker.models import LifecyclePhase
-
     with Broker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
         llm = broker["p1"]
         assert llm.state().phase is LifecyclePhase.AVAILABLE

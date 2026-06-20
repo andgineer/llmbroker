@@ -31,7 +31,7 @@ from llmbroker.models import (
     LLMMetrics,
     LLMSnapshot,
     LLMState,
-    SyncPolicy,
+    SeedPolicy,
     Usage,
 )
 from llmbroker.registry import MutableRegistryProtocol, RegistryProtocol
@@ -136,7 +136,7 @@ class AsyncLLM:
 class AsyncBroker(Mapping[str, AsyncLLM]):
     """Read-only Mapping of LLM handles + the single call/admin front door."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         *,
         registry: RegistryProtocol,
@@ -144,6 +144,8 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
         shared_state: SharedStateProtocol | None = None,
         telemetry: TelemetryProtocol | None = None,
         optimize: bool | Optimizer = True,
+        seed: RegistryProtocol | None = None,
+        seed_policy: SeedPolicy = SeedPolicy.IF_EMPTY,
     ) -> None:
         self._registry = registry
         self._secrets: SecretsProtocol = as_secrets(secrets) if secrets is not None else Secrets()
@@ -156,28 +158,42 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
         else:
             self._optimizer = None
 
+        self._seed = seed
+        self._seed_policy = seed_policy
         self._queue: asyncio.Queue[LLMConfig] = asyncio.Queue()
         self._configs: dict[str, LLMConfig] = {}
         self._resolved_keys: dict[str, str] = {}
         self._state = InMemoryState()
-        self._started = False
-        self._start_lock = asyncio.Lock()
+        self._pool_initialized = False
+        self._pool_lock = asyncio.Lock()
         self._bg_tasks: list[asyncio.Task] = []
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def ensure_started(self) -> None:
-        if self._started:
+    async def _populate_pool(self) -> None:
+        """Reconcile the in-memory pool with the registry. Assumes _pool_lock is held."""
+        configs = await self._registry.load()
+        names = {c.name for c in configs}
+        for name in list(self._configs):
+            if name not in names:
+                self._configs.pop(name, None)
+                self._resolved_keys.pop(name, None)
+        for cfg in configs:
+            await self._add_to_pool(cfg)
+        self._pool_initialized = True
+
+    async def ensure_pool(self) -> None:
+        """Lazy idempotent initializer — seeds and loads the registry into the pool once."""
+        if self._pool_initialized:
             return
-        async with self._start_lock:
-            if self._started:
+        async with self._pool_lock:
+            if self._pool_initialized:
                 return
-            configs = await self._registry.load()
-            for cfg in configs:
-                await self._add_to_pool(cfg)
-            self._started = True
+            if self._seed is not None:
+                await self._apply_seed(self._seed, self._seed_policy)
+            await self._populate_pool()
 
     async def _add_to_pool(self, cfg: LLMConfig) -> None:
         is_new = cfg.name not in self._configs
@@ -206,6 +222,7 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
                 await port.aclose()
 
     async def __aenter__(self) -> "AsyncBroker":
+        await self.ensure_pool()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -254,7 +271,7 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
         trace_id: str | None = None,
         wait: float | None = None,
     ) -> AsyncResult:
-        await self.ensure_started()
+        await self.ensure_pool()
         while True:
             try:
                 config = await self._acquire(wait)
@@ -378,7 +395,7 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
             return self._queue.get_nowait()
         return await asyncio.wait_for(self._queue.get(), timeout=wait)
 
-    async def _cool_down(self, config: LLMConfig, headers) -> None:  # noqa: ANN001
+    async def _cool_down(self, config: LLMConfig, headers: httpx.Headers) -> None:
         delay = retry_after_seconds(headers, _DEFAULT_RATE_LIMIT_SEC)
         cooldown_until = datetime.now(UTC) + timedelta(seconds=delay)
         self._state.set_cooling(
@@ -423,7 +440,7 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
         *,
         since: datetime | None = None,
     ) -> Mapping[str, LLMSnapshot]:
-        await self.ensure_started()
+        await self.ensure_pool()
         metrics_map: dict[str, LLMMetrics] = {}
         if isinstance(self._telemetry, QueryableTelemetryProtocol):
             metrics_map = await self._telemetry.metrics(since=since)
@@ -446,51 +463,45 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
             raise TypeError(
                 "this registry is read-only — edit the config file directly"
                 " (a mutable registry such as llmbroker.sqlite.Registry is required"
-                " for add/remove/sync_configs)",
+                " for add/remove/seed",
             )
         return self._registry
 
     async def add(self, cfg: LLMConfig) -> None:
-        await self.ensure_started()
+        await self.ensure_pool()
         registry = self._require_mutable_registry()
         await registry.add(cfg)
         await self._add_to_pool(cfg)
 
     async def remove(self, name: str) -> None:
-        await self.ensure_started()
+        await self.ensure_pool()
         registry = self._require_mutable_registry()
         await registry.remove(name)
         self._configs.pop(name, None)
         self._resolved_keys.pop(name, None)
 
-    async def sync_configs(
-        self,
-        source: RegistryProtocol,
-        *,
-        policy: SyncPolicy = "mirror",
-    ) -> None:
-        await self.ensure_started()
+    async def _apply_seed(self, source: RegistryProtocol, policy: SeedPolicy) -> None:
+        """Apply a seed source to the mutable registry. Assumes _pool_lock is held."""
         registry = self._require_mutable_registry()
         source_configs = await source.load()
         existing = {c.name: c for c in await registry.load()}
 
-        if policy == "if_empty" and existing:
+        if policy is SeedPolicy.IF_EMPTY and existing:
             return
 
-        if policy == "mirror":
+        if policy is SeedPolicy.MIRROR:
             source_names = {c.name for c in source_configs}
             for name in list(existing):
                 if name not in source_names:
                     await registry.remove(name)
             for cfg in source_configs:
                 await registry.update(cfg) if cfg.name in existing else await registry.add(cfg)
-        else:  # "add" or "if_empty" (empty store)
+        else:  # ADD or IF_EMPTY (empty store)
             for cfg in source_configs:
                 if cfg.name not in existing:
                     await registry.add(cfg)
 
         await self._seed_secrets(source_configs)
-        await self._reconcile_pool()
 
     async def _seed_secrets(self, configs: list[LLMConfig]) -> None:
         if not isinstance(self._secrets, MutableSecretsProtocol):
@@ -507,17 +518,6 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
             except KeyError:
                 continue
             await self._secrets.set(cfg.api_key_ref, value)
-
-    async def _reconcile_pool(self) -> None:
-        registry = self._require_mutable_registry()
-        configs = await registry.load()
-        names = {c.name for c in configs}
-        for name in list(self._configs):
-            if name not in names:
-                self._configs.pop(name, None)
-                self._resolved_keys.pop(name, None)
-        for cfg in configs:
-            await self._add_to_pool(cfg)
 
     # ------------------------------------------------------------------
     # Call journal / retention

@@ -138,10 +138,9 @@ from datetime import UTC, datetime
 with llmbroker.Broker(
     registry=llmbroker.sqlite.Registry("broker.db"),
     telemetry=llmbroker.sqlite.Telemetry("broker.db"),
+    seed=llmbroker.Registry("llms.toml"),
+    seed_policy=llmbroker.SeedPolicy.IF_EMPTY,
 ) as llms:
-    # Seed the DB from a file (only if empty)
-    llms.sync_configs(llmbroker.Registry("llms.toml"), policy="if_empty")
-
     reply = llms.ask("Question")
 
     # Pool status
@@ -163,13 +162,13 @@ with llmbroker.Broker(
     llms.purge_calls(before=datetime(2025, 1, 1, tzinfo=UTC))
 ```
 
-`sync_configs` policies:
+`SeedPolicy` values:
 
 | Policy | Behaviour |
 |---|---|
-| `mirror` (default) | DB = source exactly: add new, update changed, remove dropped |
-| `if_empty` | fill only if DB is empty, otherwise no-op |
-| `add` | only add entries not already present by name |
+| `SeedPolicy.MIRROR` | DB = source exactly: add new, update changed, remove dropped |
+| `SeedPolicy.IF_EMPTY` (default) | fill only if DB is empty, otherwise no-op |
+| `SeedPolicy.ADD` | only add entries not already present by name |
 
 ## Alembic integration
 

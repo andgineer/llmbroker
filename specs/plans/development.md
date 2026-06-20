@@ -216,8 +216,8 @@ import llmbroker, llmbroker.sqlite
 with llmbroker.Broker(
     registry=llmbroker.sqlite.Registry("broker.db"),
     telemetry=llmbroker.sqlite.Telemetry("broker.db"),
+    seed=llmbroker.Registry("llms.toml"),   # bootstrap DB from file on first use
 ) as llms:
-    llms.sync_configs(llmbroker.Registry("llms.toml"))   # bring the DB in step with your list
     ...   # now llms.calls(limit=...) and llms.snapshot() give you the admin view
 ```
 
@@ -290,12 +290,11 @@ Persist config and telemetry, build an admin UI through the broker — or take j
 one: `registry=llmbroker.sqlite.Registry(...)` alone gives DB-backed config + admin
 CRUD (telemetry stays the default log); `telemetry=llmbroker.sqlite.Telemetry(...)`
 alone gives a queryable call history while the pool stays in `llms.toml`. The
-example below takes both — the common admin-UI case. Connecting to
-the store and **populating** it are separate steps (see "Seeding a DB store" —
-the constructor never auto-seeds). One idempotent `sync_configs` call on every
-startup keeps the DB in step with the authors' set (default `policy="mirror"`).
-**`shared_state` is not part of this** — a single process keeps cooldown state in
-memory internally; there is nothing to share.
+example below takes both — the common admin-UI case. Connecting to the store and
+**populating** it happen together: pass `seed=` to the constructor and the pool is
+seeded on first use (see "Seeding a DB store"). **`shared_state` is not part of
+this** — a single process keeps cooldown state in memory internally; there is
+nothing to share.
 
 ```python
 import llmbroker
@@ -304,13 +303,14 @@ import llmbroker.sqlite          # dep-carrying → explicit import (llmbroker.R
 llms = llmbroker.Broker(
     registry=llmbroker.sqlite.Registry("broker.db"),
     telemetry=llmbroker.sqlite.Telemetry("broker.db"),
+    seed=llmbroker.Registry("llms.toml"),              # bootstrap from file on first use
     # no shared_state= → single process (Rung 2 adds it for clusters)
 )
-llms.sync_configs(llmbroker.Registry("llms.toml"))   # every startup, idempotent; default policy="mirror"
 ```
 
-A host that wants to **curate** its own pool instead uses `policy="if_empty"` (seed
-once, then `add`/`remove` survive restarts); `policy="add"` only ever adds new entries.
+`seed_policy=SeedPolicy.IF_EMPTY` (default) seeds once and steps aside — `add`/`remove`
+through the admin API survive restarts. `SeedPolicy.ADD` only ever adds new entries.
+`SeedPolicy.MIRROR` keeps the DB identical to the seed source every startup.
 
 ### Rung 2 — "if you run a cluster"
 
@@ -549,7 +549,10 @@ class AsyncResult:                 # returned by AsyncBroker.ask()/chat()
 # fields, `record_quality` blocks instead of awaiting — see "Sync wrapper".
 
 
-SyncPolicy = Literal["mirror", "add", "if_empty"]   # how sync_configs reconciles the DB with a source
+class SeedPolicy(Enum):    # how the constructor seed reconciles the DB with the source
+    MIRROR = "mirror"      # DB = source exactly: add new, update changed, remove absent
+    ADD = "add"            # add absent entries only; never remove or update
+    IF_EMPTY = "if_empty"  # seed only when registry is empty; no-op if already populated
 
 
 class AsyncBroker(Mapping[str, AsyncLLM]):
@@ -561,6 +564,8 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
         shared_state: SharedStateProtocol | None = None,   # opt-in, cluster only
         telemetry: TelemetryProtocol | None = None,  # default llmbroker.Telemetry() — log
         optimize: bool | Optimizer = True,           # True ≡ Optimizer() (judge_fraction=0.0); see "Autonomous optimization"
+        seed: RegistryProtocol | None = None,        # optional bootstrap source; applied on first ensure_pool()
+        seed_policy: SeedPolicy = SeedPolicy.IF_EMPTY,
     ) -> None: ...                                   # cheap & side-effect-free; background loops start lazily
 
     async def aclose(self) -> None: ...
@@ -595,9 +600,10 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
     async def add(self, cfg: LLMConfig) -> None: ...
     async def remove(self, name: str) -> None: ...
 
-    # ── reconcile the DB pool with a source set, idempotently, EVERY startup (like `alembic upgrade`):
-    # no-op when already matching, applies the delta otherwise. policy picks the rule. ──
-    async def sync_configs(self, source: RegistryProtocol, *, policy: SyncPolicy = "mirror") -> None: ...
+    # ── lazy idempotent pool initializer — applies constructor seed, then loads registry into pool.
+    # Double-checked locking: safe for concurrent callers. __aenter__, chat, snapshot, add, remove
+    # all call it automatically; call explicitly for eager fail-fast init at startup. ──
+    async def ensure_pool(self) -> None: ...
 
     # ── call journal (require a queryable telemetry backend; else a clear error) ──
     async def calls(self, *, limit: int) -> list[Call]: ...
@@ -630,7 +636,7 @@ for name, s in report.items():
 
 - **The schema is private; the broker is the public contract.** No host issues raw
   SQL against `llmbroker_registry`/`llmbroker_calls`, and **no host calls a port method
-  directly** — config CRUD goes through `llms.add`/`remove`/`sync_configs`, live state
+  directly** — config CRUD goes through `llms.add`/`remove`, live state
   through `await llms[name].state()` (or the whole-pool `await llms.snapshot()`), and
   call-log read/retention through `await llms.calls()`/`purge_calls()`. The ports
   (`MutableRegistryProtocol`, `QueryableTelemetryProtocol`) are contracts the **broker**
@@ -658,7 +664,7 @@ for name, s in report.items():
   it performs I/O.** In-memory / cached access is sync — `llms[name]`, `.config` (the
   static stored config, which cannot lie), `Result.text`/`.usage`, `name in llms`,
   `len(llms)`. Anything touching the network, a file, or the DB is async — `ask`/`chat`,
-  the config mutators (`add`/`remove`/`sync_configs`), `AsyncLLM.state()`/`.metrics()`,
+  the config mutators (`add`/`remove`/`ensure_pool`), `AsyncLLM.state()`/`.metrics()`,
   `snapshot()`, `calls`/`purge_calls`, and `Result.record_quality()`. **`state()` is
   deliberately async, not a sync property:** in a cluster the truth lives in the shared
   store, so reading it is I/O — a sync field would silently show this instance's stale
@@ -669,8 +675,7 @@ for name, s in report.items():
   **read-only** `Mapping` — you cannot `llms[new_key] = …` (assigning a handle by key has
   no construction semantics; the key lives inside `cfg.name`; and the op is I/O, so it
   can't be a sync `__setitem__`). Config changes go through the named methods
-  `llms.add(cfg)` (upsert by `cfg.name`) / `llms.remove(name)` (single items) and
-  `llms.sync_configs(source, policy=...)` (bulk reconcile, every startup; see "Seeding").
+  `llms.add(cfg)` (upsert by `cfg.name`) / `llms.remove(name)` (single items).
   Each delegates to the mutable registry backend **and** reconciles the live pool in the
   same call (resolve the key via `Secrets`, create or drain the queue slot), so `llms`
   reflects the change atomically — no user-facing refresh, no "configured but not yet
@@ -682,8 +687,8 @@ for name, s in report.items():
   level it supports, and each level is a real, type-checked contract. `RegistryProtocol`
   (just `load()`) is all the broker needs to *read* config; `MutableRegistryProtocol(RegistryProtocol)`
   adds `get`/`add`/`update`/`remove` — the **broker** requires it to offer
-  `llms.add`/`remove`/`sync_configs`, and `isinstance`-checks the registry so a file backend
-  gives a clear error instead of a missing method. Likewise `TelemetryProtocol` (just
+  `llms.add`/`remove` and apply the constructor seed, and `isinstance`-checks the registry
+  so a file backend gives a clear error instead of a missing method. Likewise `TelemetryProtocol` (just
   `record()`) vs `QueryableTelemetryProtocol(TelemetryProtocol)` (`metrics`/`calls`/`purge_calls`)
   for the call-log read side; the default `Telemetry()` (log) / `NoTelemetry()` implement
   only `TelemetryProtocol`, so `llms.calls()`/`purge_calls()` raise a clear error on them
@@ -751,10 +756,9 @@ for name, s in report.items():
 - `registry=` takes a `RegistryProtocol`; build one with `llmbroker.Registry(path)`
   (file) or `llmbroker.sqlite.Registry(...)` — **the port is only a backend selector you
   construct**, every operation on it is reached through the broker. Programmatic config
-  goes through `llms.add`/`remove`; bulk reconcile with a source through
-  `llms.sync_configs(source, policy=...)`, whose `source` is itself a `RegistryProtocol`
-  (e.g. `llmbroker.Registry("llms.toml")`). The kwarg matches the port, like
-  `secrets=`/`shared_state=`/`telemetry=` taking a
+  goes through `llms.add`/`remove`; bootstrap from a source via the constructor `seed=`
+  parameter (a `RegistryProtocol`, e.g. `llmbroker.Registry("llms.toml")`). The kwarg
+  matches the port, like `secrets=`/`shared_state=`/`telemetry=` taking a
   `SecretsProtocol`/`SharedStateProtocol`/`TelemetryProtocol`.
 - **Two entry points, each with one clean type — no polymorphic parameter.**
   `chat` is the full API and always takes a chat messages array; `ask` is a thin
@@ -982,8 +986,8 @@ llmbroker.Broker(registry=..., secrets=my_vault_resolver)                       
   — both zero-dependency, so they are top-level classes, not a backend submodule. A
   plain `Callable[[str], Awaitable[str]] | Callable[[str], str]` is accepted and
   adapted, so a secret-manager integration is one small function.
-- Keys are resolved when config is (re)loaded — on `llms.add`/`sync_configs` and the
-  demand-driven config read; rotated secrets are picked up on the next load.
+- Keys are resolved when config is (re)loaded — on `llms.add` and pool init
+  (`ensure_pool`); rotated secrets are picked up on the next load.
 
 ### Admin-editable secrets
 
@@ -1038,59 +1042,62 @@ design (a running process cannot write its own environment back to disk).
 
 ---
 
-## Seeding a DB store — `sync_configs`, idempotent, every startup
+## Seeding a DB store — constructor `seed`, lazy on first use
 
-Constructing a backend registry only **selects/connects** it; it never populates. The
-DB is brought into step with a source set by **one idempotent broker call run on every
-startup** — exactly the `alembic upgrade` pattern: a no-op when the DB already matches,
-applies the delta otherwise. There is no separate "seed once" method and nothing to
-remember to call only the first time.
+Constructing a backend registry only **selects/connects** it; it starts empty. Pass
+`seed` and `seed_policy` to the constructor; the broker applies the seed exactly
+once on the first `ensure_pool()` call (triggered lazily by `chat`, `snapshot`,
+`add`, `remove`, and `__aenter__`, or explicitly for eager fail-fast startup):
 
 ```python
-llms = llmbroker.Broker(registry=llmbroker.sqlite.Registry("broker.db"))
-llms.sync_configs(llmbroker.Registry("llms.toml"))   # every startup; default policy="mirror"
+llms = llmbroker.AsyncBroker(
+    registry=llmbroker.sqlite.Registry("broker.db"),
+    secrets=llmbroker.sqlite.Secrets("broker.db"),
+    seed=llmbroker.Registry("llms.toml"),
+    seed_policy=llmbroker.SeedPolicy.ADD,
+)
+await llms.ensure_pool()   # eager init at startup (fail-fast)
 ```
 
-`AsyncBroker.sync_configs(source, *, policy: SyncPolicy = "mirror")` takes any read-only
-`RegistryProtocol` source. The `Literal` policy is statically checked — a typo'd policy is
-a type error, not a silent no-op. The policy chooses **who is authoritative**, which in
+`seed_policy` is a `SeedPolicy` enum. It chooses **who is authoritative**, which in
 turn decides whether `add`/`remove` are meaningful:
 
-| `policy` | Each startup | Authoritative | `add`/`remove`? |
+| `SeedPolicy` | On `ensure_pool` | Authoritative | `add`/`remove`? |
 |---|---|---|---|
-| `mirror` (default) | DB ← exactly the source: add new, update changed, **remove** dropped | the source (authors' set) | don't use them — they're undone next boot |
-| `if_empty` | fill only while DB is empty, else no-op | the DB after first fill | yes — they persist across restarts |
-| `add` | add new by name; never touch or remove existing | mixed | partial — re-adds a name you removed |
+| `MIRROR` | DB = source exactly: add new, update changed, **remove** absent | The seed source | Don't — undone next boot |
+| `IF_EMPTY` (default) | Seed only when registry is empty; no-op if already populated | The DB after first fill | Yes — they persist |
+| `ADD` | Add absent entries only; never remove or update existing | Mixed | Partial — re-adds a removed name |
 
-`mirror` is the default because the authors maintain the recommended set and the majority
-just wants "always be current." A host that prefers to **curate its own pool** uses
-`if_empty` and then `add`/`remove`. All three are idempotent and safe to run every boot.
-The same operation is on the CLI for ops (it builds a throwaway broker — no host code):
+The CLI offers the same reconciliation offline (without a running application):
 
 ```bash
 python -m llmbroker sync llms.toml --into sqlite:broker.db --policy mirror
 ```
 
-`sync_configs` needs a mutable registry (it reconciles via the backend's
-`add`/`update`/`remove`); the file `llmbroker.Registry` implements only `RegistryProtocol`,
-so on it it raises a clear "edit the file" error.
+Seeding requires a mutable registry (`MutableRegistryProtocol`); using a file
+`llmbroker.Registry` as the main registry raises a clear "edit the file" error.
 
 ### Seeding secrets alongside configs
 
-`sync_configs` reconciles `Registry` entries; for each synced `LLMConfig`, it also
-**fills gaps** in the broker's secrets store for that `api_key_ref` — "fill gap,
-don't overwrite":
+When applying the seed, the broker also bootstraps secrets — **fill gap,
+don't overwrite** — for each synced `LLMConfig`:
 
-- if `secrets.resolve(api_key_ref)` already succeeds, leave it as-is — preserves an
-  admin's edited key or a pre-populated secrets store;
-- else, try the bootstrap source, `llmbroker.Secrets()` (env). If found **and**
-  `secrets` is `MutableSecretsProtocol`, `secrets.set(api_key_ref, value)`;
-- else — no special handling here. The broker's own config-load resolution (see
-  "Secrets") raises its usual clear error for that `api_key_ref`, exactly as it
-  would without `sync_configs`.
+- if `secrets.resolve(api_key_ref)` already succeeds, leave it as-is — preserves
+  an admin's edited key or a pre-populated secrets store;
+- else, try `llmbroker.Secrets()` (env vars). If found **and** `secrets` implements
+  `MutableSecretsProtocol`, call `secrets.set(api_key_ref, value)` to persist it;
+- else — no special handling. The broker's own resolution raises its usual clear
+  error for that `api_key_ref` when the LLM is first used.
 
-This is a one-time bootstrap, not a runtime fallback: once seeded, the broker
-consults only its configured `secrets=`, never the env as a secondary source.
+This is a one-time bootstrap transfer (env → secrets store), not a runtime
+fallback: once seeded, the broker consults only its configured `secrets=`, never
+env vars as a secondary source.
+
+**`IF_EMPTY` on restart with a non-empty registry exits early without attempting
+secret seeding** — by design: if the registry is already populated, secrets were
+bootstrapped during the initial seed. `ADD` and `MIRROR` always attempt to fill
+missing secrets on every `ensure_pool`, so a secret absent on first boot (e.g.
+env var added later) is picked up on the next restart.
 
 ---
 
@@ -1294,7 +1301,7 @@ import llmbroker.sqlite
 import llmbroker.redis
 
 llmbroker.AsyncBroker(                                      # shared_state ⇒ cluster ⇒ async
-    registry=llmbroker.sqlite.Registry("broker.db"),       # populate separately via llms.sync_configs(...)
+    registry=llmbroker.sqlite.Registry("broker.db"),       # seed via constructor seed= param
     shared_state=llmbroker.redis.SharedState("redis://..."),  # omit for single process
     telemetry=llmbroker.sqlite.Telemetry("broker.db"),
 )
@@ -1448,7 +1455,7 @@ is version-aware (initial create now; additive data-preserving ALTERs hang off t
 version marker in later releases), and `llmbroker.alembic.include_object` is
 exported (see "Coexisting with host migration tools"). Because the DB schema is
 **private**, P1 also ships the **broker front door** that replaces raw SQL — config
-CRUD (`llms.add`/`remove` + `llms.sync_configs`, built on the `MutableRegistryProtocol`
+CRUD (`llms.add`/`remove` + constructor `seed=`, built on the `MutableRegistryProtocol`
 backend contract), live state + usage (`await llms.snapshot()`), and call-log
 read/retention (`await llms.calls()`/`purge_calls()`, built on the
 `QueryableTelemetryProtocol` backend contract) — and reworks dinary's admin to consume it
@@ -1464,7 +1471,7 @@ src/llmbroker/
                          #             LLMRequestError/NoLLMAvailable/AllLLMsFailed.
                          #             Protocols (RegistryProtocol/MutableRegistryProtocol/SecretsProtocol/SharedStateProtocol/
                          #             TelemetryProtocol/QueryableTelemetryProtocol/AsyncResourceProtocol) and DTOs (LLMConfig/
-                         #             LLMState/LLMSnapshot/Usage/Call/CallStatus/LLMMetrics/Alert/SyncPolicy) are NOT exported here —
+                         #             LLMState/LLMSnapshot/Usage/Call/CallStatus/LLMMetrics/Alert/SeedPolicy) are NOT exported here —
                          #             backend/admin authors import them from their defining modules (registry.py/secrets.py/
                          #             shared_state.py/telemetry.py/models.py).
                          #             NEVER imports a dep-carrying backend submodule (sqlite/redis/postgres/mongodb).
@@ -1483,8 +1490,8 @@ src/llmbroker/
                          #             never imports `llmbroker.chat` and the helper name never collides with `.chat()`.
   broker.py              # from adapters/llmbroker.py — AsyncBroker(Mapping[str, AsyncLLM]), the AsyncLLM handle
                          #             (sync .config + async .state()/.metrics()), the single front door:
-                         #             ask()/chat() + `wait` capacity bound; add/remove + sync_configs(policy)
-                         #             (delegate to registry + reconcile live pool); snapshot(); calls/purge_calls;
+                         #             ask()/chat() + `wait` capacity bound; add/remove; ensure_pool()
+                         #             (seed + populate pool); snapshot(); calls/purge_calls;
                          #             alerts(); cheap __init__ + lazy start + aclose()/async with;
                          #             private _resolved_keys (name→secret) + internal LLMState + demand-driven
                          #             shared-state sync (lazy read at selection, write-through on change);
@@ -1495,7 +1502,7 @@ src/llmbroker/
                          #             event-loop thread; blocking proxies (no `await`), close()/with teardown
   models.py              # LLMConfig (config: name/base_url/model/api_key_ref — no secret),
                          #             LifecyclePhase (enum), LLMState (live state + SharedState wire DTO),
-                         #             LLMSnapshot (frozen config+state+metrics), SyncPolicy (Literal),
+                         #             LLMSnapshot (frozen config+state+metrics), SeedPolicy (Enum: MIRROR/ADD/IF_EMPTY),
                          #             Usage (provider token report), Call (llm_name/usage/…), CallStatus,
                          #             LLMMetrics (call_count/last_status/last_at),
                          #             Alert (P1 placeholder for the Optimizer's human-only signals;
@@ -1515,7 +1522,7 @@ src/llmbroker/
   telemetry.py           # TelemetryProtocol + QueryableTelemetryProtocol (read layer) Protocols,
                          #             llmbroker.Telemetry() (log, default), NoTelemetry(), JsonlTelemetry(path)  [core]
   sqlite.py              # llmbroker.sqlite.Registry (config; MutableRegistryProtocol CRUD — get/add/update/remove —
-                         #             that the broker's sync_configs reconciles against)
+                         #             used by the broker's seed application and add/remove)
                          #             + llmbroker.sqlite.Telemetry (llmbroker_calls; record + queryable read surface)
                          #             + llmbroker.sqlite.Secrets (MutableSecretsProtocol; llmbroker_secrets table)  [aiosqlite]
   alembic.py             # llmbroker.alembic.include_object — host migration-tool coexistence (dependency-free)

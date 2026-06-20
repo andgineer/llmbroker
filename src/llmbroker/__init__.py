@@ -15,7 +15,7 @@ from llmbroker.broker import (
     Optimizer,
 )
 from llmbroker.chat import arun_tool_loop, run_tool_loop
-from llmbroker.models import LifecyclePhase
+from llmbroker.models import LifecyclePhase, SeedPolicy
 from llmbroker.registry import Registry
 from llmbroker.secrets import DictSecrets, Secrets, SecretsReadOnlyError
 from llmbroker.sync import LLM, Broker, Result
@@ -37,6 +37,7 @@ __all__ = [
     "Optimizer",
     "Registry",
     "Result",
+    "SeedPolicy",
     "Secrets",
     "SecretsReadOnlyError",
     "Telemetry",

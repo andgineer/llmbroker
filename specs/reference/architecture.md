@@ -87,14 +87,40 @@ https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/<name>.toml
 
 ## Provider seeding
 
-The broker never auto-seeds. The operator seeds the sqlite registry once with:
+The broker seeds on first use via the constructor `seed` parameter. Pass any
+`RegistryProtocol` source (e.g. a TOML file) and a `SeedPolicy`:
 
-```bash
-python -m llmbroker sync .deploy/llm_providers.toml --into sqlite:<path> --policy if_empty
+```python
+llms = llmbroker.AsyncBroker(
+    registry=llmbroker.sqlite.Registry("broker.db"),
+    secrets=llmbroker.sqlite.Secrets("broker.db"),
+    seed=llmbroker.Registry(".deploy/llms.toml"),
+    seed_policy=llmbroker.SeedPolicy.ADD,
+)
+await llms.ensure_pool()   # eager init at startup
 ```
 
-After that, `add`/`remove` through the admin API survive restarts. Pulling an
-updated preset without clobbering admin edits: re-run with `--policy add`.
+`SeedPolicy` controls reconciliation:
+
+| Policy | Behavior |
+|---|---|
+| `IF_EMPTY` (default) | Seeds only when the registry is empty; no-op on restart if providers are present |
+| `ADD` | Adds providers absent by name; never removes or updates existing entries |
+| `MIRROR` | Keeps the registry identical to the seed source: adds new, updates changed, removes absent |
+
+When seeding, the broker also bootstraps secrets: for each provider config whose
+`api_key_ref` cannot be resolved by the configured `secrets=` backend, the broker
+tries `llmbroker.Secrets()` (env vars) and, if found, persists the value via
+`secrets.set()`. Existing secrets are never overwritten — admin-edited values win.
+Once the secrets store is populated, env vars are not consulted again at runtime.
+
+`IF_EMPTY` with a non-empty registry exits early without re-seeding secrets — by
+design: a non-empty registry means secrets were already bootstrapped during the
+initial seed. `ADD` and `MIRROR` always attempt to fill missing secrets on every
+startup.
+
+The `python -m llmbroker sync` CLI command performs the same reconciliation offline
+(without a running application) and is useful for ops workflows.
 
 ---
 

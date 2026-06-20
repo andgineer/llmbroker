@@ -73,7 +73,7 @@ def test_broker_resolves_key_not_on_config(tmp_path, monkeypatch):
     async def run():
         broker = llmbroker.AsyncBroker(registry=FileRegistry(toml))
         async with broker:
-            await broker.ensure_started()
+            await broker.ensure_pool()
             cfg = broker["p1"].config
             assert cfg.api_key_ref == "MY_API_KEY"
             assert "the-secret" not in (cfg.api_key_ref, cfg.base_url, cfg.model, cfg.name)
@@ -83,7 +83,7 @@ def test_broker_resolves_key_not_on_config(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
-def test_sync_configs_seeds_secret_from_env(tmp_path, monkeypatch, real_broker_sync):  # noqa: ARG001
+def test_seed_seeds_secret_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("SEED_KEY", "from-env")
     db = str(tmp_path / "b.db")
     src = tmp_path / "llms.toml"
@@ -96,15 +96,16 @@ def test_sync_configs_seeds_secret_from_env(tmp_path, monkeypatch, real_broker_s
         broker = llmbroker.AsyncBroker(
             registry=llmbroker.sqlite.Registry(db),
             secrets=secrets,
+            seed=FileRegistry(src),
+            seed_policy=llmbroker.SeedPolicy.MIRROR,
         )
         async with broker:
-            await broker.sync_configs(FileRegistry(src), policy="mirror")
             return await secrets.resolve("SEED_KEY")
 
     assert asyncio.run(run()) == "from-env"
 
 
-def test_sync_configs_preserves_existing_secret(tmp_path, monkeypatch, real_broker_sync):  # noqa: ARG001
+def test_seed_preserves_existing_secret(tmp_path, monkeypatch):
     monkeypatch.setenv("SEED_KEY", "from-env")
     db = str(tmp_path / "b.db")
     src = tmp_path / "llms.toml"
@@ -118,15 +119,16 @@ def test_sync_configs_preserves_existing_secret(tmp_path, monkeypatch, real_brok
         broker = llmbroker.AsyncBroker(
             registry=llmbroker.sqlite.Registry(db),
             secrets=secrets,
+            seed=FileRegistry(src),
+            seed_policy=llmbroker.SeedPolicy.MIRROR,
         )
         async with broker:
-            await broker.sync_configs(FileRegistry(src), policy="mirror")
             return await secrets.resolve("SEED_KEY")
 
     assert asyncio.run(run()) == "admin-edited"
 
 
-def test_missing_ref_with_readonly_secrets_does_not_block(tmp_path, monkeypatch, real_broker_sync):  # noqa: ARG001
+def test_missing_ref_with_readonly_secrets_does_not_block(tmp_path, monkeypatch):
     monkeypatch.delenv("ABSENT_KEY", raising=False)
     db = str(tmp_path / "b.db")
     src = tmp_path / "llms.toml"
@@ -135,10 +137,12 @@ def test_missing_ref_with_readonly_secrets_does_not_block(tmp_path, monkeypatch,
     )
 
     async def run():
-        broker = llmbroker.AsyncBroker(registry=llmbroker.sqlite.Registry(db))
+        broker = llmbroker.AsyncBroker(
+            registry=llmbroker.sqlite.Registry(db),
+            seed=FileRegistry(src),
+            seed_policy=llmbroker.SeedPolicy.MIRROR,
+        )
         async with broker:
-            # read-only env secrets + missing var: sync still completes, key just unresolved
-            await broker.sync_configs(FileRegistry(src), policy="mirror")
             return "p1" in broker
 
     assert asyncio.run(run()) is True

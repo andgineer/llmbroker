@@ -12,9 +12,7 @@ readme = "README.md"
 requires-python = ">=3.11"  # tomllib (stdlib) and `from datetime import UTC` require 3.11+
 dependencies = [
     "aiosqlite>=0.22.1",
-    "click>=8.2.0",
     "httpx>=0.28.1",
-    "rich-click>=1.8.8",
 ]
 [[project.authors]]
 name = "Andrey Sorokin"

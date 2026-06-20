@@ -138,10 +138,9 @@ from datetime import UTC, datetime
 with llmbroker.Broker(
     registry=llmbroker.sqlite.Registry("broker.db"),
     telemetry=llmbroker.sqlite.Telemetry("broker.db"),
+    seed=llmbroker.Registry("llms.toml"),
+    seed_policy=llmbroker.SeedPolicy.IF_EMPTY,
 ) as llms:
-    # Заполнить DB из файла (только если пуста)
-    llms.sync_configs(llmbroker.Registry("llms.toml"), policy="if_empty")
-
     reply = llms.ask("Вопрос")
 
     # Состояние пула
@@ -163,13 +162,13 @@ with llmbroker.Broker(
     llms.purge_calls(before=datetime(2025, 1, 1, tzinfo=UTC))
 ```
 
-Политики `sync_configs`:
+Значения `SeedPolicy`:
 
 | Политика | Поведение |
 |---|---|
-| `mirror` (по умолчанию) | DB = источник точно: добавить новые, обновить изменённые, удалить удалённые |
-| `if_empty` | заполнить только если DB пуста, иначе ничего |
-| `add` | только добавить новые по имени, существующие не трогать |
+| `SeedPolicy.MIRROR` | DB = источник точно: добавить новые, обновить изменённые, удалить удалённые |
+| `SeedPolicy.IF_EMPTY` (по умолчанию) | заполнить только если DB пуста, иначе ничего |
+| `SeedPolicy.ADD` | только добавить новые по имени, существующие не трогать |
 
 ## Интеграция с Alembic
 

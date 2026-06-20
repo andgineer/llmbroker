@@ -17,6 +17,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Lint + format + type-check | `invoke pre` |
 | Preview docs (English) | `invoke docs-en` |
 | Bump version | `invoke ver-release` / `invoke ver-bug` / `invoke ver-feature` |
+
+**Never edit `src/llmbroker/__about__.py` directly.** Version is managed by `invoke ver-*` commands only.
 | Upgrade deps | `invoke reqs` |
 
 **Never call ruff directly.** Always use `invoke pre` — it runs ruff, ruff-format, pyrefly, and pre-commit hygiene hooks in the correct order. Never bypass hooks with `--no-verify`.

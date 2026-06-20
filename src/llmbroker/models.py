@@ -7,7 +7,7 @@ imports — safe to import from anywhere in the package.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Literal, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 
 class LifecyclePhase(Enum):
@@ -100,7 +100,10 @@ class Alert:
     message: str = field(default="")
 
 
-SyncPolicy = Literal["mirror", "add", "if_empty"]
+class SeedPolicy(Enum):
+    MIRROR = "mirror"
+    ADD = "add"
+    IF_EMPTY = "if_empty"
 
 
 @runtime_checkable
