@@ -7,19 +7,19 @@
 | src/llmbroker/\_\_about\_\_.py |        1 |        1 |      0% |         1 |
 | src/llmbroker/\_\_main\_\_.py  |        4 |        4 |      0% |       3-8 |
 | src/llmbroker/alembic.py       |        2 |        0 |    100% |           |
-| src/llmbroker/broker.py        |      271 |       42 |     85% |103, 131-132, 153, 157, 176, 199, 201-202, 266, 338, 355-372, 379, 390, 414-415, 429, 456-457, 460-464, 478, 483-484, 488-490, 507-508, 516-518, 532, 541 |
+| src/llmbroker/broker.py        |      271 |       35 |     87% |103, 131-132, 155, 159, 180-182, 193, 215, 217-218, 283, 355, 372-389, 396, 407, 431-432, 446, 473-474, 477-481, 490, 532, 541 |
 | src/llmbroker/chat.py          |       72 |       10 |     86% |92, 142-152 |
-| src/llmbroker/cli.py           |       52 |       52 |      0% |      7-76 |
-| src/llmbroker/models.py        |       44 |        0 |    100% |           |
+| src/llmbroker/cli.py           |       29 |       29 |      0% |      6-42 |
+| src/llmbroker/models.py        |       47 |        0 |    100% |           |
 | src/llmbroker/registry.py      |       34 |        0 |    100% |           |
 | src/llmbroker/schema.py        |       19 |        0 |    100% |           |
 | src/llmbroker/secrets.py       |       38 |        3 |     92% |59, 66, 71 |
 | src/llmbroker/shared\_state.py |        3 |        0 |    100% |           |
-| src/llmbroker/sqlite.py        |      107 |       56 |     48% |38-49, 70, 73-76, 83-86, 90-99, 117, 120-146, 149-155, 158-189, 192-202, 205-212, 215 |
+| src/llmbroker/sqlite.py        |      107 |       52 |     51% |38-49, 70, 83-86, 90-99, 117, 120-146, 149-155, 158-189, 192-202, 205-212, 215 |
 | src/llmbroker/state.py         |       24 |        0 |    100% |           |
-| src/llmbroker/sync.py          |      103 |       12 |     88% |59, 98-99, 136, 175, 178, 181, 184, 187, 190, 193, 198 |
+| src/llmbroker/sync.py          |       99 |       11 |     89% |59, 96-97, 139, 178, 181, 184, 187, 190, 193, 198 |
 | src/llmbroker/telemetry.py     |       38 |        2 |     95% |    38, 49 |
-| **TOTAL**                      |  **812** |  **182** | **78%** |           |
+| **TOTAL**                      |  **788** |  **147** | **81%** |           |
 
 
 ## Setup coverage badge
