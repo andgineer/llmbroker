@@ -42,8 +42,8 @@ line-length = 99
 [tool.hatch.version]
 path = "src/llmbroker/__about__.py"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "allure-pytest>=2.14.2",
     "invoke>=2.2.0",
     "tomli-w>=1.2.0",
