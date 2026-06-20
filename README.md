@@ -4,9 +4,22 @@
 
 | Name                           |    Stmts |     Miss |   Cover |   Missing |
 |------------------------------- | -------: | -------: | ------: | --------: |
-| src/llmbroker/\_\_about\_\_.py |        1 |        0 |    100% |           |
-| src/llmbroker/main.py          |       16 |        5 |     69% |     22-29 |
-| **TOTAL**                      |   **17** |    **5** | **71%** |           |
+| src/llmbroker/\_\_about\_\_.py |        1 |        1 |      0% |         1 |
+| src/llmbroker/\_\_main\_\_.py  |        4 |        4 |      0% |       3-8 |
+| src/llmbroker/alembic.py       |        2 |        0 |    100% |           |
+| src/llmbroker/broker.py        |      272 |       44 |     84% |103, 131-132, 153, 157, 176, 192, 194-195, 257, 262, 328, 346-364, 371, 379, 403-404, 418, 445-446, 449-453, 467, 472-473, 477-479, 496-497, 505-507, 521, 530 |
+| src/llmbroker/chat.py          |       72 |       10 |     86% |92, 142-152 |
+| src/llmbroker/cli.py           |       52 |       52 |      0% |      7-76 |
+| src/llmbroker/models.py        |       44 |        0 |    100% |           |
+| src/llmbroker/registry.py      |       34 |        0 |    100% |           |
+| src/llmbroker/schema.py        |       19 |        0 |    100% |           |
+| src/llmbroker/secrets.py       |       38 |        3 |     92% |59, 66, 71 |
+| src/llmbroker/shared\_state.py |        3 |        0 |    100% |           |
+| src/llmbroker/sqlite.py        |      107 |       56 |     48% |38-49, 70, 73-76, 83-86, 90-99, 117, 120-146, 149-155, 158-189, 192-202, 205-212, 215 |
+| src/llmbroker/state.py         |       24 |        0 |    100% |           |
+| src/llmbroker/sync.py          |      103 |       12 |     88% |59, 98-99, 136, 175, 178, 181, 184, 187, 190, 193, 198 |
+| src/llmbroker/telemetry.py     |       36 |        2 |     94% |    37, 48 |
+| **TOTAL**                      |  **811** |  **184** | **77%** |           |
 
 
 ## Setup coverage badge
