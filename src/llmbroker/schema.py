@@ -86,9 +86,13 @@ _CREATE_IDX_STATE_UNIQUE = (
     " ON llmbroker_state(llm_name, COALESCE(user_id, ''))"
 )
 
+_schema_ready: dict[str, int] = {}
 
-async def ensure_schema(db: aiosqlite.Connection) -> None:
+
+async def ensure_schema(db: aiosqlite.Connection, db_path: str = "") -> None:
     """Create the package's tables/indexes if missing. Idempotent, version-aware."""
+    if db_path and db_path != ":memory:" and _schema_ready.get(db_path) == _SCHEMA_VERSION:
+        return
     await db.execute(_CREATE_REGISTRY)
     await db.execute(_CREATE_CALLS)
     await db.execute(_CREATE_SECRETS)
@@ -105,3 +109,5 @@ async def ensure_schema(db: aiosqlite.Connection) -> None:
     if current < _SCHEMA_VERSION:
         await db.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
     await db.commit()
+    if db_path and db_path != ":memory:":
+        _schema_ready[db_path] = _SCHEMA_VERSION

@@ -102,7 +102,10 @@ class AsyncResult:
     async def record_quality(self, score: float) -> None:
         if score == 0.0:
             self._state.record_quality_fail(self._llm_name)
-        await self._telemetry.record_quality(self._call_id, score)
+        try:
+            await self._telemetry.record_quality(self._call_id, score)
+        except KeyError:
+            logger.warning("record_quality: call %s not found, score dropped", self._call_id)
 
 
 class AsyncLLM:

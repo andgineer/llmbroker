@@ -18,6 +18,12 @@ print(llms.ask("Summarize this receipt").text)
 Grab the [freetier preset](presets/freetier.toml) from this repo to start with a
 maintained list of free LLM endpoints.
 
+That one-liner is the whole API for a script — but the same `Broker` scales up too.
+Run it inside a server or across a cluster with cooldown state shared between
+instances, and back it with common databases (connectors for SQLite, Redis, and
+Postgres covering registry, telemetry, secrets, and state). The calling code stays the
+same — you just pass a backend.
+
 **Why llmbroker:**
 
 - **Round-robin with automatic failover** — 429/503 cools an endpoint and tries
@@ -27,7 +33,7 @@ maintained list of free LLM endpoints.
 - **Dead-simple to start** — a TOML file and env vars, one constructor line, done.
 - **Fully customisable** — swap registry, secrets, and telemetry backends
   independently: any DB, any secrets manager (AWS, Vault, …), any storage.
-- **Cluster-ready** — add `shared_state=llmbroker.redis.SharedState(...)` to sync
+- **Cluster-ready** — add `state_store=llmbroker.redis.StateStore(...)` to sync
   cooldown state across instances; omit for single-process.
 - **Sync and async** — `llmbroker.Broker` for scripts; `llmbroker.AsyncBroker` for
   FastAPI, agents, and async workers.
