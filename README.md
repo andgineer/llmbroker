@@ -7,19 +7,19 @@
 | src/llmbroker/\_\_about\_\_.py |        1 |        1 |      0% |         1 |
 | src/llmbroker/\_\_main\_\_.py  |        4 |        4 |      0% |       3-8 |
 | src/llmbroker/alembic.py       |        2 |        0 |    100% |           |
-| src/llmbroker/broker.py        |      294 |       32 |     89% |104, 141-142, 166, 170, 192-194, 205, 230, 232-233, 304, 378, 396-414, 421, 460-461, 520-524, 533, 542, 578, 587 |
+| src/llmbroker/broker.py        |      297 |       34 |     89% |104, 107-108, 144-145, 169, 173, 195-197, 208, 233, 235-236, 307, 381, 399-417, 424, 463-464, 523-527, 536, 545, 581, 590 |
 | src/llmbroker/chat.py          |       72 |       10 |     86% |92, 142-152 |
 | src/llmbroker/cli.py           |       29 |       29 |      0% |      6-42 |
 | src/llmbroker/models.py        |       48 |        0 |    100% |           |
 | src/llmbroker/registry.py      |       34 |        0 |    100% |           |
-| src/llmbroker/schema.py        |       29 |        0 |    100% |           |
+| src/llmbroker/schema.py        |       34 |        0 |    100% |           |
 | src/llmbroker/secrets.py       |       43 |        3 |     93% |70, 77, 82 |
-| src/llmbroker/sqlite.py        |      154 |       36 |     77% |53-64, 93, 112-113, 117-126, 178-184, 195-196, 209-220, 233-244, 248-255, 293, 319 |
+| src/llmbroker/sqlite.py        |      185 |       53 |     71% |29, 59-71, 102, 114, 124-125, 129-154, 206-214, 226-227, 240-253, 266-278, 282-289, 328-330, 337, 351, 368 |
 | src/llmbroker/state.py         |       24 |        0 |    100% |           |
 | src/llmbroker/state\_store.py  |        3 |        0 |    100% |           |
 | src/llmbroker/sync.py          |      104 |       12 |     88% |80, 99, 101, 128-129, 161-162, 210, 213, 216, 219, 224 |
 | src/llmbroker/telemetry.py     |       38 |        2 |     95% |    43, 54 |
-| **TOTAL**                      |  **879** |  **129** | **85%** |           |
+| **TOTAL**                      |  **918** |  **148** | **84%** |           |
 
 
 ## Setup coverage badge
