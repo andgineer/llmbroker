@@ -71,17 +71,34 @@ _CREATE_IDX_SECRETS_UNIQUE = (
     " ON llmbroker_secrets(ref, COALESCE(user_id, ''))"
 )
 
+_CREATE_STATE = """
+CREATE TABLE IF NOT EXISTS llmbroker_state (
+    llm_name       TEXT NOT NULL,
+    phase          TEXT NOT NULL,
+    cooldown_until TEXT,
+    fail_count     INTEGER NOT NULL DEFAULT 0,
+    user_id        TEXT
+)
+"""
+
+_CREATE_IDX_STATE_UNIQUE = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS llmbroker_state_unique"
+    " ON llmbroker_state(llm_name, COALESCE(user_id, ''))"
+)
+
 
 async def ensure_schema(db: aiosqlite.Connection) -> None:
     """Create the package's tables/indexes if missing. Idempotent, version-aware."""
     await db.execute(_CREATE_REGISTRY)
     await db.execute(_CREATE_CALLS)
     await db.execute(_CREATE_SECRETS)
+    await db.execute(_CREATE_STATE)
     await db.execute(_CREATE_IDX_LLM_NAME)
     await db.execute(_CREATE_IDX_CALLED_AT)
     await db.execute(_CREATE_IDX_CALLS_USER_ID)
     await db.execute(_CREATE_IDX_REGISTRY_UNIQUE)
     await db.execute(_CREATE_IDX_SECRETS_UNIQUE)
+    await db.execute(_CREATE_IDX_STATE_UNIQUE)
     cursor = await db.execute("PRAGMA user_version")
     row = await cursor.fetchone()
     current = int(row[0]) if row else 0

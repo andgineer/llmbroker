@@ -31,7 +31,7 @@ import is the dependency declaration.
 
 ---
 
-## What is implemented (v0.0.5)
+## What is implemented (v0.0.7)
 
 ### Core
 
@@ -60,6 +60,9 @@ import is the dependency declaration.
 - `SeedPolicy` enum (`IF_EMPTY` / `ADD` / `MIRROR`) — controls how the constructor
   `seed=` source reconciles the registry on first `ensure_pool`. See "Provider
   seeding" below.
+- **Per-user scoping** — a single `user_id` on the broker scopes every port call to
+  one tenant; all batteries scope records exactly to it (`None` = unscoped /
+  single-tenant). See "Per-user scoping" below.
 
 ### Batteries
 
@@ -67,20 +70,22 @@ import is the dependency declaration.
 |---|---|
 | Registry | `Registry(path)` (file, `.toml`/`.json`), `llmbroker.sqlite.Registry` (CRUD-capable) |
 | Secrets | `Secrets()` (env), `DictSecrets(mapping)` (test double), `llmbroker.sqlite.Secrets` |
-| State store | `StateStoreProtocol` seam is defined; **no backends** (Phase 3) |
+| State store | `llmbroker.sqlite.StateStore` (single-machine: preserves cooldown across restarts) |
 | Telemetry | `Telemetry()` (log), `NoTelemetry()`, `JsonlTelemetry(path)`, `llmbroker.sqlite.Telemetry` |
 
 ### CLI
 
 - `python -m llmbroker env <config>` — emit a `.env` skeleton of `api_key_ref` names
-- `python -m llmbroker sync <config> --into sqlite:<path> [--policy mirror|add|if_empty]` — reconcile a TOML into a sqlite DB
 - `python -m llmbroker preset <name>` — **Phase 2, not yet implemented**
 
 ### DB schema
 
-`llmbroker.sqlite` self-manages its tables via `ensure_schema`: creates on first
-use, applies additive data-preserving migrations on upgrade. Every DB object is
-`llmbroker_`-prefixed so the host's migration tool can ignore them by prefix.
+`llmbroker.sqlite` self-manages its tables via `ensure_schema`: it creates them on
+first use and is **version-aware** — it tracks a schema version (`PRAGMA
+user_version`) so later releases can hang additive, data-preserving migrations off
+that marker. No migrations are needed yet (the initial schema is still version 1);
+the upgrade path is reserved, not exercised. Every DB object is `llmbroker_`-prefixed
+so the host's migration tool can ignore them by prefix.
 
 ### Host migration coexistence
 
@@ -136,8 +141,52 @@ design: a non-empty registry means secrets were already bootstrapped during the
 initial seed. `ADD` and `MIRROR` always attempt to fill missing secrets on every
 startup.
 
-The `python -m llmbroker sync` CLI command performs the same reconciliation offline
-(without a running application) and is useful for ops workflows.
+---
+
+## Per-user scoping (multi-tenancy)
+
+A multi-user host can give each end user its own LLM API keys (and optionally its
+own set of LLMs) over one shared infrastructure (one DB, one Redis, one Vault). The
+driving constraint is correctness of cooldown state: a cooldown is the health of an
+*API key*, and keys are per-user — so key-scope and state-scope must move together,
+or one user's 429 would cool an LLM for everyone.
+
+- **One knob.** Tenancy is selected by a single `user_id` supplied to the broker;
+  the broker threads it into every port call. There is no per-port tenancy wiring to
+  keep in sync, so key-scope and state-scope cannot drift apart.
+- **`user_id` is request-scoped, not infrastructure.** Ports (registry, secrets,
+  state store, telemetry) are constructed once as app-lifetime infrastructure and
+  shared; in a stateless server the broker is cheap and constructed *per request*
+  with that request's `user_id`.
+- **A broker instance is one tenant's view.** The broker never multiplexes users
+  internally — resolved keys and the per-LLM queue are single-user. `user_id` absent
+  (the default) is exactly the single-tenant behavior, untouched.
+- **`None` means unscoped / single-tenant** and is a legitimate value. The broker
+  passes whatever it has — `None` or an id — and the batteries decide what to do
+  with it.
+- **Uniform, exact scoping across all batteries.** Registry, secrets, state store,
+  and telemetry all scope records to exactly the `user_id` passed: a scoped load
+  returns only that tenant's rows, an unscoped load only unscoped rows. There is no
+  "shared ∪ the user's own" merging — mixing unscoped and named tenants in one query
+  produces subtle seeding bugs that cannot be made correct.
+- **Exception — retention purge is cross-tenant.** Purging old call records is an
+  **administrative** maintenance action over the whole journal, not a per-tenant read,
+  so it deliberately ignores `user_id` and drops every user's rows older than the
+  cutoff. It is the one telemetry operation not scoped to one tenant.
+- **Per-user is a parameter, not a subclass.** The same battery classes gain a
+  nullable user scope; there is no `PerUser*` variant and the battery matrix gains no
+  "× tenancy" axis. Pure batteries with no notion of users (file registry, env
+  secrets, log/none telemetry) accept the scope and ignore it.
+- **Seeding stays shared.** The constructor `seed=` catalog is read unscoped (shared
+  defaults) but written into the registry under the tenant's `user_id`, so every
+  tenant bootstraps from the same curated source into its own scoped rows.
+- **Uniqueness is per tenant.** The same LLM name (or secret ref) is allowed across
+  different users but remains unique within one user — and within the unscoped
+  single-tenant bucket.
+- **Optional paranoia guard.** A secrets battery may be constructed to *require* a
+  user scope, raising `UserScopeError` if it is ever asked to resolve or set with no
+  user (e.g. auth silently yielded none). It is opt-in; normal use relies on always
+  passing a real id.
 
 ---
 
@@ -146,6 +195,6 @@ The `python -m llmbroker sync` CLI command performs the same reconciliation offl
 | Feature | Phase |
 |---|---|
 | `preset` CLI command (URL-fetch from repo) | P2 |
-| `StateStore` backends (redis, postgres, mongodb) | P3 |
+| `StateStore` cross-node backends (redis, postgres, mongodb) | P3 |
 | Optimizer control loop (delay tuning, routing, offline/probe FSM) | P4 |
 | LLM-as-judge quality scoring | P5 |
