@@ -64,6 +64,34 @@ async def main():
 
 `AsyncBroker` is the core engine; use it in FastAPI, agents, and background workers.
 
+## Closing the broker
+
+For one-off scripts you do not need to close the broker — the background thread
+exits with the process.
+
+Close the broker explicitly (`with`, or `try/finally` with `.close()`) if either
+holds:
+
+- **a long-lived process creates brokers repeatedly** (per request, in a loop) —
+  otherwise each instance leaks a background thread;
+- **an external service is wired in (Redis, Postgres)** — it holds a persistent
+  connection that is only closed reliably on an explicit close.
+
+```python
+# Context manager — preferred
+with llmbroker.Broker("llms.toml") as llms:
+    reply = llms.ask("...")
+
+# Or manually, when with is inconvenient
+llms = llmbroker.Broker(registry=..., shared_state=...)
+try:
+    reply = llms.ask("...")
+finally:
+    llms.close()
+```
+
+`AsyncBroker` is the same via `async with` or `await llms.aclose()`.
+
 ## Wait timeout
 
 By default a call waits until any endpoint becomes free. To limit the wait:

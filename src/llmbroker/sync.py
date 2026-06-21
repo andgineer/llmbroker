@@ -7,6 +7,7 @@ concurrency persists across calls.
 
 import asyncio
 import threading
+import weakref
 from collections.abc import Callable, Coroutine, Iterator, Mapping
 from concurrent.futures import Future
 from datetime import datetime
@@ -26,6 +27,25 @@ from llmbroker.registry import Registry, RegistryProtocol
 from llmbroker.secrets import SecretsProtocol
 from llmbroker.shared_state import SharedStateProtocol
 from llmbroker.telemetry import TelemetryProtocol
+
+
+def _run_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Thread target: own ``loop`` until it is stopped.
+
+    Top-level (not a bound method) on purpose: the background thread must not
+    hold a reference to the ``Broker`` instance, or the running thread would
+    keep the instance reachable forever and its ``weakref.finalize`` cleanup
+    could never fire.
+    """
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
+
+
+def _shutdown(loop: asyncio.AbstractEventLoop, thread: threading.Thread) -> None:
+    """Stop the background loop and reclaim its thread. Runs once."""
+    loop.call_soon_threadsafe(loop.stop)
+    thread.join(timeout=5.0)
+    loop.close()
 
 
 class Result:
@@ -79,7 +99,12 @@ class Broker(Mapping[str, LLM]):
         if isinstance(seed, (str, Path)):
             seed = Registry(seed)
         self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._run_loop, daemon=True, name="llmbroker-loop")
+        self._thread = threading.Thread(
+            target=_run_loop,
+            args=(self._loop,),
+            daemon=True,
+            name="llmbroker-loop",
+        )
         self._thread.start()
         # AsyncBroker.__init__ creates an asyncio.Queue, which binds to the
         # running loop — construct it on the broker's own loop thread.
@@ -103,11 +128,10 @@ class Broker(Mapping[str, LLM]):
 
         self._loop.call_soon_threadsafe(_build)
         self._async = fut.result()
-        self._closed = False
-
-    def _run_loop(self) -> None:
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_forever()
+        # Backstop: if the caller never closes the Broker, stop the loop and
+        # join the thread when the instance is garbage-collected. The callback
+        # holds only loop + thread (never self), so it does not pin the Broker.
+        self._finalizer = weakref.finalize(self, _shutdown, self._loop, self._thread)
 
     def _run(self, coro: Coroutine[Any, Any, Any]) -> Any:
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
@@ -199,13 +223,12 @@ class Broker(Mapping[str, LLM]):
 
     # ── lifecycle ──
     def close(self) -> None:
-        if self._closed:
+        if not self._finalizer.alive:
             return
-        self._closed = True
         self._run(self._async.aclose())
-        self._loop.call_soon_threadsafe(self._loop.stop)
-        self._thread.join(timeout=5.0)
-        self._loop.close()
+        # Run the same teardown the GC backstop would, and mark it done so the
+        # finalizer does not repeat it later.
+        self._finalizer()
 
     def __enter__(self) -> "Broker":
         self._ensure_pool()

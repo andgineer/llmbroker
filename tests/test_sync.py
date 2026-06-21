@@ -1,6 +1,7 @@
 """Tests for the synchronous Broker / LLM / Result wrappers."""
 
 import asyncio
+import gc
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -120,7 +121,19 @@ def test_broker_context_manager_closes_cleanly(tmp_path):
     broker = Broker(registry=_registry(tmp_path), telemetry=NoTelemetry())
     with broker:
         _ = len(broker)
-    assert broker._closed
+    assert not broker._finalizer.alive
+    assert not broker._thread.is_alive()
+
+
+def test_broker_gc_stops_thread_without_close(tmp_path):
+    """An abandoned Broker reclaims its loop thread when garbage-collected."""
+    broker = Broker(registry=_registry(tmp_path), telemetry=NoTelemetry())
+    thread = broker._thread
+    assert thread.is_alive()
+    del broker
+    gc.collect()
+    thread.join(timeout=5.0)
+    assert not thread.is_alive()
 
 
 # ── constructor seed tests ────────────────────────────────────────────────────
