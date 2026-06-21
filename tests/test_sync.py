@@ -208,3 +208,14 @@ def test_broker_seed_with_readonly_registry_raises(tmp_path):
             telemetry=NoTelemetry(),
         ):
             pass
+
+
+def test_broker_user_id_forwarded_to_async_broker(tmp_path):
+    """Broker(user_id=...) forwards user_id to the underlying AsyncBroker."""
+    db = str(tmp_path / "b.db")
+    with Broker(
+        registry=llmbroker.sqlite.Registry(db),
+        user_id="alice",
+        telemetry=NoTelemetry(),
+    ) as broker:
+        assert broker._async._user_id == "alice"

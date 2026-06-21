@@ -15,20 +15,31 @@ class SecretsReadOnlyError(Exception):
     """Raised when ``.set()`` is called on a read-only secrets battery."""
 
 
+class UserScopeError(Exception):
+    """Raised when ``user_id`` is ``None`` and ``require_user_id=True``."""
+
+
 @runtime_checkable
 class SecretsProtocol(Protocol):
-    async def resolve(self, ref: str) -> str: ...
+    async def resolve(self, ref: str, user_id: int | str | None = None) -> str: ...
 
 
 @runtime_checkable
 class MutableSecretsProtocol(SecretsProtocol, Protocol):
-    async def set(self, ref: str, value: str) -> None: ...
+    async def set(self, ref: str, value: str, user_id: int | str | None = None) -> None: ...
 
 
 class Secrets:
     """Read-only env-backed secrets resolver (the default battery)."""
 
-    async def resolve(self, ref: str) -> str:
+    def __init__(self, *, require_user_id: bool = False) -> None:
+        self._require_user_id = require_user_id
+
+    async def resolve(self, ref: str, user_id: int | str | None = None) -> str:
+        if self._require_user_id and user_id is None:
+            raise UserScopeError(
+                "Secrets: user_id is required (require_user_id=True) but received None",
+            )
         value = os.environ.get(ref)
         if value is None:
             raise KeyError(f"Secrets: env var {ref!r} is not set")
@@ -41,7 +52,7 @@ class DictSecrets:
     def __init__(self, mapping: dict[str, str]) -> None:
         self._mapping = dict(mapping)
 
-    async def resolve(self, ref: str) -> str:
+    async def resolve(self, ref: str, user_id: int | str | None = None) -> str:  # noqa: ARG002
         if ref not in self._mapping:
             raise KeyError(f"DictSecrets: ref {ref!r} not found")
         return self._mapping[ref]
@@ -53,7 +64,7 @@ class _CallableSecrets:
     def __init__(self, fn: Callable[[str], str | Awaitable[str]]) -> None:
         self._fn = fn
 
-    async def resolve(self, ref: str) -> str:
+    async def resolve(self, ref: str, user_id: int | str | None = None) -> str:  # noqa: ARG002
         result = self._fn(ref)
         if inspect.isawaitable(result):
             return str(await result)

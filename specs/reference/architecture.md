@@ -15,7 +15,7 @@ Every host wires up to four things; only the registry is required:
 |---|---|---|---|
 | **config** | `RegistryProtocol` | `Registry(path)` (file: `.toml`/`.json`) | where LLM configurations are stored |
 | **secrets** | `SecretsProtocol` | `Secrets()` (env vars) | how `api_key_ref` names resolve to real keys |
-| **shared state** | `SharedStateProtocol` | absent — single-process only | cross-instance cooldown sync (cluster only) |
+| **state store** | `StateStoreProtocol` | absent — single-process only | persists cooldown state between requests (any stateless server, not just clusters) |
 | **telemetry** | `TelemetryProtocol` | `Telemetry()` (Python logging) | append-only call journal |
 
 **Naming convention — one rule for all ports:**
@@ -52,11 +52,11 @@ import is the dependency declaration.
   already exists); `update` is modify-only (raises `KeyError` if the name is
   absent). Plain `KeyError` signals a missing LLM everywhere in the public API;
   `ValueError` signals a duplicate on `add`. No domain exception subclasses.
-- **State merging** — when a `SharedStateProtocol` backend is configured, `state()`
-  on an `AsyncLLM` handle and `snapshot()` on the broker both prefer the shared
-  (cluster) state over the in-process state. The shared read is batched (one call
+- **State merging** — when a `StateStoreProtocol` backend is configured, `state()`
+  on an `AsyncLLM` handle and `snapshot()` on the broker both prefer the stored
+  state over the in-process state. The store read is batched (one call
   for `snapshot`, one call per `state()` invocation); `InMemoryState` is the
-  fallback when the shared backend has no entry for that LLM.
+  fallback when the store has no entry for that LLM.
 - `SeedPolicy` enum (`IF_EMPTY` / `ADD` / `MIRROR`) — controls how the constructor
   `seed=` source reconciles the registry on first `ensure_pool`. See "Provider
   seeding" below.
@@ -67,7 +67,7 @@ import is the dependency declaration.
 |---|---|
 | Registry | `Registry(path)` (file, `.toml`/`.json`), `llmbroker.sqlite.Registry` (CRUD-capable) |
 | Secrets | `Secrets()` (env), `DictSecrets(mapping)` (test double), `llmbroker.sqlite.Secrets` |
-| Shared state | `SharedStateProtocol` seam is defined; **no backends** (Phase 3) |
+| State store | `StateStoreProtocol` seam is defined; **no backends** (Phase 3) |
 | Telemetry | `Telemetry()` (log), `NoTelemetry()`, `JsonlTelemetry(path)`, `llmbroker.sqlite.Telemetry` |
 
 ### CLI
@@ -146,6 +146,6 @@ The `python -m llmbroker sync` CLI command performs the same reconciliation offl
 | Feature | Phase |
 |---|---|
 | `preset` CLI command (URL-fetch from repo) | P2 |
-| `SharedState` backends (redis, postgres, mongodb) | P3 |
+| `StateStore` backends (redis, postgres, mongodb) | P3 |
 | Optimizer control loop (delay tuning, routing, offline/probe FSM) | P4 |
 | LLM-as-judge quality scoring | P5 |

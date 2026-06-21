@@ -10,7 +10,7 @@ import llmbroker.sqlite
 import pytest
 
 from llmbroker.broker import AllLLMsFailedError, AsyncBroker, NoLLMAvailableError
-from llmbroker.models import LifecyclePhase, LLMConfig, LLMState, SeedPolicy
+from llmbroker.models import Call, CallStatus, LifecyclePhase, LLMConfig, LLMState, SeedPolicy
 from llmbroker.registry import Registry as FileRegistry
 from llmbroker.secrets import DictSecrets
 from llmbroker.telemetry import NoTelemetry
@@ -281,26 +281,39 @@ def test_update_changes_config_without_extra_queue_slot(tmp_path):
 
 
 class _FakeStateStore:
-    """Minimal SharedStateProtocol returning a fixed cooling state."""
+    """Minimal StateStoreProtocol returning a fixed cooling state."""
 
     def __init__(self, state: LLMState) -> None:
         self._state = state
 
-    async def read(self) -> dict[str, LLMState]:
+    async def read(self, user_id: int | str | None = None) -> dict[str, LLMState]:
         return {"p1": self._state}
 
-    async def write(self, name: str, state: LLMState) -> None:
+    async def write(self, name: str, state: LLMState, user_id: int | str | None = None) -> None:
         pass
 
 
-def test_snapshot_picks_up_shared_state(tmp_path):
+class _PerUserStateStore:
+    """StateStoreProtocol that segregates state by user_id."""
+
+    def __init__(self) -> None:
+        self._data: dict[int | str | None, dict[str, LLMState]] = {}
+
+    async def read(self, user_id: int | str | None = None) -> dict[str, LLMState]:
+        return dict(self._data.get(user_id, {}))
+
+    async def write(self, name: str, state: LLMState, user_id: int | str | None = None) -> None:
+        self._data.setdefault(user_id, {})[name] = state
+
+
+def test_snapshot_picks_up_state_store(tmp_path):
     cooling = LLMState(phase=LifecyclePhase.COOLING, fail_count=3)
     store = _FakeStateStore(cooling)
 
     async def run():
         async with AsyncBroker(
             registry=_registry(tmp_path),
-            shared_state=store,
+            state_store=store,
             telemetry=NoTelemetry(),
         ) as broker:
             snap = await broker.snapshot()
@@ -310,14 +323,14 @@ def test_snapshot_picks_up_shared_state(tmp_path):
     asyncio.run(run())
 
 
-def test_get_state_picks_up_shared_state(tmp_path):
+def test_get_state_picks_up_state_store(tmp_path):
     cooling = LLMState(phase=LifecyclePhase.COOLING, fail_count=2)
     store = _FakeStateStore(cooling)
 
     async def run():
         async with AsyncBroker(
             registry=_registry(tmp_path),
-            shared_state=store,
+            state_store=store,
             telemetry=NoTelemetry(),
         ) as broker:
             state = await (await broker.get("p1")).state()
@@ -501,5 +514,180 @@ def test_constructor_seed_policy_add_does_not_overwrite(tmp_path):
         )
         async with broker:
             assert (await broker.get("p1")).config.base_url == "https://original/v1"
+
+    asyncio.run(run())
+
+
+# ── per-user scoping tests ────────────────────────────────────────────────────
+
+
+def test_two_users_have_isolated_pool(tmp_path):
+    """Two brokers with different user_id over one SQLite registry see separate configs."""
+
+    async def run():
+        db = str(tmp_path / "b.db")
+        reg_a = llmbroker.sqlite.Registry(db)
+        reg_b = llmbroker.sqlite.Registry(db)
+
+        cfg_a = LLMConfig(name="llm", base_url="https://a/v1", model="m", api_key_ref="KA")
+        cfg_b = LLMConfig(name="llm", base_url="https://b/v1", model="m", api_key_ref="KB")
+        await reg_a.add(cfg_a, "alice")
+        await reg_b.add(cfg_b, "bob")
+
+        broker_a = AsyncBroker(
+            registry=llmbroker.sqlite.Registry(db),
+            user_id="alice",
+            telemetry=NoTelemetry(),
+        )
+        broker_b = AsyncBroker(
+            registry=llmbroker.sqlite.Registry(db),
+            user_id="bob",
+            telemetry=NoTelemetry(),
+        )
+        async with broker_a, broker_b:
+            assert (await broker_a.get("llm")).config.base_url == "https://a/v1"
+            assert (await broker_b.get("llm")).config.base_url == "https://b/v1"
+
+    asyncio.run(run())
+
+
+def test_user_none_reproduces_single_tenant_behavior(tmp_path):
+    """user_id=None (default) is equivalent to single-tenant behavior."""
+
+    async def run():
+        db = str(tmp_path / "b.db")
+        reg = llmbroker.sqlite.Registry(db)
+        await reg.add(LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K"))
+
+        async with AsyncBroker(
+            registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()
+        ) as broker:
+            assert (await broker.get("p1")).config.name == "p1"
+
+    asyncio.run(run())
+
+
+def test_cooldown_invisible_to_other_user(tmp_path):
+    """A cooldown triggered under user A is not visible to user B."""
+    store = _PerUserStateStore()
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            secrets=_secrets(),
+            state_store=store,
+            telemetry=NoTelemetry(),
+            user_id="alice",
+        ) as broker_a:
+            with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_error(429)):
+                with pytest.raises(NoLLMAvailableError):
+                    await broker_a.chat([{"role": "user", "content": "hi"}], wait=0)
+            state_a = await (await broker_a.get("p1")).state()
+            assert state_a.phase is LifecyclePhase.COOLING
+
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            secrets=_secrets(),
+            state_store=store,
+            telemetry=NoTelemetry(),
+            user_id="bob",
+        ) as broker_b:
+            state_b = await (await broker_b.get("p1")).state()
+            assert state_b.phase is LifecyclePhase.AVAILABLE
+
+    asyncio.run(run())
+
+
+def test_seed_from_unscoped_source_writes_to_user_scope(tmp_path):
+    """Seeding from an unscoped (file) source writes entries under user_id, not under NULL."""
+
+    async def run():
+        db = str(tmp_path / "b.db")
+        async with AsyncBroker(
+            registry=llmbroker.sqlite.Registry(db),
+            seed=_toml_registry(tmp_path),
+            telemetry=NoTelemetry(),
+            user_id="alice",
+        ):
+            pass
+        reg = llmbroker.sqlite.Registry(db)
+        alice_rows = await reg.load(user_id="alice")
+        none_rows = await reg.load()
+        bob_rows = await reg.load(user_id="bob")
+        assert len(alice_rows) == 1 and alice_rows[0].name == "p1"
+        assert none_rows == []
+        assert bob_rows == []
+
+    asyncio.run(run())
+
+
+def test_two_users_have_isolated_secrets(tmp_path):
+    """Two brokers with different user_id resolve different values for the same api_key_ref."""
+
+    async def run():
+        db = str(tmp_path / "b.db")
+        secrets = llmbroker.sqlite.Secrets(db)
+        await secrets.set("KEY", "alice-secret", "alice")
+        await secrets.set("KEY", "bob-secret", "bob")
+
+        cfg = LLMConfig(name="llm", base_url="https://x/v1", model="m", api_key_ref="KEY")
+        reg = llmbroker.sqlite.Registry(db)
+        await reg.add(cfg, "alice")
+        await reg.add(cfg, "bob")
+
+        broker_a = AsyncBroker(
+            registry=llmbroker.sqlite.Registry(db),
+            secrets=secrets,
+            user_id="alice",
+            telemetry=NoTelemetry(),
+        )
+        broker_b = AsyncBroker(
+            registry=llmbroker.sqlite.Registry(db),
+            secrets=secrets,
+            user_id="bob",
+            telemetry=NoTelemetry(),
+        )
+        async with broker_a, broker_b:
+            assert broker_a._resolved_keys["llm"] == "alice-secret"
+            assert broker_b._resolved_keys["llm"] == "bob-secret"
+
+    asyncio.run(run())
+
+
+def test_two_users_snapshot_isolated(tmp_path):
+    """snapshot() for bob does not include alice's telemetry metrics or cooldown state."""
+    store = _PerUserStateStore()
+
+    async def run():
+        db = str(tmp_path / "b.db")
+        tel = llmbroker.sqlite.Telemetry(db)
+        reg = llmbroker.sqlite.Registry(db)
+        cfg = LLMConfig(name="llm", base_url="https://x/v1", model="m", api_key_ref="K")
+        await reg.add(cfg, "alice")
+        await reg.add(cfg, "bob")
+
+        await store.write("llm", LLMState(phase=LifecyclePhase.COOLING, fail_count=3), "alice")
+        await tel.record(
+            Call(
+                id="c1",
+                llm_name="llm",
+                operation=None,
+                trace_id=None,
+                status=CallStatus.OK,
+                user_id="alice",
+            )
+        )
+
+        async with AsyncBroker(
+            registry=llmbroker.sqlite.Registry(db),
+            secrets=DictSecrets({"K": "key"}),
+            telemetry=tel,
+            state_store=store,
+            user_id="bob",
+        ) as broker_b:
+            snap = await broker_b.snapshot()
+
+        assert snap["llm"].state.phase is LifecyclePhase.AVAILABLE
+        assert snap["llm"].metrics is None or snap["llm"].metrics.call_count == 0
 
     asyncio.run(run())

@@ -83,7 +83,7 @@ with llmbroker.Broker("llms.toml") as llms:
     reply = llms.ask("...")
 
 # Or manually, when with is inconvenient
-llms = llmbroker.Broker(registry=..., shared_state=...)
+llms = llmbroker.Broker(registry=..., state_store=...)
 try:
     reply = llms.ask("...")
 finally:
@@ -208,6 +208,62 @@ with llmbroker.Broker(
 | `SeedPolicy.MIRROR` | DB = source exactly: add new, update changed, remove dropped |
 | `SeedPolicy.IF_EMPTY` (default) | fill only if DB is empty, otherwise no-op |
 | `SeedPolicy.ADD` | only add entries not already present by name |
+
+## Multi-user (per-user scoping)
+
+In a multi-user application each end user can have their own API keys and
+optionally their own set of LLM entries, backed by a single shared database.
+
+**Ports are app-lifetime infrastructure; the broker is constructed per request.**
+Construct `registry`, `secrets`, `state_store`, and `telemetry` once at startup
+and share them. Construct a new `AsyncBroker` (or `Broker`) for each request,
+passing the user's id:
+
+```python
+import llmbroker
+import llmbroker.sqlite
+
+# App startup — shared infrastructure
+registry   = llmbroker.sqlite.Registry("broker.db")
+secrets    = llmbroker.sqlite.Secrets("broker.db")
+telemetry  = llmbroker.sqlite.Telemetry("broker.db")
+# state_store = <backend>  # required for stateless servers — see note below
+
+# Per-request — cheap, single-tenant view
+async def handle_request(user_id: str, prompt: str) -> str:
+    async with llmbroker.AsyncBroker(
+        registry=registry,
+        secrets=secrets,
+        telemetry=telemetry,
+        # state_store=state_store,
+        user_id=user_id,
+    ) as llms:
+        result = await llms.ask(prompt)
+        return result.text
+```
+
+**Stateless servers need a `state_store`.**  In a process-per-request setup
+(multiple workers, a load balancer, restarts) in-process cooldown state is
+lost between requests, so a rate-limited LLM will appear available to the next
+worker.  Pass a shared `state_store=` backend — Redis, Postgres, or any
+implementation of `StateStoreProtocol` — to preserve cooldown state across
+requests.  Backends are available as of the P3 release.
+
+**All batteries** (registry, secrets, telemetry) scope records exactly to the
+`user_id` passed. A broker with `user_id=None` (the default) sees and writes
+only unscoped rows — reproducing today's single-tenant behavior. The same LLM
+name can exist for multiple users independently.
+
+**Optional paranoia guard** — `Secrets(require_user_id=True)` (and the SQLite
+equivalent) raises `UserScopeError` if a broker calls `resolve` with
+`user_id=None`. Use this when auth must always produce a real user id:
+
+```python
+from llmbroker import UserScopeError
+import llmbroker.sqlite
+
+secrets = llmbroker.sqlite.Secrets("broker.db", require_user_id=True)
+```
 
 ## Alembic integration
 

@@ -13,6 +13,7 @@ import aiosqlite
 
 from llmbroker.models import Call, CallStatus, LLMConfig, LLMMetrics, Usage
 from llmbroker.schema import ensure_schema
+from llmbroker.secrets import UserScopeError
 
 
 class Registry:
@@ -21,13 +22,14 @@ class Registry:
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)
 
-    async def load(self) -> list[LLMConfig]:
+    async def load(self, user_id: int | str | None = None) -> list[LLMConfig]:
         async with aiosqlite.connect(self._db_path) as db:
             await ensure_schema(db)
             rows = await (
                 await db.execute(
                     "SELECT name, base_url, model, api_key_ref FROM llmbroker_registry"
-                    " ORDER BY name",
+                    " WHERE user_id IS ? ORDER BY name",
+                    [user_id],
                 )
             ).fetchall()
         return [
@@ -35,14 +37,18 @@ class Registry:
             for r in rows
         ]
 
-    async def get(self, name: str) -> LLMConfig | None:
+    async def get(
+        self,
+        name: str,
+        user_id: int | str | None = None,
+    ) -> LLMConfig | None:
         async with aiosqlite.connect(self._db_path) as db:
             await ensure_schema(db)
             row = await (
                 await db.execute(
                     "SELECT name, base_url, model, api_key_ref FROM llmbroker_registry"
-                    " WHERE name = ?",
-                    [name],
+                    " WHERE name = ? AND user_id IS ?",
+                    [name, user_id],
                 )
             ).fetchone()
         if row is None:
@@ -54,34 +60,38 @@ class Registry:
             api_key_ref=str(row[3]),
         )
 
-    async def add(self, cfg: LLMConfig) -> None:
+    async def add(self, cfg: LLMConfig, user_id: int | str | None = None) -> None:
         async with aiosqlite.connect(self._db_path) as db:
             await ensure_schema(db)
             try:
                 await db.execute(
-                    "INSERT INTO llmbroker_registry (name, base_url, model, api_key_ref)"
-                    " VALUES (?, ?, ?, ?)",
-                    [cfg.name, cfg.base_url, cfg.model, cfg.api_key_ref],
+                    "INSERT INTO llmbroker_registry (name, base_url, model, api_key_ref, user_id)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    [cfg.name, cfg.base_url, cfg.model, cfg.api_key_ref, user_id],
                 )
             except sqlite3.IntegrityError:
                 raise ValueError(f"LLM {cfg.name!r} already exists") from None
             await db.commit()
 
-    async def update(self, cfg: LLMConfig) -> None:
+    async def update(self, cfg: LLMConfig, user_id: int | str | None = None) -> None:
         async with aiosqlite.connect(self._db_path) as db:
             await ensure_schema(db)
             cursor = await db.execute(
-                "UPDATE llmbroker_registry SET base_url=?, model=?, api_key_ref=? WHERE name=?",
-                [cfg.base_url, cfg.model, cfg.api_key_ref, cfg.name],
+                "UPDATE llmbroker_registry SET base_url=?, model=?, api_key_ref=?"
+                " WHERE name=? AND user_id IS ?",
+                [cfg.base_url, cfg.model, cfg.api_key_ref, cfg.name, user_id],
             )
             if cursor.rowcount == 0:
                 raise KeyError(cfg.name)
             await db.commit()
 
-    async def remove(self, name: str) -> None:
+    async def remove(self, name: str, user_id: int | str | None = None) -> None:
         async with aiosqlite.connect(self._db_path) as db:
             await ensure_schema(db)
-            await db.execute("DELETE FROM llmbroker_registry WHERE name = ?", [name])
+            await db.execute(
+                "DELETE FROM llmbroker_registry WHERE name = ? AND user_id IS ?",
+                [name, user_id],
+            )
             await db.commit()
 
     async def aclose(self) -> None:
@@ -116,6 +126,7 @@ def _call_from_row(row) -> Call:  # noqa: ANN001
         error_detail=row[7],
         usage=usage,
         quality_score=row[12],
+        user_id=row[13],
     )
 
 
@@ -133,8 +144,8 @@ class Telemetry:
                 "INSERT INTO llmbroker_calls"
                 " (id, llm_name, operation, trace_id, status, http_status, latency_ms,"
                 "  error_detail, prompt_tokens, completion_tokens, total_tokens, usage_extra,"
-                "  quality_score, called_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  quality_score, called_at, user_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     call.id,
                     call.llm_name,
@@ -150,6 +161,7 @@ class Telemetry:
                     extra,
                     call.quality_score,
                     datetime.now(UTC).isoformat(),
+                    call.user_id,
                 ],
             )
             await db.commit()
@@ -163,12 +175,18 @@ class Telemetry:
             )
             await db.commit()
 
-    async def metrics(self, *, since: datetime | None = None) -> dict[str, LLMMetrics]:
-        where = ""
-        params: list = []
+    async def metrics(
+        self,
+        *,
+        since: datetime | None = None,
+        user_id: int | str | None = None,
+    ) -> dict[str, LLMMetrics]:
+        conditions: list[str] = ["user_id IS ?"]
+        params: list = [user_id]
         if since is not None:
-            where = " WHERE called_at >= ?"
+            conditions.append("called_at >= ?")
             params.append(since.isoformat())
+        where = " WHERE " + " AND ".join(conditions)
         async with aiosqlite.connect(self._db_path) as db:
             await ensure_schema(db)
             rows = await (
@@ -183,9 +201,10 @@ class Telemetry:
                 name = str(r[0])
                 last = await (
                     await db.execute(
-                        "SELECT status FROM llmbroker_calls WHERE llm_name = ?"
+                        "SELECT status FROM llmbroker_calls"  # noqa: S608
+                        " WHERE llm_name = ? AND user_id IS ?"
                         " ORDER BY called_at DESC LIMIT 1",
-                        [name],
+                        [name, user_id],
                     )
                 ).fetchone()
                 last_status = CallStatus(last[0]) if last else None
@@ -197,20 +216,27 @@ class Telemetry:
                 )
         return result
 
-    async def calls(self, *, limit: int) -> list[Call]:
+    async def calls(
+        self,
+        *,
+        limit: int,
+        user_id: int | str | None = None,
+    ) -> list[Call]:
         async with aiosqlite.connect(self._db_path) as db:
             await ensure_schema(db)
             rows = await (
                 await db.execute(
-                    "SELECT id, llm_name, operation, trace_id, status, http_status, latency_ms,"
+                    "SELECT id, llm_name, operation, trace_id, status, http_status, latency_ms,"  # noqa: S608
                     " error_detail, prompt_tokens, completion_tokens, total_tokens, usage_extra,"
-                    " quality_score FROM llmbroker_calls ORDER BY called_at DESC LIMIT ?",
-                    [limit],
+                    " quality_score, user_id FROM llmbroker_calls"
+                    " WHERE user_id IS ? ORDER BY called_at DESC LIMIT ?",
+                    [user_id, limit],
                 )
             ).fetchall()
         return [_call_from_row(r) for r in rows]
 
     async def purge_calls(self, *, before: datetime) -> int:
+        """Delete all calls older than *before*, across all users. Admin operation."""
         async with aiosqlite.connect(self._db_path) as db:
             await ensure_schema(db)
             cursor = await db.execute(
@@ -227,29 +253,37 @@ class Telemetry:
 class Secrets:
     """SQLite-backed mutable secrets store over ``llmbroker_secrets``."""
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, require_user_id: bool = False) -> None:
         self._db_path = str(db_path)
+        self._require_user_id = require_user_id
 
-    async def resolve(self, ref: str) -> str:
+    async def resolve(self, ref: str, user_id: int | str | None = None) -> str:
+        if self._require_user_id and user_id is None:
+            raise UserScopeError(
+                "sqlite.Secrets: user_id is required (require_user_id=True) but received None",
+            )
         async with aiosqlite.connect(self._db_path) as db:
             await ensure_schema(db)
             row = await (
                 await db.execute(
-                    "SELECT value FROM llmbroker_secrets WHERE ref = ?",
-                    [ref],
+                    "SELECT value FROM llmbroker_secrets WHERE ref = ? AND user_id IS ?",
+                    [ref, user_id],
                 )
             ).fetchone()
         if row is None:
             raise KeyError(f"sqlite.Secrets: ref {ref!r} not found")
         return str(row[0])
 
-    async def set(self, ref: str, value: str) -> None:
+    async def set(self, ref: str, value: str, user_id: int | str | None = None) -> None:
+        if self._require_user_id and user_id is None:
+            raise UserScopeError(
+                "sqlite.Secrets: user_id is required (require_user_id=True) but received None",
+            )
         async with aiosqlite.connect(self._db_path) as db:
             await ensure_schema(db)
             await db.execute(
-                "INSERT INTO llmbroker_secrets (ref, value) VALUES (?, ?)"
-                " ON CONFLICT(ref) DO UPDATE SET value = excluded.value",
-                [ref, value],
+                "INSERT OR REPLACE INTO llmbroker_secrets (ref, value, user_id) VALUES (?, ?, ?)",
+                [ref, value, user_id],
             )
             await db.commit()
 

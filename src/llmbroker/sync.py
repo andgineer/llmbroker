@@ -25,7 +25,7 @@ from llmbroker.models import (
 )
 from llmbroker.registry import Registry, RegistryProtocol
 from llmbroker.secrets import SecretsProtocol
-from llmbroker.shared_state import SharedStateProtocol
+from llmbroker.state_store import StateStoreProtocol
 from llmbroker.telemetry import TelemetryProtocol
 
 
@@ -88,11 +88,12 @@ class Broker:
         registry: RegistryProtocol | str | Path,
         *,
         secrets: SecretsProtocol | None = None,
-        shared_state: SharedStateProtocol | None = None,
+        state_store: StateStoreProtocol | None = None,
         telemetry: TelemetryProtocol | None = None,
         optimize: bool | Optimizer = True,
         seed: RegistryProtocol | str | Path | None = None,
         seed_policy: SeedPolicy = SeedPolicy.IF_EMPTY,
+        user_id: int | str | None = None,
     ) -> None:
         if isinstance(registry, (str, Path)):
             registry = Registry(registry)
@@ -116,11 +117,12 @@ class Broker:
                     AsyncBroker(
                         registry,
                         secrets=secrets,
-                        shared_state=shared_state,
+                        state_store=state_store,
                         telemetry=telemetry,
                         optimize=optimize,
                         seed=seed,
                         seed_policy=seed_policy,
+                        user_id=user_id,
                     ),
                 )
             except BaseException as exc:  # noqa: BLE001

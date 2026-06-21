@@ -73,6 +73,7 @@ class Call:
     error_detail: str | None = None
     usage: Usage | None = None
     quality_score: float | None = None
+    user_id: int | str | None = None
 
 
 @dataclass(frozen=True, slots=True)

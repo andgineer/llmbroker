@@ -11,6 +11,7 @@ from llmbroker.secrets import (
     DictSecrets,
     MutableSecretsProtocol,
     Secrets,
+    UserScopeError,
     as_secrets,
 )
 
@@ -152,3 +153,76 @@ def test_missing_ref_with_readonly_secrets_does_not_block(tmp_path, monkeypatch)
 def test_llm_config_dataclass_has_no_secret_field():
     cfg = LLMConfig(name="p", base_url="u", model="m", api_key_ref="REF")
     assert not hasattr(cfg, "api_key")
+
+
+# ── per-user scoping tests ────────────────────────────────────────────────────
+
+
+def test_sqlite_secrets_two_users_isolated(tmp_path):
+    """resolve/set round-trip under two distinct user_ids stays isolated."""
+    db = str(tmp_path / "b.db")
+    secrets = llmbroker.sqlite.Secrets(db)
+
+    async def run():
+        await secrets.set("K", "alice-val", "alice")
+        await secrets.set("K", "bob-val", "bob")
+        assert await secrets.resolve("K", "alice") == "alice-val"
+        assert await secrets.resolve("K", "bob") == "bob-val"
+
+    asyncio.run(run())
+
+
+def test_sqlite_secrets_user_id_none_resolves_unscoped(tmp_path):
+    """user_id=None resolves the NULL-scoped (unscoped) row."""
+    db = str(tmp_path / "b.db")
+    secrets = llmbroker.sqlite.Secrets(db)
+
+    async def run():
+        await secrets.set("K", "global-val")
+        return await secrets.resolve("K")
+
+    assert asyncio.run(run()) == "global-val"
+
+
+def test_sqlite_secrets_missing_per_user_raises_key_error(tmp_path):
+    """A missing per-user row raises KeyError, never falls back to shared row."""
+    db = str(tmp_path / "b.db")
+    secrets = llmbroker.sqlite.Secrets(db)
+
+    async def run():
+        await secrets.set("K", "global-val")  # NULL-scoped
+        await secrets.resolve("K", "alice")  # alice has no row
+
+    with pytest.raises(KeyError):
+        asyncio.run(run())
+
+
+def test_secrets_require_user_id_raises_on_none(monkeypatch):
+    """Secrets(require_user_id=True) raises UserScopeError when user_id is None."""
+    monkeypatch.setenv("K", "val")
+    s = Secrets(require_user_id=True)
+    with pytest.raises(UserScopeError):
+        asyncio.run(s.resolve("K", None))
+
+
+def test_secrets_require_user_id_resolves_with_user(monkeypatch):
+    """Secrets(require_user_id=True) resolves normally when user_id is provided."""
+    monkeypatch.setenv("K", "val")
+    s = Secrets(require_user_id=True)
+    assert asyncio.run(s.resolve("K", "alice")) == "val"
+
+
+def test_sqlite_secrets_require_user_id_raises_on_none(tmp_path, monkeypatch):
+    """sqlite.Secrets(require_user_id=True) raises UserScopeError when user_id is None."""
+    db = str(tmp_path / "b.db")
+    secrets = llmbroker.sqlite.Secrets(db, require_user_id=True)
+    with pytest.raises(UserScopeError):
+        asyncio.run(secrets.resolve("K", None))
+
+
+def test_sqlite_secrets_require_user_id_set_raises_on_none(tmp_path):
+    """sqlite.Secrets(require_user_id=True).set raises UserScopeError when user_id is None."""
+    db = str(tmp_path / "b.db")
+    secrets = llmbroker.sqlite.Secrets(db, require_user_id=True)
+    with pytest.raises(UserScopeError):
+        asyncio.run(secrets.set("K", "val", None))

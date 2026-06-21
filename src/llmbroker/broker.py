@@ -42,8 +42,8 @@ from llmbroker.secrets import (
     SecretsProtocol,
     as_secrets,
 )
-from llmbroker.shared_state import SharedStateProtocol
 from llmbroker.state import InMemoryState
+from llmbroker.state_store import StateStoreProtocol
 from llmbroker.telemetry import (
     QueryableTelemetryProtocol,
     Telemetry,
@@ -108,35 +108,37 @@ class AsyncResult:
 class AsyncLLM:
     """Handle returned by ``AsyncBroker.get(name)`` — live view into broker internals."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         name: str,
         config: LLMConfig,
         state: "InMemoryState",
         telemetry: TelemetryProtocol,
         *,
-        shared_state: "SharedStateProtocol | None" = None,
+        state_store: "StateStoreProtocol | None" = None,
+        user_id: int | str | None = None,
     ) -> None:
         self._name = name
         self._config = config
         self._state = state
         self._telemetry = telemetry
-        self._shared_state = shared_state
+        self._state_store = state_store
+        self._user_id = user_id
 
     @property
     def config(self) -> LLMConfig:
         return self._config
 
     async def state(self) -> LLMState:
-        if self._shared_state is not None:
-            shared = await self._shared_state.read()
-            if self._name in shared:
-                return shared[self._name]
+        if self._state_store is not None:
+            stored = await self._state_store.read(self._user_id)
+            if self._name in stored:
+                return stored[self._name]
         return self._state.get_state(self._name)
 
     async def metrics(self, *, since: datetime | None = None) -> LLMMetrics:
         if isinstance(self._telemetry, QueryableTelemetryProtocol):
-            all_metrics = await self._telemetry.metrics(since=since)
+            all_metrics = await self._telemetry.metrics(since=since, user_id=self._user_id)
             return all_metrics.get(self._name, LLMMetrics(0, None, None))
         return LLMMetrics(0, None, None)
 
@@ -149,15 +151,16 @@ class AsyncBroker:
         registry: RegistryProtocol | str | Path,
         *,
         secrets: SecretsProtocol | None = None,
-        shared_state: SharedStateProtocol | None = None,
+        state_store: StateStoreProtocol | None = None,
         telemetry: TelemetryProtocol | None = None,
         optimize: bool | Optimizer = True,
         seed: RegistryProtocol | str | Path | None = None,
         seed_policy: SeedPolicy = SeedPolicy.IF_EMPTY,
+        user_id: int | str | None = None,
     ) -> None:
         self._registry = Registry(registry) if isinstance(registry, (str, Path)) else registry
         self._secrets: SecretsProtocol = as_secrets(secrets) if secrets is not None else Secrets()
-        self._shared_state = shared_state
+        self._state_store = state_store
         self._telemetry: TelemetryProtocol = telemetry if telemetry is not None else Telemetry()
         if isinstance(optimize, Optimizer):
             self._optimizer: Optimizer | None = optimize
@@ -168,6 +171,7 @@ class AsyncBroker:
 
         self._seed = Registry(seed) if isinstance(seed, (str, Path)) else seed
         self._seed_policy = seed_policy
+        self._user_id = user_id
         self._queue: asyncio.Queue[LLMConfig] = asyncio.Queue()
         self._configs: dict[str, LLMConfig] = {}
         self._resolved_keys: dict[str, str] = {}
@@ -182,7 +186,7 @@ class AsyncBroker:
 
     async def _populate_pool(self) -> None:
         """Reconcile the in-memory pool with the registry. Assumes _pool_lock is held."""
-        configs = await self._registry.load()
+        configs = await self._registry.load(user_id=self._user_id)
         names = {c.name for c in configs}
         for name in list(self._configs):
             if name not in names:
@@ -207,7 +211,10 @@ class AsyncBroker:
         is_new = cfg.name not in self._configs
         self._configs[cfg.name] = cfg
         try:
-            self._resolved_keys[cfg.name] = await self._secrets.resolve(cfg.api_key_ref)
+            self._resolved_keys[cfg.name] = await self._secrets.resolve(
+                cfg.api_key_ref,
+                self._user_id,
+            )
         except KeyError:
             logger.warning(
                 "LLM %s: api_key_ref %r could not be resolved — calls will fail"
@@ -225,7 +232,7 @@ class AsyncBroker:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._bg_tasks.clear()
-        for port in (self._registry, self._secrets, self._telemetry, self._shared_state):
+        for port in (self._registry, self._secrets, self._telemetry, self._state_store):
             if isinstance(port, AsyncResourceProtocol):
                 await port.aclose()
 
@@ -249,7 +256,8 @@ class AsyncBroker:
             self._configs[name],
             self._state,
             self._telemetry,
-            shared_state=self._shared_state,
+            state_store=self._state_store,
+            user_id=self._user_id,
         )
 
     async def count(self) -> int:
@@ -329,6 +337,7 @@ class AsyncBroker:
                         latency_ms=int((time.monotonic() - t0) * 1000),
                         error_detail=error_detail,
                         usage=usage,
+                        user_id=self._user_id,
                     ),
                 )
                 return AsyncResult(
@@ -358,6 +367,7 @@ class AsyncBroker:
                             latency_ms=int((time.monotonic() - t0) * 1000),
                             error_detail=error_detail,
                             usage=usage,
+                            user_id=self._user_id,
                         ),
                     )
                     if wait == 0:
@@ -379,6 +389,7 @@ class AsyncBroker:
                         latency_ms=int((time.monotonic() - t0) * 1000),
                         error_detail=error_detail,
                         usage=usage,
+                        user_id=self._user_id,
                     ),
                 )
                 raise AllLLMsFailedError(f"{config.name} returned HTTP {code}") from exc
@@ -397,6 +408,7 @@ class AsyncBroker:
                         latency_ms=int((time.monotonic() - t0) * 1000),
                         error_detail=error_detail,
                         usage=usage,
+                        user_id=self._user_id,
                     ),
                 )
                 raise AllLLMsFailedError(f"{config.name} network error ({error_detail})") from exc
@@ -416,8 +428,12 @@ class AsyncBroker:
             cooldown_until,
             self._state.fail_count(config.name) + 1,
         )
-        if self._shared_state is not None:
-            await self._shared_state.write(config.name, self._state.get_state(config.name))
+        if self._state_store is not None:
+            await self._state_store.write(
+                config.name,
+                self._state.get_state(config.name),
+                self._user_id,
+            )
         loop = asyncio.get_running_loop()
         loop.call_later(float(delay), self._queue.put_nowait, config)
         logger.warning("LLM %s cooling for %ds", config.name, delay)
@@ -456,14 +472,14 @@ class AsyncBroker:
         await self.ensure_pool()
         metrics_map: dict[str, LLMMetrics] = {}
         if isinstance(self._telemetry, QueryableTelemetryProtocol):
-            metrics_map = await self._telemetry.metrics(since=since)
-        shared: dict[str, LLMState] = {}
-        if self._shared_state is not None:
-            shared = await self._shared_state.read()
+            metrics_map = await self._telemetry.metrics(since=since, user_id=self._user_id)
+        stored: dict[str, LLMState] = {}
+        if self._state_store is not None:
+            stored = await self._state_store.read(self._user_id)
         result: dict[str, LLMSnapshot] = {}
         for name, cfg in self._configs.items():
             metrics = metrics_map.get(name) if metrics_map else None
-            state = shared[name] if name in shared else self._state.get_state(name)
+            state = stored[name] if name in stored else self._state.get_state(name)
             result[name] = LLMSnapshot(
                 config=cfg,
                 state=state,
@@ -489,7 +505,7 @@ class AsyncBroker:
         registry = self._require_mutable_registry()
         if cfg.name in self._configs:
             raise ValueError(f"LLM {cfg.name!r} already exists; use update()")
-        await registry.add(cfg)
+        await registry.add(cfg, self._user_id)
         await self._add_to_pool(cfg)
 
     async def update(self, cfg: LLMConfig) -> None:
@@ -497,13 +513,13 @@ class AsyncBroker:
         registry = self._require_mutable_registry()
         if cfg.name not in self._configs:
             raise KeyError(cfg.name)
-        await registry.update(cfg)
+        await registry.update(cfg, self._user_id)
         await self._add_to_pool(cfg)
 
     async def remove(self, name: str) -> None:
         await self.ensure_pool()
         registry = self._require_mutable_registry()
-        await registry.remove(name)
+        await registry.remove(name, self._user_id)
         self._configs.pop(name, None)
         self._resolved_keys.pop(name, None)
 
@@ -511,7 +527,7 @@ class AsyncBroker:
         """Apply a seed source to the mutable registry. Assumes _pool_lock is held."""
         registry = self._require_mutable_registry()
         source_configs = await source.load()
-        existing = {c.name: c for c in await registry.load()}
+        existing = {c.name: c for c in await registry.load(user_id=self._user_id)}
 
         if policy is SeedPolicy.IF_EMPTY and existing:
             return
@@ -520,13 +536,16 @@ class AsyncBroker:
             source_names = {c.name for c in source_configs}
             for name in list(existing):
                 if name not in source_names:
-                    await registry.remove(name)
+                    await registry.remove(name, self._user_id)
             for cfg in source_configs:
-                await registry.update(cfg) if cfg.name in existing else await registry.add(cfg)
+                if cfg.name in existing:
+                    await registry.update(cfg, self._user_id)
+                else:
+                    await registry.add(cfg, self._user_id)
         else:  # ADD or IF_EMPTY (empty store)
             for cfg in source_configs:
                 if cfg.name not in existing:
-                    await registry.add(cfg)
+                    await registry.add(cfg, self._user_id)
 
         await self._seed_secrets(source_configs)
 
@@ -536,7 +555,7 @@ class AsyncBroker:
         bootstrap = Secrets()
         for cfg in configs:
             try:
-                await self._secrets.resolve(cfg.api_key_ref)
+                await self._secrets.resolve(cfg.api_key_ref, self._user_id)
                 continue  # already resolvable — preserve
             except KeyError:
                 pass
@@ -544,7 +563,7 @@ class AsyncBroker:
                 value = await bootstrap.resolve(cfg.api_key_ref)
             except KeyError:
                 continue
-            await self._secrets.set(cfg.api_key_ref, value)
+            await self._secrets.set(cfg.api_key_ref, value, self._user_id)
 
     # ------------------------------------------------------------------
     # Call journal / retention
@@ -559,7 +578,7 @@ class AsyncBroker:
         return self._telemetry
 
     async def calls(self, *, limit: int) -> list[Call]:
-        return await self._require_queryable().calls(limit=limit)
+        return await self._require_queryable().calls(limit=limit, user_id=self._user_id)
 
     async def purge_calls(self, *, before: datetime) -> int:
         return await self._require_queryable().purge_calls(before=before)

@@ -35,14 +35,12 @@ together.
 - **`None` is a legitimate value**, meaning "unscoped / single-tenant". The
   broker passes whatever it has — `None` or an id — and batteries decide what
   to do with it. No NULL-bucket safety is claimed (see the guard below).
-- **Asymmetry by sensitivity:**
-  - `registry` (LLM list — *not* sensitive): a shared list is a feature. Rows
-    with `user_id IS NULL` are visible to everyone; `load(uid)` returns
-    shared ∪ the user's own.
-  - `secrets` / `state_store` / `telemetry` (sensitive): scoped by the id the
-    broker sends. Mixing a shared "null tenant" with real users in these
-    stores would be a cross-tenant leak, so multi-tenant deployments simply
-    always pass a real `user_id`.
+- **Uniform scoping across all batteries.** `registry`, `secrets`,
+  `state_store`, and `telemetry` all scope records exactly to the `user_id`
+  passed. `load(uid)` returns only rows for that exact uid; `None` returns
+  only unscoped rows. There is no "shared ∪ user's own" merging — mixing
+  NULL and named tenants in a single query produces subtle seeding bugs that
+  cannot be made correct.
 - **Optional paranoia guard on `Secrets`.** `Secrets(require_user_id=True)`
   (default `False`). When set, `resolve`/`set` raise `UserScopeError` if the
   broker calls them with `user_id is None` (e.g. auth broke and silently
@@ -67,6 +65,8 @@ together.
 - `MutableRegistryProtocol`: add `user_id=None` to `get`, `add`, `update`,
   `remove`.
 - File `Registry.load` accepts and ignores `user_id`.
+- SQLite `Registry.load`: `WHERE user_id IS ?` — exact match, no fallback to
+  NULL rows.
 
 ### `src/llmbroker/secrets.py`
 - `SecretsProtocol.resolve(self, ref, user_id=None) -> str`.
@@ -142,21 +142,14 @@ e.g. `UNIQUE(name, COALESCE(user_id, ''))` via a generated column or an
 expression index, and keep the broker's own `_configs` check as the first line.
 
 ### `src/llmbroker/schema.py`
-- Bump `_SCHEMA_VERSION` to 2.
-- Version-2 migration (additive, but PK change needs the SQLite 12-step table
-  rebuild for registry/secrets: create new table → copy → drop → rename):
-  - `llmbroker_registry`: add nullable `user_id`; uniqueness on
-    `(name, COALESCE(user_id,''))`.
-  - `llmbroker_secrets`: add nullable `user_id`; uniqueness on
-    `(ref, COALESCE(user_id,''))`.
-  - `llmbroker_calls`: add nullable `user_id`; index
-    `llmbroker_idx_calls_user_id`.
-  - state_store table (when that battery lands): `user_id` column + index.
-- Guard with `PRAGMA user_version`; run only when upgrading 1 → 2.
+No production installations exist, so no migration path is needed. The new
+schema (with `user_id` columns and expression indexes) is the only schema.
+`_SCHEMA_VERSION` stays at 1; `PRAGMA user_version` guard and the 12-step
+table rebuild are not required.
 
 ### `src/llmbroker/sqlite.py`
 - Every method takes `user_id=None`.
-- `Registry`: `load` → `WHERE user_id = :uid OR user_id IS NULL`; `get`/`add`/
+- `Registry`: `load` → `WHERE user_id IS :uid` (exact match); `get`/`add`/
   `update`/`remove` scope by `user_id` (write the user's own rows).
 - `Secrets`: `resolve` → `WHERE ref = :ref AND user_id IS :uid` (exact match,
   **no** `IS NULL` fallback — a missing per-user row is `KeyError`, never the
@@ -178,19 +171,17 @@ expression index, and keep the broker's own `_configs` check as the first line.
   set of batteries see independent keys, cooldowns and snapshots; a cooldown
   written under user A is invisible to user B; `user_id=None` reproduces
   current single-tenant behavior.
-- `tests/test_registry`/sqlite: shared (`NULL`) rows visible to every user;
-  per-user rows isolated; same `name` allowed across users; duplicate within
-  one user rejected.
+- `tests/test_registry`/sqlite: per-user rows isolated; `load(None)` returns
+  only unscoped rows; same `name` allowed across users; duplicate within one
+  user rejected.
 - `tests/test_sync.py`: `Broker(user_id=...)` forwards correctly.
-- Schema: 1 → 2 migration preserves existing single-tenant rows (they land as
-  `user_id IS NULL`).
 
 ## Docs
 
 - `docs/src/{en,ru}/`: a "Multi-user" section — ports are app-lifetime infra,
-  the broker is constructed per request with `user_id`; registry `NULL` =
-  shared list, secrets/state/telemetry scoped per user; the `require_user_id`
-  guard as opt-in paranoia.
+  the broker is constructed per request with `user_id`; all batteries scope
+  records exactly to `user_id` (`None` = unscoped / single-tenant); the
+  `require_user_id` guard as opt-in paranoia.
 - Architecture note (and the corrected `state_store` docstring): stateless
   servers need `state_store` to keep cooldowns **between requests**, not only
   between cluster nodes.

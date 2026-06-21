@@ -3,8 +3,10 @@
 import asyncio
 import json
 
+import llmbroker.sqlite
 import pytest
 
+from llmbroker.models import LLMConfig
 from llmbroker.registry import Registry
 
 
@@ -71,3 +73,70 @@ def test_load_empty_llms_section(tmp_path):
     f = tmp_path / "llms.toml"
     f.write_text("")
     assert asyncio.run(Registry(f).load()) == []
+
+
+# ── SQLite registry per-user scoping tests ────────────────────────────────────
+
+
+def _cfg(name: str, url: str = "https://x/v1") -> LLMConfig:
+    return LLMConfig(name=name, base_url=url, model="m", api_key_ref="K")
+
+
+def test_sqlite_registry_per_user_row_isolated(tmp_path):
+    """Per-user rows are not visible to other users."""
+    db = str(tmp_path / "b.db")
+    reg = llmbroker.sqlite.Registry(db)
+
+    async def run():
+        await reg.add(_cfg("alice-llm"), "alice")
+        alice_rows = await reg.load("alice")
+        bob_rows = await reg.load("bob")
+        assert len(alice_rows) == 1
+        assert len(bob_rows) == 0
+
+    asyncio.run(run())
+
+
+def test_sqlite_registry_same_name_different_users_allowed(tmp_path):
+    """Two users can have rows with the same name without conflict."""
+    db = str(tmp_path / "b.db")
+    reg = llmbroker.sqlite.Registry(db)
+
+    async def run():
+        await reg.add(_cfg("llm", "https://a/v1"), "alice")
+        await reg.add(_cfg("llm", "https://b/v1"), "bob")
+        alice_rows = await reg.load("alice")
+        bob_rows = await reg.load("bob")
+        assert alice_rows[0].base_url == "https://a/v1"
+        assert bob_rows[0].base_url == "https://b/v1"
+
+    asyncio.run(run())
+
+
+def test_sqlite_registry_duplicate_within_user_rejected(tmp_path):
+    """Adding the same name twice for the same user raises ValueError."""
+    db = str(tmp_path / "b.db")
+    reg = llmbroker.sqlite.Registry(db)
+
+    async def run():
+        await reg.add(_cfg("llm"), "alice")
+        with pytest.raises(ValueError, match="already exists"):
+            await reg.add(_cfg("llm"), "alice")
+
+    asyncio.run(run())
+
+
+def test_sqlite_registry_load_none_returns_only_unscoped(tmp_path):
+    """load(None) returns only NULL-scoped rows and does not bleed named-user rows."""
+    db = str(tmp_path / "b.db")
+    reg = llmbroker.sqlite.Registry(db)
+
+    async def run():
+        await reg.add(_cfg("shared"))
+        await reg.add(_cfg("alice-llm"), "alice")
+        none_rows = await reg.load()
+        alice_rows = await reg.load("alice")
+        assert [r.name for r in none_rows] == ["shared"]
+        assert [r.name for r in alice_rows] == ["alice-llm"]
+
+    asyncio.run(run())
