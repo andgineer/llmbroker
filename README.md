@@ -17,9 +17,9 @@
 | src/llmbroker/shared\_state.py |        3 |        0 |    100% |           |
 | src/llmbroker/sqlite.py        |      107 |       52 |     51% |38-49, 70, 83-86, 90-99, 117, 120-146, 149-155, 158-189, 192-202, 205-212, 215 |
 | src/llmbroker/state.py         |       24 |        0 |    100% |           |
-| src/llmbroker/sync.py          |       99 |       11 |     89% |59, 96-97, 139, 178, 181, 184, 187, 190, 193, 198 |
+| src/llmbroker/sync.py          |      100 |       11 |     89% |59, 96-97, 139, 178, 181, 184, 187, 190, 193, 198 |
 | src/llmbroker/telemetry.py     |       38 |        2 |     95% |    38, 49 |
-| **TOTAL**                      |  **788** |  **147** | **81%** |           |
+| **TOTAL**                      |  **789** |  **147** | **81%** |           |
 
 
 ## Setup coverage badge

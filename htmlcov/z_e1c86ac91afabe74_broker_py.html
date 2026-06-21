@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_e1c86ac91afabe74_chat_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.1">coverage.py v7.14.1</a>,
-            created at 2026-06-20 18:49 +0000
+            created at 2026-06-21 06:43 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -543,9 +543,9 @@
     <p class="run"><span class="n"><a id="t461" href="#t461">461</a></span><span class="t">    <span class="key">def</span> <span class="nam">_require_mutable_registry</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span> <span class="op">-></span> <span class="nam">MutableRegistryProtocol</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t462" href="#t462">462</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">_registry</span><span class="op">,</span> <span class="nam">MutableRegistryProtocol</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t463" href="#t463">463</a></span><span class="t">            <span class="key">raise</span> <span class="nam">TypeError</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t464" href="#t464">464</a></span><span class="t">                <span class="str">"this registry is read-only &#8212; edit the config file directly"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t465" href="#t465">465</a></span><span class="t">                <span class="str">" (a mutable registry such as llmbroker.sqlite.Registry is required"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t466" href="#t466">466</a></span><span class="t">                <span class="str">" for add/remove/seed"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t464" href="#t464">464</a></span><span class="t">                <span class="fst">f"</span><span class="op">{</span><span class="nam">type</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">_registry</span><span class="op">)</span><span class="op">.</span><span class="nam">__name__</span><span class="op">}</span><span class="fst"> does not support mutations</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t465" href="#t465">465</a></span><span class="t">                <span class="str">" (add/remove/seed require a mutable registry such as"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t466" href="#t466">466</a></span><span class="t">                <span class="str">" llmbroker.sqlite.Registry)"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t467" href="#t467">467</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t468" href="#t468">468</a></span><span class="t">        <span class="key">return</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_registry</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t469" href="#t469">469</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -630,7 +630,7 @@
             <a class="nav" href="z_e1c86ac91afabe74_chat_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.1">coverage.py v7.14.1</a>,
-            created at 2026-06-20 18:49 +0000
+            created at 2026-06-21 06:43 +0000
         </p>
     </div>
 </footer>
