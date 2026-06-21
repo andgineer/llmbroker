@@ -38,6 +38,7 @@ import is the dependency declaration.
 - `AsyncBroker` — async engine. One `asyncio.Queue` slot per LLM; at most one
   in-flight request per LLM. On 429/503: cooldown via `loop.call_later` re-enqueue.
   Lazy start (no `start()` call required). `aclose()` / `async with` lifecycle.
+  LLMs are identified by name; access is always by name.
 - `Broker` — synchronous wrapper over `AsyncBroker` on a dedicated background
   event-loop thread. First-class shipped surface, not an afterthought.
 - `optimize` parameter shape (`bool | Optimizer`) is locked. `optimize=True` (default)
@@ -45,8 +46,17 @@ import is the dependency declaration.
   version `optimize=True/False` has no effect on routing.
 - `ensure_pool()` — lazy idempotent pool initializer with double-checked locking.
   Applies the constructor `seed=` source first, then loads the registry into the
-  pool. Called automatically by `chat`, `snapshot`, `add`, `remove`, and
-  `__aenter__`; call explicitly for eager fail-fast startup.
+  pool. Called automatically by `chat`, `snapshot`, `get`, `count`, `add`,
+  `update`, `remove`, and `__aenter__`; call explicitly for eager fail-fast startup.
+- **Mutability contract** — `add` is create-only (raises `ValueError` if the name
+  already exists); `update` is modify-only (raises `KeyError` if the name is
+  absent). Plain `KeyError` signals a missing LLM everywhere in the public API;
+  `ValueError` signals a duplicate on `add`. No domain exception subclasses.
+- **State merging** — when a `SharedStateProtocol` backend is configured, `state()`
+  on an `AsyncLLM` handle and `snapshot()` on the broker both prefer the shared
+  (cluster) state over the in-process state. The shared read is batched (one call
+  for `snapshot`, one call per `state()` invocation); `InMemoryState` is the
+  fallback when the shared backend has no entry for that LLM.
 - `SeedPolicy` enum (`IF_EMPTY` / `ADD` / `MIRROR`) — controls how the constructor
   `seed=` source reconciles the registry on first `ensure_pool`. See "Provider
   seeding" below.
