@@ -12,14 +12,14 @@
 | src/llmbroker/cli.py           |       29 |       29 |      0% |      6-42 |
 | src/llmbroker/models.py        |       48 |        0 |    100% |           |
 | src/llmbroker/registry.py      |       34 |        0 |    100% |           |
-| src/llmbroker/schema.py        |       25 |        0 |    100% |           |
+| src/llmbroker/schema.py        |       29 |        0 |    100% |           |
 | src/llmbroker/secrets.py       |       43 |        3 |     93% |70, 77, 82 |
-| src/llmbroker/sqlite.py        |      123 |       34 |     72% |45-56, 85, 104-105, 109-118, 170-176, 187-188, 201-212, 225-236, 240-247 |
+| src/llmbroker/sqlite.py        |      154 |       36 |     77% |53-64, 93, 112-113, 117-126, 178-184, 195-196, 209-220, 233-244, 248-255, 293, 319 |
 | src/llmbroker/state.py         |       24 |        0 |    100% |           |
 | src/llmbroker/state\_store.py  |        3 |        0 |    100% |           |
 | src/llmbroker/sync.py          |      104 |       12 |     88% |80, 99, 101, 128-129, 161-162, 210, 213, 216, 219, 224 |
 | src/llmbroker/telemetry.py     |       38 |        2 |     95% |    43, 54 |
-| **TOTAL**                      |  **844** |  **127** | **85%** |           |
+| **TOTAL**                      |  **879** |  **129** | **85%** |           |
 
 
 ## Setup coverage badge
