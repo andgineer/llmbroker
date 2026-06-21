@@ -7,19 +7,19 @@
 | src/llmbroker/\_\_about\_\_.py |        1 |        1 |      0% |         1 |
 | src/llmbroker/\_\_main\_\_.py  |        4 |        4 |      0% |       3-8 |
 | src/llmbroker/alembic.py       |        2 |        0 |    100% |           |
-| src/llmbroker/broker.py        |      290 |       33 |     89% |104, 139-140, 163, 167, 188-190, 201, 223, 225-226, 296, 368, 385-402, 409, 420, 444-445, 459, 504-508, 517, 559, 568 |
+| src/llmbroker/broker.py        |      294 |       32 |     89% |104, 141-142, 166, 170, 192-194, 205, 230, 232-233, 304, 378, 396-414, 421, 460-461, 520-524, 533, 542, 578, 587 |
 | src/llmbroker/chat.py          |       72 |       10 |     86% |92, 142-152 |
 | src/llmbroker/cli.py           |       29 |       29 |      0% |      6-42 |
-| src/llmbroker/models.py        |       47 |        0 |    100% |           |
+| src/llmbroker/models.py        |       48 |        0 |    100% |           |
 | src/llmbroker/registry.py      |       34 |        0 |    100% |           |
-| src/llmbroker/schema.py        |       19 |        0 |    100% |           |
-| src/llmbroker/secrets.py       |       38 |        3 |     92% |59, 66, 71 |
-| src/llmbroker/shared\_state.py |        3 |        0 |    100% |           |
-| src/llmbroker/sqlite.py        |      116 |       54 |     53% |39-50, 66-67, 78, 92-95, 99-108, 126, 129-155, 158-164, 167-198, 201-211, 214-221, 224 |
+| src/llmbroker/schema.py        |       25 |        0 |    100% |           |
+| src/llmbroker/secrets.py       |       43 |        3 |     93% |70, 77, 82 |
+| src/llmbroker/sqlite.py        |      123 |       34 |     72% |45-56, 85, 104-105, 109-118, 170-176, 187-188, 201-212, 225-236, 240-247 |
 | src/llmbroker/state.py         |       24 |        0 |    100% |           |
-| src/llmbroker/sync.py          |      104 |       12 |     88% |80, 98, 100, 126-127, 159-160, 208, 211, 214, 217, 222 |
-| src/llmbroker/telemetry.py     |       38 |        2 |     95% |    38, 49 |
-| **TOTAL**                      |  **821** |  **148** | **82%** |           |
+| src/llmbroker/state\_store.py  |        3 |        0 |    100% |           |
+| src/llmbroker/sync.py          |      104 |       12 |     88% |80, 99, 101, 128-129, 161-162, 210, 213, 216, 219, 224 |
+| src/llmbroker/telemetry.py     |       38 |        2 |     95% |    43, 54 |
+| **TOTAL**                      |  **844** |  **127** | **85%** |           |
 
 
 ## Setup coverage badge
