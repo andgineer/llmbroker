@@ -173,12 +173,25 @@ with llmbroker.Broker(
     for name, entry in llms.snapshot().items():
         print(name, entry.state.phase, entry.metrics)
 
-    # Добавить / удалить endpoint во время работы
+    # Получить один endpoint
+    llm = llms.get("groq-llama")
+    print(llm.config, llm.state())
+
+    # Количество загруженных endpoints
+    print(llms.count())
+
+    # Добавить / обновить / удалить endpoint во время работы
     from llmbroker.models import LLMConfig
     llms.add(LLMConfig(
         name="new-llm",
         base_url="https://api.example.com/v1",
         model="gpt-4o-mini",
+        api_key_ref="EXAMPLE_API_KEY",
+    ))
+    llms.update(LLMConfig(
+        name="new-llm",
+        base_url="https://api.example.com/v1",
+        model="gpt-4o",
         api_key_ref="EXAMPLE_API_KEY",
     ))
     llms.remove("groq-gemma")

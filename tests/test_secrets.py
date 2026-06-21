@@ -74,7 +74,7 @@ def test_broker_resolves_key_not_on_config(tmp_path, monkeypatch):
         broker = llmbroker.AsyncBroker(registry=FileRegistry(toml))
         async with broker:
             await broker.ensure_pool()
-            cfg = broker["p1"].config
+            cfg = (await broker.get("p1")).config
             assert cfg.api_key_ref == "MY_API_KEY"
             assert "the-secret" not in (cfg.api_key_ref, cfg.base_url, cfg.model, cfg.name)
             # the resolved key lives only in the private map
@@ -143,7 +143,8 @@ def test_missing_ref_with_readonly_secrets_does_not_block(tmp_path, monkeypatch)
             seed_policy=llmbroker.SeedPolicy.MIRROR,
         )
         async with broker:
-            return "p1" in broker
+            await broker.get("p1")
+            return True
 
     assert asyncio.run(run()) is True
 

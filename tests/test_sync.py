@@ -49,26 +49,26 @@ def _http_error(status):
     return cm
 
 
-def test_broker_len(tmp_path):
+def test_broker_count(tmp_path):
     with Broker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
-        assert len(broker) == 1
+        assert broker.count() == 1
 
 
-def test_broker_iter(tmp_path):
+def test_broker_snapshot_names(tmp_path):
     with Broker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
-        assert list(broker) == ["p1"]
+        assert list(broker.snapshot().keys()) == ["p1"]
 
 
-def test_broker_getitem_returns_llm(tmp_path):
+def test_broker_get_returns_llm(tmp_path):
     with Broker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
-        llm = broker["p1"]
+        llm = broker.get("p1")
         assert llm.config.name == "p1"
 
 
-def test_broker_getitem_missing_raises(tmp_path):
+def test_broker_get_missing_raises(tmp_path):
     with Broker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
         with pytest.raises(KeyError):
-            _ = broker["nope"]
+            broker.get("nope")
 
 
 def _secrets() -> DictSecrets:
@@ -113,14 +113,14 @@ def test_result_record_quality_does_not_raise(tmp_path):
 
 def test_llm_state_is_available(tmp_path):
     with Broker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
-        llm = broker["p1"]
+        llm = broker.get("p1")
         assert llm.state().phase is LifecyclePhase.AVAILABLE
 
 
 def test_broker_context_manager_closes_cleanly(tmp_path):
     broker = Broker(registry=_registry(tmp_path), telemetry=NoTelemetry())
     with broker:
-        _ = len(broker)
+        _ = broker.count()
     assert not broker._finalizer.alive
     assert not broker._thread.is_alive()
 
@@ -134,6 +134,14 @@ def test_broker_gc_stops_thread_without_close(tmp_path):
     gc.collect()
     thread.join(timeout=5.0)
     assert not thread.is_alive()
+
+
+def test_broker_update_changes_config(tmp_path):
+    db = str(tmp_path / "b.db")
+    with Broker(registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()) as broker:
+        broker.add(LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K"))
+        broker.update(LLMConfig(name="p1", base_url="https://new/v1", model="m2", api_key_ref="K"))
+        assert broker.get("p1").config.base_url == "https://new/v1"
 
 
 # ── constructor seed tests ────────────────────────────────────────────────────
@@ -154,8 +162,8 @@ def test_broker_enter_seeds_eagerly(tmp_path):
         seed_policy=SeedPolicy.IF_EMPTY,
         telemetry=NoTelemetry(),
     ) as broker:
-        assert "p1" in broker
-        assert len(broker) == 1
+        assert broker.count() == 1
+        assert broker.get("p1").config.name == "p1"
 
 
 def test_broker_seed_policy_add_preserves_existing(tmp_path):
@@ -170,8 +178,8 @@ def test_broker_seed_policy_add_preserves_existing(tmp_path):
         seed_policy=SeedPolicy.ADD,
         telemetry=NoTelemetry(),
     ) as broker:
-        assert "p1" in broker
-        assert "extra" in broker
+        assert broker.get("p1").config.name == "p1"
+        assert broker.get("extra").config.name == "extra"
 
 
 def test_broker_seed_policy_mirror_reconciles(tmp_path):
@@ -186,8 +194,9 @@ def test_broker_seed_policy_mirror_reconciles(tmp_path):
         seed_policy=SeedPolicy.MIRROR,
         telemetry=NoTelemetry(),
     ) as broker:
-        assert "p1" in broker
-        assert "extra" not in broker
+        assert broker.get("p1").config.name == "p1"
+        with pytest.raises(KeyError):
+            broker.get("extra")
 
 
 def test_broker_seed_with_readonly_registry_raises(tmp_path):

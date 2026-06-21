@@ -8,7 +8,7 @@ concurrency persists across calls.
 import asyncio
 import threading
 import weakref
-from collections.abc import Callable, Coroutine, Iterator, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from datetime import datetime
 from pathlib import Path
@@ -80,8 +80,8 @@ class LLM:
         return self._broker.metrics_of(self._name, since=since)
 
 
-class Broker(Mapping[str, LLM]):
-    """Shipped synchronous client over an AsyncBroker on a background loop thread."""
+class Broker:
+    """Synchronous client over an AsyncBroker on a background loop thread."""
 
     def __init__(  # noqa: PLR0913
         self,
@@ -137,35 +137,27 @@ class Broker(Mapping[str, LLM]):
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
     def _ensure_pool(self) -> None:
-        # The async pool starts lazily on the first ask/chat; the sync Mapping
-        # surface (len/iter) must reflect loaded config without a call, so warm it.
         self._run(self._async.ensure_pool())
 
-    # ── Mapping interface ──
-    def __getitem__(self, name: str) -> LLM:
-        self._ensure_pool()
-        if name not in self._async:
-            raise KeyError(name)
+    # ── Accessors ──
+    def get(self, name: str) -> LLM:
+        self._run(self._async.get(name))  # raises KeyError if absent
         return LLM(self, name)
 
-    def __iter__(self) -> Iterator[str]:
-        self._ensure_pool()
-        return iter(self._async)
-
-    def __len__(self) -> int:
-        self._ensure_pool()
-        return len(self._async)
+    def count(self) -> int:
+        return self._run(self._async.count())
 
     # ── LLM accessors (used by LLM companion class) ──
     def config_of(self, name: str) -> LLMConfig:
-        self._ensure_pool()
-        return self._async[name].config
+        return self._run(self._async.get(name)).config
 
     def state_of(self, name: str) -> LLMState:
-        return self._run(self._async[name].state())
+        llm = self._run(self._async.get(name))
+        return self._run(llm.state())
 
     def metrics_of(self, name: str, *, since: datetime | None = None) -> LLMMetrics:
-        return self._run(self._async[name].metrics(since=since))
+        llm = self._run(self._async.get(name))
+        return self._run(llm.metrics(since=since))
 
     # ── calls ──
     def ask(
@@ -208,6 +200,9 @@ class Broker(Mapping[str, LLM]):
 
     def add(self, cfg: LLMConfig) -> None:
         self._run(self._async.add(cfg))
+
+    def update(self, cfg: LLMConfig) -> None:
+        self._run(self._async.update(cfg))
 
     def remove(self, name: str) -> None:
         self._run(self._async.remove(name))

@@ -9,7 +9,7 @@ import contextlib
 import logging
 import time
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -106,7 +106,7 @@ class AsyncResult:
 
 
 class AsyncLLM:
-    """Handle returned by ``AsyncBroker[name]`` — live view into broker internals."""
+    """Handle returned by ``AsyncBroker.get(name)`` — live view into broker internals."""
 
     def __init__(
         self,
@@ -114,17 +114,24 @@ class AsyncLLM:
         config: LLMConfig,
         state: "InMemoryState",
         telemetry: TelemetryProtocol,
+        *,
+        shared_state: "SharedStateProtocol | None" = None,
     ) -> None:
         self._name = name
         self._config = config
         self._state = state
         self._telemetry = telemetry
+        self._shared_state = shared_state
 
     @property
     def config(self) -> LLMConfig:
         return self._config
 
     async def state(self) -> LLMState:
+        if self._shared_state is not None:
+            shared = await self._shared_state.read()
+            if self._name in shared:
+                return shared[self._name]
         return self._state.get_state(self._name)
 
     async def metrics(self, *, since: datetime | None = None) -> LLMMetrics:
@@ -134,8 +141,8 @@ class AsyncLLM:
         return LLMMetrics(0, None, None)
 
 
-class AsyncBroker(Mapping[str, AsyncLLM]):
-    """Read-only Mapping of LLM handles + the single call/admin front door."""
+class AsyncBroker:
+    """Async broker: route completions over a pool of LLM endpoints."""
 
     def __init__(  # noqa: PLR0913
         self,
@@ -230,18 +237,23 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
         await self.aclose()
 
     # ------------------------------------------------------------------
-    # Mapping interface
+    # Async accessors
     # ------------------------------------------------------------------
 
-    def __getitem__(self, name: str) -> AsyncLLM:
+    async def get(self, name: str) -> AsyncLLM:
+        await self.ensure_pool()
         if name not in self._configs:
             raise KeyError(name)
-        return AsyncLLM(name, self._configs[name], self._state, self._telemetry)
+        return AsyncLLM(
+            name,
+            self._configs[name],
+            self._state,
+            self._telemetry,
+            shared_state=self._shared_state,
+        )
 
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._configs)
-
-    def __len__(self) -> int:
+    async def count(self) -> int:
+        await self.ensure_pool()
         return len(self._configs)
 
     # ------------------------------------------------------------------
@@ -445,12 +457,16 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
         metrics_map: dict[str, LLMMetrics] = {}
         if isinstance(self._telemetry, QueryableTelemetryProtocol):
             metrics_map = await self._telemetry.metrics(since=since)
+        shared: dict[str, LLMState] = {}
+        if self._shared_state is not None:
+            shared = await self._shared_state.read()
         result: dict[str, LLMSnapshot] = {}
         for name, cfg in self._configs.items():
             metrics = metrics_map.get(name) if metrics_map else None
+            state = shared[name] if name in shared else self._state.get_state(name)
             result[name] = LLMSnapshot(
                 config=cfg,
-                state=self._state.get_state(name),
+                state=state,
                 metrics=metrics,
             )
         return result
@@ -471,7 +487,17 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
     async def add(self, cfg: LLMConfig) -> None:
         await self.ensure_pool()
         registry = self._require_mutable_registry()
+        if cfg.name in self._configs:
+            raise ValueError(f"LLM {cfg.name!r} already exists; use update()")
         await registry.add(cfg)
+        await self._add_to_pool(cfg)
+
+    async def update(self, cfg: LLMConfig) -> None:
+        await self.ensure_pool()
+        registry = self._require_mutable_registry()
+        if cfg.name not in self._configs:
+            raise KeyError(cfg.name)
+        await registry.update(cfg)
         await self._add_to_pool(cfg)
 
     async def remove(self, name: str) -> None:

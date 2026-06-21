@@ -5,6 +5,7 @@ All tables are ``llmbroker_``-prefixed and owned by ``ensure_schema``.
 """
 
 import json
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -56,18 +57,26 @@ class Registry:
     async def add(self, cfg: LLMConfig) -> None:
         async with aiosqlite.connect(self._db_path) as db:
             await ensure_schema(db)
-            await db.execute(
-                "INSERT INTO llmbroker_registry (name, base_url, model, api_key_ref)"
-                " VALUES (?, ?, ?, ?)"
-                " ON CONFLICT(name) DO UPDATE SET"
-                " base_url = excluded.base_url, model = excluded.model,"
-                " api_key_ref = excluded.api_key_ref",
-                [cfg.name, cfg.base_url, cfg.model, cfg.api_key_ref],
-            )
+            try:
+                await db.execute(
+                    "INSERT INTO llmbroker_registry (name, base_url, model, api_key_ref)"
+                    " VALUES (?, ?, ?, ?)",
+                    [cfg.name, cfg.base_url, cfg.model, cfg.api_key_ref],
+                )
+            except sqlite3.IntegrityError:
+                raise ValueError(f"LLM {cfg.name!r} already exists") from None
             await db.commit()
 
     async def update(self, cfg: LLMConfig) -> None:
-        await self.add(cfg)
+        async with aiosqlite.connect(self._db_path) as db:
+            await ensure_schema(db)
+            cursor = await db.execute(
+                "UPDATE llmbroker_registry SET base_url=?, model=?, api_key_ref=? WHERE name=?",
+                [cfg.base_url, cfg.model, cfg.api_key_ref, cfg.name],
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(cfg.name)
+            await db.commit()
 
     async def remove(self, name: str) -> None:
         async with aiosqlite.connect(self._db_path) as db:

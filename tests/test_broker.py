@@ -2,16 +2,15 @@
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import llmbroker.sqlite
 import pytest
 
-from datetime import UTC, datetime
-
 from llmbroker.broker import AllLLMsFailedError, AsyncBroker, NoLLMAvailableError
-from llmbroker.models import LifecyclePhase, LLMConfig, SeedPolicy
+from llmbroker.models import LifecyclePhase, LLMConfig, LLMState, SeedPolicy
 from llmbroker.registry import Registry as FileRegistry
 from llmbroker.secrets import DictSecrets
 from llmbroker.telemetry import NoTelemetry
@@ -64,8 +63,8 @@ def _http_error(status):
 def test_ensure_pool_populates_configs(tmp_path):
     async def run():
         async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
-            assert "p1" in broker
-            assert len(broker) == 1
+            assert await broker.count() == 1
+            assert (await broker.get("p1")).config.name == "p1"
 
     asyncio.run(run())
 
@@ -74,37 +73,37 @@ def test_ensure_pool_idempotent(tmp_path):
     async def run():
         async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
             await broker.ensure_pool()  # second call after __aenter__ — must be no-op
-            assert len(broker) == 1
+            assert await broker.count() == 1
 
     asyncio.run(run())
 
 
-def test_iter_yields_names(tmp_path):
+def test_snapshot_names(tmp_path):
     async def run():
         entries = [("a", "https://a/v1", "m", "K"), ("b", "https://b/v1", "m", "K")]
         async with AsyncBroker(
             registry=_registry(tmp_path, entries), telemetry=NoTelemetry()
         ) as broker:
-            assert set(broker) == {"a", "b"}
+            assert set((await broker.snapshot()).keys()) == {"a", "b"}
 
     asyncio.run(run())
 
 
-def test_getitem_returns_async_llm_with_correct_config(tmp_path):
+def test_get_returns_async_llm_with_correct_config(tmp_path):
     async def run():
         async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
-            llm = broker["p1"]
+            llm = await broker.get("p1")
             assert llm.config.name == "p1"
             assert llm.config.base_url == "https://x/v1"
 
     asyncio.run(run())
 
 
-def test_getitem_missing_raises_key_error(tmp_path):
+def test_get_missing_raises_key_error(tmp_path):
     async def run():
         async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
             with pytest.raises(KeyError):
-                _ = broker["nope"]
+                await broker.get("nope")
 
     asyncio.run(run())
 
@@ -112,7 +111,7 @@ def test_getitem_missing_raises_key_error(tmp_path):
 def test_async_llm_state_available(tmp_path):
     async def run():
         async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
-            state = await broker["p1"].state()
+            state = await (await broker.get("p1")).state()
             assert state.phase is LifecyclePhase.AVAILABLE
 
     asyncio.run(run())
@@ -121,7 +120,7 @@ def test_async_llm_state_available(tmp_path):
 def test_async_llm_metrics_no_queryable_telemetry(tmp_path):
     async def run():
         async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
-            metrics = await broker["p1"].metrics()
+            metrics = await (await broker.get("p1")).metrics()
             assert metrics.call_count == 0
 
     asyncio.run(run())
@@ -184,7 +183,7 @@ def test_chat_429_increments_fail_count(tmp_path):
             with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_error(429)):
                 with pytest.raises(NoLLMAvailableError):
                     await broker.chat([{"role": "user", "content": "hi"}], wait=0)
-            state = await broker["p1"].state()
+            state = await (await broker.get("p1")).state()
             assert state.fail_count == 1
             assert state.phase is LifecyclePhase.COOLING
 
@@ -231,6 +230,99 @@ def test_add_with_readonly_registry_raises(tmp_path):
         async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
             with pytest.raises(TypeError, match="does not support mutations"):
                 await broker.add(LLMConfig(name="p2", base_url="u", model="m", api_key_ref="K"))
+
+    asyncio.run(run())
+
+
+def test_add_duplicate_raises_value_error(tmp_path):
+    async def run():
+        db = str(tmp_path / "b.db")
+        async with AsyncBroker(
+            registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()
+        ) as broker:
+            cfg = LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")
+            await broker.add(cfg)
+            with pytest.raises(ValueError, match="already exists"):
+                await broker.add(cfg)
+
+    asyncio.run(run())
+
+
+def test_update_absent_raises_key_error(tmp_path):
+    async def run():
+        db = str(tmp_path / "b.db")
+        async with AsyncBroker(
+            registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()
+        ) as broker:
+            cfg = LLMConfig(name="ghost", base_url="https://x/v1", model="m", api_key_ref="K")
+            with pytest.raises(KeyError):
+                await broker.update(cfg)
+
+    asyncio.run(run())
+
+
+def test_update_changes_config_without_extra_queue_slot(tmp_path):
+    async def run():
+        db = str(tmp_path / "b.db")
+        async with AsyncBroker(
+            registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()
+        ) as broker:
+            original = LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")
+            await broker.add(original)
+            queue_size_before = broker._queue.qsize()
+
+            updated = LLMConfig(name="p1", base_url="https://new/v1", model="m2", api_key_ref="K")
+            await broker.update(updated)
+
+            assert (await broker.get("p1")).config.base_url == "https://new/v1"
+            assert broker._queue.qsize() == queue_size_before  # no extra slot enqueued
+
+    asyncio.run(run())
+
+
+class _FakeStateStore:
+    """Minimal SharedStateProtocol returning a fixed cooling state."""
+
+    def __init__(self, state: LLMState) -> None:
+        self._state = state
+
+    async def read(self) -> dict[str, LLMState]:
+        return {"p1": self._state}
+
+    async def write(self, name: str, state: LLMState) -> None:
+        pass
+
+
+def test_snapshot_picks_up_shared_state(tmp_path):
+    cooling = LLMState(phase=LifecyclePhase.COOLING, fail_count=3)
+    store = _FakeStateStore(cooling)
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            shared_state=store,
+            telemetry=NoTelemetry(),
+        ) as broker:
+            snap = await broker.snapshot()
+            assert snap["p1"].state.phase is LifecyclePhase.COOLING
+            assert snap["p1"].state.fail_count == 3
+
+    asyncio.run(run())
+
+
+def test_get_state_picks_up_shared_state(tmp_path):
+    cooling = LLMState(phase=LifecyclePhase.COOLING, fail_count=2)
+    store = _FakeStateStore(cooling)
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            shared_state=store,
+            telemetry=NoTelemetry(),
+        ) as broker:
+            state = await (await broker.get("p1")).state()
+            assert state.phase is LifecyclePhase.COOLING
+            assert state.fail_count == 2
 
     asyncio.run(run())
 
@@ -303,14 +395,13 @@ def test_constructor_seed_if_empty_seeds_on_first_ensure_pool(tmp_path):
             telemetry=NoTelemetry(),
         )
         async with broker:
-            assert "p1" in broker
+            assert (await broker.get("p1")).config.name == "p1"
 
     asyncio.run(run())
 
 
 def test_constructor_seed_second_ensure_pool_is_noop(tmp_path, caplog):
     """A second ensure_pool() call is a no-op — no extra warnings emitted."""
-    _KEY = "K"
 
     async def run():
         db = str(tmp_path / "b.db")
@@ -342,8 +433,8 @@ def test_aenter_seeds_eagerly(tmp_path):
             telemetry=NoTelemetry(),
         )
         async with broker:
-            assert len(broker) == 1
-            assert "p1" in broker
+            assert await broker.count() == 1
+            assert (await broker.get("p1")).config.name == "p1"
 
     asyncio.run(run())
 
@@ -364,8 +455,9 @@ def test_constructor_seed_policy_mirror_reconciles(tmp_path):
             telemetry=NoTelemetry(),
         )
         async with broker:
-            assert "p1" in broker
-            assert "extra" not in broker
+            assert (await broker.get("p1")).config.name == "p1"
+            with pytest.raises(KeyError):
+                await broker.get("extra")
 
     asyncio.run(run())
 
@@ -386,8 +478,8 @@ def test_constructor_seed_policy_add_preserves_existing(tmp_path):
             telemetry=NoTelemetry(),
         )
         async with broker:
-            assert "p1" in broker  # added from seed
-            assert "extra" in broker  # existing entry not removed
+            assert (await broker.get("p1")).config.name == "p1"
+            assert (await broker.get("extra")).config.name == "extra"
 
     asyncio.run(run())
 
@@ -408,6 +500,6 @@ def test_constructor_seed_policy_add_does_not_overwrite(tmp_path):
             telemetry=NoTelemetry(),
         )
         async with broker:
-            assert broker["p1"].config.base_url == "https://original/v1"
+            assert (await broker.get("p1")).config.base_url == "https://original/v1"
 
     asyncio.run(run())
