@@ -25,8 +25,9 @@ Three design targets:
 
 ## Status
 
-Phase 1 shipped as v0.0.3 (June 2026), stabilised as v0.0.4. The package is in its
-own repository with its own `pyproject.toml`. Phases 2–5 are described below.
+Phase 1 shipped as v0.0.3 (June 2026), stabilised as v0.0.4 and v0.0.5. The package
+is in its own repository with its own `pyproject.toml`. Phases 2–5 are described
+below.
 
 Invariants that hold for every future phase: zero host-specific imports, every DB
 object `llmbroker_`-prefixed, `ensure_schema` as sole schema owner, Alembic
@@ -1580,9 +1581,9 @@ fail counter is dropped. The config record loses `rate_limited_until` (now an
 maps onto it). The `api_key` columns/fields become `api_key_ref`, resolved by the
 broker via `Secrets` into its private `_resolved_keys` map.
 
-### Phase 1 — completed (v0.0.3 → v0.0.4)
+### Phase 1 — completed (v0.0.3 → v0.0.5)
 
-Extraction done. Fixes applied during stabilisation:
+Extraction done. Fixes and additions applied during stabilisation:
 
 1. Removed dead `tried_error` flag (was always `False` at the check point).
 2. A missing `api_key_ref` resolution now raises `AllLLMsFailedError` immediately
@@ -1592,6 +1593,20 @@ Extraction done. Fixes applied during stabilisation:
    file write so the event loop is never blocked.
 
 `DictSecrets` added as a zero-dep test double (pre-resolved key map, no env vars).
+
+Pool-init refactor and constructor seeding (v0.0.5):
+
+5. Renamed `_started` → `_pool_initialized`, `_start_lock` → `_pool_lock`.
+6. Replaced `ensure_started` / `_reconcile_pool` with `_populate_pool` (lock-free
+   body) + `ensure_pool` (double-checked locking + seeding); removed `sync_configs`.
+7. `SeedPolicy` enum (`MIRROR` / `ADD` / `IF_EMPTY`) replaces the `SyncPolicy`
+   `Literal`; bare policy strings no longer used.
+8. Constructor parameters `seed: RegistryProtocol | None` and
+   `seed_policy: SeedPolicy = SeedPolicy.IF_EMPTY` replace the post-construction
+   `sync_configs` call. Seeding happens inside `ensure_pool` on first init only,
+   before the registry is loaded into the pool — secrets are therefore populated
+   before resolution, eliminating duplicate "api_key_ref could not be resolved"
+   warnings on restart.
 
 ### Phase 2 — example variants + catalog refresh
 

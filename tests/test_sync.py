@@ -1,12 +1,14 @@
 """Tests for the synchronous Broker / LLM / Result wrappers."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import llmbroker.sqlite
 import pytest
 
 from llmbroker.broker import AllLLMsFailedError
-from llmbroker.models import LifecyclePhase
+from llmbroker.models import LifecyclePhase, LLMConfig, SeedPolicy
 from llmbroker.registry import Registry as FileRegistry
 from llmbroker.secrets import DictSecrets
 from llmbroker.sync import Broker
@@ -119,3 +121,68 @@ def test_broker_context_manager_closes_cleanly(tmp_path):
     with broker:
         _ = len(broker)
     assert broker._closed
+
+
+# ── constructor seed tests ────────────────────────────────────────────────────
+
+
+def _seed_registry(tmp_path, name="p1"):
+    f = tmp_path / "seed.toml"
+    f.write_text(f'[[llms]]\nname="{name}"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n')
+    return FileRegistry(f)
+
+
+def test_broker_enter_seeds_eagerly(tmp_path):
+    """with Broker(..., seed=...) populates the pool before the body runs."""
+    db = str(tmp_path / "b.db")
+    with Broker(
+        registry=llmbroker.sqlite.Registry(db),
+        seed=_seed_registry(tmp_path),
+        seed_policy=SeedPolicy.IF_EMPTY,
+        telemetry=NoTelemetry(),
+    ) as broker:
+        assert "p1" in broker
+        assert len(broker) == 1
+
+
+def test_broker_seed_policy_add_preserves_existing(tmp_path):
+    """seed_policy=ADD adds new entries but leaves existing ones untouched."""
+    db = str(tmp_path / "b.db")
+    extra = LLMConfig(name="extra", base_url="https://e/v1", model="m", api_key_ref="K")
+    asyncio.run(llmbroker.sqlite.Registry(db).add(extra))
+
+    with Broker(
+        registry=llmbroker.sqlite.Registry(db),
+        seed=_seed_registry(tmp_path),
+        seed_policy=SeedPolicy.ADD,
+        telemetry=NoTelemetry(),
+    ) as broker:
+        assert "p1" in broker
+        assert "extra" in broker
+
+
+def test_broker_seed_policy_mirror_reconciles(tmp_path):
+    """seed_policy=MIRROR removes entries absent from seed on first enter."""
+    db = str(tmp_path / "b.db")
+    extra = LLMConfig(name="extra", base_url="https://e/v1", model="m", api_key_ref="K")
+    asyncio.run(llmbroker.sqlite.Registry(db).add(extra))
+
+    with Broker(
+        registry=llmbroker.sqlite.Registry(db),
+        seed=_seed_registry(tmp_path),
+        seed_policy=SeedPolicy.MIRROR,
+        telemetry=NoTelemetry(),
+    ) as broker:
+        assert "p1" in broker
+        assert "extra" not in broker
+
+
+def test_broker_seed_with_readonly_registry_raises(tmp_path):
+    """Passing seed= with a read-only registry raises TypeError on enter."""
+    with pytest.raises(TypeError, match="does not support mutations"):
+        with Broker(
+            registry=_registry(tmp_path),
+            seed=_seed_registry(tmp_path),
+            telemetry=NoTelemetry(),
+        ):
+            pass

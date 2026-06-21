@@ -461,9 +461,9 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
     def _require_mutable_registry(self) -> MutableRegistryProtocol:
         if not isinstance(self._registry, MutableRegistryProtocol):
             raise TypeError(
-                "this registry is read-only — edit the config file directly"
-                " (a mutable registry such as llmbroker.sqlite.Registry is required"
-                " for add/remove/seed",
+                f"{type(self._registry).__name__} does not support mutations"
+                " (add/remove/seed require a mutable registry such as"
+                " llmbroker.sqlite.Registry)",
             )
         return self._registry
 

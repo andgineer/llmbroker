@@ -203,6 +203,7 @@ class Broker(Mapping[str, LLM]):
         self._loop.close()
 
     def __enter__(self) -> "Broker":
+        self._ensure_pool()
         return self
 
     def __exit__(self, *exc: object) -> None:

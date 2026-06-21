@@ -31,7 +31,7 @@ import is the dependency declaration.
 
 ---
 
-## What is implemented (v0.0.4)
+## What is implemented (v0.0.5)
 
 ### Core
 
@@ -43,6 +43,13 @@ import is the dependency declaration.
 - `optimize` parameter shape (`bool | Optimizer`) is locked. `optimize=True` (default)
   is a reservation — the control loop does not run until Phase 4. In the current
   version `optimize=True/False` has no effect on routing.
+- `ensure_pool()` — lazy idempotent pool initializer with double-checked locking.
+  Applies the constructor `seed=` source first, then loads the registry into the
+  pool. Called automatically by `chat`, `snapshot`, `add`, `remove`, and
+  `__aenter__`; call explicitly for eager fail-fast startup.
+- `SeedPolicy` enum (`IF_EMPTY` / `ADD` / `MIRROR`) — controls how the constructor
+  `seed=` source reconciles the registry on first `ensure_pool`. See "Provider
+  seeding" below.
 
 ### Batteries
 

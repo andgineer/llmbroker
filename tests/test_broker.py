@@ -229,7 +229,7 @@ def test_result_record_quality_does_not_raise(tmp_path):
 def test_add_with_readonly_registry_raises(tmp_path):
     async def run():
         async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
-            with pytest.raises(TypeError, match="read-only"):
+            with pytest.raises(TypeError, match="does not support mutations"):
                 await broker.add(LLMConfig(name="p2", base_url="u", model="m", api_key_ref="K"))
 
     asyncio.run(run())
@@ -247,7 +247,7 @@ def test_seed_with_readonly_registry_raises(tmp_path):
         ):
             pass
 
-    with pytest.raises(TypeError, match="read-only"):
+    with pytest.raises(TypeError, match="does not support mutations"):
         asyncio.run(run())
 
 
