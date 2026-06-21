@@ -10,6 +10,7 @@ import threading
 from collections.abc import Callable, Coroutine, Iterator, Mapping
 from concurrent.futures import Future
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from llmbroker.broker import AsyncBroker, AsyncResult, Optimizer
@@ -21,7 +22,7 @@ from llmbroker.models import (
     LLMState,
     SeedPolicy,
 )
-from llmbroker.registry import RegistryProtocol
+from llmbroker.registry import Registry, RegistryProtocol
 from llmbroker.secrets import SecretsProtocol
 from llmbroker.shared_state import SharedStateProtocol
 from llmbroker.telemetry import TelemetryProtocol
@@ -64,15 +65,19 @@ class Broker(Mapping[str, LLM]):
 
     def __init__(  # noqa: PLR0913
         self,
+        registry: RegistryProtocol | str | Path,
         *,
-        registry: RegistryProtocol,
         secrets: SecretsProtocol | None = None,
         shared_state: SharedStateProtocol | None = None,
         telemetry: TelemetryProtocol | None = None,
         optimize: bool | Optimizer = True,
-        seed: RegistryProtocol | None = None,
+        seed: RegistryProtocol | str | Path | None = None,
         seed_policy: SeedPolicy = SeedPolicy.IF_EMPTY,
     ) -> None:
+        if isinstance(registry, (str, Path)):
+            registry = Registry(registry)
+        if isinstance(seed, (str, Path)):
+            seed = Registry(seed)
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run_loop, daemon=True, name="llmbroker-loop")
         self._thread.start()
@@ -84,7 +89,7 @@ class Broker(Mapping[str, LLM]):
             try:
                 fut.set_result(
                     AsyncBroker(
-                        registry=registry,
+                        registry,
                         secrets=secrets,
                         shared_state=shared_state,
                         telemetry=telemetry,

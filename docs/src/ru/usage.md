@@ -31,7 +31,7 @@ python -m llmbroker env llms.toml
 ```python
 import llmbroker
 
-llms = llmbroker.Broker(registry=llmbroker.Registry("llms.toml"))
+llms = llmbroker.Broker("llms.toml")
 
 # Один вопрос
 reply = llms.ask("Переведи на английский: Привет мир")
@@ -54,9 +54,7 @@ print(reply.text)
 import llmbroker
 
 async def main():
-    async with llmbroker.AsyncBroker(
-        registry=llmbroker.Registry("llms.toml"),
-    ) as llms:
+    async with llmbroker.AsyncBroker("llms.toml") as llms:
         reply = await llms.ask("Что такое asyncio?")
         print(reply.text)
 ```
@@ -105,7 +103,7 @@ tools = [{
     },
 }]
 
-llms = llmbroker.Broker(registry=llmbroker.Registry("llms.toml"))
+llms = llmbroker.Broker("llms.toml")
 reply = llmbroker.run_tool_loop(
     llms,
     [{"role": "user", "content": "Какая погода в Москве?"}],
@@ -138,7 +136,7 @@ from datetime import UTC, datetime
 with llmbroker.Broker(
     registry=llmbroker.sqlite.Registry("broker.db"),
     telemetry=llmbroker.sqlite.Telemetry("broker.db"),
-    seed=llmbroker.Registry("llms.toml"),
+    seed="llms.toml",
     seed_policy=llmbroker.SeedPolicy.IF_EMPTY,
 ) as llms:
     reply = llms.ask("Вопрос")

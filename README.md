@@ -10,7 +10,7 @@ No LangChain, no heavy deps.
 ```python
 import llmbroker
 
-llms = llmbroker.Broker(registry=llmbroker.Registry("llms.toml"))
+llms = llmbroker.Broker("llms.toml")
 print(llms.ask("Summarize this receipt").text)
 ```
 

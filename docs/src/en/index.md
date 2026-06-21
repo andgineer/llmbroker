@@ -33,7 +33,7 @@ Set your keys and call the broker:
 ```python
 import llmbroker
 
-llms = llmbroker.Broker(registry=llmbroker.Registry("llms.toml"))
+llms = llmbroker.Broker("llms.toml")
 print(llms.ask("Hello, how are you?").text)
 ```
 

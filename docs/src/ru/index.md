@@ -31,7 +31,7 @@ api_key_ref = "GROQ_API_KEY"
 ```python
 import llmbroker
 
-llms = llmbroker.Broker(registry=llmbroker.Registry("llms.toml"))
+llms = llmbroker.Broker("llms.toml")
 print(llms.ask("Привет, как дела?").text)
 ```
 

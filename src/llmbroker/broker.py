@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 
@@ -34,7 +35,7 @@ from llmbroker.models import (
     SeedPolicy,
     Usage,
 )
-from llmbroker.registry import MutableRegistryProtocol, RegistryProtocol
+from llmbroker.registry import MutableRegistryProtocol, Registry, RegistryProtocol
 from llmbroker.secrets import (
     MutableSecretsProtocol,
     Secrets,
@@ -138,16 +139,16 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
 
     def __init__(  # noqa: PLR0913
         self,
+        registry: RegistryProtocol | str | Path,
         *,
-        registry: RegistryProtocol,
         secrets: SecretsProtocol | None = None,
         shared_state: SharedStateProtocol | None = None,
         telemetry: TelemetryProtocol | None = None,
         optimize: bool | Optimizer = True,
-        seed: RegistryProtocol | None = None,
+        seed: RegistryProtocol | str | Path | None = None,
         seed_policy: SeedPolicy = SeedPolicy.IF_EMPTY,
     ) -> None:
-        self._registry = registry
+        self._registry = Registry(registry) if isinstance(registry, (str, Path)) else registry
         self._secrets: SecretsProtocol = as_secrets(secrets) if secrets is not None else Secrets()
         self._shared_state = shared_state
         self._telemetry: TelemetryProtocol = telemetry if telemetry is not None else Telemetry()
@@ -158,7 +159,7 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
         else:
             self._optimizer = None
 
-        self._seed = seed
+        self._seed = Registry(seed) if isinstance(seed, (str, Path)) else seed
         self._seed_policy = seed_policy
         self._queue: asyncio.Queue[LLMConfig] = asyncio.Queue()
         self._configs: dict[str, LLMConfig] = {}
