@@ -1,26 +1,20 @@
-"""llmbroker — a standalone, host-agnostic LLM-provider broker.
+"""llmbroker — a standalone, host-agnostic LLM-provider broker."""
 
-Public surface only. Protocols and DTOs are imported from their defining
-modules (registry/secrets/state_store/telemetry/models). Dependency-carrying
-backends (sqlite/redis/…) are submodules imported explicitly — never from here.
-"""
-
-from llmbroker.broker import (
+from llmbroker.broker import AsyncBroker, AsyncLLM, AsyncResult
+from llmbroker.chat import arun_tool_loop, run_tool_loop
+from llmbroker.exceptions import (
     AllLLMsFailedError,
-    AsyncBroker,
-    AsyncLLM,
-    AsyncResult,
     LLMRequestError,
     NoLLMAvailableError,
-    Optimizer,
+    SecretsReadOnlyError,
+    UserScopeError,
 )
-from llmbroker.chat import arun_tool_loop, run_tool_loop
 from llmbroker.models import LifecyclePhase, SeedPolicy
-from llmbroker.registry import Registry
-from llmbroker.secrets import DictSecrets, Secrets, SecretsReadOnlyError, UserScopeError
-from llmbroker.state_store import StateStoreProtocol
+from llmbroker.optimizer import Optimizer
+from llmbroker.standalone.registry import Registry
+from llmbroker.standalone.secrets import DictSecrets, Secrets
+from llmbroker.standalone.telemetry import JsonlTelemetry, NoTelemetry, Telemetry
 from llmbroker.sync import LLM, Broker, Result
-from llmbroker.telemetry import JsonlTelemetry, NoTelemetry, Telemetry
 
 __all__ = [
     "AllLLMsFailedError",
@@ -41,7 +35,6 @@ __all__ = [
     "SeedPolicy",
     "Secrets",
     "SecretsReadOnlyError",
-    "StateStoreProtocol",
     "Telemetry",
     "UserScopeError",
     "arun_tool_loop",

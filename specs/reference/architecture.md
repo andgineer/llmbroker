@@ -7,27 +7,29 @@ exception — never silence.
 
 ---
 
-## Four-port model
+## The four pluggable backends
 
-Every host wires up to four things; only the registry is required:
+Every host plugs in up to four backends; only the registry is required:
 
-| Port | Interface | Default battery | What it is |
+| Backend | Contract | Default (zero-dependency) | What it is |
 |---|---|---|---|
 | **config** | `RegistryProtocol` | `Registry(path)` (file: `.toml`/`.json`) | where LLM configurations are stored |
 | **secrets** | `SecretsProtocol` | `Secrets()` (env vars) | how `api_key_ref` names resolve to real keys |
 | **state store** | `StateStoreProtocol` | absent — single-process only | persists cooldown state between requests (any stateless server, not just clusters) |
 | **telemetry** | `TelemetryProtocol` | `Telemetry()` (Python logging) | append-only call journal |
 
-**Naming convention — one rule for all ports:**
-- Bare name = the zero-dep default battery you construct directly (`Registry`, `Secrets`, `Telemetry`)
-- Descriptive prefix = a zero-dep variant (`DictSecrets`, `NoTelemetry`, `JsonlTelemetry`)
-- `Protocol` suffix = the structural interface to implement (`RegistryProtocol`, `TelemetryProtocol`, …)
-- Submodule = a battery that carries an external dependency (`llmbroker.sqlite.Registry`, `llmbroker.sqlite.Telemetry`)
-
-**Battery classification — one rule:** if a battery has no external dependency it is
-top-level (`import llmbroker` only); if it does it is a submodule you import
-explicitly (`import llmbroker.sqlite`). There is no list to memorize: the submodule
-import is the dependency declaration.
+**Where each kind lives:**
+- **Contracts** (`RegistryProtocol`, `SecretsProtocol`, …) live in `llmbroker.protocols` —
+  implement one to add a custom backend. They are not part of the top-level surface.
+- **Zero-dependency implementations** that work without any external backend live in
+  `llmbroker.standalone` and are re-exported for convenience: construct them directly as
+  `llmbroker.Registry`, `llmbroker.Secrets`, `llmbroker.Telemetry` (plus variants
+  `DictSecrets`, `NoTelemetry`, `JsonlTelemetry`). This is the simplest usage — a config
+  file, env-var secrets, logging telemetry, no integration code.
+- **Dependency-carrying backends** are submodules imported explicitly
+  (`llmbroker.sqlite.Registry`, …), one subpackage per driver (`llmbroker.sqlite`, and
+  `llmbroker.postgres`/`redis`/… as they ship). Importing the submodule is the dependency
+  declaration: a bare `import llmbroker` never pulls in a driver.
 
 ---
 
@@ -60,13 +62,13 @@ import is the dependency declaration.
 - `SeedPolicy` enum (`IF_EMPTY` / `ADD` / `MIRROR`) — controls how the constructor
   `seed=` source reconciles the registry on first `ensure_pool`. See "Provider
   seeding" below.
-- **Per-user scoping** — a single `user_id` on the broker scopes every port call to
-  one tenant; all batteries scope records exactly to it (`None` = unscoped /
+- **Per-user scoping** — a single `user_id` on the broker scopes every backend call to
+  one tenant; all backends scope records exactly to it (`None` = unscoped /
   single-tenant). See "Per-user scoping" below.
 
 ### Batteries
 
-| Port | Implemented batteries |
+| Backend | Implemented |
 |---|---|
 | Registry | `Registry(path)` (file, `.toml`/`.json`), `llmbroker.sqlite.Registry` (CRUD-capable) |
 | Secrets | `Secrets()` (env), `DictSecrets(mapping)` (test double), `llmbroker.sqlite.Secrets` |
@@ -152,9 +154,9 @@ driving constraint is correctness of cooldown state: a cooldown is the health of
 or one user's 429 would cool an LLM for everyone.
 
 - **One knob.** Tenancy is selected by a single `user_id` supplied to the broker;
-  the broker threads it into every port call. There is no per-port tenancy wiring to
-  keep in sync, so key-scope and state-scope cannot drift apart.
-- **`user_id` is request-scoped, not infrastructure.** Ports (registry, secrets,
+  the broker threads it into every backend call. There is no per-backend tenancy wiring
+  to keep in sync, so key-scope and state-scope cannot drift apart.
+- **`user_id` is request-scoped, not infrastructure.** Backends (registry, secrets,
   state store, telemetry) are constructed once as app-lifetime infrastructure and
   shared; in a stateless server the broker is cheap and constructed *per request*
   with that request's `user_id`.

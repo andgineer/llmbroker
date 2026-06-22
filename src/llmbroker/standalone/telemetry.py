@@ -1,39 +1,19 @@
-"""Telemetry port protocols and the zero-dependency batteries.
+"""Logging and JSON-lines telemetry — no external backend.
 
-``Telemetry()`` (log, default) and ``NoTelemetry()`` implement only the
-minimal contract. ``JsonlTelemetry(path)`` appends JSON lines. ``record_quality``
-on the log/jsonl batteries appends a distinct quality record, never a Call.
-Queryable backends (sqlite, …) implement ``QueryableTelemetryProtocol``.
+``Telemetry()`` (log, default) and ``NoTelemetry()`` implement only the minimal
+contract. ``JsonlTelemetry(path)`` appends JSON lines. ``record_quality`` on
+these appends a distinct quality record, never a Call.
 """
 
 import asyncio
 import json
 import logging
 from dataclasses import asdict
-from datetime import datetime
 from pathlib import Path
-from typing import Protocol, runtime_checkable
 
-from llmbroker.models import Call, LLMMetrics
+from llmbroker.models import Call
 
 logger = logging.getLogger("llmbroker.telemetry")
-
-
-class TelemetryProtocol(Protocol):
-    async def record(self, call: Call) -> None: ...
-    async def record_quality(self, call_id: str, score: float) -> None: ...
-
-
-@runtime_checkable
-class QueryableTelemetryProtocol(TelemetryProtocol, Protocol):
-    async def metrics(
-        self,
-        *,
-        since: datetime | None = None,
-        user_id: int | str | None = None,
-    ) -> dict[str, LLMMetrics]: ...
-    async def calls(self, *, limit: int, user_id: int | str | None = None) -> list[Call]: ...
-    async def purge_calls(self, *, before: datetime) -> int: ...
 
 
 class Telemetry:

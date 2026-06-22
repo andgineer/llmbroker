@@ -4,7 +4,7 @@ import asyncio
 import json
 
 from llmbroker.models import Call, CallStatus
-from llmbroker.telemetry import JsonlTelemetry, NoTelemetry
+from llmbroker.standalone.telemetry import JsonlTelemetry, NoTelemetry
 
 
 def _call(call_id="c1", llm_name="p1"):

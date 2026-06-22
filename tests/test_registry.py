@@ -7,7 +7,7 @@ import llmbroker.sqlite
 import pytest
 
 from llmbroker.models import LLMConfig
-from llmbroker.registry import Registry
+from llmbroker.standalone.registry import Registry
 
 
 def test_load_toml(tmp_path):
@@ -138,5 +138,51 @@ def test_sqlite_registry_load_none_returns_only_unscoped(tmp_path):
         alice_rows = await reg.load("alice")
         assert [r.name for r in none_rows] == ["shared"]
         assert [r.name for r in alice_rows] == ["alice-llm"]
+
+    asyncio.run(run())
+
+
+def test_sqlite_registry_get_existing(tmp_path):
+    db = str(tmp_path / "b.db")
+    reg = llmbroker.sqlite.Registry(db)
+
+    async def run():
+        await reg.add(_cfg("p1", "https://x/v1"))
+        result = await reg.get("p1")
+        assert result is not None
+        assert result.name == "p1"
+        assert result.base_url == "https://x/v1"
+
+    asyncio.run(run())
+
+
+def test_sqlite_registry_get_missing_returns_none(tmp_path):
+    db = str(tmp_path / "b.db")
+    reg = llmbroker.sqlite.Registry(db)
+
+    async def run():
+        assert await reg.get("ghost") is None
+
+    asyncio.run(run())
+
+
+def test_sqlite_registry_update_missing_raises_key_error(tmp_path):
+    db = str(tmp_path / "b.db")
+    reg = llmbroker.sqlite.Registry(db)
+
+    async def run():
+        with pytest.raises(KeyError):
+            await reg.update(_cfg("ghost"))
+
+    asyncio.run(run())
+
+
+def test_sqlite_registry_remove_missing_raises_key_error(tmp_path):
+    db = str(tmp_path / "b.db")
+    reg = llmbroker.sqlite.Registry(db)
+
+    async def run():
+        with pytest.raises(KeyError):
+            await reg.remove("ghost")
 
     asyncio.run(run())

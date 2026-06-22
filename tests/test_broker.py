@@ -9,11 +9,12 @@ import httpx
 import llmbroker.sqlite
 import pytest
 
-from llmbroker.broker import AllLLMsFailedError, AsyncBroker, NoLLMAvailableError
+from llmbroker.broker import AsyncBroker
+from llmbroker.exceptions import AllLLMsFailedError, NoLLMAvailableError
 from llmbroker.models import Call, CallStatus, LifecyclePhase, LLMConfig, LLMState, SeedPolicy
-from llmbroker.registry import Registry as FileRegistry
-from llmbroker.secrets import DictSecrets
-from llmbroker.telemetry import NoTelemetry
+from llmbroker.standalone.registry import Registry as FileRegistry
+from llmbroker.standalone.secrets import DictSecrets
+from llmbroker.standalone.telemetry import NoTelemetry
 
 
 def _registry(tmp_path, entries=None):
@@ -135,7 +136,7 @@ def test_chat_happy_path(tmp_path):
         async with AsyncBroker(
             registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
         ) as broker:
-            with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_ok("world")):
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("world")):
                 result = await broker.chat([{"role": "user", "content": "hi"}])
                 assert result.text == "world"
 
@@ -147,7 +148,7 @@ def test_ask_delegates_to_chat(tmp_path):
         async with AsyncBroker(
             registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
         ) as broker:
-            with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_ok("yes")):
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("yes")):
                 result = await broker.ask("prompt")
                 assert result.text == "yes"
 
@@ -168,7 +169,7 @@ def test_chat_429_wait0_raises_no_llm_available(tmp_path):
         async with AsyncBroker(
             registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
         ) as broker:
-            with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_error(429)):
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(429)):
                 with pytest.raises(NoLLMAvailableError):
                     await broker.chat([{"role": "user", "content": "hi"}], wait=0)
 
@@ -180,7 +181,7 @@ def test_chat_429_increments_fail_count(tmp_path):
         async with AsyncBroker(
             registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
         ) as broker:
-            with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_error(429)):
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(429)):
                 with pytest.raises(NoLLMAvailableError):
                     await broker.chat([{"role": "user", "content": "hi"}], wait=0)
             state = await (await broker.get("p1")).state()
@@ -195,7 +196,7 @@ def test_chat_500_raises_all_llms_failed(tmp_path):
         async with AsyncBroker(
             registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
         ) as broker:
-            with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_error(500)):
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(500)):
                 with pytest.raises(AllLLMsFailedError):
                     await broker.chat([{"role": "user", "content": "hi"}])
 
@@ -218,7 +219,7 @@ def test_result_record_quality_does_not_raise(tmp_path):
         async with AsyncBroker(
             registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
         ) as broker:
-            with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_ok("hi")):
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
                 result = await broker.chat([{"role": "user", "content": "x"}])
                 await result.record_quality(1.0)
 
@@ -269,13 +270,13 @@ def test_update_changes_config_without_extra_queue_slot(tmp_path):
         ) as broker:
             original = LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")
             await broker.add(original)
-            queue_size_before = broker._queue.qsize()
+            queue_size_before = broker._pool._queue.qsize()
 
             updated = LLMConfig(name="p1", base_url="https://new/v1", model="m2", api_key_ref="K")
             await broker.update(updated)
 
             assert (await broker.get("p1")).config.base_url == "https://new/v1"
-            assert broker._queue.qsize() == queue_size_before  # no extra slot enqueued
+            assert broker._pool._queue.qsize() == queue_size_before  # no extra slot enqueued
 
     asyncio.run(run())
 
@@ -579,7 +580,7 @@ def test_cooldown_invisible_to_other_user(tmp_path):
             telemetry=NoTelemetry(),
             user_id="alice",
         ) as broker_a:
-            with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_error(429)):
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(429)):
                 with pytest.raises(NoLLMAvailableError):
                     await broker_a.chat([{"role": "user", "content": "hi"}], wait=0)
             state_a = await (await broker_a.get("p1")).state()
@@ -648,8 +649,8 @@ def test_two_users_have_isolated_secrets(tmp_path):
             telemetry=NoTelemetry(),
         )
         async with broker_a, broker_b:
-            assert broker_a._resolved_keys["llm"] == "alice-secret"
-            assert broker_b._resolved_keys["llm"] == "bob-secret"
+            assert broker_a._pool._resolved_keys["llm"] == "alice-secret"
+            assert broker_b._pool._resolved_keys["llm"] == "bob-secret"
 
     asyncio.run(run())
 

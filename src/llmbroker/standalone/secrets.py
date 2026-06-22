@@ -1,32 +1,16 @@
-"""Secrets port protocols and the zero-dependency batteries.
+"""Env-var and in-memory secrets resolvers — read-only, no external backend.
 
 ``Secrets()`` resolves ``api_key_ref`` from ``os.environ``; ``DictSecrets``
-from a mapping. Both are read-only — ``.set()`` raises
-``SecretsReadOnlyError``. A plain callable is accepted and adapted.
+from a mapping. Both are read-only. A plain callable is accepted and adapted.
 """
 
 import inspect
 import os
 from collections.abc import Awaitable, Callable
-from typing import Protocol, cast, runtime_checkable
+from typing import cast
 
-
-class SecretsReadOnlyError(Exception):
-    """Raised when ``.set()`` is called on a read-only secrets battery."""
-
-
-class UserScopeError(Exception):
-    """Raised when ``user_id`` is ``None`` and ``require_user_id=True``."""
-
-
-@runtime_checkable
-class SecretsProtocol(Protocol):
-    async def resolve(self, ref: str, user_id: int | str | None = None) -> str: ...
-
-
-@runtime_checkable
-class MutableSecretsProtocol(SecretsProtocol, Protocol):
-    async def set(self, ref: str, value: str, user_id: int | str | None = None) -> None: ...
+from llmbroker.exceptions import UserScopeError
+from llmbroker.protocols.secrets import SecretsProtocol
 
 
 class Secrets:

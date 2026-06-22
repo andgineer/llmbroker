@@ -1,8 +1,8 @@
 """Private in-memory per-LLM live state.
 
-Always-on internal detail, not a public port. Tracks cooldown_until and
-fail_count per LLM name; ``phase`` is always DERIVED for AVAILABLE/COOLING
-(never stored).
+Always-on internal detail of the broker, not a public backend. Tracks
+cooldown_until and fail_count per LLM name; ``phase`` is always DERIVED for
+AVAILABLE/COOLING (never stored).
 """
 
 from datetime import UTC, datetime

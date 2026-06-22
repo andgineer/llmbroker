@@ -10,9 +10,12 @@ import json
 from collections.abc import Callable, Mapping
 from typing import Any
 
+import httpx
+
 from llmbroker.models import LLMConfig, Usage
 
 _CHAT_PATH = "/chat/completions"
+_HTTP_TIMEOUT = 60.0
 
 
 def is_rate_limit(status_code: int) -> bool:
@@ -66,6 +69,23 @@ def parse_usage(data: dict) -> Usage | None:
         total_tokens=raw.get("total_tokens"),
         extra=extra or None,
     )
+
+
+async def call_provider(
+    config: LLMConfig,
+    api_key: str,
+    messages: list[dict],
+    tools: list[dict] | None,
+) -> tuple[str, list[dict] | None, Usage | None]:
+    """POST an OpenAI-compatible completion and return (content, tool_calls, usage)."""
+    url, headers, body = build_chat_request(config, api_key, messages, tools)
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+        resp = await client.post(url, headers=headers, json=body)
+        resp.raise_for_status()
+        data = resp.json()
+    message = message_from_response(data)
+    content = str(message.get("content") or "")
+    return content, parse_tool_calls(message), parse_usage(data)
 
 
 def parse_tool_calls(message: dict) -> list[dict] | None:
@@ -155,6 +175,7 @@ def run_tool_loop(
 __all__ = [
     "arun_tool_loop",
     "build_chat_request",
+    "call_provider",
     "execute_tool_calls",
     "is_rate_limit",
     "message_from_response",

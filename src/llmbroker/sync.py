@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from llmbroker.broker import AsyncBroker, AsyncResult, Optimizer
+from llmbroker.broker import AsyncBroker, AsyncResult
 from llmbroker.models import (
     Call,
     LLMConfig,
@@ -23,10 +23,12 @@ from llmbroker.models import (
     LLMState,
     SeedPolicy,
 )
-from llmbroker.registry import Registry, RegistryProtocol
-from llmbroker.secrets import SecretsProtocol
-from llmbroker.state_store import StateStoreProtocol
-from llmbroker.telemetry import TelemetryProtocol
+from llmbroker.optimizer import Optimizer
+from llmbroker.protocols.registry import RegistryProtocol
+from llmbroker.protocols.secrets import SecretsProtocol
+from llmbroker.protocols.state_store import StateStoreProtocol
+from llmbroker.protocols.telemetry import TelemetryProtocol
+from llmbroker.standalone.registry import Registry
 
 
 def _run_loop(loop: asyncio.AbstractEventLoop) -> None:

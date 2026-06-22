@@ -6,14 +6,10 @@ import llmbroker
 import llmbroker.sqlite
 import pytest
 from llmbroker.models import LLMConfig
-from llmbroker.registry import Registry as FileRegistry
-from llmbroker.secrets import (
-    DictSecrets,
-    MutableSecretsProtocol,
-    Secrets,
-    UserScopeError,
-    as_secrets,
-)
+from llmbroker.standalone.registry import Registry as FileRegistry
+from llmbroker.exceptions import UserScopeError
+from llmbroker.protocols.secrets import MutableSecretsProtocol
+from llmbroker.standalone.secrets import DictSecrets, Secrets, as_secrets
 
 
 def test_env_secrets_resolves(monkeypatch):
@@ -79,7 +75,7 @@ def test_broker_resolves_key_not_on_config(tmp_path, monkeypatch):
             assert cfg.api_key_ref == "MY_API_KEY"
             assert "the-secret" not in (cfg.api_key_ref, cfg.base_url, cfg.model, cfg.name)
             # the resolved key lives only in the private map
-            assert broker._resolved_keys["p1"] == "the-secret"
+            assert broker._pool._resolved_keys["p1"] == "the-secret"
 
     asyncio.run(run())
 

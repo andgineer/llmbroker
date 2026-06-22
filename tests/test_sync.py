@@ -8,12 +8,12 @@ import httpx
 import llmbroker.sqlite
 import pytest
 
-from llmbroker.broker import AllLLMsFailedError
+from llmbroker.exceptions import AllLLMsFailedError
 from llmbroker.models import LifecyclePhase, LLMConfig, SeedPolicy
-from llmbroker.registry import Registry as FileRegistry
-from llmbroker.secrets import DictSecrets
+from llmbroker.standalone.registry import Registry as FileRegistry
+from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.sync import Broker
-from llmbroker.telemetry import NoTelemetry
+from llmbroker.standalone.telemetry import NoTelemetry
 
 
 def _registry(tmp_path, name="p1"):
@@ -79,7 +79,7 @@ def test_broker_chat_happy_path(tmp_path):
     with Broker(
         registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
     ) as broker:
-        with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_ok("sync-hello")):
+        with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("sync-hello")):
             result = broker.chat([{"role": "user", "content": "hi"}])
             assert result.text == "sync-hello"
 
@@ -88,7 +88,7 @@ def test_broker_ask_happy_path(tmp_path):
     with Broker(
         registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
     ) as broker:
-        with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_ok("yes")):
+        with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("yes")):
             result = broker.ask("question")
             assert result.text == "yes"
 
@@ -97,7 +97,7 @@ def test_broker_chat_500_raises_all_failed(tmp_path):
     with Broker(
         registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
     ) as broker:
-        with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_error(500)):
+        with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(500)):
             with pytest.raises(AllLLMsFailedError):
                 broker.chat([{"role": "user", "content": "hi"}])
 
@@ -106,7 +106,7 @@ def test_result_record_quality_does_not_raise(tmp_path):
     with Broker(
         registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
     ) as broker:
-        with patch("llmbroker.broker.httpx.AsyncClient", return_value=_http_ok("hi")):
+        with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
             result = broker.chat([{"role": "user", "content": "x"}])
             result.record_quality(1.0)
 

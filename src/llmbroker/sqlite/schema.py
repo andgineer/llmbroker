@@ -1,4 +1,4 @@
-"""Version-aware schema management for the sqlite battery.
+"""Version-aware schema management for the sqlite backend.
 
 ``ensure_schema`` is the single authority for the package's sqlite tables.
 Every object is ``llmbroker_``-prefixed and owned by ``ensure_schema``.

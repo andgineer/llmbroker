@@ -14,7 +14,7 @@ Three design targets:
   **never puts a secret in source**.
 - **Full universality.** Any storage, any secret backend, single-process or
   clustered — each is a shipped *battery*; the rare host with a non-standard
-  requirement implements one small port.
+  requirement implements one small backend.
 - **Self-tuning.** A background optimizer reads telemetry (per LLM *and per
   operation*) and **acts**: adjusts cooldowns, offlines and re-probes bad LLMs,
   routes each operation to the LLMs that empirically handle it best. A human is
@@ -57,8 +57,10 @@ regenerates `presets/` from a documented source with latency/limits/quality note
 ## Phase 3 — cross-node state + DB/secret batteries
 
 New batteries, each behind its own optional dependency extra
-(`llmbroker[redis]`, `llmbroker[postgres]`, …). Every backend is a submodule importing
-its driver at module top level, so `import llmbroker` stays driver-free.
+(`llmbroker[redis]`, `llmbroker[postgres]`, …). Each driver is its own subpackage
+(`llmbroker.postgres`, …), following the template `llmbroker.sqlite` sets: implement the
+contracts from `llmbroker.protocols`, and import the driver only inside that subpackage so
+a bare `import llmbroker` stays driver-free.
 
 - **Cross-node `StateStore`:** `llmbroker.redis`/`postgres`/`mongodb` `.StateStore`.
   The single-machine `sqlite.StateStore` already ships; these extend the same
