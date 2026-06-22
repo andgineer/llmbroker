@@ -270,12 +270,12 @@ secrets = llmbroker.sqlite.Secrets("broker.db", require_user_id=True)
 
 ```python
 # alembic/env.py
-import llmbroker.alembic
+import llmbroker.integrations.alembic
 
 context.configure(
     connection=connection,
     target_metadata=target_metadata,
-    include_object=llmbroker.alembic.include_object,
+    include_object=llmbroker.integrations.alembic.include_object,
 )
 ```
 
@@ -284,7 +284,7 @@ context.configure(
 ```python
 def include_object(object, name, type_, reflected, compare_to):
     return (
-        llmbroker.alembic.include_object(object, name, type_, reflected, compare_to)
+        llmbroker.integrations.alembic.include_object(object, name, type_, reflected, compare_to)
         and your_predicate(object, name, type_, reflected, compare_to)
     )
 ```

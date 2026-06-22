@@ -2,8 +2,11 @@
 
 Wire into ``alembic/env.py``::
 
-    import llmbroker.alembic
-    context.configure(..., include_object=llmbroker.alembic.include_object)
+    import llmbroker.integrations.alembic
+    context.configure(
+        ...,
+        include_object=llmbroker.integrations.alembic.include_object,
+    )
 
 Imports nothing from Alembic — it only inspects the object name.
 """

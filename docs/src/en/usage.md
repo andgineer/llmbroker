@@ -271,12 +271,12 @@ Add the hook so Alembic autogenerate ignores `llmbroker_*` tables:
 
 ```python
 # alembic/env.py
-import llmbroker.alembic
+import llmbroker.integrations.alembic
 
 context.configure(
     connection=connection,
     target_metadata=target_metadata,
-    include_object=llmbroker.alembic.include_object,
+    include_object=llmbroker.integrations.alembic.include_object,
 )
 ```
 
@@ -285,7 +285,7 @@ If you already have your own `include_object`, compose manually:
 ```python
 def include_object(object, name, type_, reflected, compare_to):
     return (
-        llmbroker.alembic.include_object(object, name, type_, reflected, compare_to)
+        llmbroker.integrations.alembic.include_object(object, name, type_, reflected, compare_to)
         and your_predicate(object, name, type_, reflected, compare_to)
     )
 ```

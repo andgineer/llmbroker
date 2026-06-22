@@ -33,7 +33,7 @@ Every host plugs in up to four backends; only the registry is required:
 
 ---
 
-## What is implemented (v0.0.7)
+## What is implemented
 
 ### Core
 
@@ -78,7 +78,7 @@ Every host plugs in up to four backends; only the registry is required:
 ### CLI
 
 - `python -m llmbroker env <config>` — emit a `.env` skeleton of `api_key_ref` names
-- `python -m llmbroker preset <name>` — **Phase 2, not yet implemented**
+- `python -m llmbroker preset <name>` — print a curated preset TOML to stdout (redirect to save: `preset freetier > freetier.toml`)
 
 ### DB schema
 
@@ -91,7 +91,7 @@ so the host's migration tool can ignore them by prefix.
 
 ### Host migration coexistence
 
-`llmbroker.alembic.include_object` — a predicate for Alembic's `include_object`
+`llmbroker.integrations.alembic.include_object` — a predicate for Alembic's `include_object`
 hook that excludes every `llmbroker_*` object from autogenerate. Zero Alembic
 dependency: the hook inspects the object name only.
 
@@ -101,7 +101,7 @@ dependency: the hook inspects the object name only.
 
 Curated LLM lists live in `presets/` at the repository root — not in the wheel.
 A list update is a plain commit, independent of any package version. The
-`preset <name>` CLI command (Phase 2) fetches from the repository default branch:
+`preset <name>` CLI command fetches from the repository default branch:
 
 ```
 https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/<name>.toml
@@ -196,7 +196,6 @@ or one user's 429 would cool an LLM for everyone.
 
 | Feature | Phase |
 |---|---|
-| `preset` CLI command (URL-fetch from repo) | P2 |
 | `StateStore` cross-node backends (redis, postgres, mongodb) | P3 |
 | Optimizer control loop (delay tuning, routing, offline/probe FSM) | P4 |
 | LLM-as-judge quality scoring | P5 |

@@ -1,5 +1,9 @@
 """Unit tests for the CLI (python -m llmbroker)."""
 
+import socket
+import urllib.error
+from unittest.mock import MagicMock, patch
+
 from llmbroker.cli import main
 
 
@@ -39,3 +43,75 @@ def test_env_missing_file_returns_1(tmp_path, capsys):
     rc = main(["env", str(tmp_path / "nope.toml")])
     assert rc == 1
     assert "error" in capsys.readouterr().err
+
+
+# --- preset command ---
+
+_FAKE_TOML = b'[[llms]]\nname="x"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
+
+
+def _mock_urlopen(content: bytes):
+    resp = MagicMock()
+    resp.read.return_value = content
+    resp.__enter__ = lambda s: s
+    resp.__exit__ = MagicMock()
+    return resp
+
+
+def test_preset_prints_to_stdout(capsys):
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_FAKE_TOML)):
+        rc = main(["preset", "freetier"])
+    assert rc == 0
+    assert capsys.readouterr().out == _FAKE_TOML.decode()
+
+
+def test_preset_not_found_returns_1(capsys):
+    exc = urllib.error.HTTPError(url="u", code=404, msg="Not Found", hdrs=None, fp=None)
+    with patch("urllib.request.urlopen", side_effect=exc):
+        rc = main(["preset", "nosuchpreset"])
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_preset_http_error_returns_1(capsys):
+    exc = urllib.error.HTTPError(url="u", code=500, msg="Server Error", hdrs=None, fp=None)
+    with patch("urllib.request.urlopen", side_effect=exc):
+        rc = main(["preset", "freetier"])
+    assert rc == 1
+    assert "HTTP 500" in capsys.readouterr().err
+
+
+def test_preset_url_error_returns_1(capsys):
+    exc = urllib.error.URLError(reason="Name or service not known")
+    with patch("urllib.request.urlopen", side_effect=exc):
+        rc = main(["preset", "freetier"])
+    assert rc == 1
+    assert "Name or service not known" in capsys.readouterr().err
+
+
+def test_preset_invalid_name_returns_1(capsys):
+    rc = main(["preset", "../secrets"])
+    assert rc == 1
+    assert "invalid preset name" in capsys.readouterr().err
+
+
+def test_preset_invalid_toml_returns_1(capsys):
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(b"not toml ]][")):
+        rc = main(["preset", "freetier"])
+    assert rc == 1
+    assert "not valid TOML" in capsys.readouterr().err
+
+
+def test_preset_invalid_encoding_returns_1(capsys):
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(b"\xff\xfe bad")):
+        rc = main(["preset", "freetier"])
+    assert rc == 1
+    assert "UTF-8" in capsys.readouterr().err
+
+
+def test_preset_timeout_returns_1(capsys):
+    exc = urllib.error.URLError(reason=socket.timeout("timed out"))
+    with patch("urllib.request.urlopen", side_effect=exc):
+        rc = main(["preset", "freetier"])
+    assert rc == 1
+    assert "timed out" in capsys.readouterr().err

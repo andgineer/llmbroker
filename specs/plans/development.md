@@ -25,32 +25,16 @@ Three design targets:
 
 ## Status
 
-Phase 1 shipped and stabilised through v0.0.7 (broker core, file/sqlite batteries,
-telemetry, secrets, seeding, the sync wrapper, the host-coexistence surface, the
-`state_store` seam + single-machine `llmbroker.sqlite.StateStore`, per-user scoping).
-The implemented surface lives in
+Phases 1–2 shipped (broker core, file/sqlite batteries, telemetry, secrets, seeding,
+the sync wrapper, the host-coexistence surface, the `state_store` seam +
+single-machine `llmbroker.sqlite.StateStore`, per-user scoping, the `preset` CLI
+command). The implemented surface lives in
 [`specs/reference/architecture.md`](../reference/architecture.md). **Everything below
 is remaining work only.**
 
 Invariants for every phase: zero host-specific imports, every DB object
 `llmbroker_`-prefixed, `ensure_schema` as sole schema owner, the Alembic coexistence
 hook. Any coupling to a specific host application is a defect.
-
----
-
-## Phase 2 — `preset` CLI + catalog refresh
-
-Add the `preset <name>` subcommand to `cli.py`, fetching from the repository's
-`presets/` directory on the default branch:
-
-```
-https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/<name>.toml
-```
-
-`presets/` lives at the repository root (not in `src/`, not bundled in the wheel) so a
-list update is a plain commit independent of any package version. Add more curated
-lists beyond `freetier`/`smart-freetier`. Optional: a maintainer command that
-regenerates `presets/` from a documented source with latency/limits/quality notes.
 
 ---
 

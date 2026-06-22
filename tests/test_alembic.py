@@ -1,6 +1,6 @@
 """Tests for the Alembic autogenerate filter."""
 
-from llmbroker.alembic import include_object
+from llmbroker.integrations.alembic import include_object
 
 
 def test_llmbroker_table_excluded():
