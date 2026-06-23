@@ -32,7 +32,7 @@ llmbroker env llms.toml
 ```
 
 These are only the variable names — get the actual keys from each provider and set them.
-A `.env` file is the simplest path, but secrets can come from any backend (environment,
+A `.env` file is the simplest path, but API key can come from any Secrets backend (environment, DB,
 AWS, Vault, …).
 
 ### Where to get the keys

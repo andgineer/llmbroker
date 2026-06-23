@@ -35,7 +35,7 @@ The same `Broker` scales straight to a server or cluster — add Redis or Postgr
 - **Async-first** — `llmbroker.AsyncBroker` built on asyncio for FastAPI, agents, and async workers;
   `llmbroker.Broker` wraps the same engine in a blocking API for plain scripts.
 - **Pluggable backends** — swap registry, state store, and telemetry independently: DB, Redis etc.
-- **Secrets can come from anywhere** — environment variables, AWS, Vault, your own store.
+- **API keys configurable storage** — environment variables, DB, AWS, Vault, your own store.
 - **Multi-user mode** -- optionally separate secrets and LLMs list for each application user.
 
 # Documentation
