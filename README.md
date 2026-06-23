@@ -14,7 +14,7 @@ print(llms.ask("Explain Python decorators in one sentence").text)
 
 Put your LLMs in `llms.toml` — or grab a preset: `llmbroker preset freetier > llms.toml`.
 
-The only setup is the API keys. Ask llmbroker which ones your pool needs:
+The only setup is the API keys. Ask llmbroker which ones your pool needs — each with a note on where to get it:
 
 ```
 llmbroker env llms.toml > .env

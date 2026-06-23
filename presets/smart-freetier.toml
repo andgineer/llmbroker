@@ -24,3 +24,9 @@ name        = "google-gemini-2.5-flash"
 base_url    = "https://generativelanguage.googleapis.com/v1beta/openai"
 model       = "gemini-2.5-flash"
 api_key_ref = "GEMINI_API_KEY"
+
+# How to obtain each key (markdown: link + short steps), keyed by api_key_ref.
+[keys]
+GROQ_API_KEY = "Create a free API key at [groq](https://console.groq.com/keys) (sign in, then New API Key)."
+OPENROUTER_API_KEY = "Create a free API key at [openrouter](https://openrouter.ai/keys)."
+GEMINI_API_KEY = "Create a free API key at [aistudio](https://aistudio.google.com/apikey) (Google AI Studio)."

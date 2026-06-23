@@ -7,6 +7,7 @@ import llmbroker.sqlite
 import pytest
 
 from llmbroker.models import LLMConfig
+from llmbroker.protocols.registry import KeyHelpProtocol
 from llmbroker.standalone.registry import Registry
 
 
@@ -73,6 +74,38 @@ def test_load_empty_llms_section(tmp_path):
     f = tmp_path / "llms.toml"
     f.write_text("")
     assert asyncio.run(Registry(f).load()) == []
+
+
+# ── Key acquisition help (KeyHelpProtocol) ────────────────────────────────────
+
+
+def test_key_help_toml(tmp_path):
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[llms]]\nname="g"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
+        '[keys]\nK="Get it at https://example.com/keys"\n'
+    )
+    assert asyncio.run(Registry(f).key_help()) == {"K": "Get it at https://example.com/keys"}
+
+
+def test_key_help_json(tmp_path):
+    f = tmp_path / "llms.json"
+    f.write_text(json.dumps({"llms": [], "keys": {"K": "see https://x"}}))
+    assert asyncio.run(Registry(f).key_help()) == {"K": "see https://x"}
+
+
+def test_key_help_absent_returns_empty(tmp_path):
+    f = tmp_path / "llms.toml"
+    f.write_text('[[llms]]\nname="g"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n')
+    assert asyncio.run(Registry(f).key_help()) == {}
+
+
+def test_key_help_missing_file_returns_empty(tmp_path):
+    assert asyncio.run(Registry(tmp_path / "nope.toml").key_help()) == {}
+
+
+def test_registry_satisfies_keyhelp_protocol(tmp_path):
+    assert isinstance(Registry(tmp_path / "x.toml"), KeyHelpProtocol)
 
 
 # ── SQLite registry per-user scoping tests ────────────────────────────────────

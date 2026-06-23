@@ -1,8 +1,8 @@
 # Использование
 
-## Конфигурация пула LLM
+## Конфигурация
 
-Создайте файл `llms.toml` — список endpoint-ов:
+Создайте файл `llms.toml` — список LLM:
 
 ```toml
 [[llms]]
@@ -34,74 +34,73 @@ llmbroker env llms.toml
 `.env`-файл — самый простой путь, но секреты могут браться из любого бэкенда (окружение,
 AWS, Vault, …).
 
-## Синхронное использование
+### Где взять ключи
 
-```python
-import llmbroker
+Если в конфиге есть таблица `[keys]` — как в готовых пресетах — `llmbroker env`
+печатает над каждой переменной комментарий, где взять этот ключ:
 
-llms = llmbroker.Broker("llms.toml")
-
-# Один вопрос
-reply = llms.ask("Переведи на английский: Привет мир")
-print(reply.text)
-
-# Полный messages API
-reply = llms.chat([
-    {"role": "system", "content": "Ты специалист по краткому обьяснению."},
-    {"role": "user",   "content": "Что такое Python?"},
-])
-print(reply.text)
+```
+# GROQ_API_KEY — Create a free API key at [groq](https://console.groq.com/keys) (sign in, then New API Key).
+GROQ_API_KEY=
 ```
 
-Синхронный `Broker` запускает внутренний цикл событий в фоновом потоке — удобен
-для скриптов и синхронных приложений.
+Чтобы показать те же подсказки в своём UI, прочитайте их программно из файлового реестра:
 
-## Асинхронное использование
+```python
+import asyncio
+import llmbroker
+
+registry = llmbroker.Registry("llms.toml")
+hints = asyncio.run(registry.key_help())
+# {"GROQ_API_KEY": "Create a free API key at [groq](https://console.groq.com/keys) ...", ...}
+```
+
+`key_help()` возвращает по одной markdown-строке (ссылка + шаги) на каждый `api_key_ref`.
+Это опциональная возможность реестра (`KeyHelpProtocol` в `llmbroker.protocols.registry`):
+реестры с такими данными её предоставляют, остальные — нет; проверяйте через
+`isinstance(registry, KeyHelpProtocol)`, если принимаете произвольные реестры. Она не
+зависит от брокера — реестр не нужно передавать как `seed=`, чтобы прочитать подсказки.
+
+## Вызов брокера
+
+`AsyncBroker` — основной движок; используйте его в FastAPI, агентах и асинхронных
+воркерах:
 
 ```python
 import llmbroker
 
 async def main():
     async with llmbroker.AsyncBroker("llms.toml") as llms:
-        reply = await llms.ask("Что такое asyncio?")
+        # Один вопрос
+        reply = await llms.ask("Переведи на английский: Привет мир")
+        print(reply.text)
+
+        # Полный messages API
+        reply = await llms.chat([
+            {"role": "system", "content": "Ты специалист по краткому объяснению."},
+            {"role": "user",   "content": "Что такое Python?"},
+        ])
         print(reply.text)
 ```
 
-`AsyncBroker` — основной движок; используйте его в FastAPI, агентах и фоновых
-воркерах.
+### Синхронная обёртка
 
-## Закрытие брокера
-
-Для разовых скриптов закрывать брокер не нужно — фоновый поток завершится вместе
-с процессом.
-
-Закрывайте брокер явно (`with` или `try/finally` с `.close()`), если выполняется
-хотя бы одно условие:
-
-- **долгоживущий процесс создаёт брокеры повторно** (в обработчике запроса,
-  в цикле) — иначе на каждый экземпляр утекает фоновый поток;
-- **подключён внешний сервис (Redis, Postgres)** — у него постоянное соединение,
-  которое надёжно закрывается только явно.
+`Broker` оборачивает тот же движок в блокирующий API — для скриптов и синхронных
+приложений. Он запускает внутренний цикл событий в фоновом потоке; методы те же,
+только без `await`:
 
 ```python
-# Контекстный менеджер — предпочтительно
-with llmbroker.Broker("llms.toml") as llms:
-    reply = llms.ask("...")
+import llmbroker
 
-# Или вручную, когда with неудобен
-llms = llmbroker.Broker(registry=..., state_store=...)
-try:
-    reply = llms.ask("...")
-finally:
-    llms.close()
+llms = llmbroker.Broker("llms.toml")
+print(llms.ask("Переведи на английский: Привет мир").text)
 ```
 
-`AsyncBroker` — то же самое через `async with` или `await llms.aclose()`.
+## Управление запросами
 
-## Таймаут ожидания свободного слота
+### Таймаут ожидания свободного слота
 
-По умолчанию вызов ждёт, пока освободится любой endpoint. Чтобы ограничить
-ожидание:
+По умолчанию вызов ждёт, пока освободится любой LLM. Чтобы ограничить ожидание:
 
 ```python
 from llmbroker import NoLLMAvailableError
@@ -114,7 +113,18 @@ except NoLLMAvailableError:
 
 `wait=0` — немедленный отказ, если нет свободного слота.
 
-## Инструменты (tool calls)
+### Оценка качества ответа
+
+```python
+reply = llms.ask("Классифицируй как позитивный или негативный: 'Быстрая доставка, отличная упаковка!'")
+# ... проверяем результат ...
+reply.record_quality(1.0)   # хороший ответ
+reply.record_quality(0.0)   # неудачный
+```
+
+Оценка сохраняется в телеметрию (при использовании SQLite-бэкенда).
+
+## Инструменты и агенты
 
 `run_tool_loop` / `arun_tool_loop` берут на себя весь цикл: вызывают модель,
 выполняют запрошенные инструменты через `dispatch` и повторяют до получения
@@ -151,18 +161,37 @@ print(reply.text)
 
 Асинхронная версия — `await llmbroker.arun_tool_loop(...)`.
 
-## Оценка качества ответа
+## Продакшен
+
+### Закрытие брокера
+
+Для разовых скриптов закрывать брокер не нужно — фоновый поток завершится вместе
+с процессом.
+
+Закрывайте брокер явно (`with` или `try/finally` с `.close()`), если выполняется
+хотя бы одно условие:
+
+- **долгоживущий процесс создаёт брокеры повторно** (в обработчике запроса,
+  в цикле) — иначе на каждый экземпляр утекает фоновый поток;
+- **подключён внешний сервис (Redis, Postgres)** — у него постоянное соединение,
+  которое надёжно закрывается только явно.
 
 ```python
-reply = llms.ask("Классифицируй как позитивный или негативный: 'Быстрая доставка, отличная упаковка!'")
-# ... проверяем результат ...
-reply.record_quality(1.0)   # хороший ответ
-reply.record_quality(0.0)   # неудачный
+# Контекстный менеджер — предпочтительно
+with llmbroker.Broker("llms.toml") as llms:
+    reply = llms.ask("...")
+
+# Или вручную, когда with неудобен
+llms = llmbroker.Broker(registry=..., state_store=...)
+try:
+    reply = llms.ask("...")
+finally:
+    llms.close()
 ```
 
-Оценка сохраняется в телеметрию (при использовании SQLite-бэкенда).
+`AsyncBroker` — то же самое через `async with` или `await llms.aclose()`.
 
-## SQLite-бэкенд: история вызовов и управление пулом
+### SQLite-бэкенд: история вызовов и управление пулом
 
 ```python
 import llmbroker
@@ -181,14 +210,14 @@ with llmbroker.Broker(
     for name, entry in llms.snapshot().items():
         print(name, entry.state.phase, entry.metrics)
 
-    # Получить один endpoint
+    # Получить один LLM
     llm = llms.get("groq-llama")
     print(llm.config, llm.state())
 
-    # Количество загруженных endpoints
+    # Количество загруженных LLM
     print(llms.count())
 
-    # Добавить / обновить / удалить endpoint во время работы
+    # Добавить / обновить / удалить LLM во время работы
     from llmbroker.models import LLMConfig
     llms.add(LLMConfig(
         name="new-llm",
@@ -217,7 +246,7 @@ with llmbroker.Broker(
 | `SeedPolicy.IF_EMPTY` (по умолчанию) | заполнить только если DB пуста, иначе ничего |
 | `SeedPolicy.ADD` | только добавить новые по имени, существующие не трогать |
 
-## Мультипользовательский режим (per-user scoping)
+### Мультипользовательский режим (per-user scoping)
 
 В многопользовательском приложении у каждого пользователя могут быть свои
 API-ключи и свой набор LLM-записей — при этом используется одна общая база данных.

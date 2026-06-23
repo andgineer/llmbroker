@@ -16,9 +16,7 @@ _PRESET_URL = "https://raw.githubusercontent.com/andgineer/llmbroker/main/preset
 _PRESET_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
-def _api_key_refs(toml_path: Path) -> list[str]:
-    with toml_path.open("rb") as fh:
-        data = tomllib.load(fh)
+def _api_key_refs(data: dict) -> list[str]:
     refs: list[str] = []
     for entry in data.get("llms", []):
         ref = entry.get("api_key_ref")
@@ -32,7 +30,18 @@ def _cmd_env(args: argparse.Namespace) -> int:
     if not toml_path.exists():
         print(f"error: no such file: {toml_path}", file=sys.stderr)
         return 1
-    lines = [f"{ref}=" for ref in _api_key_refs(toml_path)]
+    with toml_path.open("rb") as fh:
+        data = tomllib.load(fh)
+    key_help = data.get("keys", {})
+    if not isinstance(key_help, dict):
+        key_help = {}
+    lines: list[str] = []
+    for ref in _api_key_refs(data):
+        help_text = key_help.get(ref)
+        if isinstance(help_text, str) and help_text.strip():
+            for i, line in enumerate(help_text.splitlines()):
+                lines.append(f"# {ref} — {line}" if i == 0 else f"# {line}")
+        lines.append(f"{ref}=")
     print("\n".join(lines))
     return 0
 

@@ -7,10 +7,11 @@ llmbroker env llms.toml
 ```
 
 Читает файл конфигурации и выводит имена переменных окружения (`api_key_ref`)
-которые нужно заполнить:
+которые нужно заполнить. Если в конфиге есть секция `[keys]`, перед каждой
+переменной выводится комментарий (с именем переменной в начале), где её взять:
 
 ```
-GROQ_API_KEY=
+# OPENROUTER_API_KEY — Create a free API key at [openrouter](https://openrouter.ai/keys).
 OPENROUTER_API_KEY=
 ```
 

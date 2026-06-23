@@ -20,6 +20,21 @@ def _config_from_entry(entry: dict) -> LLMConfig | None:
     )
 
 
+def _read_data(path: Path) -> dict:
+    """Parse the file into a dict; ``{}`` if missing, ``ValueError`` if unsupported."""
+    if not path.exists():
+        return {}
+    suffix = path.suffix.lower()
+    if suffix == ".toml":
+        with path.open("rb") as fh:
+            return tomllib.load(fh)
+    if suffix == ".json":
+        return json.loads(path.read_text(encoding="utf-8"))
+    raise ValueError(
+        f"Registry: unsupported config extension {suffix!r} for {path} — expected .toml or .json",
+    )
+
+
 class Registry:
     """File-backed read-only registry — ``.toml`` / ``.json`` by extension."""
 
@@ -27,23 +42,17 @@ class Registry:
         self._path = Path(path)
 
     async def load(self, user_id: int | str | None = None) -> list[LLMConfig]:  # noqa: ARG002
-        path = self._path
-        if not path.exists():
-            return []
-        suffix = path.suffix.lower()
-        if suffix == ".toml":
-            with path.open("rb") as fh:
-                data = tomllib.load(fh)
-        elif suffix == ".json":
-            data = json.loads(path.read_text(encoding="utf-8"))
-        else:
-            raise ValueError(
-                f"Registry: unsupported config extension {suffix!r} for {path} —"
-                " expected .toml or .json",
-            )
+        data = _read_data(self._path)
         result: list[LLMConfig] = []
         for entry in data.get("llms", []):
             cfg = _config_from_entry(entry)
             if cfg is not None:
                 result.append(cfg)
         return result
+
+    async def key_help(self) -> dict[str, str]:
+        """Per-key markdown help from the ``[keys]`` table, keyed by ``api_key_ref``."""
+        raw = _read_data(self._path).get("keys", {})
+        if not isinstance(raw, dict):
+            return {}
+        return {str(ref): text for ref, text in raw.items() if isinstance(text, str)}

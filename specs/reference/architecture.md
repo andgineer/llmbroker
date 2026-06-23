@@ -109,6 +109,28 @@ https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/<name>.toml
 
 ---
 
+## Key acquisition help
+
+A config source may carry, per `api_key_ref`, a short markdown string describing
+how to obtain that key (a link plus a step or two). It is keyed by the env-var
+name, not by LLM, because one key is typically shared by several LLMs. The format
+is deliberately just markdown — no structured provider/free/url fields to keep in
+sync.
+
+The same data feeds two consumers:
+
+- the `env` CLI prints each string as a comment above its variable, prefixed with
+  the variable name so the comment is unambiguously tied to its key;
+- a host can pull the strings to render its own setup UI.
+
+Surfacing it is an **optional registry capability**, independent of the broker. A
+registry that has the metadata exposes it; one that does not simply omits the
+capability. Hosts query whichever registry they hold — there is no requirement
+that the broker was constructed with a seed, and no coupling between obtaining the
+help and routing.
+
+---
+
 ## Provider seeding
 
 The broker seeds on first use via the constructor `seed` parameter. Pass any

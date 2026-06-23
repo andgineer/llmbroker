@@ -7,10 +7,11 @@ llmbroker env llms.toml
 ```
 
 Reads the config file and prints the environment variable names (`api_key_ref`)
-that need to be set:
+that need to be set. When the config carries a `[keys]` section, each variable is
+preceded by a comment (prefixed with the variable name) telling you where to get it:
 
 ```
-GROQ_API_KEY=
+# OPENROUTER_API_KEY — Create a free API key at [openrouter](https://openrouter.ai/keys).
 OPENROUTER_API_KEY=
 ```
 

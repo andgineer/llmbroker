@@ -45,6 +45,28 @@ def test_env_missing_file_returns_1(tmp_path, capsys):
     assert "error" in capsys.readouterr().err
 
 
+def test_env_prints_key_help_as_named_comment(tmp_path, capsys):
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n'
+        '[keys]\nKEY_A="Get it at https://example.com/keys"\n'
+    )
+    rc = main(["env", str(f)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "# KEY_A — Get it at https://example.com/keys" in out
+    assert "KEY_A=" in out
+
+
+def test_env_without_key_help_has_no_comments(tmp_path, capsys):
+    path = _write_toml(tmp_path, [("a", "KEY_A")])
+    rc = main(["env", path])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "#" not in out
+    assert "KEY_A=" in out
+
+
 # --- preset command ---
 
 _FAKE_TOML = b'[[llms]]\nname="x"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
