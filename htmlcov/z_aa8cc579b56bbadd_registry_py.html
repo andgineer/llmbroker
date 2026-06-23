@@ -54,10 +54,10 @@
             </div>
         </aside>
         <h2>
-            <span class="text">5 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">5<span class="text"> run</span></button>
+            <span class="text">7 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">7<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
-            <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">8<span class="text"> excluded</span></button>
+            <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">12<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_e1c86ac91afabe74_optimizer_py.html">&#xab; prev</a> &nbsp; &nbsp;
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_aa8cc579b56bbadd_secrets_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.2">coverage.py v7.14.2</a>,
-            created at 2026-06-23 09:53 +0000
+            created at 2026-06-23 10:44 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -97,6 +97,20 @@
     <p class="exc show_exc"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">add</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">cfg</span><span class="op">:</span> <span class="nam">LLMConfig</span><span class="op">,</span> <span class="nam">user_id</span><span class="op">:</span> <span class="nam">int</span> <span class="op">|</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span> <span class="op">...</span>&nbsp;</span><span class="r"></span></p>
     <p class="exc show_exc"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">update</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">cfg</span><span class="op">:</span> <span class="nam">LLMConfig</span><span class="op">,</span> <span class="nam">user_id</span><span class="op">:</span> <span class="nam">int</span> <span class="op">|</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span> <span class="op">...</span>&nbsp;</span><span class="r"></span></p>
     <p class="exc show_exc"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">remove</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">name</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">user_id</span><span class="op">:</span> <span class="nam">int</span> <span class="op">|</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span> <span class="op">...</span>&nbsp;</span><span class="r"></span></p>
+    <p class="exc show_exc"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="exc show_exc"><span class="n"><a id="t19" href="#t19">19</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t20" href="#t20">20</a></span><span class="t"><span class="op">@</span><span class="nam">runtime_checkable</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t21" href="#t21">21</a></span><span class="t"><span class="key">class</span> <span class="nam">KeyHelpProtocol</span><span class="op">(</span><span class="nam">Protocol</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t22" href="#t22">22</a></span><span class="t">    <span class="str">"""Optional capability: per-key, human-readable acquisition help.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t23" href="#t23">23</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t"><span class="str">    Maps each ``api_key_ref`` to a markdown string (a link plus short steps for</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t"><span class="str">    getting that key). Keyed by the env-var name because one key is usually shared</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t"><span class="str">    by several LLMs. A source without such metadata simply does not implement this</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t"><span class="str">    protocol; callers probe with ``isinstance(reg, KeyHelpProtocol)``. It is</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t"><span class="str">    independent of the broker &#8212; hosts query whichever registry they built.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
+    <p class="exc show_exc"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="exc show_exc"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">key_help</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span> <span class="op">-></span> <span class="nam">dict</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">str</span><span class="op">]</span><span class="op">:</span> <span class="op">...</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -106,7 +120,7 @@
             <a class="nav" href="z_aa8cc579b56bbadd_secrets_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.2">coverage.py v7.14.2</a>,
-            created at 2026-06-23 09:53 +0000
+            created at 2026-06-23 10:44 +0000
         </p>
     </div>
 </footer>

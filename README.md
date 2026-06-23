@@ -14,12 +14,12 @@
 | src/llmbroker/broker/router.py          |       69 |        3 |     96% |148, 175-176 |
 | src/llmbroker/broker/state.py           |       24 |        0 |    100% |           |
 | src/llmbroker/chat.py                   |       83 |       10 |     88% |112, 162-172 |
-| src/llmbroker/cli.py                    |       67 |        0 |    100% |           |
+| src/llmbroker/cli.py                    |       76 |        1 |     99% |        37 |
 | src/llmbroker/exceptions.py             |        5 |        0 |    100% |           |
 | src/llmbroker/integrations/alembic.py   |        2 |        0 |    100% |           |
 | src/llmbroker/models.py                 |       51 |        1 |     98% |       133 |
 | src/llmbroker/optimizer.py              |        4 |        0 |    100% |           |
-| src/llmbroker/protocols/registry.py     |        5 |        0 |    100% |           |
+| src/llmbroker/protocols/registry.py     |        7 |        0 |    100% |           |
 | src/llmbroker/protocols/secrets.py      |        5 |        0 |    100% |           |
 | src/llmbroker/protocols/state\_store.py |        3 |        0 |    100% |           |
 | src/llmbroker/protocols/telemetry.py    |        6 |        0 |    100% |           |
@@ -28,11 +28,11 @@
 | src/llmbroker/sqlite/secrets.py         |       29 |        0 |    100% |           |
 | src/llmbroker/sqlite/state\_store.py    |       44 |        5 |     89% |44-46, 53, 67 |
 | src/llmbroker/sqlite/telemetry.py       |       73 |        2 |     97% |   139-140 |
-| src/llmbroker/standalone/registry.py    |       30 |        0 |    100% |           |
+| src/llmbroker/standalone/registry.py    |       36 |        1 |     97% |        57 |
 | src/llmbroker/standalone/secrets.py     |       39 |        3 |     92% |54, 61, 66 |
 | src/llmbroker/standalone/telemetry.py   |       33 |        2 |     94% |    23, 34 |
 | src/llmbroker/sync.py                   |      106 |       12 |     89% |82, 101, 103, 130-131, 163-164, 212, 215, 218, 221, 226 |
-| **TOTAL**                               | **1123** |   **65** | **94%** |           |
+| **TOTAL**                               | **1140** |   **67** | **94%** |           |
 
 
 ## Setup coverage badge
