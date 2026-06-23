@@ -192,6 +192,35 @@ or one user's 429 would cool an LLM for everyone.
 
 ---
 
+## Shared cooldown across processes
+
+When a `StateStoreProtocol` backend is configured, a cooldown set by one process
+must be honored by every other process backed by the same store: when process A
+cools an LLM after a 429/503, process B skips that LLM at its next selection
+point instead of earning a redundant rate-limit error.
+
+The shared state is consulted lazily, just before an acquired LLM is used — there
+is no background timer or polling, and an idle broker performs zero store reads.
+To stay cheap under load, each process caches the shared state for a short
+bounded window, so at most one read happens per window regardless of request
+volume. The read is scoped to the broker's `user_id` like all other state.
+
+When a shared cooldown is detected, the process mirrors it into its own state and
+defers the LLM for the remaining window, so it does not re-probe until the
+cooldown expires. Any quality-fail history the local process has accumulated is
+preserved, never lowered by the shared count.
+
+Two consequences are accepted by design:
+
+- **Bounded staleness.** Within the cache window a process may not yet see a
+  cooldown another process just wrote, so it can still earn one redundant 429
+  before converging. The cost is a single wasted call, not a correctness failure.
+- **Fail-open on store errors.** If the shared-state read fails, the process
+  proceeds as if no shared cooldown applied rather than blocking the request — at
+  worst it earns a 429 it could have avoided.
+
+---
+
 ## Not yet implemented
 
 | Feature | Phase |

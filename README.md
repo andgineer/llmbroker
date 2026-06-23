@@ -14,21 +14,28 @@ print(llms.ask("Explain Python decorators in one sentence").text)
 
 Put your LLMs in `llms.toml` — or grab a preset: `llmbroker preset freetier > llms.toml`.
 
-That's it for a script. The same `Broker` works in a server or cluster too — add Redis or Postgres to share cooldown state across instances, the calling code stays the same.
+The only setup is the API keys. Ask llmbroker which ones your pool needs:
+
+```
+llmbroker env llms.toml > .env
+```
+
+Then sign up at each provider (free-tier keys take about a minute) and fill in the keys.
+A `.env` file is the quickest way, but secrets can come from anywhere — environment
+variables, AWS, Vault, your own store. Now your script is ready.
+
+The same `Broker` scales straight to a server or cluster — add Redis or Postgres to share cooldown state across instances, the calling code stays the same.
 
 **Why llmbroker:**
 
-- **Round-robin with automatic failover** — 429/503 cools an endpoint and tries
-  the next; the caller never sees a rate-limit error unless *every* endpoint fails.
-- **No heavy deps** — stdlib-only core; optional backends (`sqlite`, `redis`,
-  `postgres`) are submodules you import only when you need them.
-- **Dead-simple to start** — a TOML file and env vars, one constructor line, done.
-- **Fully customisable** — swap registry, secrets, and telemetry backends
-  independently: any DB, any secrets manager (AWS, Vault, …), any storage.
-- **Cluster-ready** — add `state_store=llmbroker.redis.StateStore(...)` to sync
-  cooldown state across instances; omit for single-process.
-- **Sync and async** — `llmbroker.Broker` for scripts; `llmbroker.AsyncBroker` for
-  FastAPI, agents, and async workers.
+- **Automatic failover** — when one LLM is rate-limited or down, the next one in
+  the pool answers instead; you get a reply, not an error, as long as any LLM is up.
+- **Chat, tools & agents** — one-shot `ask`, multi-turn `chat`, and function/tool
+  calling for agentic workflows.
+- **Async-first** — built on asyncio for FastAPI, agents, and async workers;
+  `llmbroker.Broker` wraps the same engine in a blocking API for plain scripts.
+- **Pluggable backends** — swap registry, secrets, and telemetry independently:
+  any DB, any secrets manager (AWS, Vault, …).
 
 # Documentation
 

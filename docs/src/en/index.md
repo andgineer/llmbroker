@@ -32,7 +32,15 @@ api_key_ref = "GROQ_API_KEY"
 `api_key_ref` is the name of the environment variable holding the key. The secret
 never goes into the file.
 
-Set your keys and call the broker:
+List the keys your pool needs, then get them from the providers and set them:
+
+```bash
+llmbroker env llms.toml > .env
+```
+
+Each provider issues its own key (free-tier keys take about a minute to sign up for).
+A `.env` file is the simplest option — secrets can also come from environment variables,
+AWS, Vault, or any backend you plug in. With the keys set, call the broker:
 
 ```python
 import llmbroker

@@ -8,18 +8,20 @@ re-added when the cooldown expires. The pool also owns the in-memory
 
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 
 import httpx
 
 from llmbroker.broker.state import InMemoryState
 from llmbroker.chat import retry_after_seconds
-from llmbroker.models import LLMConfig, LLMState
+from llmbroker.models import LifecyclePhase, LLMConfig, LLMState
 from llmbroker.protocols.state_store import StateStoreProtocol
 
 logger = logging.getLogger("llmbroker.broker")
 
 _DEFAULT_RATE_LIMIT_SEC = 60
+_STORE_CACHE_TTL = 2.0  # seconds
 
 
 class LLMPool:
@@ -36,6 +38,8 @@ class LLMPool:
         self._state = InMemoryState()
         self._state_store = state_store
         self._user_id = user_id
+        self._store_cache: dict[str, LLMState] | None = None
+        self._store_cache_expires: float = 0.0
 
     # ------------------------------------------------------------------
     # Membership / lookup
@@ -113,6 +117,7 @@ class LLMPool:
                 self._state.get_state(config.name),
                 self._user_id,
             )
+            self._store_cache = None
         loop = asyncio.get_running_loop()
         loop.call_later(float(delay), self._queue.put_nowait, config)
         logger.warning("LLM %s cooling for %ds", config.name, delay)
@@ -128,3 +133,49 @@ class LLMPool:
         if self._state_store is None:
             return {}
         return await self._state_store.read(self._user_id)
+
+    async def _get_store_cache(self) -> dict[str, LLMState]:
+        now = time.monotonic()
+        if self._store_cache is not None and now < self._store_cache_expires:
+            return self._store_cache
+        self._store_cache = await self.stored_states()
+        self._store_cache_expires = now + _STORE_CACHE_TTL
+        return self._store_cache
+
+    async def apply_shared_cooling(self, config: LLMConfig) -> bool:
+        """Return True if shared store shows this LLM cooling and the slot was deferred.
+
+        The caller must have already dequeued ``config`` via ``acquire()``; this method
+        re-queues it via ``call_later`` and must not be called on a slot still in the queue.
+        """
+        if self._state_store is None:
+            return False
+        try:
+            shared = await self._get_store_cache()
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "LLM %s: shared-state read failed; proceeding without shared cooling",
+                config.name,
+            )
+            return False
+        stored = shared.get(config.name)
+        if stored is None or stored.phase is not LifecyclePhase.COOLING:
+            return False
+        # A naive cooldown_until can't be compared to the aware now_utc below;
+        # treat it as "not cooling" rather than risk a TypeError mid-routing.
+        if stored.cooldown_until is None or stored.cooldown_until.tzinfo is None:
+            return False
+        now_utc = datetime.now(UTC)
+        if stored.cooldown_until <= now_utc:
+            return False
+        local_fail_count = self._state.fail_count(config.name)
+        self._state.set_cooling(
+            config.name,
+            stored.cooldown_until,
+            max(local_fail_count, stored.fail_count),
+        )
+        delay = (stored.cooldown_until - now_utc).total_seconds()
+        loop = asyncio.get_running_loop()
+        loop.call_later(delay, self._queue.put_nowait, config)
+        logger.info("LLM %s: shared cooldown applied, %.0fs remaining", config.name, delay)
+        return True

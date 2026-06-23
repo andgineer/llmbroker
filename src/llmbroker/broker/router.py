@@ -78,6 +78,9 @@ class Router:
                     " — set the env var or configure a secrets backend",
                 )
 
+            if await self._pool.apply_shared_cooling(config):
+                continue
+
             result = await self._attempt(
                 config,
                 messages,

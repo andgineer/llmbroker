@@ -126,3 +126,32 @@ def test_empty_pool_wait0_raises_no_llm_available():
             await router.chat([{"role": "user", "content": "hi"}], wait=0)
 
     asyncio.run(run())
+
+
+def test_router_skips_slot_shared_cooling():
+    """Router skips a slot when apply_shared_cooling returns True, then proceeds."""
+
+    async def run():
+        cfg = _cfg()
+        pool = _pool(cfg)
+        router = _router(pool)
+
+        call_count = 0
+
+        async def cooling_effect(c):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                pool._queue.put_nowait(c)  # simulate call_later re-scheduling
+                return True
+            return False
+
+        pool.apply_shared_cooling = AsyncMock(side_effect=cooling_effect)
+
+        with patch(_PATCH, new=AsyncMock(return_value=("ok", None, None))):
+            result = await router.chat([{"role": "user", "content": "hi"}])
+
+        assert pool.apply_shared_cooling.call_count == 2
+        assert result.text == "ok"
+
+    asyncio.run(run())
