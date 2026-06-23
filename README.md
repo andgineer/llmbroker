@@ -20,9 +20,7 @@ The only setup is the API keys. Ask llmbroker which ones your pool needs — eac
 llmbroker env llms.toml > .env
 ```
 
-Then sign up at each provider (free-tier keys take about a minute) and fill in the keys.
-A `.env` file is the quickest way, but secrets can come from anywhere — environment
-variables, AWS, Vault, your own store. Now your script is ready.
+Then sign up at each provider for free-tier keys.
 
 The same `Broker` scales straight to a server or cluster — add Redis or Postgres to share cooldown state across instances, the calling code stays the same.
 
@@ -32,16 +30,15 @@ The same `Broker` scales straight to a server or cluster — add Redis or Postgr
   the pool answers instead; you get a reply, not an error, as long as any LLM is up.
 - **Chat, tools & agents** — one-shot `ask`, multi-turn `chat`, and function/tool
   calling for agentic workflows.
-- **Async-first** — built on asyncio for FastAPI, agents, and async workers;
+- **Async-first** — `llmbroker.AsyncBroker` built on asyncio for FastAPI, agents, and async workers;
   `llmbroker.Broker` wraps the same engine in a blocking API for plain scripts.
-- **Pluggable backends** — swap registry, secrets, and telemetry independently:
-  any DB, any secrets manager (AWS, Vault, …).
+- **Pluggable backends** — swap registry, state store, and telemetry independently: DB, Redis etc.
+- **Secrets can come from anywhere** — environment variables, AWS, Vault, your own store.
+- **Multi-user mode** -- optionally separate secrets and LLMs list for each application user.
 
 # Documentation
 
 [llmbroker](https://andgineer.github.io/llmbroker/)
-
-
 
 # Developers
 
