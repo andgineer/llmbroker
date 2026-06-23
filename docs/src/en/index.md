@@ -7,9 +7,13 @@ No heavy deps like LangChain etc.
 
 ## Quick start
 
-Create `llms.toml` with your LLMs (or grab the
-[freetier preset](https://github.com/andgineer/llmbroker/blob/main/presets/freetier.toml)
-from the repository):
+Create `llms.toml` with your LLMs, or download a ready-made preset:
+
+```bash
+llmbroker preset freetier > llms.toml
+```
+
+Example `llms.toml`:
 
 ```toml
 [[llms]]

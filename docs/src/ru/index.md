@@ -6,9 +6,13 @@
 
 ## Быстрый старт
 
-Создайте файл `llms.toml` со списком LLM (можно взять
-[готовый пресет](https://github.com/andgineer/llmbroker/blob/main/presets/freetier.toml)
-из репозитория):
+Создайте файл `llms.toml` со списком LLM, или скачайте готовый пресет:
+
+```bash
+llmbroker preset freetier > llms.toml
+```
+
+Пример `llms.toml`:
 
 ```toml
 [[llms]]

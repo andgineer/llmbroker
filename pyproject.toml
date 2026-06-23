@@ -57,4 +57,4 @@ dev = [
 ]
 
 [project.scripts]
-llmbroker = "llmbroker.main:llmbroker"
+llmbroker = "llmbroker.cli:main"

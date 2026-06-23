@@ -18,15 +18,17 @@ model       = "gemma2-9b-it"
 api_key_ref = "GROQ_API_KEY"
 ```
 
-A ready-made list of free endpoints is available as
-[freetier.toml](https://github.com/andgineer/llmbroker/blob/main/presets/freetier.toml)
-in the repository.
+A ready-made list of free endpoints is available as a preset:
+
+```bash
+llmbroker preset freetier > llms.toml
+```
 
 `api_key_ref` is the name of the environment variable holding the key. To print
 the required variable names for a config file:
 
 ```bash
-python -m llmbroker env llms.toml
+llmbroker env llms.toml
 ```
 
 ## Synchronous usage
@@ -146,7 +148,7 @@ Async version: `await llmbroker.arun_tool_loop(...)`.
 ## Quality feedback
 
 ```python
-reply = llms.ask("Classify this receipt")
+reply = llms.ask("Classify as positive or negative: 'Fast delivery and great packaging!'")
 # ... inspect the result ...
 reply.record_quality(1.0)   # good answer
 reply.record_quality(0.0)   # bad answer

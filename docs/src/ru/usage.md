@@ -18,12 +18,16 @@ model       = "gemma2-9b-it"
 api_key_ref = "GROQ_API_KEY"
 ```
 
-Готовый список бесплатных endpoint-ов — [freetier.toml](https://github.com/andgineer/llmbroker/blob/main/presets/freetier.toml) в репозитории.
+Готовый список бесплатных LLM доступен как пресет:
+
+```bash
+llmbroker preset freetier > llms.toml
+```
 
 `api_key_ref` — имя переменной окружения с ключом. Получить список нужных переменных для конкретного файла:
 
 ```bash
-python -m llmbroker env llms.toml
+llmbroker env llms.toml
 ```
 
 ## Синхронное использование
@@ -146,7 +150,7 @@ print(reply.text)
 ## Оценка качества ответа
 
 ```python
-reply = llms.ask("Классифицируй чек")
+reply = llms.ask("Классифицируй как позитивный или негативный: 'Быстрая доставка, отличная упаковка!'")
 # ... проверяем результат ...
 reply.record_quality(1.0)   # хороший ответ
 reply.record_quality(0.0)   # неудачный

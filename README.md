@@ -8,21 +8,13 @@ cooldown.
 No LangChain, no heavy deps.
 
 ```python
-import llmbroker
-
 llms = llmbroker.Broker("llms.toml")
-print(llms.ask("Summarize this receipt").text)
+print(llms.ask("Explain Python decorators in one sentence").text)
 ```
 
-`llms.toml` is a plain list of `[[llms]]` entries (base\_url, model, api\_key\_ref).
-Grab the [freetier preset](presets/freetier.toml) from this repo to start with a
-maintained list of free LLM endpoints.
+Put your LLMs in `llms.toml` — or grab a preset: `llmbroker preset freetier > llms.toml`.
 
-That one-liner is the whole API for a script — but the same `Broker` scales up too.
-Run it inside a server or across a cluster with cooldown state shared between
-instances, and back it with common databases (connectors for SQLite, Redis, and
-Postgres covering registry, telemetry, secrets, and state). The calling code stays the
-same — you just pass a backend.
+That's it for a script. The same `Broker` works in a server or cluster too — add Redis or Postgres to share cooldown state across instances, the calling code stays the same.
 
 **Why llmbroker:**
 
