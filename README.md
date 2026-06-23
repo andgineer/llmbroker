@@ -8,10 +8,10 @@
 | src/llmbroker/\_\_main\_\_.py           |        4 |        4 |      0% |       3-8 |
 | src/llmbroker/broker/broker.py          |      100 |       10 |     90% |58, 62, 97, 103, 105-106, 181-182, 196, 204 |
 | src/llmbroker/broker/catalog.py         |       84 |        5 |     94% |55-56, 75-77 |
-| src/llmbroker/broker/pool.py            |       68 |        2 |     97% |   89, 121 |
+| src/llmbroker/broker/pool.py            |      103 |        2 |     98% |   93, 126 |
 | src/llmbroker/broker/pool\_view.py      |       28 |        0 |    100% |           |
 | src/llmbroker/broker/result.py          |       42 |        5 |     88% |37, 40-41, 74-75 |
-| src/llmbroker/broker/router.py          |       67 |        3 |     96% |145, 172-173 |
+| src/llmbroker/broker/router.py          |       69 |        3 |     96% |148, 175-176 |
 | src/llmbroker/broker/state.py           |       24 |        0 |    100% |           |
 | src/llmbroker/chat.py                   |       83 |       10 |     88% |112, 162-172 |
 | src/llmbroker/cli.py                    |       67 |        0 |    100% |           |
@@ -32,7 +32,7 @@
 | src/llmbroker/standalone/secrets.py     |       39 |        3 |     92% |54, 61, 66 |
 | src/llmbroker/standalone/telemetry.py   |       33 |        2 |     94% |    23, 34 |
 | src/llmbroker/sync.py                   |      106 |       12 |     89% |82, 101, 103, 130-131, 163-164, 212, 215, 218, 221, 226 |
-| **TOTAL**                               | **1086** |   **65** | **94%** |           |
+| **TOTAL**                               | **1123** |   **65** | **94%** |           |
 
 
 ## Setup coverage badge
