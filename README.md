@@ -12,15 +12,17 @@ llms = llmbroker.Broker("llms.toml")
 print(llms.ask("Explain Python decorators in one sentence").text)
 ```
 
-Put your LLMs in `llms.toml` — or grab a preset: `llmbroker preset freetier > llms.toml`.
+Put your LLMs in `llms.toml` — or grab a preset:
+
+```bash
+llmbroker preset freetier > llms.toml
+```
 
 The only setup is the API keys. Ask llmbroker which ones your pool needs — each with a note on where to get it:
 
-```
+```bash
 llmbroker env llms.toml > .env
 ```
-
-Then sign up at each provider for free-tier keys.
 
 The same `Broker` scales straight to a server or cluster — add Redis or Postgres to share cooldown state across instances, the calling code stays the same.
 
