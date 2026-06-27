@@ -70,10 +70,10 @@ Every host plugs in up to four backends; only the registry is required:
 
 | Backend | Implemented |
 |---|---|
-| Registry | `Registry(path)` (file, `.toml`/`.json`), `llmbroker.sqlite.Registry` (CRUD-capable) |
-| Secrets | `Secrets()` (env), `DictSecrets(mapping)` (test double), `llmbroker.sqlite.Secrets` |
-| State store | `llmbroker.sqlite.StateStore` (single-machine: preserves cooldown across restarts) |
-| Telemetry | `Telemetry()` (log), `NoTelemetry()`, `JsonlTelemetry(path)`, `llmbroker.sqlite.Telemetry` |
+| Registry | `Registry(path)` (file, `.toml`/`.json`), `llmbroker.sqlite.Registry`, `llmbroker.postgres.Registry`, `llmbroker.mongodb.Registry` |
+| Secrets | `Secrets()` (env), `DictSecrets(mapping)` (test double), `llmbroker.sqlite.Secrets`, `llmbroker.postgres.Secrets`, `llmbroker.mongodb.Secrets` |
+| State store | `llmbroker.sqlite.StateStore` (single-machine), `llmbroker.redis.StateStore`, `llmbroker.postgres.StateStore`, `llmbroker.mongodb.StateStore` (cross-process) |
+| Telemetry | `Telemetry()` (log), `NoTelemetry()`, `JsonlTelemetry(path)`, `llmbroker.sqlite.Telemetry`, `llmbroker.postgres.Telemetry`, `llmbroker.mongodb.Telemetry` |
 
 ### CLI
 
@@ -82,18 +82,31 @@ Every host plugs in up to four backends; only the registry is required:
 
 ### DB schema
 
-`llmbroker.sqlite` self-manages its tables via `ensure_schema`: it creates them on
-first use and is **version-aware** — it tracks a schema version (`PRAGMA
-user_version`) so later releases can hang additive, data-preserving migrations off
-that marker. No migrations are needed yet (the initial schema is still version 1);
-the upgrade path is reserved, not exercised. Every DB object is `llmbroker_`-prefixed
-so the host's migration tool can ignore them by prefix.
+Every DB backend self-manages its schema via `ensure_schema`: idempotent, called on
+first use, version-aware. Every table/collection is `llmbroker_`-prefixed so the
+host's migration tool can ignore them by prefix.
+
+- **SQLite** tracks version via `PRAGMA user_version`.
+- **Postgres** tracks version via a single-row `llmbroker_schema_version` table
+  (no PRAGMA in Postgres). The caller owns the `asyncpg.Pool` lifecycle; `aclose()`
+  on every class is a no-op by design so the pool is not closed prematurely.
+- **MongoDB** tracks version via a document in `llmbroker_schema_version`. The caller
+  owns the Motor database handle. `user_id: None` is stored explicitly in every
+  document (not as an absent field) so MongoDB null participates correctly in unique
+  indexes.
+- **Redis** stores one hash per `(user_id)` scope under `llmbroker_state:*` keys;
+  keys have no TTL in v1 (cooling entries accumulate indefinitely — acceptable for
+  the initial release).
 
 ### Host migration coexistence
 
 `llmbroker.integrations.alembic.include_object` — a predicate for Alembic's `include_object`
 hook that excludes every `llmbroker_*` object from autogenerate. Zero Alembic
-dependency: the hook inspects the object name only.
+dependency: the hook inspects the object name only. Wire it in `alembic/env.py`:
+
+```python
+context.configure(include_object=llmbroker.integrations.alembic.include_object, ...)
+```
 
 ---
 
@@ -247,6 +260,5 @@ Two consequences are accepted by design:
 
 | Feature | Phase |
 |---|---|
-| `StateStore` cross-node backends (redis, postgres, mongodb) | P3 |
 | Optimizer control loop (delay tuning, routing, offline/probe FSM) | P4 |
 | LLM-as-judge quality scoring | P5 |

@@ -46,7 +46,7 @@ jobs:
       uses: andgineer/uv-venv@v3
 
     - name: Install dependencies
-      run: uv sync --frozen
+      run: uv sync --frozen --all-extras
 
     - name: Test with pytest
       run: ${{ env.PYTEST_CMD }}
@@ -71,7 +71,7 @@ jobs:
       uses: andgineer/uv-venv@v3
 
     - name: Install dependencies
-      run: uv sync --frozen
+      run: uv sync --frozen --all-extras
 
     - name: Test with pytest and Allure report
       run: "${{ env.PYTEST_CMD }} --alluredir=./allure-results"

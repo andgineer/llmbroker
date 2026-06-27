@@ -41,7 +41,7 @@ if [[ ! -d ${VENV_FOLDER} ]] ; then
         if uv venv ${VENV_FOLDER} --python=python${PRIMARY_PYTHON_VERSION}; then
 
             . ${VENV_FOLDER}/bin/activate
-            uv sync --frozen
+            uv sync --frozen --all-extras
             END_TIME=$(date +%s)
             echo "Environment created in $((END_TIME - $START_TIME)) seconds"
         else

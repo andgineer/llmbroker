@@ -10,8 +10,11 @@
 uv pip install llmbroker
 ```
 
-To use the SQLite backend, install with the optional dependency:
+To use a state backend, install the matching extra:
 
 ```bash
 uv pip install "llmbroker[sqlite]"
+uv pip install "llmbroker[redis]"
+uv pip install "llmbroker[postgres]"
+uv pip install "llmbroker[mongodb]"
 ```

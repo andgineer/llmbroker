@@ -10,8 +10,11 @@
 uv pip install llmbroker
 ```
 
-Для использования SQLite-бэкенда установите вместе с опциональной зависимостью:
+Для использования бэкенда установите соответствующий extra:
 
 ```bash
 uv pip install "llmbroker[sqlite]"
+uv pip install "llmbroker[redis]"
+uv pip install "llmbroker[postgres]"
+uv pip install "llmbroker[mongodb]"
 ```

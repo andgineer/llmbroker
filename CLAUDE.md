@@ -58,9 +58,13 @@ Run `invoke pre` after each discrete batch of changes, not only at the end.
 - Never reference plan file paths or step numbers inside code comments or docstrings.
 - Specs in `specs/` capture architectural decisions and business requirements only — not implementation details (no function signatures, field names, or internal class structure).
 
+## Dependencies and optional extras
+
+All storage backends (sqlite, redis, postgres, mongodb) are `[project.optional-dependencies]` in `pyproject.toml`. **Never add backend packages to the dev group** — they are installed in dev and CI via `uv sync --frozen --all-extras`. The dev group is for dev tooling only (pytest, invoke, pre-commit, etc.). `fakeredis` is the exception: it is a test-only mock with no corresponding optional extra, so it stays in dev.
+
 ## Architecture notes
 
 - Python 3.11+ required: uses `tomllib` (stdlib) and `from datetime import UTC`
 - Secrets are pluggable via `src/llmbroker/secrets.py` (env vars, AWS, Vault)
-- State backends are optional submodules: SQLite (default), Redis, Postgres
+- State backends are optional submodules: SQLite, Redis, Postgres, MongoDB — all optional extras
 - LLM registry is TOML-based (`presets/freetier.toml`); `api_key_ref` fields point to env var names

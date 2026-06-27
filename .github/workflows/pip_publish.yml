@@ -67,7 +67,7 @@ jobs:
         uses: andgineer/uv-venv@v3
 
       - name: Install dependencies
-        run: uv sync --frozen
+        run: uv sync --frozen --all-extras
 
       - name: Build package
         run: uv build

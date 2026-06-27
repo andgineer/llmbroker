@@ -11,9 +11,14 @@ classifiers = [ "Programming Language :: Python :: 3", "License :: OSI Approved 
 readme = "README.md"
 requires-python = ">=3.11"  # tomllib (stdlib) and `from datetime import UTC` require 3.11+
 dependencies = [
-    "aiosqlite>=0.22.1",
     "httpx>=0.28.1",
 ]
+
+[project.optional-dependencies]
+sqlite   = ["aiosqlite>=0.22.1"]
+redis    = ["redis>=5.0"]
+postgres = ["asyncpg>=0.30.0"]
+mongodb  = ["motor>=3.6.0"]
 [[project.authors]]
 name = "Andrey Sorokin"
 email = "andrey@sorokin.engineer"
@@ -43,6 +48,7 @@ path = "src/llmbroker/__about__.py"
 [dependency-groups]
 dev = [
     "allure-pytest>=2.14.2",
+    "fakeredis>=2.26",
     "invoke>=2.2.0",
     "tomli-w>=1.2.0",
     "mkdocs-awesome-pages-plugin>=2.10.1",
@@ -52,6 +58,7 @@ dev = [
     "pre-commit>=4.2.0",
     "pymdown-extensions>=10.15",
     "pyrefly>=0.50.0",
+    "pytest-asyncio>=0.23.0",
     "pytest-cov>=6.1.1",
     "pytest>=8.3.5",
 ]
