@@ -37,6 +37,7 @@ Run `invoke pre` after each discrete batch of changes, not only at the end.
 - `pytest.ini` sets `addopts = --doctest-modules`, so doctests in source files run automatically — keep them up to date.
 - Tests are excluded from ruff linting (format-only); strict ruff rules apply only to `src/`.
 - Every new function needs tests in the same session. Never skip.
+- **Never use `pytest.skip()`, `pytest.importorskip()`, or `skipIf` to hide missing services or packages.** Tests must fail, not silently pass as skipped. Postgres and MongoDB are spun up automatically via testcontainers — no external services needed. A green run with skipped tests is a false green.
 
 ## Code style
 

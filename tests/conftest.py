@@ -1,28 +1,25 @@
 """Session fixtures for postgres and mongodb integration tests."""
 
+import asyncpg
 import pytest
+from motor.motor_asyncio import AsyncIOMotorClient
+from testcontainers.mongodb import MongoDbContainer
+from testcontainers.postgres import PostgresContainer
 
 
 @pytest.fixture(scope="session")
 async def pg_pool():
-    asyncpg = pytest.importorskip("asyncpg")
-    try:
-        pool = await asyncpg.create_pool("postgresql://localhost/llmbroker_test")
-    except Exception:
-        pytest.skip("postgres not available")
-    yield pool
-    await pool.close()
+    with PostgresContainer("postgres:16") as postgres:
+        url = postgres.get_connection_url().replace("+psycopg2", "")
+        pool = await asyncpg.create_pool(url)
+        yield pool
+        await pool.close()
 
 
 @pytest.fixture(scope="session")
 async def mongo_db():
-    motor_asyncio = pytest.importorskip("motor.motor_asyncio")
-    try:
-        client = motor_asyncio.AsyncIOMotorClient(
-            "mongodb://localhost:27017", serverSelectionTimeoutMS=2000
-        )
+    with MongoDbContainer("mongo:7") as mongo:
+        client = AsyncIOMotorClient(mongo.get_connection_url())
         await client.server_info()
-    except Exception:
-        pytest.skip("mongodb not available")
-    yield client["llmbroker_test"]
-    client.close()
+        yield client["llmbroker_test"]
+        client.close()
