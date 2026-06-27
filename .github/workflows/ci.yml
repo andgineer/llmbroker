@@ -48,8 +48,13 @@ jobs:
     - name: Install dependencies
       run: uv sync --frozen --all-extras
 
-    - name: Test with pytest
+    - name: Test with pytest (Linux — all tests)
+      if: matrix.platform == 'ubuntu-latest'
       run: ${{ env.PYTEST_CMD }}
+
+    - name: Test with pytest (non-Linux — skip Docker tests)
+      if: matrix.platform != 'ubuntu-latest'
+      run: ${{ env.PYTEST_CMD }} -m "not docker"
 
 # Build with publishing Allure report, coverage report
   primary-build:

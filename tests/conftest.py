@@ -7,6 +7,12 @@ from testcontainers.mongodb import MongoDbContainer
 from testcontainers.postgres import PostgresContainer
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    for item in items:
+        if "pg_pool" in item.fixturenames or "mongo_db" in item.fixturenames:
+            item.add_marker(pytest.mark.docker)
+
+
 @pytest.fixture(scope="session")
 async def pg_pool():
     with PostgresContainer("postgres:16") as postgres:
