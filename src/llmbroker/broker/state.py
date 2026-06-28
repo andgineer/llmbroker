@@ -16,8 +16,16 @@ class InMemoryState:
     def __init__(self) -> None:
         self._cooldown: dict[str, datetime] = {}
         self._fail_count: dict[str, int] = {}
+        self._phase_override: dict[str, LifecyclePhase] = {}
 
     def get_state(self, name: str) -> LLMState:
+        override = self._phase_override.get(name)
+        if override in (LifecyclePhase.OFFLINE, LifecyclePhase.PROBING):
+            return LLMState(
+                phase=override,
+                cooldown_until=self._cooldown.get(name),
+                fail_count=self._fail_count.get(name, 0),
+            )
         cooldown_until = self._cooldown.get(name)
         fail_count = self._fail_count.get(name, 0)
         now = datetime.now(UTC)
@@ -31,6 +39,12 @@ class InMemoryState:
     def set_cooling(self, name: str, cooldown_until: datetime, fail_count: int) -> None:
         self._cooldown[name] = cooldown_until
         self._fail_count[name] = fail_count
+
+    def set_phase_override(self, name: str, phase: LifecyclePhase) -> None:
+        self._phase_override[name] = phase
+
+    def clear_phase_override(self, name: str) -> None:
+        self._phase_override.pop(name, None)
 
     def clear_cooling(self, name: str) -> None:
         self._cooldown.pop(name, None)

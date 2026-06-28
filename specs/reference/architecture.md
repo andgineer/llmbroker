@@ -44,8 +44,8 @@ Every host plugs in up to four backends; only the registry is required:
 - `Broker` — synchronous wrapper over `AsyncBroker` on a dedicated background
   event-loop thread. First-class shipped surface, not an afterthought.
 - `optimize` parameter shape (`bool | Optimizer`) is locked. `optimize=True` (default)
-  is a reservation — the control loop does not run until Phase 4. In the current
-  version `optimize=True/False` has no effect on routing.
+  activates the `Optimizer` component: adaptive per-LLM cooldown delay, OFFLINE/PROBING
+  FSM, and alert emission. See [optimizer.md](optimizer.md) for the behavior spec.
 - `ensure_pool()` — lazy idempotent pool initializer with double-checked locking.
   Applies the constructor `seed=` source first, then loads the registry into the
   pool. Called automatically by `chat`, `snapshot`, `get`, `count`, `add`,
@@ -260,5 +260,4 @@ Two consequences are accepted by design:
 
 | Feature | Phase |
 |---|---|
-| Optimizer control loop (delay tuning, routing, offline/probe FSM) | P4 |
 | LLM-as-judge quality scoring | P5 |

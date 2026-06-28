@@ -16,6 +16,7 @@ from llmbroker.broker.result import AsyncResult
 from llmbroker.chat import call_provider, is_rate_limit
 from llmbroker.exceptions import AllLLMsFailedError, NoLLMAvailableError
 from llmbroker.models import Call, CallStatus, LLMConfig, Usage
+from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.telemetry import TelemetryProtocol
 
 HTTP_429 = 429
@@ -32,10 +33,12 @@ class Router:
         telemetry: TelemetryProtocol,
         *,
         user_id: int | str | None,
+        optimizer: Optimizer | None = None,
     ) -> None:
         self._pool = pool
         self._telemetry = telemetry
         self._user_id = user_id
+        self._optimizer = optimizer
 
     async def ask(
         self,
@@ -141,7 +144,8 @@ class Router:
             detail = exc.response.text[:300]
             if is_rate_limit(code):
                 status = CallStatus.RATE_LIMITED if code == HTTP_429 else CallStatus.UNAVAILABLE
-                await self._pool.cool_down(config, exc.response.headers)
+                delay = self._optimizer.delay_for(config.name) if self._optimizer else None
+                await self._pool.cool_down(config, exc.response.headers, delay_override=delay)
                 await record(status, http_status=code, error_detail=detail)
                 if wait == 0:
                     raise NoLLMAvailableError(f"{config.name} rate-limited and wait=0") from exc

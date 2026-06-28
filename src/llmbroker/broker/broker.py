@@ -9,7 +9,7 @@ operation to the collaborator that owns it:
 * ``PoolView`` — read-only views of current pool state
 
 The call journal (``calls``/``purge_calls``) is a thin pass-through to a queryable
-telemetry backend; ``alerts`` is an Optimizer concern, stubbed empty until P4.
+telemetry backend; ``alerts`` is delegated to ``Optimizer``.
 """
 
 import asyncio
@@ -17,14 +17,23 @@ import contextlib
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 from llmbroker.broker.catalog import Catalog
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.pool_view import PoolView
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.broker.router import Router
-from llmbroker.models import AsyncResourceProtocol, Call, LLMConfig, LLMSnapshot, SeedPolicy
-from llmbroker.optimizer import Optimizer
+from llmbroker.models import (
+    Alert,
+    AsyncResourceProtocol,
+    Call,
+    LifecyclePhase,
+    LLMConfig,
+    LLMSnapshot,
+    SeedPolicy,
+)
+from llmbroker.optimizer import Optimizer, OptimizerTelemetry
 from llmbroker.protocols.registry import RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
 from llmbroker.protocols.state_store import StateStoreProtocol
@@ -63,7 +72,7 @@ class AsyncBroker:
 
         self._registry = registry
         self._secrets = secrets
-        self._telemetry = telemetry
+        self._base_telemetry = telemetry
         self._state_store = state_store
         self._user_id = user_id
 
@@ -77,12 +86,24 @@ class AsyncBroker:
             seed_policy=seed_policy,
             user_id=user_id,
         )
-        self._router = Router(pool, telemetry, user_id=user_id)
-        self._pool_view = PoolView(pool, telemetry, user_id=user_id)
+
+        if self._optimizer is not None:
+            effective_telemetry: TelemetryProtocol = OptimizerTelemetry(
+                self._optimizer,
+                telemetry,
+                pool,
+                on_go_offline=self._on_go_offline,
+            )
+        else:
+            effective_telemetry = telemetry
+
+        self._telemetry = effective_telemetry
+        self._router = Router(pool, effective_telemetry, user_id=user_id, optimizer=self._optimizer)
+        self._pool_view = PoolView(pool, effective_telemetry, user_id=user_id)
 
         self._provisioned = False
         self._provision_lock = asyncio.Lock()
-        self._bg_tasks: list[asyncio.Task] = []
+        self._bg_tasks: set[asyncio.Task] = set()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -96,12 +117,19 @@ class AsyncBroker:
             if self._provisioned:
                 return
             await self._catalog.provision()
+            if self._optimizer is not None and isinstance(
+                self._base_telemetry,
+                QueryableTelemetryProtocol,
+            ):
+                metrics = await self._base_telemetry.metrics()
+                self._optimizer.seed_from_metrics(metrics)
             self._provisioned = True
 
     async def aclose(self) -> None:
-        for task in self._bg_tasks:
+        tasks = list(self._bg_tasks)
+        for task in tasks:
             task.cancel()
-        for task in self._bg_tasks:
+        for task in tasks:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._bg_tasks.clear()
@@ -191,14 +219,35 @@ class AsyncBroker:
     async def purge_calls(self, *, before: datetime) -> int:
         return await self._require_queryable().purge_calls(before=before)
 
-    async def alerts(self) -> list:
-        # Actionable items come from the Optimizer's control loop (P4); empty until then.
-        return []
+    async def alerts(self) -> list[Alert]:
+        if self._optimizer is None:
+            return []
+        return self._optimizer.alerts()
+
+    def _on_go_offline(self, llm_name: str) -> None:
+        if any(t.get_name() == f"probe-{llm_name}" and not t.done() for t in self._bg_tasks):
+            return
+        task = asyncio.create_task(self._probe_loop(llm_name), name=f"probe-{llm_name}")
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
+    async def _probe_loop(self, llm_name: str) -> None:
+        assert self._optimizer is not None
+        await asyncio.sleep(self._optimizer.offline_sleep)
+        if (
+            llm_name not in self._pool
+            or self._pool.state(llm_name).phase is not LifecyclePhase.OFFLINE
+        ):
+            return
+        self._pool.set_probing(llm_name)
+        self._optimizer.on_probing_start(llm_name)
+        config = self._pool.config(llm_name)
+        self._pool.release(config)
 
     def _require_queryable(self) -> QueryableTelemetryProtocol:
-        if not isinstance(self._telemetry, QueryableTelemetryProtocol):
+        if not isinstance(self._base_telemetry, QueryableTelemetryProtocol):
             raise TypeError(
                 "this telemetry backend is not queryable — use a queryable backend"
                 " (e.g. llmbroker.sqlite.Telemetry) for calls()/purge_calls()",
             )
-        return self._telemetry
+        return cast(QueryableTelemetryProtocol, self._telemetry)

@@ -13,8 +13,8 @@ from typing import Protocol, runtime_checkable
 class LifecyclePhase(Enum):
     """The FSM label for one LLM's lifecycle.
 
-    AVAILABLE/COOLING are derived from cooldown_until vs now. OFFLINE/PROBING
-    are set by the Optimizer (P4) and never occur in P1.
+    AVAILABLE/COOLING are derived from cooldown_until vs now.
+    OFFLINE/PROBING are set by the Optimizer circuit-breaker.
     """
 
     AVAILABLE = "available"
@@ -96,7 +96,7 @@ class LLMSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class Alert:
-    """One human-actionable signal from the Optimizer (P4 placeholder)."""
+    """One human-actionable signal from the Optimizer."""
 
     message: str = field(default="")
 

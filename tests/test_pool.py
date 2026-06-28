@@ -177,8 +177,11 @@ def test_apply_shared_cooling_active():
         assert mock_loop.call_later.called
         call_args = mock_loop.call_later.call_args
         assert abs(call_args[0][0] - 30) < 1.0
-        assert call_args[0][1].__self__ is pool._queue
-        assert call_args[0][1].__name__ == "put_nowait"
+        # callback is _reenqueue_config; calling it with the config arg should re-add the slot
+        callback, cfg_arg = call_args[0][1], call_args[0][2]
+        size_before = pool._queue.qsize()
+        callback(cfg_arg)
+        assert pool._queue.qsize() == size_before + 1
 
     asyncio.run(run())
 

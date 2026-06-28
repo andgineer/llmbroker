@@ -80,6 +80,7 @@ class LLMPool:
     def drop(self, name: str) -> None:
         self._configs.pop(name, None)
         self._resolved_keys.pop(name, None)
+        self._state.clear_phase_override(name)
 
     # ------------------------------------------------------------------
     # Slot acquisition
@@ -102,9 +103,40 @@ class LLMPool:
     def clear_cooling(self, name: str) -> None:
         self._state.clear_cooling(name)
 
-    async def cool_down(self, config: LLMConfig, headers: httpx.Headers) -> None:
+    def _reenqueue_config(self, config: LLMConfig) -> None:
+        """Re-enqueue a slot only when the LLM is not in a terminal override phase."""
+        if self._state.get_state(config.name).phase not in (
+            LifecyclePhase.OFFLINE,
+            LifecyclePhase.PROBING,
+        ):
+            self._queue.put_nowait(config)
+
+    def set_offline(self, name: str) -> None:
+        self._state.set_phase_override(name, LifecyclePhase.OFFLINE)
+
+    def set_probing(self, name: str) -> None:
+        self._state.set_phase_override(name, LifecyclePhase.PROBING)
+
+    def set_available(self, name: str) -> None:
+        self._state.clear_phase_override(name)
+        self._state.clear_cooling(name)
+
+    async def cool_down(
+        self,
+        config: LLMConfig,
+        headers: httpx.Headers,
+        *,
+        delay_override: float | None = None,
+    ) -> None:
         """Withdraw the slot for the Retry-After window, persisting the new state."""
-        delay = retry_after_seconds(headers, _DEFAULT_RATE_LIMIT_SEC)
+        delay = (
+            delay_override
+            if delay_override is not None
+            else retry_after_seconds(
+                headers,
+                _DEFAULT_RATE_LIMIT_SEC,
+            )
+        )
         cooldown_until = datetime.now(UTC) + timedelta(seconds=delay)
         self._state.set_cooling(
             config.name,
@@ -119,7 +151,7 @@ class LLMPool:
             )
             self._store_cache = None
         loop = asyncio.get_running_loop()
-        loop.call_later(float(delay), self._queue.put_nowait, config)
+        loop.call_later(float(delay), self._reenqueue_config, config)
         logger.warning("LLM %s cooling for %ds", config.name, delay)
 
     def mark_quality_fail(self, name: str) -> None:
@@ -176,6 +208,6 @@ class LLMPool:
         )
         delay = (stored.cooldown_until - now_utc).total_seconds()
         loop = asyncio.get_running_loop()
-        loop.call_later(delay, self._queue.put_nowait, config)
+        loop.call_later(delay, self._reenqueue_config, config)
         logger.info("LLM %s: shared cooldown applied, %.0fs remaining", config.name, delay)
         return True
