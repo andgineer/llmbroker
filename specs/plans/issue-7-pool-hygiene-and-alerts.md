@@ -136,6 +136,11 @@ def _maybe_alert_underprov(self) -> None:
             "pool under-provisioned: all LLMs are OFFLINE or COOLING"
             " — add more LLMs to the registry"
         )
+        # Note: the condition `phase is not AVAILABLE` also fires when all LLMs are
+        # in PROBING phase. The alert text ("OFFLINE or COOLING") doesn't mention
+        # PROBING, but this is acceptable — a pool where every member is simultaneously
+        # probing is equally under-provisioned. The wording is intentionally human-friendly
+        # rather than exhaustively precise.
 ```
 
 In both `ask()` and `chat()`, catch `NoLLMAvailableError`, call `_maybe_alert_underprov()`,
@@ -157,7 +162,7 @@ Add `import time` to `broker.py`. Import `NoLLMAvailableError` from `llmbroker.e
 
 | File | Change |
 |---|---|
-| `src/llmbroker/optimizer.py` | `Optimizer`: add `max_probe_cycles`, `_probe_cycles`, `_increment_probe_cycles()`, `probe_cycles()`, `reset_probe_cycles()`. Update `on_probing_success` to reset cycles. `_drive_fsm`: remove noise OFFLINE alert; add 401/403 branch (`pool.drop` + alert); update ERROR/PROBING branch to count cycles and retire at `max_probe_cycles` |
+| `src/llmbroker/optimizer.py` | `Optimizer`: add `max_probe_cycles`, `_probe_cycles`, `increment_probe_cycles()`, `probe_cycles()`, `reset_probe_cycles()`. Update `on_probing_success` to reset cycles. `_drive_fsm`: remove noise OFFLINE alert; add 401/403 branch (`pool.drop` + alert); update ERROR/PROBING branch to count cycles and retire at `max_probe_cycles` |
 | `src/llmbroker/broker/broker.py` | Add `_last_underprov_alert`, `_underprov_alert_interval`. Add `_maybe_alert_underprov()` (plain `def`, no I/O). Wrap `ask()` and `chat()` router calls to catch `NoLLMAvailableError`, call `_maybe_alert_underprov()`, re-raise. In `add()`, call `self._optimizer.reset_probe_cycles(cfg.name)` when optimizer is set. Add `import time` and import `NoLLMAvailableError` |
 
 ## Tests to add (`tests/test_optimizer.py`)
@@ -165,7 +170,7 @@ Add `import time` to `broker.py`. Import `NoLLMAvailableError` from `llmbroker.e
 - `test_no_offline_alert_on_rate_limit_backoff` — max `rl_fail_count` reached → LLM goes OFFLINE but `opt.alerts()` returns `[]` (no human alert for auto-recoverable event)
 - `test_auth_failure_401_drops_llm_and_alerts` — `_drive_fsm` called with `ERROR/http_status=401` → `pool.drop(name)` called; alert message contains "API key" and api_key_ref
 - `test_auth_failure_403_drops_llm_and_alerts` — same for 403
-- `test_auth_failure_stale_slot_skipped` — after drop, a second `acquire()` dequeues the stale slot and skips it via `config.name not in pool` guard
+- `test_auth_failure_stale_slot_skipped` — after drop, `acquire()` dequeues the stale slot and the name is no longer in pool. Note: this test verifies the pool-side precondition only; the actual router guard (`if config.name not in self._pool: continue`) is pre-existing code and not exercised here. A full router integration test was judged disproportionate for a pre-existing guard.
 - `test_auth_failure_during_probing_phase` — 401 while in PROBING phase: `pool.drop()` called, `_on_go_offline` NOT called again (no duplicate probe task), and `probe_cycles()` is irrelevant (counter not incremented)
 - `test_probe_failure_increments_cycle_count` — single probe ERROR → `opt.probe_cycles(name) == 1`; LLM goes OFFLINE, probe loop restarted; no human alert
 - `test_probe_success_resets_cycle_count` — probe cycles incremented then probe OK → `opt.probe_cycles(name) == 0`; no retirement alert
