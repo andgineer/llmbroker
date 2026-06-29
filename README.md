@@ -6,12 +6,12 @@
 |---------------------------------------- | -------: | -------: | ------: | --------: |
 | src/llmbroker/\_\_about\_\_.py          |        1 |        1 |      0% |         1 |
 | src/llmbroker/\_\_main\_\_.py           |        4 |        4 |      0% |       3-8 |
-| src/llmbroker/broker/broker.py          |      126 |       23 |     82% |71, 98, 118, 131, 133-134, 209-210, 224, 228-232, 235-245, 253 |
+| src/llmbroker/broker/broker.py          |      128 |       21 |     84% |126, 139, 141-142, 217-218, 232, 236-240, 243-253, 261 |
 | src/llmbroker/broker/catalog.py         |       84 |        5 |     94% |55-56, 75-77 |
-| src/llmbroker/broker/pool.py            |      114 |        2 |     98% |   94, 158 |
+| src/llmbroker/broker/pool.py            |      137 |        7 |     95% |95, 115-118, 120, 188 |
 | src/llmbroker/broker/pool\_view.py      |       28 |        0 |    100% |           |
 | src/llmbroker/broker/result.py          |       42 |        4 |     90% |37, 40-41, 76 |
-| src/llmbroker/broker/router.py          |       72 |        3 |     96% |152, 179-180 |
+| src/llmbroker/broker/router.py          |       73 |        3 |     96% |154, 181-182 |
 | src/llmbroker/broker/state.py           |       32 |        0 |    100% |           |
 | src/llmbroker/chat.py                   |       83 |       10 |     88% |112, 162-172 |
 | src/llmbroker/cli.py                    |       76 |        1 |     99% |        37 |
@@ -23,7 +23,7 @@
 | src/llmbroker/mongodb/secrets.py        |       25 |        0 |    100% |           |
 | src/llmbroker/mongodb/state\_store.py   |       42 |        5 |     88% |32-34, 41, 55 |
 | src/llmbroker/mongodb/telemetry.py      |       53 |        0 |    100% |           |
-| src/llmbroker/optimizer.py              |       95 |        7 |     93% |122-124, 127-129, 132 |
+| src/llmbroker/optimizer.py              |      145 |        8 |     94% |162-164, 167-169, 172, 205 |
 | src/llmbroker/postgres/registry.py      |       49 |        0 |    100% |           |
 | src/llmbroker/postgres/schema.py        |       19 |        1 |     95% |        90 |
 | src/llmbroker/postgres/secrets.py       |       29 |        0 |    100% |           |
@@ -43,7 +43,7 @@
 | src/llmbroker/standalone/secrets.py     |       39 |        3 |     92% |54, 61, 66 |
 | src/llmbroker/standalone/telemetry.py   |       33 |        2 |     94% |    23, 34 |
 | src/llmbroker/sync.py                   |      106 |       12 |     89% |82, 101, 103, 130-131, 163-164, 212, 215, 218, 221, 226 |
-| **TOTAL**                               | **1714** |  **104** | **94%** |           |
+| **TOTAL**                               | **1790** |  **108** | **94%** |           |
 
 
 ## Setup coverage badge
