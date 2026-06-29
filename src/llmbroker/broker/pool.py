@@ -16,6 +16,7 @@ import httpx
 from llmbroker.broker.state import InMemoryState
 from llmbroker.chat import retry_after_seconds
 from llmbroker.models import LifecyclePhase, LLMConfig, LLMState
+from llmbroker.optimizer import SelectionPolicy
 from llmbroker.protocols.state_store import StateStoreProtocol
 
 logger = logging.getLogger("llmbroker.broker")
@@ -86,12 +87,41 @@ class LLMPool:
     # Slot acquisition
     # ------------------------------------------------------------------
 
-    async def acquire(self, wait: float | None) -> LLMConfig:
+    async def _queue_acquire(self, wait: float | None) -> LLMConfig:
         if wait is None:
             return await self._queue.get()
         if wait == 0:
             return self._queue.get_nowait()
         return await asyncio.wait_for(self._queue.get(), timeout=wait)
+
+    async def acquire(
+        self,
+        wait: float | None,
+        *,
+        policy: SelectionPolicy | None = None,
+        operation: str | None = None,
+    ) -> LLMConfig:
+        first = await self._queue_acquire(wait)
+        if policy is None:
+            return first
+        available = [first]
+        while True:
+            try:
+                available.append(self._queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        try:
+            picked = policy.select(available, operation=operation)
+        except Exception:
+            for cfg in available:
+                self._queue.put_nowait(cfg)
+            raise
+        if picked is None:
+            picked = available[0]
+        for cfg in available:
+            if cfg is not picked:
+                self._queue.put_nowait(cfg)
+        return picked
 
     def release(self, config: LLMConfig) -> None:
         self._queue.put_nowait(config)

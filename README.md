@@ -2,8 +2,7 @@
 [![Coverage](https://raw.githubusercontent.com/andgineer/llmbroker/python-coverage-comment-action-data/badge.svg)](https://htmlpreview.github.io/?https://github.com/andgineer/llmbroker/blob/python-coverage-comment-action-data/htmlcov/index.html)
 # llmbroker
 
-Route LLM calls over a **pool of free LLMs** with automatic round-robin and
-cooldown.
+Turn a crowd of free, rate-limited LLMs into one reliable model — no premium subscription, no single point of failure.
 
 No LangChain, no heavy deps.
 

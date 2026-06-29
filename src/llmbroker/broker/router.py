@@ -16,7 +16,7 @@ from llmbroker.broker.result import AsyncResult
 from llmbroker.chat import call_provider, is_rate_limit
 from llmbroker.exceptions import AllLLMsFailedError, NoLLMAvailableError
 from llmbroker.models import Call, CallStatus, LLMConfig, Usage
-from llmbroker.optimizer import Optimizer
+from llmbroker.optimizer import Optimizer, SelectionPolicy
 from llmbroker.protocols.telemetry import TelemetryProtocol
 
 HTTP_429 = 429
@@ -34,11 +34,13 @@ class Router:
         *,
         user_id: int | str | None,
         optimizer: Optimizer | None = None,
+        policy: SelectionPolicy | None = None,
     ) -> None:
         self._pool = pool
         self._telemetry = telemetry
         self._user_id = user_id
         self._optimizer = optimizer
+        self._policy = policy
 
     async def ask(
         self,
@@ -66,7 +68,7 @@ class Router:
     ) -> AsyncResult:
         while True:
             try:
-                config = await self._pool.acquire(wait)
+                config = await self._pool.acquire(wait, policy=self._policy, operation=operation)
             except (asyncio.QueueEmpty, TimeoutError) as exc:
                 raise NoLLMAvailableError("no LLM slot came free within wait") from exc
 

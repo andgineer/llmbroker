@@ -55,6 +55,52 @@ hammering a still-unhealthy endpoint.
 
 ## Rolling aggregates
 
-Per-`(llm, operation)` rolling call windows are tracked internally and reserved for
-future phases (quality judging, tiered routing). They have no effect on current
-routing decisions.
+Per-`(llm, operation)` rolling call windows of at most `rolling_window` entries are
+maintained in memory. From each window two metrics are derived:
+
+- **Usable rate** — Laplace-smoothed (Beta(1,1) prior) fraction of OK calls.
+  Returns `None` when fewer than `min_sample_count` samples are available; the
+  caller treats `None` as "insufficient data" rather than "bad".
+- **Mean latency** — average latency of OK calls only; `None` when no OK call
+  has been recorded.
+
+---
+
+## Selection policy
+
+When the optimizer is active, slot acquisition is no longer pure round-robin.
+After pool availability gating (only AVAILABLE-phase LLMs are candidates), the
+selection goes through three tiers:
+
+**Tier 1 — exploration reserve.**
+A random fraction (`exploration_fraction`, default 10 %) of selections are routed
+uniformly at random across all candidates, bypassing floor gating and ranking.
+This is ε-greedy: without occasional exploration, data never accumulates on LLMs
+that have been ranked out, making the ranking permanent regardless of whether the
+LLM has recovered.
+
+**Tier 2 — quality floor.**
+Candidates with a Laplace-smoothed usable rate below `usable_rate_floor` (default
+0.5) are excluded. An LLM with fewer than `min_sample_count` samples always passes
+unconditionally — new LLMs must be tried before they can be judged. If all
+candidates fail the floor, the floor is dropped for this selection and an alert is
+emitted.
+
+**Tier 3 — objective ranking.**
+The surviving candidates are ranked by a two-element tuple. The objective depends
+on whether the operation is listed in `background_operations`:
+
+- **Background operation** — quality matters most: rank by `(-usable_rate, latency)`.
+- **Interactive operation** (default) — latency matters most: rank by `(latency, -usable_rate)`.
+
+An LLM with no OK calls receives `latency = ∞`, ranking last in interactive mode.
+An LLM with fewer than `min_sample_count` samples receives a neutral prior rate of
+0.5 in the ranking key.
+
+### TPM awareness
+
+A `max_tpm`-based ranking axis was considered and rejected: free-tier LLMs rarely
+publish exact TPM limits, so the field would almost always be absent. Sustained
+rate-limiting is already handled empirically by the circuit-breaker FSM and
+`usable_rate`. TPM awareness can be revisited if a concrete use-case with known
+limits emerges.

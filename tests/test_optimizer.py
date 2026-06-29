@@ -2,20 +2,22 @@
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 
 from llmbroker.broker import AsyncBroker
 from llmbroker.broker.pool import LLMPool
+from llmbroker.broker.router import Router
 from llmbroker.models import (
     Call,
     CallStatus,
     LifecyclePhase,
     LLMConfig,
     LLMMetrics,
+    Usage,
 )
-from llmbroker.optimizer import Optimizer, OptimizerTelemetry
+from llmbroker.optimizer import FirstAvailablePolicy, Optimizer, OptimizerPolicy, OptimizerTelemetry
 from llmbroker.protocols.telemetry import QueryableTelemetryProtocol
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.telemetry import NoTelemetry
@@ -30,13 +32,21 @@ def _cfg(name: str = "x") -> LLMConfig:
     return LLMConfig(name=name, base_url="https://x/v1", model="m", api_key_ref="k")
 
 
-def _call(name: str, status: CallStatus, operation: str | None = None) -> Call:
+def _call(
+    name: str,
+    status: CallStatus,
+    operation: str | None = None,
+    latency_ms: int | None = None,
+    usage: Usage | None = None,
+) -> Call:
     return Call(
         id="test",
         llm_name=name,
         operation=operation,
         trace_id=None,
         status=status,
+        latency_ms=latency_ms,
+        usage=usage,
     )
 
 
@@ -420,3 +430,297 @@ def test_pool_drop_clears_phase_override():
     pool.drop("x")
     pool.add(_cfg(), "k")
     assert pool.state("x").phase is LifecyclePhase.AVAILABLE
+
+
+# ---------------------------------------------------------------------------
+# Rolling-aggregate and stats tests
+# ---------------------------------------------------------------------------
+
+
+def test_record_rolling_populates_deque():
+    opt = Optimizer(rolling_window=3)
+    for i in range(4):
+        opt._record_rolling("x", "op", _call("x", CallStatus.OK))
+    deque = opt._rolling[("x", "op")]
+    assert len(deque) == 3  # maxlen=3 enforced
+
+
+def test_usable_rate_none_below_min_sample_count():
+    opt = Optimizer(min_sample_count=10)
+    for _ in range(9):
+        opt._record_rolling("x", None, _call("x", CallStatus.OK))
+    assert opt.usable_rate("x", None) is None
+
+
+def test_usable_rate_laplace_smoothed():
+    opt = Optimizer(min_sample_count=10)
+    for _ in range(5):
+        opt._record_rolling("x", None, _call("x", CallStatus.OK))
+    for _ in range(5):
+        opt._record_rolling("x", None, _call("x", CallStatus.ERROR))
+    rate = opt.usable_rate("x", None)
+    assert rate is not None
+    assert abs(rate - (5 + 1) / (10 + 2)) < 1e-9
+
+
+def test_mean_latency_ignores_non_ok():
+    opt = Optimizer(min_sample_count=1)
+    opt._record_rolling("x", None, _call("x", CallStatus.ERROR, latency_ms=9999))
+    opt._record_rolling("x", None, _call("x", CallStatus.OK, latency_ms=100))
+    opt._record_rolling("x", None, _call("x", CallStatus.OK, latency_ms=200))
+    assert opt.mean_latency_ms("x", None) == 150.0
+
+
+# ---------------------------------------------------------------------------
+# SelectionPolicy tests
+# ---------------------------------------------------------------------------
+
+
+def test_first_available_policy_picks_first():
+    policy = FirstAvailablePolicy()
+    a, b, c = _cfg("a"), _cfg("b"), _cfg("c")
+    assert policy.select([a, b, c], operation=None) is a
+
+
+def test_first_available_empty_returns_none():
+    assert FirstAvailablePolicy().select([], operation=None) is None
+
+
+def _opt_with_samples(
+    llm_name: str,
+    ok: int,
+    err: int,
+    latency_ms: int,
+    operation: str | None,
+    min_sample_count: int = 5,
+) -> Optimizer:
+    opt = Optimizer(min_sample_count=min_sample_count, rolling_window=100)
+    for _ in range(ok):
+        opt._record_rolling(
+            llm_name, operation, _call(llm_name, CallStatus.OK, latency_ms=latency_ms)
+        )
+    for _ in range(err):
+        opt._record_rolling(llm_name, operation, _call(llm_name, CallStatus.ERROR))
+    return opt
+
+
+def test_optimizer_policy_no_data_does_not_filter():
+    opt = Optimizer(min_sample_count=10, exploration_fraction=0.0)
+    a, b = _cfg("a"), _cfg("b")
+    policy = OptimizerPolicy(opt)
+    result = policy.select([a, b], operation=None)
+    assert result in (a, b)
+
+
+def test_optimizer_policy_quality_floor_gates():
+    opt = Optimizer(min_sample_count=5, usable_rate_floor=0.6, exploration_fraction=0.0)
+    # "a" has a low usable rate; "b" has high rate
+    for _ in range(5):
+        opt._record_rolling("a", "op", _call("a", CallStatus.ERROR))
+    for _ in range(5):
+        opt._record_rolling("b", "op", _call("b", CallStatus.OK, latency_ms=50))
+    policy = OptimizerPolicy(opt)
+    result = policy.select([_cfg("a"), _cfg("b")], operation="op")
+    assert result is not None
+    assert result.name == "b"
+
+
+def test_optimizer_policy_quality_floor_fallback_when_all_fail():
+    # All candidates fail the floor — must not raise, must return something
+    opt = Optimizer(min_sample_count=5, usable_rate_floor=0.99, exploration_fraction=0.0)
+    for name in ("a", "b"):
+        for _ in range(5):
+            opt._record_rolling(name, None, _call(name, CallStatus.ERROR))
+    policy = OptimizerPolicy(opt)
+    result = policy.select([_cfg("a"), _cfg("b")], operation=None)
+    assert result is not None
+    alerts = opt.alerts()
+    assert any("score-ranked fallback" in a.message for a in alerts)
+
+
+def test_optimizer_policy_background_ranks_by_quality():
+    # usable_rate_floor=0.0 so both candidates pass the floor gate; the test exercises ranking only
+    opt = Optimizer(
+        min_sample_count=5,
+        exploration_fraction=0.0,
+        usable_rate_floor=0.0,
+        background_operations=frozenset({"batch"}),
+    )
+    # "hi": 5/5 OK → Laplace rate = 6/7 ≈ 0.857; "lo": 1/5 OK → 2/7 ≈ 0.286; same latency
+    for _ in range(5):
+        opt._record_rolling("hi", "batch", _call("hi", CallStatus.OK, latency_ms=100))
+    for _ in range(4):
+        opt._record_rolling("lo", "batch", _call("lo", CallStatus.ERROR))
+    opt._record_rolling("lo", "batch", _call("lo", CallStatus.OK, latency_ms=100))
+    policy = OptimizerPolicy(opt)
+    result = policy.select([_cfg("lo"), _cfg("hi")], operation="batch")
+    assert result is not None
+    assert result.name == "hi"
+
+
+def test_optimizer_policy_interactive_ranks_by_latency():
+    opt = Optimizer(min_sample_count=5, exploration_fraction=0.0)
+    # Both have identical good quality; "fast" has lower latency
+    for _ in range(5):
+        opt._record_rolling("fast", "op", _call("fast", CallStatus.OK, latency_ms=10))
+    for _ in range(5):
+        opt._record_rolling("slow", "op", _call("slow", CallStatus.OK, latency_ms=500))
+    policy = OptimizerPolicy(opt)
+    result = policy.select([_cfg("slow"), _cfg("fast")], operation="op")
+    assert result is not None
+    assert result.name == "fast"
+
+
+def test_optimizer_policy_exploration_bypasses_ranking():
+    # With exploration_fraction=1.0, select is random — run enough times to observe non-determinism
+    opt = Optimizer(min_sample_count=5, exploration_fraction=1.0)
+    for _ in range(5):
+        opt._record_rolling("fast", "op", _call("fast", CallStatus.OK, latency_ms=1))
+    for _ in range(5):
+        opt._record_rolling("slow", "op", _call("slow", CallStatus.OK, latency_ms=9999))
+    policy = OptimizerPolicy(opt)
+    candidates = [_cfg("fast"), _cfg("slow")]
+    seen = {policy.select(candidates, operation="op").name for _ in range(50)}
+    assert "slow" in seen
+
+
+def test_optimizer_policy_unknown_latency_ranked_last_interactive():
+    opt = Optimizer(min_sample_count=5, exploration_fraction=0.0)
+    # "known" has measured latency; "unknown" has no OK calls → latency=inf
+    for _ in range(5):
+        opt._record_rolling("known", "op", _call("known", CallStatus.OK, latency_ms=999))
+    policy = OptimizerPolicy(opt)
+    result = policy.select([_cfg("unknown"), _cfg("known")], operation="op")
+    assert result is not None
+    assert result.name == "known"
+
+
+# ---------------------------------------------------------------------------
+# Pool drain-and-pick tests
+# ---------------------------------------------------------------------------
+
+
+def test_pool_acquire_drain_and_pick():
+    """Multiple available slots: policy picks non-first; others returned to queue."""
+
+    async def run():
+        pool = LLMPool(state_store=None, user_id=None)
+        a, b, c = _cfg("a"), _cfg("b"), _cfg("c")
+        pool.add(a, "k")
+        pool.add(b, "k")
+        pool.add(c, "k")
+
+        policy = MagicMock()
+        policy.select.return_value = b
+
+        result = await pool.acquire(0, policy=policy, operation="op")
+        assert result is b
+        assert pool._queue.qsize() == 2
+        remaining = {pool._queue.get_nowait().name, pool._queue.get_nowait().name}
+        assert remaining == {"a", "c"}
+
+    asyncio.run(run())
+
+
+def test_pool_acquire_single_slot_no_drain():
+    """Single slot: policy receives list of one; no put_nowait overflow."""
+
+    async def run():
+        pool = LLMPool(state_store=None, user_id=None)
+        a = _cfg("a")
+        pool.add(a, "k")
+
+        policy = MagicMock()
+        policy.select.return_value = a
+
+        result = await pool.acquire(0, policy=policy, operation=None)
+        assert result is a
+        assert pool._queue.qsize() == 0
+        policy.select.assert_called_once_with([a], operation=None)
+
+    asyncio.run(run())
+
+
+def test_pool_acquire_no_policy_returns_first():
+    """Without policy, acquire returns the first slot without drain."""
+
+    async def run():
+        pool = LLMPool(state_store=None, user_id=None)
+        a, b = _cfg("a"), _cfg("b")
+        pool.add(a, "k")
+        pool.add(b, "k")
+
+        result = await pool.acquire(0)
+        assert result in (a, b)
+        assert pool._queue.qsize() == 1
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Router and Broker wiring tests
+# ---------------------------------------------------------------------------
+
+
+def test_router_passes_policy_to_acquire():
+    """Router passes its policy and operation through to pool.acquire."""
+
+    async def run():
+        pool = MagicMock()
+        acquired = _cfg("x")
+
+        async def fake_acquire(wait, *, policy, operation):
+            assert policy is sentinel_policy
+            assert operation == "myop"
+            return acquired
+
+        pool.acquire = fake_acquire
+        pool.__contains__ = MagicMock(return_value=True)
+        pool.has_key = MagicMock(return_value=True)
+
+        async def _no_shared_cooling(_cfg):
+            return False
+
+        pool.apply_shared_cooling = _no_shared_cooling
+
+        async def fake_call_provider(*a, **kw):
+            return "text", [], None
+
+        sentinel_policy = object()
+
+        router = Router(pool, NoTelemetry(), user_id=None, policy=sentinel_policy)
+        with patch("llmbroker.broker.router.call_provider", fake_call_provider):
+            pool.release = MagicMock()
+            pool.clear_cooling = MagicMock()
+            result = await router.chat([{"role": "user", "content": "hi"}], operation="myop")
+        assert result._llm_name == "x"
+
+    asyncio.run(run())
+
+
+def test_broker_creates_optimizer_policy_when_optimizer_set(tmp_path):
+    """AsyncBroker with optimizer wires OptimizerPolicy to the Router."""
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            telemetry=NoTelemetry(),
+            optimize=True,
+        ) as broker:
+            assert isinstance(broker._router._policy, OptimizerPolicy)
+
+    asyncio.run(run())
+
+
+def test_broker_no_policy_when_no_optimizer(tmp_path):
+    """AsyncBroker with optimize=False passes policy=None; acquire never drains."""
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            telemetry=NoTelemetry(),
+            optimize=False,
+        ) as broker:
+            assert broker._router._policy is None
+
+    asyncio.run(run())

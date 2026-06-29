@@ -33,7 +33,7 @@ from llmbroker.models import (
     LLMSnapshot,
     SeedPolicy,
 )
-from llmbroker.optimizer import Optimizer, OptimizerTelemetry
+from llmbroker.optimizer import Optimizer, OptimizerPolicy, OptimizerTelemetry
 from llmbroker.protocols.registry import RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
 from llmbroker.protocols.state_store import StateStoreProtocol
@@ -94,11 +94,19 @@ class AsyncBroker:
                 pool,
                 on_go_offline=self._on_go_offline,
             )
+            policy = OptimizerPolicy(self._optimizer)
         else:
             effective_telemetry = telemetry
+            policy = None
 
         self._telemetry = effective_telemetry
-        self._router = Router(pool, effective_telemetry, user_id=user_id, optimizer=self._optimizer)
+        self._router = Router(
+            pool,
+            effective_telemetry,
+            user_id=user_id,
+            optimizer=self._optimizer,
+            policy=policy,
+        )
         self._pool_view = PoolView(pool, effective_telemetry, user_id=user_id)
 
         self._provisioned = False

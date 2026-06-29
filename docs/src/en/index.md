@@ -1,7 +1,6 @@
 # llmbroker
 
-Route LLM calls over a **pool of free LLMs** with automatic round-robin and
-cooldown.
+Turn a crowd of free, rate-limited LLMs into one reliable model — no premium subscription, no single point of failure.
 
 No heavy deps like LangChain.
 

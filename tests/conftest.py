@@ -1,10 +1,18 @@
 """Session fixtures for postgres and mongodb integration tests."""
 
+import os
+
 import asyncpg
 import pytest
 from motor.motor_asyncio import AsyncIOMotorClient
 from testcontainers.mongodb import MongoDbContainer
 from testcontainers.postgres import PostgresContainer
+
+# On macOS the Ryuk sidecar container (testcontainers' cleanup daemon) occasionally
+# fails to expose its port in time, causing a flaky ConnectionError on the first run.
+# Docker Desktop cleans up containers itself, so Ryuk is not needed on macOS.
+if os.uname().sysname == "Darwin":
+    os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
