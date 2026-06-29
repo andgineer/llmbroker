@@ -11,7 +11,7 @@ from testcontainers.postgres import PostgresContainer
 # On macOS the Ryuk sidecar container (testcontainers' cleanup daemon) occasionally
 # fails to expose its port in time, causing a flaky ConnectionError on the first run.
 # Docker Desktop cleans up containers itself, so Ryuk is not needed on macOS.
-if os.uname().sysname == "Darwin":
+if getattr(os, "uname", None) and os.uname().sysname == "Darwin":
     os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
 
