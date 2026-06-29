@@ -2,6 +2,16 @@
 
 Source of truth: https://github.com/andgineer/llmbroker/issues/6
 
+## Decision: `max_tpm` dropped
+
+The original plan included `LLMConfig.max_tpm`, `Optimizer.tpm_window_sec`, `_tpm_windows`,
+`_record_tpm`, and `tpm_used` to incorporate a TPM-headroom axis into the ranking key.
+This was removed: free-tier LLMs rarely publish exact TPM limits, so the field would almost
+always be `None`; the circuit-breaker FSM and `usable_rate` already handle sustained rate-limiting
+empirically without requiring the user to supply a number. The complexity (unbounded deque growth,
+duplicate eviction loops, extra ranking dimension) was not justified by the benefit.
+TPM awareness can be added later if a concrete use-case with known limits emerges.
+
 ## Current state
 
 - `Router.chat()` calls `pool.acquire(wait)` which dequeues the next `LLMConfig` from
@@ -9,7 +19,6 @@ Source of truth: https://github.com/andgineer/llmbroker/issues/6
 - `Optimizer._rolling` is a stub: `_touch_rolling()` creates empty deques but never
   appends calls; no stats methods exist.
 - `Optimizer` has no selection-related parameters.
-- `LLMConfig` has no `max_tpm` field.
 - No `SelectionPolicy` protocol or implementations exist.
 
 ## Architecture

@@ -43,7 +43,7 @@ _probe_cycles: dict[str, int] = field(default_factory=dict, init=False, repr=Fal
 Add two methods:
 
 ```python
-def _increment_probe_cycles(self, llm_name: str) -> int:
+def increment_probe_cycles(self, llm_name: str) -> int:
     count = self._probe_cycles.get(llm_name, 0) + 1
     self._probe_cycles[llm_name] = count
     return count
@@ -80,7 +80,7 @@ elif call.status == CallStatus.ERROR:
             f" — check api_key_ref '{ref}'"
         )
     elif self._pool.state(name).phase is LifecyclePhase.PROBING:
-        cycles = self._opt._increment_probe_cycles(name)  # noqa: SLF001
+        cycles = self._opt.increment_probe_cycles(name)
         if cycles >= self._opt.max_probe_cycles:
             self._pool.drop(name)
             self._opt.add_alert(
