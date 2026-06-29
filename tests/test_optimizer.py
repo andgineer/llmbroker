@@ -5,10 +5,12 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 
 from llmbroker.broker import AsyncBroker
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.router import Router
+from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import (
     Call,
     CallStatus,
@@ -38,6 +40,7 @@ def _call(
     operation: str | None = None,
     latency_ms: int | None = None,
     usage: Usage | None = None,
+    http_status: int | None = None,
 ) -> Call:
     return Call(
         id="test",
@@ -47,6 +50,7 @@ def _call(
         status=status,
         latency_ms=latency_ms,
         usage=usage,
+        http_status=http_status,
     )
 
 
@@ -230,7 +234,9 @@ def test_fsm_probing_failure_to_offline():
     asyncio.run(run())
 
 
-def test_fsm_offline_generates_alert():
+def test_no_offline_alert_on_rate_limit_backoff():
+    """Going OFFLINE after rate-limit backoff is auto-recoverable — no human alert."""
+
     async def run():
         pool = LLMPool(state_store=None, user_id=None)
         pool.add(_cfg(), "key")
@@ -240,10 +246,8 @@ def test_fsm_offline_generates_alert():
         for _ in range(2):
             await opt_tel.record(_call("x", CallStatus.RATE_LIMITED))
 
-        alerts = opt.alerts()
-        assert len(alerts) == 1
-        assert "x" in alerts[0].message
-        assert "OFFLINE" in alerts[0].message
+        assert pool.state("x").phase is LifecyclePhase.OFFLINE
+        assert opt.alerts() == []
 
     asyncio.run(run())
 
@@ -309,8 +313,8 @@ def test_warm_start_activates_with_queryable(tmp_path):
     asyncio.run(run())
 
 
-def test_alerts_returns_offline_llm(tmp_path):
-    """OFFLINE transition produces an alert retrievable via broker.alerts()."""
+def test_no_offline_alert_via_opt_tel(tmp_path):
+    """OFFLINE transition via rate-limit does not produce a human alert."""
 
     async def run():
         opt = Optimizer(max_fail_count=2)
@@ -322,9 +326,9 @@ def test_alerts_returns_offline_llm(tmp_path):
         for _ in range(2):
             await opt_tel.record(_call("p1", CallStatus.RATE_LIMITED))
 
-        alerts = opt.alerts()
-        assert len(alerts) == 1
-        assert "p1" in alerts[0].message
+        assert pool.state("p1").phase is LifecyclePhase.OFFLINE
+        assert offline_calls == ["p1"]
+        assert opt.alerts() == []
 
     asyncio.run(run())
 
@@ -722,5 +726,331 @@ def test_broker_no_policy_when_no_optimizer(tmp_path):
             optimize=False,
         ) as broker:
             assert broker._router._policy is None
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Pool hygiene and alert tests (issue-7)
+# ---------------------------------------------------------------------------
+
+
+def test_auth_failure_401_drops_llm_and_alerts():
+    """ERROR with HTTP 401 drops the LLM from pool and fires an API-key alert."""
+
+    async def run():
+        pool = LLMPool(state_store=None, user_id=None)
+        pool.add(_cfg(), "key")
+        opt = Optimizer()
+        offline_calls: list[str] = []
+        opt_tel = _make_opt_tel(opt, pool, offline_calls)
+
+        await opt_tel.record(_call("x", CallStatus.ERROR, http_status=401))
+
+        assert "x" not in pool
+        assert offline_calls == []
+        alerts = opt.alerts()
+        assert len(alerts) == 1
+        assert "API key" in alerts[0].message
+        assert "401" in alerts[0].message
+        assert "'k'" in alerts[0].message  # api_key_ref value
+
+    asyncio.run(run())
+
+
+def test_auth_failure_403_drops_llm_and_alerts():
+    """ERROR with HTTP 403 drops the LLM from pool and fires an API-key alert."""
+
+    async def run():
+        pool = LLMPool(state_store=None, user_id=None)
+        pool.add(_cfg(), "key")
+        opt = Optimizer()
+        opt_tel = _make_opt_tel(opt, pool, [])
+
+        await opt_tel.record(_call("x", CallStatus.ERROR, http_status=403))
+
+        assert "x" not in pool
+        alerts = opt.alerts()
+        assert len(alerts) == 1
+        assert "403" in alerts[0].message
+
+    asyncio.run(run())
+
+
+def test_drop_removes_config_but_not_queue_slot():
+    """drop() removes from _configs but leaves the stale slot in the queue.
+
+    This verifies the pool-side precondition for the router guard
+    (`if config.name not in self._pool: continue`). The guard itself is
+    pre-existing code exercised in router integration tests, not here.
+    """
+
+    async def run():
+        pool = LLMPool(state_store=None, user_id=None)
+        pool.add(_cfg(), "key")
+        pool.drop("x")
+        stale = await pool.acquire(0)  # stale slot still drainable from queue
+        assert stale.name == "x"
+        assert "x" not in pool  # _configs was cleared by drop
+
+    asyncio.run(run())
+
+
+def test_auth_failure_during_probing_phase():
+    """401 while in PROBING phase: dropped, on_go_offline NOT called, cycles not incremented."""
+
+    async def run():
+        pool = LLMPool(state_store=None, user_id=None)
+        pool.add(_cfg(), "key")
+        pool.set_probing("x")
+        opt = Optimizer()
+        offline_calls: list[str] = []
+        opt_tel = _make_opt_tel(opt, pool, offline_calls)
+
+        await opt_tel.record(_call("x", CallStatus.ERROR, http_status=401))
+
+        assert "x" not in pool
+        assert offline_calls == []
+        assert opt.probe_cycles("x") == 0
+        alerts = opt.alerts()
+        assert len(alerts) == 1
+        assert "API key" in alerts[0].message
+
+    asyncio.run(run())
+
+
+def test_probe_failure_increments_cycle_count():
+    """Single probe ERROR increments cycle count; LLM goes OFFLINE; no human alert."""
+
+    async def run():
+        pool = LLMPool(state_store=None, user_id=None)
+        pool.add(_cfg(), "key")
+        pool.set_probing("x")
+        opt = Optimizer(max_probe_cycles=5)
+        offline_calls: list[str] = []
+        opt_tel = _make_opt_tel(opt, pool, offline_calls)
+
+        await opt_tel.record(_call("x", CallStatus.ERROR))
+
+        assert opt.probe_cycles("x") == 1
+        assert pool.state("x").phase is LifecyclePhase.OFFLINE
+        assert offline_calls == ["x"]
+        assert opt.alerts() == []
+
+    asyncio.run(run())
+
+
+def test_probe_success_resets_cycle_count():
+    """Probe OK after failed cycles resets the counter and marks LLM AVAILABLE."""
+
+    async def run():
+        pool = LLMPool(state_store=None, user_id=None)
+        pool.add(_cfg(), "key")
+        pool.set_probing("x")
+        opt = Optimizer()
+        for _ in range(3):
+            opt.increment_probe_cycles("x")
+        opt_tel = _make_opt_tel(opt, pool, [])
+
+        await opt_tel.record(_call("x", CallStatus.OK))
+
+        assert opt.probe_cycles("x") == 0
+        assert pool.state("x").phase is LifecyclePhase.AVAILABLE
+        assert opt.alerts() == []
+
+    asyncio.run(run())
+
+
+def test_retirement_after_max_probe_cycles():
+    """Two consecutive probe ERRORs with max_probe_cycles=2 retire the LLM."""
+
+    async def run():
+        pool = LLMPool(state_store=None, user_id=None)
+        pool.add(_cfg(), "key")
+        opt = Optimizer(max_probe_cycles=2)
+        offline_calls: list[str] = []
+        opt_tel = _make_opt_tel(opt, pool, offline_calls)
+
+        pool.set_probing("x")
+        await opt_tel.record(_call("x", CallStatus.ERROR))
+        assert opt.probe_cycles("x") == 1
+        assert "x" in pool
+
+        pool.set_probing("x")
+        await opt_tel.record(_call("x", CallStatus.ERROR))
+
+        assert "x" not in pool
+        assert offline_calls == ["x"]  # only the first failure triggered on_go_offline
+        alerts = opt.alerts()
+        assert len(alerts) == 1
+        assert "retired" in alerts[0].message
+
+    asyncio.run(run())
+
+
+def test_no_retirement_before_max_probe_cycles():
+    """Two probe ERRORs with max_probe_cycles=3 do not retire the LLM."""
+
+    async def run():
+        pool = LLMPool(state_store=None, user_id=None)
+        pool.add(_cfg(), "key")
+        opt = Optimizer(max_probe_cycles=3)
+        offline_calls: list[str] = []
+        opt_tel = _make_opt_tel(opt, pool, offline_calls)
+
+        for _ in range(2):
+            pool.set_probing("x")
+            await opt_tel.record(_call("x", CallStatus.ERROR))
+
+        assert "x" in pool
+        assert opt.probe_cycles("x") == 2
+        assert offline_calls == ["x", "x"]
+        assert opt.alerts() == []
+
+    asyncio.run(run())
+
+
+def test_underprovisioned_alert_when_all_offline(tmp_path):
+    """_maybe_alert_underprov fires when all pool members are not AVAILABLE."""
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            telemetry=NoTelemetry(),
+            optimize=True,
+        ) as broker:
+            broker._pool.set_offline("p1")
+            broker._maybe_alert_underprov()
+            alerts = await broker.alerts()
+            assert len(alerts) == 1
+            assert "under-provisioned" in alerts[0].message
+
+    asyncio.run(run())
+
+
+def test_no_underprov_alert_when_some_available(tmp_path):
+    """No alert when at least one LLM is AVAILABLE."""
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path, name="p1"),
+            telemetry=NoTelemetry(),
+            optimize=True,
+        ) as broker:
+            # p1 stays AVAILABLE (default)
+            broker._maybe_alert_underprov()
+            alerts = await broker.alerts()
+            assert alerts == []
+
+    asyncio.run(run())
+
+
+def test_no_underprov_alert_when_optimize_false(tmp_path):
+    """No alert when optimize=False (no optimizer attached)."""
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            telemetry=NoTelemetry(),
+            optimize=False,
+        ) as broker:
+            broker._pool.set_offline("p1")
+            broker._maybe_alert_underprov()
+            alerts = await broker.alerts()
+            assert alerts == []
+
+    asyncio.run(run())
+
+
+def test_underprov_alert_debounced(tmp_path):
+    """Two consecutive calls within the debounce interval produce only one alert."""
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            telemetry=NoTelemetry(),
+            optimize=True,
+        ) as broker:
+            broker._pool.set_offline("p1")
+            broker._maybe_alert_underprov()
+            broker._maybe_alert_underprov()  # within interval
+            alerts = await broker.alerts()
+            assert len(alerts) == 1
+
+    asyncio.run(run())
+
+
+def test_underprov_alert_via_ask_wiring(tmp_path):
+    """ask() catches NoLLMAvailableError and calls _maybe_alert_underprov() via try/except."""
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            telemetry=NoTelemetry(),
+            optimize=True,
+        ) as broker:
+            # Drain the queue so the next acquire raises QueueEmpty → NoLLMAvailableError.
+            # set_offline marks p1 non-AVAILABLE so _maybe_alert_underprov fires.
+            await broker._pool.acquire(0)
+            broker._pool.set_offline("p1")
+
+            with pytest.raises(NoLLMAvailableError):
+                await broker.ask("hi", wait=0)
+
+            alerts = await broker.alerts()
+            assert len(alerts) == 1
+            assert "under-provisioned" in alerts[0].message
+
+    asyncio.run(run())
+
+
+def test_alerts_returns_empty_optimize_false(tmp_path):
+    """Regression guard: AsyncBroker(optimize=False).alerts() always returns []."""
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            telemetry=NoTelemetry(),
+            optimize=False,
+        ) as broker:
+            assert await broker.alerts() == []
+
+    asyncio.run(run())
+
+
+def test_add_resets_probe_cycles():
+    """broker.add() resets probe cycle counter so a re-added LLM starts fresh."""
+
+    class _MutableReg:
+        async def load(self, user_id=None):
+            return [_cfg("p1")]
+
+        async def get(self, name, user_id=None):
+            return _cfg(name)
+
+        async def add(self, cfg, user_id=None):
+            pass
+
+        async def update(self, cfg, user_id=None):
+            pass
+
+        async def remove(self, name, user_id=None):
+            pass
+
+    async def run():
+        async with AsyncBroker(
+            registry=_MutableReg(),
+            telemetry=NoTelemetry(),
+            optimize=True,
+        ) as broker:
+            # Simulate retirement: drop from pool so add() accepts the config again.
+            broker._pool.drop("p1")
+            for _ in range(3):
+                broker._optimizer.increment_probe_cycles("p1")
+            assert broker._optimizer.probe_cycles("p1") == 3
+
+            await broker.add(_cfg("p1"))
+
+            assert broker._optimizer.probe_cycles("p1") == 0
 
     asyncio.run(run())

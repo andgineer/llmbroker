@@ -28,19 +28,45 @@ A background probe task then waits `offline_sleep` seconds and transitions the L
 **PROBING** by placing exactly one slot back into the pool. The next real incoming
 request that lands on that slot acts as the probe:
 
-- **Probe succeeds** → LLM returns to AVAILABLE; delay resets to `initial_delay`.
-- **Probe fails** → LLM returns to OFFLINE immediately (the probe start primes the
-  failure count so one failure is enough); the probe task restarts.
+- **Probe succeeds** → LLM returns to AVAILABLE; delay resets to `initial_delay`;
+  the consecutive probe-failure counter resets to zero.
+- **Probe fails** → the consecutive probe-failure counter increments; if it reaches
+  `max_probe_cycles` the LLM is **permanently retired** (see Pool retirement below);
+  otherwise the LLM returns to OFFLINE and the probe task restarts.
 
 Probing is intentionally passive: no synthetic request is sent. If there is no
 incoming traffic, recovery is not needed and no probe fires.
+
+Going OFFLINE is auto-recoverable. It does not emit an alert.
+
+---
+
+## Pool retirement
+
+After `max_probe_cycles` consecutive failed probe cycles on one LLM, the LLM is
+permanently dropped from the pool and an alert is emitted. The probe loop does not
+restart. To restore the LLM the operator must fix the underlying issue and re-add it
+via `broker.add(cfg)`.
+
+An API key that is dead (HTTP 401 or 403) triggers immediate permanent retirement
+without waiting for probe cycles — no amount of retrying will fix an invalid key.
+The emitted alert names the `api_key_ref` so the operator knows which credential to
+fix.
 
 ---
 
 ## Alerts
 
-When an LLM transitions to OFFLINE the optimizer emits an alert (retrievable via
-`AsyncBroker.alerts()`). Alerts accumulate until fetched, then clear.
+Alerts are retrievable via `AsyncBroker.alerts()` and accumulate until fetched, then
+clear. Three conditions emit alerts:
+
+- **Auth failure** — a call returns HTTP 401 or 403. The LLM is immediately and
+  permanently dropped; the alert names the `api_key_ref` to fix.
+- **Retirement** — `max_probe_cycles` consecutive probe failures exhaust auto-recovery.
+  The LLM is permanently dropped and an alert is emitted.
+- **Pool under-provisioned** — `NoLLMAvailableError` is raised and all LLMs in the
+  pool are simultaneously non-AVAILABLE (OFFLINE, COOLING, or PROBING). This alert is
+  debounced per broker instance: at most one emission per 60 seconds.
 
 ---
 

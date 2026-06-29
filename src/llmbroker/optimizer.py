@@ -35,6 +35,7 @@ class Optimizer:
     backoff_factor: float = 2.0
     decrease_factor: float = 0.75
     max_fail_count: int = 3
+    max_probe_cycles: int = 5
     offline_sleep: float = 300.0
     min_sample_count: int = 10
     usable_rate_floor: float = 0.5
@@ -45,6 +46,7 @@ class Optimizer:
     _current_delay: dict[str, float] = field(default_factory=dict, init=False, repr=False)
     _pending_alerts: list[Alert] = field(default_factory=list, init=False, repr=False)
     _rl_fail_count: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    _probe_cycles: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     _rolling: dict[tuple[str, str | None], collections.deque] = field(
         default_factory=dict,
         init=False,
@@ -76,6 +78,18 @@ class Optimizer:
     def on_probing_success(self, llm_name: str) -> None:
         self._current_delay[llm_name] = self.initial_delay
         self._rl_fail_count[llm_name] = 0
+        self.reset_probe_cycles(llm_name)
+
+    def increment_probe_cycles(self, llm_name: str) -> int:
+        count = self._probe_cycles.get(llm_name, 0) + 1
+        self._probe_cycles[llm_name] = count
+        return count
+
+    def probe_cycles(self, llm_name: str) -> int:
+        return self._probe_cycles.get(llm_name, 0)
+
+    def reset_probe_cycles(self, llm_name: str) -> None:
+        self._probe_cycles.pop(llm_name, None)
 
     def seed_from_metrics(self, metrics: dict[str, LLMMetrics]) -> None:
         """Warm-start: prime delay hints from persisted metrics on restart."""
@@ -179,9 +193,6 @@ class OptimizerTelemetry:
             self._opt.on_rate_limited(name)
             if self._opt.rl_fail_count(name) >= self._opt.max_fail_count:
                 self._pool.set_offline(name)
-                self._opt.add_alert(
-                    f"{name} went OFFLINE after {self._opt.rl_fail_count(name)} failures",
-                )
                 self._on_go_offline(name)
         elif call.status == CallStatus.OK:
             phase = self._pool.state(name).phase
@@ -191,9 +202,25 @@ class OptimizerTelemetry:
             else:
                 self._opt.on_success(name)
         elif call.status == CallStatus.ERROR:
-            if self._pool.state(name).phase is LifecyclePhase.PROBING:
-                self._pool.set_offline(name)
-                self._on_go_offline(name)
+            if call.http_status in (401, 403):
+                cfg = self._pool.configs.get(name)
+                ref = cfg.api_key_ref if cfg else "unknown"
+                self._pool.drop(name)
+                self._opt.add_alert(
+                    f"{name}: API key appears dead (HTTP {call.http_status})"
+                    f" — check api_key_ref '{ref}'",
+                )
+            elif self._pool.state(name).phase is LifecyclePhase.PROBING:
+                cycles = self._opt.increment_probe_cycles(name)
+                if cycles >= self._opt.max_probe_cycles:
+                    self._pool.drop(name)
+                    self._opt.add_alert(
+                        f"{name}: retired after {cycles} failed probe cycles"
+                        " — remove from registry or fix connectivity",
+                    )
+                else:
+                    self._pool.set_offline(name)
+                    self._on_go_offline(name)
 
 
 class OptimizerPolicy:

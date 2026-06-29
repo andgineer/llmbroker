@@ -14,6 +14,7 @@ telemetry backend; ``alerts`` is delegated to ``Optimizer``.
 
 import asyncio
 import contextlib
+import time
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +25,7 @@ from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.pool_view import PoolView
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.broker.router import Router
+from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import (
     Alert,
     AsyncResourceProtocol,
@@ -112,6 +114,8 @@ class AsyncBroker:
         self._provisioned = False
         self._provision_lock = asyncio.Lock()
         self._bg_tasks: set[asyncio.Task] = set()
+        self._last_underprov_alert: float = 0.0
+        self._underprov_alert_interval: float = 60.0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -165,7 +169,11 @@ class AsyncBroker:
         wait: float | None = None,
     ) -> AsyncResult:
         await self.ensure_pool()
-        return await self._router.ask(prompt, operation=operation, trace_id=trace_id, wait=wait)
+        try:
+            return await self._router.ask(prompt, operation=operation, trace_id=trace_id, wait=wait)
+        except NoLLMAvailableError:
+            self._maybe_alert_underprov()
+            raise
 
     async def chat(
         self,
@@ -177,13 +185,17 @@ class AsyncBroker:
         wait: float | None = None,
     ) -> AsyncResult:
         await self.ensure_pool()
-        return await self._router.chat(
-            messages,
-            tools=tools,
-            operation=operation,
-            trace_id=trace_id,
-            wait=wait,
-        )
+        try:
+            return await self._router.chat(
+                messages,
+                tools=tools,
+                operation=operation,
+                trace_id=trace_id,
+                wait=wait,
+            )
+        except NoLLMAvailableError:
+            self._maybe_alert_underprov()
+            raise
 
     # ------------------------------------------------------------------
     # Inspection
@@ -208,6 +220,8 @@ class AsyncBroker:
     async def add(self, cfg: LLMConfig) -> None:
         await self.ensure_pool()
         await self._catalog.add(cfg)
+        if self._optimizer is not None:
+            self._optimizer.reset_probe_cycles(cfg.name)
 
     async def update(self, cfg: LLMConfig) -> None:
         await self.ensure_pool()
@@ -231,6 +245,25 @@ class AsyncBroker:
         if self._optimizer is None:
             return []
         return self._optimizer.alerts()
+
+    def _maybe_alert_underprov(self) -> None:
+        if self._optimizer is None:
+            return
+        if not self._pool.configs:
+            return
+        now = time.monotonic()
+        if now - self._last_underprov_alert < self._underprov_alert_interval:
+            return
+        all_offline = all(
+            self._pool.state(name).phase is not LifecyclePhase.AVAILABLE
+            for name in self._pool.configs
+        )
+        if all_offline:
+            self._last_underprov_alert = now
+            self._optimizer.add_alert(
+                "pool under-provisioned: all LLMs are OFFLINE or COOLING"
+                " — add more LLMs to the registry",
+            )
 
     def _on_go_offline(self, llm_name: str) -> None:
         if any(t.get_name() == f"probe-{llm_name}" and not t.done() for t in self._bg_tasks):
