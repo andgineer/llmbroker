@@ -70,8 +70,11 @@ def _record_rolling(self, llm_name: str, operation: str | None, call: Call) -> N
     if key not in self._rolling:
         self._rolling[key] = collections.deque(maxlen=self.rolling_window)
     self._rolling[key].append(call)
-    if call.status == CallStatus.OK and call.usage and call.usage.total_tokens:
+    if call.status == CallStatus.OK and call.usage and call.usage.total_tokens is not None:
         self._record_tpm(llm_name, call.usage.total_tokens)
+    # Only OK calls carry reliable token counts. RATE_LIMITED responses do not include usage,
+    # so recording them is impossible. The FSM circuit-breaker handles sustained rate-limiting
+    # independently by taking the LLM offline.
 ```
 
 Update `_drive_fsm` (in `OptimizerTelemetry`) to call `self._opt._record_rolling(name, call.operation, call)  # noqa: SLF001` instead of `self._opt._touch_rolling(name, call.operation)  # noqa: SLF001`.
@@ -99,9 +102,15 @@ def mean_latency_ms(self, llm_name: str, operation: str | None) -> float | None:
 def _record_tpm(self, llm_name: str, tokens: int) -> None:
     if llm_name not in self._tpm_windows:
         self._tpm_windows[llm_name] = collections.deque()
-    self._tpm_windows[llm_name].append((time.monotonic(), tokens))
-    # Deque is unbounded by count; old entries are evicted lazily in tpm_used().
-    # This is intentional: TPM bounding is time-based, not count-based.
+    now = time.monotonic()
+    window = self._tpm_windows[llm_name]
+    cutoff = now - self.tpm_window_sec
+    while window and window[0][0] < cutoff:
+        window.popleft()
+    window.append((now, tokens))
+    # Deque is unbounded by count; bounding is time-based via tpm_window_sec.
+    # Eviction runs eagerly here (to keep the deque lean under heavy write traffic)
+    # and again in tpm_used() (to handle idle periods where writes stopped but reads continue).
 
 def tpm_used(self, llm_name: str) -> int:
     """Total tokens sent to llm_name in the last tpm_window_sec."""
@@ -139,7 +148,9 @@ class OptimizerPolicy:
     def select(self, candidates: list[LLMConfig], *, operation: str | None) -> LLMConfig | None:
         if not candidates:
             return None
-        # Exploration reserve: bypass ranking so low-ranked LLMs keep accumulating data.
+        # Exploration reserve: bypass floor gating AND ranking so every LLM — including
+        # known-poor ones — keeps accumulating data. This is standard ε-greedy: you cannot
+        # learn which LLMs are bad without occasionally sending them real traffic.
         if random.random() < self._opt.exploration_fraction:
             return random.choice(candidates)
         # Tier 2: quality floor gate.
@@ -148,7 +159,7 @@ class OptimizerPolicy:
         if not gated:
             self._opt.add_alert(
                 f"quality floor {self._opt.usable_rate_floor} dropped all candidates "
-                f"for operation={operation!r}; falling back to round-robin"
+                f"for operation={operation!r}; using score-ranked fallback over all candidates"
             )
         # Tier 3+4: objective ranking.
         is_background = operation in self._opt.background_operations
@@ -157,7 +168,10 @@ class OptimizerPolicy:
     def _passes_floor(self, config: LLMConfig, operation: str | None) -> bool:
         rate = self._opt.usable_rate(config.name, operation)
         return rate is None or rate >= self._opt.usable_rate_floor
-        # rate is None → not enough samples → never filtered out
+        # rate is None (< min_sample_count) → passes unconditionally so new LLMs are always
+        # tried. In _rank_key such LLMs receive a neutral prior (0.5). When usable_rate_floor
+        # is raised above 0.5 this means an unsampled LLM ranks below the floor value it just
+        # passed — this is intentional: exploration of unknowns takes priority over the floor.
 
     def _rank_key(
         self, config: LLMConfig, operation: str | None, is_background: bool
@@ -171,7 +185,7 @@ class OptimizerPolicy:
             tpm_headroom = max(0, max_tpm - self._opt.tpm_used(config.name))
             tpm_sort = -tpm_headroom  # prefer more headroom (ascending sort key)
         else:
-            tpm_sort = 0             # unlimited — no preference
+            tpm_sort = float("-inf")  # unlimited headroom — always preferred in tpm tiebreaker
         if is_background:
             # Quality DESC, latency ASC, tpm_headroom DESC
             return (-rate, latency, tpm_sort)
