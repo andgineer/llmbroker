@@ -6,6 +6,7 @@
 |---------------------------------------- | -------: | -------: | ------: | --------: |
 | src/llmbroker/\_\_about\_\_.py          |        1 |        1 |      0% |         1 |
 | src/llmbroker/\_\_main\_\_.py           |        4 |        4 |      0% |       3-8 |
+| src/llmbroker/aws/secrets.py            |       43 |        2 |     95% |    55, 71 |
 | src/llmbroker/broker/broker.py          |      154 |       15 |     90% |130, 143, 145-146, 231-232, 269-273, 285-288 |
 | src/llmbroker/broker/catalog.py         |       84 |        5 |     94% |55-56, 75-77 |
 | src/llmbroker/broker/pool.py            |      137 |        7 |     95% |95, 115-118, 120, 188 |
@@ -43,7 +44,8 @@
 | src/llmbroker/standalone/secrets.py     |       39 |        3 |     92% |54, 61, 66 |
 | src/llmbroker/standalone/telemetry.py   |       33 |        2 |     94% |    23, 34 |
 | src/llmbroker/sync.py                   |      106 |       12 |     89% |82, 101, 103, 130-131, 163-164, 212, 215, 218, 221, 226 |
-| **TOTAL**                               | **1840** |   **94** | **95%** |           |
+| src/llmbroker/vault/secrets.py          |       30 |        0 |    100% |           |
+| **TOTAL**                               | **1913** |   **96** | **95%** |           |
 
 
 ## Setup coverage badge
