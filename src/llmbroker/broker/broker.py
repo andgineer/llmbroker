@@ -114,7 +114,7 @@ class AsyncBroker:
         self._provisioned = False
         self._provision_lock = asyncio.Lock()
         self._bg_tasks: set[asyncio.Task] = set()
-        self._last_underprov_alert: float = 0.0
+        self._last_underprov_alert: float = float("-inf")
         self._underprov_alert_interval: float = 60.0
 
     # ------------------------------------------------------------------

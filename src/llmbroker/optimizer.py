@@ -239,7 +239,10 @@ class OptimizerPolicy:
         pool = gated if gated else candidates
         if not gated:
             now = time.monotonic()
-            if now - self._last_floor_alert.get(operation, 0.0) >= self._FLOOR_ALERT_INTERVAL:
+            if (
+                now - self._last_floor_alert.get(operation, float("-inf"))
+                >= self._FLOOR_ALERT_INTERVAL
+            ):
                 self._last_floor_alert[operation] = now
                 self._opt.add_alert(
                     f"quality floor {self._opt.usable_rate_floor} dropped all candidates "
