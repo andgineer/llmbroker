@@ -3,12 +3,14 @@
 import asyncio
 
 import llmbroker
+import llmbroker.mongodb
+import llmbroker.postgres
 import llmbroker.sqlite
 import pytest
-from llmbroker.models import LLMConfig
-from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.exceptions import UserScopeError
+from llmbroker.models import LLMConfig
 from llmbroker.protocols.secrets import MutableSecretsProtocol
+from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets, Secrets, as_secrets
 
 
@@ -222,3 +224,92 @@ def test_sqlite_secrets_require_user_id_set_raises_on_none(tmp_path):
     secrets = llmbroker.sqlite.Secrets(db, require_user_id=True)
     with pytest.raises(UserScopeError):
         asyncio.run(secrets.set("K", "val", None))
+
+
+# ── Parametrized backend tests for MutableSecretsProtocol ────────────────────
+
+
+@pytest.fixture(
+    params=["sqlite", "postgres", "mongodb"],
+    ids=["sqlite", "postgres", "mongodb"],
+)
+async def mutable_secrets(request, tmp_path_factory, pg_pool, mongo_db):
+    param = request.param
+    if param == "sqlite":
+        db_path = str(tmp_path_factory.mktemp("msec_sqlite") / "sec.db")
+        yield llmbroker.sqlite.Secrets(db_path)
+    elif param == "postgres":
+        yield llmbroker.postgres.Secrets(pg_pool)
+        async with pg_pool.acquire() as conn:
+            await conn.execute("DELETE FROM llmbroker_secrets")
+    elif param == "mongodb":
+        yield llmbroker.mongodb.Secrets(mongo_db)
+        await mongo_db["llmbroker_secrets"].delete_many({})
+
+
+@pytest.fixture(
+    params=["sqlite", "postgres", "mongodb"],
+    ids=["sqlite", "postgres", "mongodb"],
+)
+async def strict_mutable_secrets(request, tmp_path_factory, pg_pool, mongo_db):
+    """Secrets backends constructed with require_user_id=True."""
+    param = request.param
+    if param == "sqlite":
+        db_path = str(tmp_path_factory.mktemp("ssec_sqlite") / "sec.db")
+        yield llmbroker.sqlite.Secrets(db_path, require_user_id=True)
+    elif param == "postgres":
+        yield llmbroker.postgres.Secrets(pg_pool, require_user_id=True)
+        async with pg_pool.acquire() as conn:
+            await conn.execute("DELETE FROM llmbroker_secrets")
+    elif param == "mongodb":
+        yield llmbroker.mongodb.Secrets(mongo_db, require_user_id=True)
+        await mongo_db["llmbroker_secrets"].delete_many({})
+
+
+async def test_mutable_set_and_resolve(mutable_secrets):
+    await mutable_secrets.set("K", "secret")
+    assert await mutable_secrets.resolve("K") == "secret"
+
+
+async def test_mutable_set_upserts(mutable_secrets):
+    await mutable_secrets.set("K", "v1")
+    await mutable_secrets.set("K", "v2")
+    assert await mutable_secrets.resolve("K") == "v2"
+
+
+async def test_mutable_resolve_missing_raises_key_error(mutable_secrets):
+    with pytest.raises(KeyError):
+        await mutable_secrets.resolve("MISSING")
+
+
+async def test_mutable_two_users_isolated(mutable_secrets):
+    await mutable_secrets.set("K", "alice-val", "alice")
+    await mutable_secrets.set("K", "bob-val", "bob")
+    assert await mutable_secrets.resolve("K", "alice") == "alice-val"
+    assert await mutable_secrets.resolve("K", "bob") == "bob-val"
+
+
+async def test_mutable_user_id_none_resolves_unscoped(mutable_secrets):
+    await mutable_secrets.set("K", "global-val")
+    assert await mutable_secrets.resolve("K") == "global-val"
+
+
+async def test_mutable_missing_per_user_raises_key_error(mutable_secrets):
+    await mutable_secrets.set("K", "global-val")
+    with pytest.raises(KeyError):
+        await mutable_secrets.resolve("K", "alice")
+
+
+async def test_strict_require_user_id_none_raises_on_resolve(strict_mutable_secrets):
+    with pytest.raises(UserScopeError):
+        await strict_mutable_secrets.resolve("K", None)
+
+
+async def test_strict_require_user_id_none_raises_on_set(strict_mutable_secrets):
+    with pytest.raises(UserScopeError):
+        await strict_mutable_secrets.set("K", "v", None)
+
+
+async def test_strict_require_user_id_resolves_with_user(strict_mutable_secrets):
+    await strict_mutable_secrets.set("K", "val", "alice")
+    assert await strict_mutable_secrets.resolve("K", "alice") == "val"

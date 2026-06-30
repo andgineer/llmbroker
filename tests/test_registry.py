@@ -1,8 +1,10 @@
-"""Tests for the file-backed Registry (TOML and JSON)."""
+"""Tests for the file-backed Registry (TOML and JSON) and MutableRegistryProtocol backends."""
 
 import asyncio
 import json
 
+import llmbroker.mongodb
+import llmbroker.postgres
 import llmbroker.sqlite
 import pytest
 
@@ -219,3 +221,93 @@ def test_sqlite_registry_remove_missing_raises_key_error(tmp_path):
             await reg.remove("ghost")
 
     asyncio.run(run())
+
+
+# ── Parametrized backend tests for the MutableRegistryProtocol ───────────────
+
+
+@pytest.fixture(
+    params=["sqlite", "postgres", "mongodb"],
+    ids=["sqlite", "postgres", "mongodb"],
+)
+async def mutable_registry(request, tmp_path_factory, pg_pool, mongo_db):
+    param = request.param
+    if param == "sqlite":
+        db_path = str(tmp_path_factory.mktemp("mreg_sqlite") / "reg.db")
+        yield llmbroker.sqlite.Registry(db_path)
+    elif param == "postgres":
+        yield llmbroker.postgres.Registry(pg_pool)
+        async with pg_pool.acquire() as conn:
+            await conn.execute("DELETE FROM llmbroker_registry")
+    elif param == "mongodb":
+        yield llmbroker.mongodb.Registry(mongo_db)
+        await mongo_db["llmbroker_registry"].delete_many({})
+
+
+async def test_mutable_add_and_load(mutable_registry):
+    await mutable_registry.add(_cfg("llm1"))
+    rows = await mutable_registry.load()
+    assert any(r.name == "llm1" for r in rows)
+
+
+async def test_mutable_load_returns_only_matching_user(mutable_registry):
+    await mutable_registry.add(_cfg("alice-llm"), "alice")
+    alice = await mutable_registry.load("alice")
+    bob = await mutable_registry.load("bob")
+    assert len(alice) == 1
+    assert len(bob) == 0
+
+
+async def test_mutable_same_name_different_users_allowed(mutable_registry):
+    await mutable_registry.add(_cfg("llm", "https://a/v1"), "alice")
+    await mutable_registry.add(_cfg("llm", "https://b/v1"), "bob")
+    assert (await mutable_registry.load("alice"))[0].base_url == "https://a/v1"
+    assert (await mutable_registry.load("bob"))[0].base_url == "https://b/v1"
+
+
+async def test_mutable_duplicate_within_user_raises_value_error(mutable_registry):
+    await mutable_registry.add(_cfg("llm"), "alice")
+    with pytest.raises(ValueError, match="already exists"):
+        await mutable_registry.add(_cfg("llm"), "alice")
+
+
+async def test_mutable_load_none_returns_unscoped_only(mutable_registry):
+    await mutable_registry.add(_cfg("shared"))
+    await mutable_registry.add(_cfg("alice-llm"), "alice")
+    none_rows = await mutable_registry.load()
+    assert [r.name for r in none_rows] == ["shared"]
+
+
+async def test_mutable_get_existing(mutable_registry):
+    await mutable_registry.add(_cfg("p1", "https://x/v1"))
+    result = await mutable_registry.get("p1")
+    assert result is not None
+    assert result.base_url == "https://x/v1"
+
+
+async def test_mutable_get_missing_returns_none(mutable_registry):
+    assert await mutable_registry.get("ghost") is None
+
+
+async def test_mutable_update_changes_fields(mutable_registry):
+    await mutable_registry.add(_cfg("p1", "https://old/v1"))
+    await mutable_registry.update(_cfg("p1", "https://new/v1"))
+    result = await mutable_registry.get("p1")
+    assert result is not None
+    assert result.base_url == "https://new/v1"
+
+
+async def test_mutable_update_missing_raises_key_error(mutable_registry):
+    with pytest.raises(KeyError):
+        await mutable_registry.update(_cfg("ghost"))
+
+
+async def test_mutable_remove_deletes_entry(mutable_registry):
+    await mutable_registry.add(_cfg("p1"))
+    await mutable_registry.remove("p1")
+    assert await mutable_registry.get("p1") is None
+
+
+async def test_mutable_remove_missing_raises_key_error(mutable_registry):
+    with pytest.raises(KeyError):
+        await mutable_registry.remove("ghost")
