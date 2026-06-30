@@ -37,7 +37,7 @@ class StateStore:
 
     async def read(self, user_id: int | str | None = None) -> dict[str, LLMState]:
         check_user_id(user_id)
-        raw: dict[str, str] = await self._client.hgetall(self._scope_key(user_id))
+        raw = await self._client.hgetall(self._scope_key(user_id))
         result: dict[str, LLMState] = {}
         now = datetime.now(UTC)
         for name, value in raw.items():
@@ -60,7 +60,7 @@ class StateStore:
                     f"Unexpected stored phase {stored_phase!r}: "
                     "add it to _TRUST_STORED_PHASES or handle it explicitly",
                 )
-            result[name] = LLMState(
+            result[str(name)] = LLMState(
                 phase=phase,
                 cooldown_until=cooldown_until,
                 fail_count=fail_count,
