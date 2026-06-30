@@ -301,6 +301,56 @@ import llmbroker.sqlite
 secrets = llmbroker.sqlite.Secrets("broker.db", require_user_id=True)
 ```
 
+### Бэкенд AWS Secrets Manager
+
+Сначала установите extra:
+
+```bash
+uv pip install "llmbroker[aws]"
+```
+
+```python
+import llmbroker
+import llmbroker.aws
+
+secrets = llmbroker.aws.Secrets(region_name="us-east-1")
+
+async with llmbroker.AsyncBroker(
+    registry=llmbroker.Registry("llms.toml"),
+    secrets=secrets,
+) as llms:
+    reply = await llms.ask("Привет")
+```
+
+Секреты хранятся в AWS Secrets Manager по именам `llmbroker/{ref}` (однопользовательский
+режим) или `llmbroker/{ref}/{user_id}` (мультипользовательский). Префикс по умолчанию
+`"llmbroker/"`, он настраивается. Поддерживает `require_user_id=True`.
+
+### Бэкенд HashiCorp Vault
+
+Сначала установите extra:
+
+```bash
+uv pip install "llmbroker[vault]"
+```
+
+```python
+import llmbroker
+import llmbroker.vault
+
+secrets = llmbroker.vault.Secrets(url="https://vault.example.com", token="s.xxx")
+
+async with llmbroker.AsyncBroker(
+    registry=llmbroker.Registry("llms.toml"),
+    secrets=secrets,
+) as llms:
+    reply = await llms.ask("Привет")
+```
+
+Секреты хранятся в KV v2 по путям `llmbroker/{ref}` (однопользовательский режим) или
+`llmbroker/users/{user_id}/{ref}` (мультипользовательский). Точка монтирования KV по
+умолчанию `"secret"`. Поддерживает `require_user_id=True`.
+
 ## Интеграция с Alembic
 
 Подключите хук, чтобы автогенерация миграций игнорировала таблицы `llmbroker_*`:

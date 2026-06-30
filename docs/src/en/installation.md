@@ -18,3 +18,10 @@ uv pip install "llmbroker[redis]"
 uv pip install "llmbroker[postgres]"
 uv pip install "llmbroker[mongodb]"
 ```
+
+To use a managed secret store:
+
+```bash
+uv pip install "llmbroker[aws]"    # AWS Secrets Manager
+uv pip install "llmbroker[vault]"  # HashiCorp Vault
+```

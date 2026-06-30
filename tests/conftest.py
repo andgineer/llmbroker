@@ -1,20 +1,26 @@
-"""Session fixtures for postgres and mongodb integration tests."""
+"""Session fixtures for postgres, mongodb, AWS, and Vault integration tests."""
 
 import contextlib
 import os
 from dataclasses import dataclass
 
+import aioboto3
 import asyncpg
 import fakeredis.aioredis
+import hvac
 import pytest
 from motor.motor_asyncio import AsyncIOMotorClient
+from testcontainers.localstack import LocalStackContainer
 from testcontainers.mongodb import MongoDbContainer
 from testcontainers.postgres import PostgresContainer
+from testcontainers.vault import VaultContainer
 
+import llmbroker.aws
 import llmbroker.mongodb
 import llmbroker.postgres
 import llmbroker.redis
 import llmbroker.sqlite
+import llmbroker.vault
 from llmbroker.broker import AsyncBroker
 from llmbroker.protocols.registry import MutableRegistryProtocol, RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
@@ -33,7 +39,12 @@ if getattr(os, "uname", None) and os.uname().sysname == "Darwin":
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
-        if "pg_pool" in item.fixturenames or "mongo_db" in item.fixturenames:
+        if (
+            "pg_pool" in item.fixturenames
+            or "mongo_db" in item.fixturenames
+            or "vault_url_and_token" in item.fixturenames
+            or "localstack_url" in item.fixturenames
+        ):
             item.add_marker(pytest.mark.docker)
 
 
@@ -53,6 +64,54 @@ async def mongo_db():
         await client.server_info()
         yield client["llmbroker_test"]
         client.close()
+
+
+@pytest.fixture(scope="session")
+def vault_url_and_token():
+    with VaultContainer("hashicorp/vault:1.17") as vault:
+        yield vault.get_connection_url(), vault.root_token
+
+
+@pytest.fixture(scope="session")
+def localstack_url():
+    with LocalStackContainer("localstack/localstack:3", region_name="us-east-1").with_services(
+        "secretsmanager"
+    ) as ls:
+        url = ls.get_url()
+        # aioboto3 (host side) needs credentials in the standard chain; LocalStack
+        # accepts any. Region must match the container's.
+        os.environ.setdefault("AWS_ACCESS_KEY_ID", "test")
+        os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "test")
+        os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+        yield url
+
+
+async def _aws_purge(url: str) -> None:
+    """Delete every secret in the LocalStack account so each test starts blank."""
+    session = aioboto3.Session()
+    async with session.client(
+        "secretsmanager", region_name="us-east-1", endpoint_url=url
+    ) as client:
+        paginator = client.get_paginator("list_secrets")
+        async for page in paginator.paginate():
+            for secret in page["SecretList"]:
+                await client.delete_secret(SecretId=secret["ARN"], ForceDeleteWithoutRecovery=True)
+
+
+def _vault_delete_recursive(client: hvac.Client, path: str, mount_point: str = "secret") -> None:
+    """Recursively delete all Vault KV v2 secrets under *path*."""
+    try:
+        result = client.secrets.kv.v2.list_secrets(path=path, mount_point=mount_point)
+    except hvac.exceptions.InvalidPath:
+        return
+    for key in result["data"]["keys"]:
+        full = f"{path}{key}"
+        if key.endswith("/"):
+            _vault_delete_recursive(client, full, mount_point)
+        else:
+            client.secrets.kv.v2.delete_metadata_and_all_versions(
+                path=full, mount_point=mount_point
+            )
 
 
 @pytest.fixture(
@@ -211,7 +270,15 @@ async def any_state_store(request, tmp_path_factory, pg_pool, mongo_db) -> State
 # A2 — Stack factory fixture (broker E2E)
 # ---------------------------------------------------------------------------
 
-_ALL_STACKS = ["all_sqlite", "all_postgres", "all_mongodb", "scaled", "minimal"]
+_ALL_STACKS = [
+    "all_sqlite",
+    "all_postgres",
+    "all_mongodb",
+    "scaled",
+    "minimal",
+    "scaled_aws_secrets",
+    "scaled_vault_secrets",
+]
 _PERSISTENT_STACKS = ["all_sqlite", "all_postgres", "all_mongodb", "scaled"]
 
 _PG_TABLES = ("llmbroker_registry", "llmbroker_calls", "llmbroker_secrets", "llmbroker_state")
@@ -219,7 +286,9 @@ _MONGO_COLLS = ("llmbroker_registry", "llmbroker_calls", "llmbroker_secrets", "l
 
 
 @contextlib.asynccontextmanager
-async def _stack_ctx(name: str, tmp_path_factory, pg_pool, mongo_db):
+async def _stack_ctx(
+    name: str, tmp_path_factory, pg_pool, mongo_db, *, vault_params=None, localstack_url=None
+):
     if name == "all_sqlite":
         base = str(tmp_path_factory.mktemp("stack_sqlite"))
         yield Stack(
@@ -296,11 +365,63 @@ async def _stack_ctx(name: str, tmp_path_factory, pg_pool, mongo_db):
             persistent=False,
         )
 
+    elif name == "scaled_aws_secrets":
+        redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        s = Stack(
+            name="scaled_aws_secrets",
+            registry=llmbroker.postgres.Registry(pg_pool),
+            secrets=llmbroker.aws.Secrets(region_name="us-east-1", endpoint_url=localstack_url),
+            state_store=llmbroker.redis.StateStore(redis_client),
+            telemetry=llmbroker.postgres.Telemetry(pg_pool),
+            queryable=True,
+            persistent=True,
+        )
+        try:
+            yield s
+        finally:
+            async with pg_pool.acquire() as conn:
+                await conn.execute("DELETE FROM llmbroker_registry")
+                await conn.execute("DELETE FROM llmbroker_calls")
+            await _aws_purge(localstack_url)
+
+    elif name == "scaled_vault_secrets":
+        url, token = vault_params
+        redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        s = Stack(
+            name="scaled_vault_secrets",
+            registry=llmbroker.postgres.Registry(pg_pool),
+            secrets=llmbroker.vault.Secrets(url=url, token=token),
+            state_store=llmbroker.redis.StateStore(redis_client),
+            telemetry=llmbroker.postgres.Telemetry(pg_pool),
+            queryable=True,
+            persistent=True,
+        )
+        try:
+            yield s
+        finally:
+            async with pg_pool.acquire() as conn:
+                await conn.execute("DELETE FROM llmbroker_registry")
+                await conn.execute("DELETE FROM llmbroker_calls")
+            _vault_delete_recursive(hvac.Client(url=url, token=token), "llmbroker/")
+
 
 @pytest.fixture(params=_ALL_STACKS, ids=_ALL_STACKS)
 async def stack(request, tmp_path_factory, pg_pool, mongo_db) -> Stack:
-    """Full-stack fixture over all five curated deployment shapes."""
-    async with _stack_ctx(request.param, tmp_path_factory, pg_pool, mongo_db) as s:
+    """Full-stack fixture over all curated deployment shapes."""
+    vault_params = None
+    if request.param == "scaled_vault_secrets":
+        vault_params = request.getfixturevalue("vault_url_and_token")
+    localstack_url = None
+    if request.param == "scaled_aws_secrets":
+        localstack_url = request.getfixturevalue("localstack_url")
+    async with _stack_ctx(
+        request.param,
+        tmp_path_factory,
+        pg_pool,
+        mongo_db,
+        vault_params=vault_params,
+        localstack_url=localstack_url,
+    ) as s:
         yield s
 
 

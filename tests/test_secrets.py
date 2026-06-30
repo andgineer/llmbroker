@@ -2,16 +2,47 @@
 
 import asyncio
 
+import aioboto3
+import hvac
 import llmbroker
+import llmbroker.aws
 import llmbroker.mongodb
 import llmbroker.postgres
 import llmbroker.sqlite
+import llmbroker.vault
 import pytest
+
 from llmbroker.exceptions import UserScopeError
 from llmbroker.models import LLMConfig
 from llmbroker.protocols.secrets import MutableSecretsProtocol
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets, Secrets, as_secrets
+
+
+def _vault_delete_recursive(client: hvac.Client, path: str, mount_point: str = "secret") -> None:
+    try:
+        result = client.secrets.kv.v2.list_secrets(path=path, mount_point=mount_point)
+    except hvac.exceptions.InvalidPath:
+        return
+    for key in result["data"]["keys"]:
+        full = f"{path}{key}"
+        if key.endswith("/"):
+            _vault_delete_recursive(client, full, mount_point)
+        else:
+            client.secrets.kv.v2.delete_metadata_and_all_versions(
+                path=full, mount_point=mount_point
+            )
+
+
+async def _aws_purge(url: str) -> None:
+    session = aioboto3.Session()
+    async with session.client(
+        "secretsmanager", region_name="us-east-1", endpoint_url=url
+    ) as client:
+        paginator = client.get_paginator("list_secrets")
+        async for page in paginator.paginate():
+            for secret in page["SecretList"]:
+                await client.delete_secret(SecretId=secret["ARN"], ForceDeleteWithoutRecovery=True)
 
 
 def test_env_secrets_resolves(monkeypatch):
@@ -230,8 +261,8 @@ def test_sqlite_secrets_require_user_id_set_raises_on_none(tmp_path):
 
 
 @pytest.fixture(
-    params=["sqlite", "postgres", "mongodb"],
-    ids=["sqlite", "postgres", "mongodb"],
+    params=["sqlite", "postgres", "mongodb", "aws", "vault"],
+    ids=["sqlite", "postgres", "mongodb", "aws", "vault"],
 )
 async def mutable_secrets(request, tmp_path_factory, pg_pool, mongo_db):
     param = request.param
@@ -245,11 +276,19 @@ async def mutable_secrets(request, tmp_path_factory, pg_pool, mongo_db):
     elif param == "mongodb":
         yield llmbroker.mongodb.Secrets(mongo_db)
         await mongo_db["llmbroker_secrets"].delete_many({})
+    elif param == "aws":
+        url = request.getfixturevalue("localstack_url")
+        yield llmbroker.aws.Secrets(region_name="us-east-1", endpoint_url=url)
+        await _aws_purge(url)
+    elif param == "vault":
+        url, token = request.getfixturevalue("vault_url_and_token")
+        yield llmbroker.vault.Secrets(url=url, token=token)
+        _vault_delete_recursive(hvac.Client(url=url, token=token), "llmbroker/")
 
 
 @pytest.fixture(
-    params=["sqlite", "postgres", "mongodb"],
-    ids=["sqlite", "postgres", "mongodb"],
+    params=["sqlite", "postgres", "mongodb", "aws", "vault"],
+    ids=["sqlite", "postgres", "mongodb", "aws", "vault"],
 )
 async def strict_mutable_secrets(request, tmp_path_factory, pg_pool, mongo_db):
     """Secrets backends constructed with require_user_id=True."""
@@ -264,6 +303,14 @@ async def strict_mutable_secrets(request, tmp_path_factory, pg_pool, mongo_db):
     elif param == "mongodb":
         yield llmbroker.mongodb.Secrets(mongo_db, require_user_id=True)
         await mongo_db["llmbroker_secrets"].delete_many({})
+    elif param == "aws":
+        url = request.getfixturevalue("localstack_url")
+        yield llmbroker.aws.Secrets(region_name="us-east-1", endpoint_url=url, require_user_id=True)
+        await _aws_purge(url)
+    elif param == "vault":
+        url, token = request.getfixturevalue("vault_url_and_token")
+        yield llmbroker.vault.Secrets(url=url, token=token, require_user_id=True)
+        _vault_delete_recursive(hvac.Client(url=url, token=token), "llmbroker/")
 
 
 async def test_mutable_set_and_resolve(mutable_secrets):

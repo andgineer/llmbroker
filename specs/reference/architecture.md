@@ -71,7 +71,7 @@ Every host plugs in up to four backends; only the registry is required:
 | Backend | Implemented |
 |---|---|
 | Registry | `Registry(path)` (file, `.toml`/`.json`), `llmbroker.sqlite.Registry`, `llmbroker.postgres.Registry`, `llmbroker.mongodb.Registry` |
-| Secrets | `Secrets()` (env), `DictSecrets(mapping)` (test double), `llmbroker.sqlite.Secrets`, `llmbroker.postgres.Secrets`, `llmbroker.mongodb.Secrets` |
+| Secrets | `Secrets()` (env), `DictSecrets(mapping)` (test double), `llmbroker.sqlite.Secrets`, `llmbroker.postgres.Secrets`, `llmbroker.mongodb.Secrets`, `llmbroker.aws.Secrets`, `llmbroker.vault.Secrets` |
 | State store | `llmbroker.sqlite.StateStore` (single-machine), `llmbroker.redis.StateStore`, `llmbroker.postgres.StateStore`, `llmbroker.mongodb.StateStore` (cross-process) |
 | Telemetry | `Telemetry()` (log), `NoTelemetry()`, `JsonlTelemetry(path)`, `llmbroker.sqlite.Telemetry`, `llmbroker.postgres.Telemetry`, `llmbroker.mongodb.Telemetry` |
 
@@ -253,6 +253,32 @@ Two consequences are accepted by design:
 - **Fail-open on store errors.** If the shared-state read fails, the process
   proceeds as if no shared cooldown applied rather than blocking the request — at
   worst it earns a 429 it could have avoided.
+
+---
+
+## Secret naming conventions
+
+Each managed-secret backend uses a deterministic, namespaced path so secrets written by
+llmbroker are identifiable and isolated from the rest of the account.
+
+### AWS Secrets Manager (`llmbroker.aws.Secrets`)
+
+| `user_id` | Secret name in Secrets Manager |
+|-----------|-------------------------------|
+| `None`    | `{prefix}{ref}`               |
+| `"alice"` | `{prefix}{ref}/alice`         |
+
+`prefix` defaults to `"llmbroker/"`.  Secrets created via `set()` carry the tag
+`{"Key": "llmbroker", "Value": "1"}` for independent enumeration and cleanup.
+
+### HashiCorp Vault (`llmbroker.vault.Secrets`)
+
+KV v2 engine.
+
+| `user_id` | KV path                          |
+|-----------|----------------------------------|
+| `None`    | `llmbroker/{ref}`                |
+| `"alice"` | `llmbroker/users/alice/{ref}`    |
 
 ---
 

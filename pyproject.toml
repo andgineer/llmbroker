@@ -19,6 +19,8 @@ sqlite   = ["aiosqlite>=0.22.1"]
 redis    = ["redis>=5.0"]
 postgres = ["asyncpg>=0.30.0"]
 mongodb  = ["motor>=3.6.0"]
+aws      = ["aioboto3>=13.0"]
+vault    = ["hvac>=2.0"]
 [[project.authors]]
 name = "Andrey Sorokin"
 email = "andrey@sorokin.engineer"
@@ -49,7 +51,7 @@ path = "src/llmbroker/__about__.py"
 dev = [
     "allure-pytest>=2.14.2",
     "fakeredis>=2.26",
-    "testcontainers[mongodb,postgres]>=4.8",
+    "testcontainers[mongodb,postgres,vault,localstack]>=4.8",
     "invoke>=2.2.0",
     "tomli-w>=1.2.0",
     "mkdocs-awesome-pages-plugin>=2.10.1",

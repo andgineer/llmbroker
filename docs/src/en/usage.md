@@ -301,6 +301,57 @@ import llmbroker.sqlite
 secrets = llmbroker.sqlite.Secrets("broker.db", require_user_id=True)
 ```
 
+### AWS Secrets Manager backend
+
+Install the extra first:
+
+```bash
+uv pip install "llmbroker[aws]"
+```
+
+```python
+import llmbroker
+import llmbroker.aws
+
+secrets = llmbroker.aws.Secrets(region_name="us-east-1")
+
+async with llmbroker.AsyncBroker(
+    registry=llmbroker.Registry("llms.toml"),
+    secrets=secrets,
+) as llms:
+    reply = await llms.ask("Hello")
+```
+
+Secrets are stored under `llmbroker/{ref}` (single-tenant) or
+`llmbroker/{ref}/{user_id}` (per-user) in AWS Secrets Manager.
+The prefix defaults to `"llmbroker/"` and is configurable.
+Pass `require_user_id=True` for the same paranoia guard.
+
+### HashiCorp Vault backend
+
+Install the extra first:
+
+```bash
+uv pip install "llmbroker[vault]"
+```
+
+```python
+import llmbroker
+import llmbroker.vault
+
+secrets = llmbroker.vault.Secrets(url="https://vault.example.com", token="s.xxx")
+
+async with llmbroker.AsyncBroker(
+    registry=llmbroker.Registry("llms.toml"),
+    secrets=secrets,
+) as llms:
+    reply = await llms.ask("Hello")
+```
+
+Secrets are stored at KV v2 paths `llmbroker/{ref}` (single-tenant) or
+`llmbroker/users/{user_id}/{ref}` (per-user). The KV mount defaults to `"secret"`.
+Pass `require_user_id=True` for the same paranoia guard.
+
 ## Alembic integration
 
 Add the hook so Alembic autogenerate ignores `llmbroker_*` tables:
