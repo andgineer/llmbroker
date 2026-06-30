@@ -149,7 +149,7 @@ verifies port wiring + persistence across the backend boundary. Patch HTTP per s
 
 ---
 
-## Part C — optimizer gap-fill (existing test_optimizer_integration.py)
+## Part C — optimizer gap-fill (existing test_optimizer_integration.py) ✓ DONE
 
 Pure FSM/policy tests over `any_telemetry` / `queryable_telemetry`. No new backend fixtures.
 
