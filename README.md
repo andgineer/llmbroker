@@ -21,14 +21,14 @@
 | src/llmbroker/mongodb/registry.py       |       43 |        0 |    100% |           |
 | src/llmbroker/mongodb/schema.py         |       24 |        1 |     96% |        30 |
 | src/llmbroker/mongodb/secrets.py        |       25 |        0 |    100% |           |
-| src/llmbroker/mongodb/state\_store.py   |       42 |        5 |     88% |32-34, 41, 55 |
-| src/llmbroker/mongodb/telemetry.py      |       53 |        0 |    100% |           |
+| src/llmbroker/mongodb/state\_store.py   |       42 |        3 |     93% |34, 41, 55 |
+| src/llmbroker/mongodb/telemetry.py      |       53 |        1 |     98% |       136 |
 | src/llmbroker/optimizer.py              |      169 |        6 |     96% |178, 181-183, 186, 235 |
 | src/llmbroker/postgres/registry.py      |       49 |        0 |    100% |           |
 | src/llmbroker/postgres/schema.py        |       19 |        1 |     95% |        90 |
 | src/llmbroker/postgres/secrets.py       |       29 |        0 |    100% |           |
-| src/llmbroker/postgres/state\_store.py  |       44 |        5 |     89% |37-39, 46, 60 |
-| src/llmbroker/postgres/telemetry.py     |       57 |        0 |    100% |           |
+| src/llmbroker/postgres/state\_store.py  |       44 |        3 |     93% |39, 46, 60 |
+| src/llmbroker/postgres/telemetry.py     |       57 |        1 |     98% |       150 |
 | src/llmbroker/protocols/registry.py     |        7 |        0 |    100% |           |
 | src/llmbroker/protocols/secrets.py      |        5 |        0 |    100% |           |
 | src/llmbroker/protocols/state\_store.py |        3 |        0 |    100% |           |
@@ -37,13 +37,13 @@
 | src/llmbroker/sqlite/registry.py        |       49 |        0 |    100% |           |
 | src/llmbroker/sqlite/schema.py          |       34 |        0 |    100% |           |
 | src/llmbroker/sqlite/secrets.py         |       29 |        0 |    100% |           |
-| src/llmbroker/sqlite/state\_store.py    |       44 |        5 |     89% |44-46, 53, 67 |
+| src/llmbroker/sqlite/state\_store.py    |       44 |        3 |     93% |46, 53, 67 |
 | src/llmbroker/sqlite/telemetry.py       |       73 |        3 |     96% |139-140, 184 |
 | src/llmbroker/standalone/registry.py    |       36 |        1 |     97% |        57 |
 | src/llmbroker/standalone/secrets.py     |       39 |        3 |     92% |54, 61, 66 |
 | src/llmbroker/standalone/telemetry.py   |       33 |        2 |     94% |    23, 34 |
 | src/llmbroker/sync.py                   |      106 |       12 |     89% |82, 101, 103, 130-131, 163-164, 212, 215, 218, 221, 226 |
-| **TOTAL**                               | **1840** |   **98** | **95%** |           |
+| **TOTAL**                               | **1840** |   **94** | **95%** |           |
 
 
 ## Setup coverage badge
