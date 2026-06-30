@@ -2,6 +2,7 @@
 
 import collections
 import random
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -29,7 +30,6 @@ class FirstAvailablePolicy:
 class Optimizer:
     """Adaptive delay store and FSM-event handler for the LLM pool."""
 
-    judge_fraction: float = 0.0
     initial_delay: float = 60.0
     max_delay: float = 3600.0
     backoff_factor: float = 2.0
@@ -224,8 +224,11 @@ class OptimizerTelemetry:
 
 
 class OptimizerPolicy:
+    _FLOOR_ALERT_INTERVAL = 60.0
+
     def __init__(self, optimizer: Optimizer) -> None:
         self._opt = optimizer
+        self._last_floor_alert: dict[str | None, float] = {}
 
     def select(self, candidates: list[LLMConfig], *, operation: str | None) -> LLMConfig | None:
         if not candidates:
@@ -235,10 +238,13 @@ class OptimizerPolicy:
         gated = [c for c in candidates if self._passes_floor(c, operation)]
         pool = gated if gated else candidates
         if not gated:
-            self._opt.add_alert(
-                f"quality floor {self._opt.usable_rate_floor} dropped all candidates "
-                f"for operation={operation!r}; using score-ranked fallback over all candidates",
-            )
+            now = time.monotonic()
+            if now - self._last_floor_alert.get(operation, 0.0) >= self._FLOOR_ALERT_INTERVAL:
+                self._last_floor_alert[operation] = now
+                self._opt.add_alert(
+                    f"quality floor {self._opt.usable_rate_floor} dropped all candidates "
+                    f"for operation={operation!r}; using score-ranked fallback over all candidates",
+                )
         is_background = operation in self._opt.background_operations
         return min(pool, key=lambda c: self._rank_key(c, operation, is_background))
 

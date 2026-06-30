@@ -1,6 +1,7 @@
 """Tests for Optimizer adaptive delay, FSM transitions, and OptimizerTelemetry."""
 
 import asyncio
+import contextlib
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -542,6 +543,31 @@ def test_optimizer_policy_quality_floor_fallback_when_all_fail():
     assert any("score-ranked fallback" in a.message for a in alerts)
 
 
+def test_floor_alert_debounced():
+    """Two consecutive selects that both fail the floor produce only one alert."""
+    opt = Optimizer(min_sample_count=5, usable_rate_floor=0.99, exploration_fraction=0.0)
+    for name in ("a", "b"):
+        for _ in range(5):
+            opt._record_rolling(name, None, _call(name, CallStatus.ERROR))
+    policy = OptimizerPolicy(opt)
+    policy.select([_cfg("a"), _cfg("b")], operation=None)
+    policy.select([_cfg("a"), _cfg("b")], operation=None)
+    assert len(opt.alerts()) == 1
+
+
+def test_floor_alert_debounce_separate_operations():
+    """Floor alert debounce is per-operation — different operations each get one alert."""
+    opt = Optimizer(min_sample_count=5, usable_rate_floor=0.99, exploration_fraction=0.0)
+    for name in ("a", "b"):
+        for _ in range(5):
+            opt._record_rolling(name, "op1", _call(name, CallStatus.ERROR))
+            opt._record_rolling(name, "op2", _call(name, CallStatus.ERROR))
+    policy = OptimizerPolicy(opt)
+    policy.select([_cfg("a"), _cfg("b")], operation="op1")
+    policy.select([_cfg("a"), _cfg("b")], operation="op2")
+    assert len(opt.alerts()) == 2
+
+
 def test_optimizer_policy_background_ranks_by_quality():
     # usable_rate_floor=0.0 so both candidates pass the floor gate; the test exercises ranking only
     opt = Optimizer(
@@ -1052,5 +1078,61 @@ def test_add_resets_probe_cycles():
             await broker.add(_cfg("p1"))
 
             assert broker._optimizer.probe_cycles("p1") == 0
+
+    asyncio.run(run())
+
+
+def test_probe_loop_sleeps_adaptive_delay_when_longer(tmp_path):
+    """_probe_loop uses max(offline_sleep, delay_for) to avoid probing while still rate-limited."""
+    slept: list[float] = []
+    real_sleep = asyncio.sleep  # capture before patch replaces it globally
+
+    async def fake_sleep(delay: float) -> None:
+        slept.append(delay)
+
+    async def run():
+        opt = Optimizer(offline_sleep=300.0, initial_delay=60.0, max_delay=3600.0)
+        opt._current_delay["p1"] = 1800.0  # adaptive delay > offline_sleep
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            telemetry=NoTelemetry(),
+            optimize=opt,
+        ) as broker:
+            with patch("llmbroker.broker.broker.asyncio.sleep", fake_sleep):
+                task = asyncio.create_task(broker._probe_loop("p1"))
+                await real_sleep(0)  # yield using real sleep, unaffected by patch
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+        assert slept == [1800.0]
+
+    asyncio.run(run())
+
+
+def test_probe_loop_sleeps_offline_sleep_when_longer(tmp_path):
+    """_probe_loop uses offline_sleep when it exceeds the adaptive delay."""
+    slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(delay: float) -> None:
+        slept.append(delay)
+
+    async def run():
+        opt = Optimizer(offline_sleep=300.0, initial_delay=60.0)
+        opt._current_delay["p1"] = 60.0  # adaptive delay < offline_sleep
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            telemetry=NoTelemetry(),
+            optimize=opt,
+        ) as broker:
+            with patch("llmbroker.broker.broker.asyncio.sleep", fake_sleep):
+                task = asyncio.create_task(broker._probe_loop("p1"))
+                await real_sleep(0)
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+        assert slept == [300.0]
 
     asyncio.run(run())

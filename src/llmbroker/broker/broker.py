@@ -274,7 +274,9 @@ class AsyncBroker:
 
     async def _probe_loop(self, llm_name: str) -> None:
         assert self._optimizer is not None
-        await asyncio.sleep(self._optimizer.offline_sleep)
+        await asyncio.sleep(
+            max(self._optimizer.offline_sleep, self._optimizer.delay_for(llm_name)),
+        )
         if (
             llm_name not in self._pool
             or self._pool.state(llm_name).phase is not LifecyclePhase.OFFLINE
