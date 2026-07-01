@@ -98,6 +98,48 @@ host's migration tool can ignore them by prefix.
   keys have no TTL in v1 (cooling entries accumulate indefinitely — acceptable for
   the initial release).
 
+#### Columns vs. JSON
+
+A field earns a dedicated column only if it appears (or realistically will) in a
+`WHERE`/`JOIN`/`ORDER BY`/`GROUP BY`/aggregate; everything else is payload and
+lives in a single JSON column (JSONB on postgres, TEXT on sqlite; native
+document/hash on mongo/redis) keyed by the row's identity. This is a hybrid, not
+"JSON everywhere" — identity and queried fields stay first-class columns and keep
+their indexes.
+
+Per table:
+
+- **Telemetry** (`llmbroker_calls`) — unchanged: `id`, `llm_name`, `called_at`,
+  `user_id`, `status` are queried/indexed columns; open-ended provider extras
+  already live in the `usage_extra` JSON column.
+- **State** (`llmbroker_state`) — a single JSON document per `(llm_name,
+  user_id)`; never queried by an inner field, ephemeral, rebuilt from traffic.
+  A schema-version bump for this table is a **drop-based** migration (the old
+  rows are disposable) — safe because state is a live cache, not durable data.
+- **Registry** (`llmbroker_registry`) — hybrid: `name`, `base_url`, `model`,
+  `api_key_ref`, `user_id` stay columns (identity, plus stable human-meaningful
+  config); nested/open-ended per-LLM config (e.g. `rate_limit`) lives in one
+  `metadata` JSON column. Because registry rows are durable, a schema-version
+  bump for this table is an **additive** migration (`ALTER TABLE ... ADD
+  COLUMN`) that preserves existing rows rather than dropping them.
+- **Secrets** (`llmbroker_secrets`) — unchanged: `value` is a single opaque
+  scalar with no sub-structure, so JSON buys nothing.
+
+`ensure_schema`, when it finds the stored version marker stale, applies both
+kinds of migration in one pass in a fixed order — drop-based (state) before
+table creation, additive (registry) after — so a database upgrading from any
+older version reaches the current shape in a single call. On sqlite this whole
+read-marker → migrate → bump-marker sequence runs inside one `BEGIN IMMEDIATE`
+transaction, since multiple OS processes can share one sqlite file and an
+in-process lock alone cannot serialize them; postgres gets the same guarantee
+for free from `CREATE`/`ALTER TABLE`'s table-level lock.
+
+`LLMState` and `LLMConfig` (`src/llmbroker/models.py`) are the typed dataclass
+boundary for the JSON payloads — `LLMState.to_dict()`/`from_dict()` round-trip
+the state document (with a generic `extra` field for forward-compatible keys),
+and `LLMConfig.rate_limit` (an optional `RateLimit` of rpm/rpd/tpm/tpd) is the
+first structured field persisted through the registry's `metadata` column.
+
 ### Host migration coexistence
 
 `llmbroker.integrations.alembic.include_object` — a predicate for Alembic's `include_object`

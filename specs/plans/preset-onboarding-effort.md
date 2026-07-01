@@ -1,28 +1,26 @@
 # Curated catalog & key-effort onboarding
 
-## Plan sequence — step 2 of 4
+## Plan sequence — step 1 of 3
 
-> **Prerequisites:** `db-schema-resilience.md` (step 1) — it defines `RateLimit`,
+> **Prerequisites:** the storage-shape foundation (columns-vs-JSON; `RateLimit`,
 > `LLMConfig.rate_limit`, the JSON-document `LLMState` that carries the new
-> `EXHAUSTED` phase, and the version-gated `ensure_schema` migration path. Do it
-> first. **Blocks:** `optimizer-learned-profile.md` (step 3), which extends the
+> `EXHAUSTED` phase, and the version-gated `ensure_schema` migration path) is
+> already implemented — see [`architecture.md`](../reference/architecture.md#columns-vs-json).
+> **Blocks:** `optimizer-learned-profile.md` (step 2), which extends the
 > keyless-not-routable pool change and the zero-routable alarm introduced here,
-> and `catalog-refresh.md` (step 4), which consumes the `effort`/`value`/
+> and `catalog-refresh.md` (step 3), which consumes the `effort`/`value`/
 > `rate_limit` taxonomies finalized here.
 
-The four plans form one dependency chain; execute in this order:
+The remaining three plans form one dependency chain; execute in this order:
 
-1. **`db-schema-resilience.md`** — storage-shape foundation: columns-vs-JSON;
-   defines `RateLimit`, `LLMConfig.rate_limit`, the `LLMState` ⇄ dict boundary,
-   and the version-gated `ensure_schema` toolkit.
-2. **`preset-onboarding-effort.md`** *(this plan)* — curated catalog knowledge,
+1. **`preset-onboarding-effort.md`** *(this plan)* — curated catalog knowledge,
    effort/value onboarding, warm-start seeding, the `EXHAUSTED` phase, and the
    keyless-not-routable pool change.
-3. **`optimizer-learned-profile.md`** — the durable learned half (learned profile
+2. **`optimizer-learned-profile.md`** — the durable learned half (learned profile
    carried in the registry, bench verdict) and `SeedPolicy.SYNC`; extends the
    routable predicate from this plan.
-4. **`catalog-refresh.md`** — the manual re-curation runbook; consumes the
-   taxonomies fixed here and may run in parallel with (3).
+3. **`catalog-refresh.md`** — the manual re-curation runbook; consumes the
+   taxonomies fixed here and may run in parallel with (2).
 
 ## Problem statement
 
@@ -196,12 +194,11 @@ No new CLI command — onboarding belongs in the existing `env`. Enrich it to:
 
 This feature adds a new per-LLM state (the `EXHAUSTED` phase) and new per-model
 config (`rate_limit`). Persisting both without a migration per field relies on the
-schema being resilient to churn — the state store persisting a JSON document, and
-the registry carrying nested/open config in a JSON column. That work, and the
-`columns-vs-JSON` decision behind it, is a **prerequisite** and lives in its own
-plan: [`db-schema-resilience.md`](db-schema-resilience.md). It also defines the
-`RateLimit` type and the `LLMConfig.rate_limit` field (so registries can persist
-them); this plan populates and consumes them.
+schema already being resilient to churn — the state store persists a JSON
+document, and the registry carries nested/open config in a JSON column (see
+[`architecture.md`](../reference/architecture.md#columns-vs-json) for the
+`columns-vs-JSON` decision). That work already defines the `RateLimit` type and
+the `LLMConfig.rate_limit` field; this plan populates and consumes them.
 
 ### Optimizer warm-start
 
@@ -237,8 +234,10 @@ Behavior:
   cooldown, so a provider asking for a long wait is honored;
 - when that cooldown exceeds a `long_cooldown_threshold`, the LLM enters
   **EXHAUSTED** — a first-class `LifecyclePhase`, persisted in the per-LLM state
-  document alongside `cooldown_until` (free to add thanks to the persistence
-  prerequisite);
+  document alongside `cooldown_until` (free to add to the JSON document thanks
+  to the existing persistence layer — but see the `reconcile()` note in Step 5
+  below: the trust rule that reads the document back does **not** get this for
+  free, it needs EXHAUSTED added to it explicitly);
 - an EXHAUSTED LLM does **not** escalate toward OFFLINE (its `rl_fail_count` is
   reset), so a daily-capped provider is not flapped through the probe loop; the
   slot simply re-enqueues when `cooldown_until` passes;
@@ -270,11 +269,11 @@ the next provision/restart — which matches the `env → .env → restart` flow
 
 ## Implementation (hand-off)
 
-**Prerequisite:** [`db-schema-resilience.md`](db-schema-resilience.md) — it makes
-the state store persist a JSON document and the registry carry nested config in a
-JSON column, and defines `RateLimit`, `LLMConfig.rate_limit`, and the
-`LLMState` ⇄ dict boundary. Do that plan first; the `EXHAUSTED` phase and
-`rate_limit` below then persist with no further migration.
+The state store already persists a JSON document and the registry already
+carries nested config in a JSON column, with `RateLimit`, `LLMConfig.rate_limit`,
+and the `LLMState` ⇄ dict boundary in place (see
+[`architecture.md`](../reference/architecture.md#columns-vs-json)); the
+`EXHAUSTED` phase and `rate_limit` below persist with no further migration.
 
 Ordered, self-contained steps. Each step lists the files, the change, and the
 tests to add. Run `invoke pre` and `python -m pytest` after each step; both must
@@ -283,7 +282,7 @@ be green (no skips) before moving on.
 ### Step 1 — enums and onboarding DTOs
 
 File: `src/llmbroker/models.py`. (`RateLimit`, `LLMConfig.rate_limit`, and the
-`LLMState` (de)serialization come from the prerequisite plan.)
+`LLMState` (de)serialization already exist.)
 
 - Add `class EffortLevel(Enum)` in easiest-first declaration order (reference
   doc): `OAUTH`, `SIGNUP`, `VERIFY`, `CONSOLE`, `WAITLIST`. Sort by
@@ -293,8 +292,8 @@ File: `src/llmbroker/models.py`. (`RateLimit`, `LLMConfig.rate_limit`, and the
   only, **no** rate_limit): `api_key_ref: str`, `effort: EffortLevel | None`,
   `value: ValueLevel | None`, `help: str`. Tolerate missing/unknown enum strings
   by storing `None` (never raise on an unrecognized bucket).
-- Add `LifecyclePhase.EXHAUSTED = "exhausted"` (persists for free via the state
-  document — prerequisite plan).
+- Add `LifecyclePhase.EXHAUSTED = "exhausted"` (persists for free via the
+  existing JSON state document).
 
 Tests (`tests/test_models.py`): enum order; `KeyInfo` partial & unknown fields →
 `None`.
@@ -305,8 +304,8 @@ Files: `src/llmbroker/standalone/registry.py`, `src/llmbroker/protocols/registry
 
 - `_config_from_entry` (file registry): read `rate_limit` from each `[[llms]]`
   row into `LLMConfig.rate_limit` (build `RateLimit` defensively; absent ⇒
-  `None`). DB registries persist `rate_limit` via the prerequisite plan — the file
-  registry only parses the TOML.
+  `None`). DB registries already persist `rate_limit` via `LLMConfig.to_metadata()`/
+  `from_metadata()` — the file registry only parses the TOML.
 - `[keys]` entries become sub-tables carrying `effort`/`value`/`help`; a bare
   string (old flat form) is read as `help` only. Add
   `key_info_from_entry(ref, raw) -> KeyInfo` (defensive enums) in `registry.py`.
@@ -362,12 +361,26 @@ Files: `src/llmbroker/chat.py`, `src/llmbroker/broker/router.py`,
   `opt_delay = optimizer.delay_for(name)`, `delay = max(provider_retry, opt_delay)`.
   If `optimizer and delay >= optimizer.long_cooldown_threshold`, cool down as
   **exhausted**; else the normal cooldown.
+- `models.py`: add `LifecyclePhase.EXHAUSTED` to `reconcile()`'s trusted-phase
+  set (`_TRUST_STORED_PHASES`, currently `{OFFLINE, PROBING}`). This is not
+  optional cleanup — without it, every DB-backed state store (`sqlite`,
+  `postgres`, `mongodb`, `redis`) calls `reconcile(LLMState.from_dict(...), now)`
+  on read, and today's `reconcile()` has no branch for an untrusted phase whose
+  `cooldown_until` has already expired other than `{AVAILABLE, COOLING}` — it
+  raises `ValueError` on anything else. An `EXHAUSTED` row would misread as
+  `COOLING` while its cooldown is still live (silently losing the phase) and
+  **raise** on the very next read after the cooldown expires. Trusting it
+  clears the expired cooldown back to `AVAILABLE` exactly like OFFLINE/PROBING
+  today.
 - `pool.py` / `state.py`: add `set_exhausted(name, cooldown_until)` — stores
-  `phase=EXHAUSTED` **and** `cooldown_until` in the JSON state doc and schedules
-  the same re-enqueue at `cooldown_until` as `cool_down`. `get_state` returns
-  `EXHAUSTED` while `cooldown_until > now` when the stored phase is `EXHAUSTED`
-  (falling back to `AVAILABLE` once it passes), analogous to how OFFLINE/PROBING
-  are trusted. (First-class stored phase — cheap now that state is a JSON doc.)
+  `phase=EXHAUSTED` **and** `cooldown_until` via `InMemoryState`'s existing
+  `_phase_override` mechanism (the same path OFFLINE/PROBING already use) and
+  schedules the same re-enqueue at `cooldown_until` as `cool_down`. `get_state`
+  returns `EXHAUSTED` while `cooldown_until > now` when the phase is
+  overridden to `EXHAUSTED` (falling back to `AVAILABLE` once it passes) —
+  mirror the `models.reconcile()` fix above in `InMemoryState.get_state`,
+  which duplicates the same trust logic independently rather than calling
+  `reconcile()`.
 - `optimizer.py` `_drive_fsm`, `RATE_LIMITED`/`UNAVAILABLE` branch: if the pool
   phase for `name` is `EXHAUSTED`, reset `rl_fail_count` and do **not**
   `set_offline`/`_on_go_offline`; otherwise keep today's escalation.

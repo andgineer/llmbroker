@@ -1,29 +1,30 @@
 # Catalog refresh — a repeatable prompt for updating the curated preset
 
-## Plan sequence — step 4 of 4
+## Plan sequence — step 3 of 3
 
-> **Prerequisites:** `preset-onboarding-effort.md` (step 2) — this runbook
+> **Prerequisites:** `preset-onboarding-effort.md` (step 1) — this runbook
 > *consumes* the `effort`/`value`/`rate_limit` taxonomies and the "one useful
 > model per provider" curation rules fixed there; it must not be written before
 > they exist. It also references `SeedPolicy.SYNC` from
-> `optimizer-learned-profile.md` (step 3) in "Interaction with the learned
-> profile" — no code dependency, but that section is only real once step 3
-> lands, so this plan is naturally last. **May run in parallel with step 3**
-> once step 2 is done. **Blocks:** nothing.
+> `optimizer-learned-profile.md` (step 2) in "Interaction with the learned
+> profile" — no code dependency, but that section is only real once step 2
+> lands, so this plan is naturally last. **May run in parallel with step 2**
+> once step 1 is done. **Blocks:** nothing.
 
-The four plans form one dependency chain; execute in this order:
+The remaining three plans form one dependency chain; execute in this order (the
+storage-shape foundation — columns-vs-JSON, `RateLimit`, `LLMConfig.rate_limit`,
+the `LLMState` ⇄ dict boundary, the version-gated `ensure_schema` toolkit — is
+already implemented; see
+[`architecture.md`](../reference/architecture.md#columns-vs-json)):
 
-1. **`db-schema-resilience.md`** — storage-shape foundation: columns-vs-JSON;
-   defines `RateLimit`, `LLMConfig.rate_limit`, the `LLMState` ⇄ dict boundary,
-   and the version-gated `ensure_schema` toolkit.
-2. **`preset-onboarding-effort.md`** — curated catalog knowledge, effort/value
+1. **`preset-onboarding-effort.md`** — curated catalog knowledge, effort/value
    onboarding, warm-start seeding, the `EXHAUSTED` phase, and the
    keyless-not-routable pool change.
-3. **`optimizer-learned-profile.md`** — the durable learned half (learned profile
+2. **`optimizer-learned-profile.md`** — the durable learned half (learned profile
    carried in the registry, bench verdict) and `SeedPolicy.SYNC`; extends the
-   routable predicate from (2).
-4. **`catalog-refresh.md`** *(this plan)* — the manual re-curation runbook;
-   consumes the taxonomies fixed in (2) and may run in parallel with (3).
+   routable predicate from (1).
+3. **`catalog-refresh.md`** *(this plan)* — the manual re-curation runbook;
+   consumes the taxonomies fixed in (1) and may run in parallel with (2).
 
 ## Problem statement
 

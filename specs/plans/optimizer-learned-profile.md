@@ -1,28 +1,26 @@
 # Learned LLM profile — the dynamic, optimizer-owned half of the catalog
 
-## Plan sequence — step 3 of 4
+## Plan sequence — step 2 of 3
 
-> **Prerequisites:** `db-schema-resilience.md` (step 1) — reuse its typed
-> dataclass ⇄ JSON-document boundary and its durable version-gated `ensure_schema`
-> path for the new `profile` column on the registry row — **and**
-> `preset-onboarding-effort.md` (step 2) — this plan extends its
+> **Prerequisites:** the typed dataclass ⇄ JSON-document boundary and the
+> durable version-gated `ensure_schema` path this plan reuses for the new
+> `profile` column are already implemented (see
+> [`architecture.md`](../reference/architecture.md#columns-vs-json)) — **and**
+> `preset-onboarding-effort.md` (step 1) — this plan extends its
 > keyless-not-routable pool change and its zero-routable alarm
 > (`routable ⟺ keyed **and** not benched`). Do the onboarding pool change first.
 > **Blocks:** nothing.
 
-The four plans form one dependency chain; execute in this order:
+The remaining three plans form one dependency chain; execute in this order:
 
-1. **`db-schema-resilience.md`** — storage-shape foundation: columns-vs-JSON;
-   defines `RateLimit`, `LLMConfig.rate_limit`, the `LLMState` ⇄ dict boundary,
-   and the version-gated `ensure_schema` toolkit.
-2. **`preset-onboarding-effort.md`** — curated catalog knowledge, effort/value
+1. **`preset-onboarding-effort.md`** — curated catalog knowledge, effort/value
    onboarding, warm-start seeding, the `EXHAUSTED` phase, and the
    keyless-not-routable pool change.
-3. **`optimizer-learned-profile.md`** *(this plan)* — the durable learned half
+2. **`optimizer-learned-profile.md`** *(this plan)* — the durable learned half
    (learned profile carried in the registry, bench verdict) and
-   `SeedPolicy.SYNC`; extends the routable predicate from (2).
-4. **`catalog-refresh.md`** — the manual re-curation runbook; consumes the
-   taxonomies fixed in (2) and may run in parallel with this plan.
+   `SeedPolicy.SYNC`; extends the routable predicate from (1).
+3. **`catalog-refresh.md`** — the manual re-curation runbook; consumes the
+   taxonomies fixed in (1) and may run in parallel with this plan.
 
 ## Problem statement
 
@@ -110,21 +108,22 @@ per-`(name, user_id)` learned profile alongside the config it already serves.
 - **`LLMProfile`** (`src/llmbroker/models.py`, one typed dataclass ⇄ dict
   boundary, same pattern as `LLMState`): a per-operation quality summary plus the
   bench verdict fields. Serialises to a single JSON document — reuse the
-  columns-vs-JSON decision from
-  [`db-schema-resilience.md`](db-schema-resilience.md): `name`, `user_id` are
-  already the registry row's identity columns; the profile is one JSON body.
+  columns-vs-JSON decision already implemented (see
+  [`architecture.md`](../reference/architecture.md#columns-vs-json)): `name`,
+  `user_id` are already the registry row's identity columns; the profile is one
+  JSON body.
 - **Registry protocol** (`src/llmbroker/protocols/registry.py`): add
   `read_profiles(user_id) -> dict[str, LLMProfile]` and
   `write_profile(name, profile, user_id) -> None`. No new protocol file, no new
   backend — these are two more methods on the registry every backend already
   implements.
-- **DB registries** (`sqlite`, `postgres`, `mongodb`, `redis`): add **one** JSON
+- **DB registries** (`sqlite`, `postgres`, `mongodb`): add **one** JSON
   column `profile` (`JSONB`/`TEXT`) on the existing `llmbroker_registry` row,
-  next to `metadata`. Use the **durable** version-gated `ensure_schema` path from
-  `db-schema-resilience.md` (additive `ALTER`; never `DROP` — the row is the
-  valuable data). `read_profiles` selects `(name, profile)`; `write_profile`
-  updates only the `profile` column. Redis/mongo store the `to_dict()` document
-  in the same record under a `profile` key.
+  next to `metadata`. Use the same **durable** version-gated `ensure_schema`
+  path already in place for `metadata` (additive `ALTER`; never `DROP` — the
+  row is the valuable data). `read_profiles` selects `(name, profile)`;
+  `write_profile` updates only the `profile` column. Mongo stores the
+  `to_dict()` document in the same record under a `profile` key.
 - **File/TOML registry** (`src/llmbroker/standalone/registry.py`): today
   read-only. Give it a **write path for the profile only** — the config stays
   read from `llm.toml`/`.json`, the learned profile is persisted to a **sibling
@@ -226,11 +225,17 @@ bench verdict are untouched.
 
 ## Relationship to the other plans
 
-- [`db-schema-resilience.md`](db-schema-resilience.md): reuse its typed
-  dataclass ⇄ JSON-document boundary and its version-gated `ensure_schema`
+- The storage-shape foundation (see
+  [`architecture.md`](../reference/architecture.md#columns-vs-json)): reuse its
+  typed dataclass ⇄ JSON-document boundary and its version-gated `ensure_schema`
   pattern for the new `profile` column. That column uses the **durable**
   (`ALTER`, keep rows) path, contrasting the state store's disposable (`DROP`)
-  path. No new decision, no new backend — same toolkit, one more registry field.
+  path. No new decision, no new backend — same toolkit, one more registry
+  field. Note the `EXHAUSTED`-in-`reconcile()` gap called out in
+  `preset-onboarding-effort.md`: it does not affect this plan (the registry's
+  `profile` column round-trips independently of `LLMState`/`reconcile()`), but
+  confirms `models.py`'s trust-set is something later plans must extend
+  explicitly rather than assume is automatically forward-compatible.
 - [`preset-onboarding-effort.md`](preset-onboarding-effort.md): this plan
   composes with its keyless-not-routable pool change (routable ⟺ keyed **and**
   not benched) and its zero-routable alarm. Do the onboarding pool change first;
@@ -262,9 +267,10 @@ Tests (`tests/test_models.py`): round-trip incl. empty/populated `quality`,
 
 ### Step 2 — registry reads/writes the learned profile
 
-Files: `src/llmbroker/protocols/registry.py`, the four DB registries
-(`sqlite`, `postgres`, `mongodb`, `redis`), `src/llmbroker/standalone/registry.py`,
-`sqlite/schema.py`, `postgres/schema.py`.
+Files: `src/llmbroker/protocols/registry.py`, the three DB registries
+(`sqlite`, `postgres`, `mongodb` — there is no `redis` registry, only a `redis`
+state store), `src/llmbroker/standalone/registry.py`, `sqlite/schema.py`,
+`postgres/schema.py`.
 
 - Protocol: add `read_profiles(user_id) -> dict[str, LLMProfile]` and
   `write_profile(name, profile, user_id) -> None`. No new protocol file, no new
@@ -275,11 +281,23 @@ Files: `src/llmbroker/protocols/registry.py`, the four DB registries
   `ALTER TABLE llmbroker_registry ADD COLUMN profile …` when the stored version
   marker is below the new `_SCHEMA_VERSION`; never `DROP`). `read_profiles`
   selects `(name, profile)` and parses `LLMProfile.from_dict`; `write_profile`
-  `UPDATE`s **only** the `profile` column for `(name, COALESCE(user_id))`. Leave
-  the config `update()` from `db-schema-resilience.md` writing only static
-  columns + `metadata` — it must **not** touch `profile`.
-- Redis/mongo store the `to_dict()` document under a `profile` key in the same
-  record; `read_profiles`/`write_profile` touch only that key.
+  `UPDATE`s **only** the `profile` column for `(name, COALESCE(user_id))`. The
+  existing `sqlite`/`postgres` config `update()` is already safe by
+  construction — it names an explicit `SET` column list (`base_url`, `model`,
+  `api_key_ref`, `metadata`) that will simply not mention `profile`, so it
+  cannot clobber it.
+- Mongo stores the `to_dict()` document under a `profile` key in the same
+  record; `read_profiles`/`write_profile` touch only that key. **Mongo needs an
+  explicit fix, not just "don't touch it":** `mongodb/registry.py update()`
+  today does a full-document `replace_one` with a `doc` dict it builds from
+  scratch (`name`/`base_url`/`model`/`api_key_ref`/`metadata`/`user_id`) — once
+  a `profile` key exists on stored documents, that `replace_one` call silently
+  **deletes** it on every config update, since the replacement document simply
+  never mentions it. Change `update()` to either fetch the existing document
+  first and carry its `profile` forward into the replacement doc, or switch it
+  to `update_one` with `$set` naming only the static fields (leaving `profile`
+  untouched at the driver level) — the latter is preferable since it needs no
+  extra read.
 - File/TOML registry: config stays read-only from `llm.toml`/`.json`.
   `Registry.__init__(path, *, profile_path=None, persist_profile=True)`;
   `read_profiles` reads the sibling JSON (`<stem>.profile.json` by default, or
