@@ -93,13 +93,22 @@ no skips (testcontainers cover postgres/mongo, `fakeredis` covers redis).
 
 File: `src/llmbroker/models.py`.
 
+- Add an `extra: dict[str, object] = field(default_factory=dict)` field to
+  `LLMState` — mirrors `Usage.extra`, already in this file — as the concrete
+  place an unknown/future key lands so it can survive a round-trip. `LLMState`
+  stays `frozen, slots=True`: a declared field works fine under `slots`, and
+  dropping `slots` on a four-field dataclass would buy nothing.
 - Add `LLMState.to_dict() -> dict` and `LLMState.from_dict(d: dict) -> LLMState`.
-  Serialize `phase.value`, `cooldown_until` (ISO-8601 or `None`), `fail_count`.
-  Write it generically so any later `LifecyclePhase` value or extra key
-  round-trips without change. Doctest the round-trip.
+  `to_dict` serializes `phase.value`, `cooldown_until` (ISO-8601 or `None`),
+  `fail_count`, then merges in `extra`'s keys at the top level. `from_dict`
+  reads `phase`/`cooldown_until`/`fail_count` and collects every other key into
+  `extra`. This is what makes a later `LifecyclePhase` value or an unrelated
+  extra key round-trip without touching this code again. Doctest the
+  round-trip.
 
 Tests (`tests/test_models.py`): round-trip incl. tz-aware `cooldown_until`, a
-`None` cooldown, and an unknown/extra dict key preserved.
+`None` cooldown, and an unknown/extra dict key preserved via the new `extra`
+field.
 
 ### Step 2 — state stores persist a JSON document
 
@@ -123,16 +132,33 @@ Files: `src/llmbroker/protocols/state_store.py`, the four state stores
   cache rebuilt from traffic, so dropping existing state rows on upgrade is
   acceptable — **no data migration**.
 - **`ensure_schema` currently has no upgrade path for an already-provisioned
-  database.** `CREATE TABLE IF NOT EXISTS` is a no-op against a table that
-  already exists in the old shape (`phase`/`cooldown_until`/`fail_count`
-  columns) — bumping the version constant alone does not touch it, and the new
-  code reading/writing a `state` column would then fail against the stale
-  schema. Since state is disposable, the fix is a version-gated
+  database, and today reads the version marker only *after* creating tables.**
+  `sqlite/schema.py::ensure_schema` runs `CREATE TABLE IF NOT EXISTS` for every
+  table first, then reads `PRAGMA user_version` and bumps it — so inserting a
+  migration branch "before `CREATE TABLE IF NOT EXISTS`" means reordering the
+  function, not just adding a line: read the version marker first, run the
+  version-gated migration while the old shape still exists, *then* run
+  `CREATE TABLE IF NOT EXISTS`, then bump the marker. Since state is
+  disposable, the migration itself is a version-gated
   `DROP TABLE IF EXISTS llmbroker_state` (sqlite) / equivalent drop (postgres)
   executed when the stored version marker (`PRAGMA user_version` /
-  `llmbroker_schema_version`) is below `_SCHEMA_VERSION`, before the
-  `CREATE TABLE IF NOT EXISTS` runs — so the table is actually recreated in the
-  new shape instead of silently left in the old one.
+  `llmbroker_schema_version`) is below `_SCHEMA_VERSION` — so the table is
+  actually recreated in the new shape instead of silently left in the old one.
+- **Concurrency: add a per-`db_path` `asyncio.Lock` to `sqlite/schema.py`,
+  mirroring the `_schema_lock` `postgres/schema.py` already has.** Today
+  sqlite's `ensure_schema` only short-circuits on a process-local
+  `_schema_ready` dict with nothing guarding the gap between reading the
+  version marker and bumping it. `StateStore`/`Registry` are explicitly meant
+  for multiple workers against one file (see `sqlite/state_store.py`
+  docstring), and even a single process can run concurrent `asyncio` callers
+  that both observe the same stale marker before either commits the bump. For
+  this step's `DROP TABLE IF EXISTS` that race is harmless (idempotent), but
+  Step 3's sqlite `ALTER TABLE ... ADD COLUMN` has no `IF NOT EXISTS` form and
+  raises `OperationalError: duplicate column name` if two callers both run it.
+  Guard the whole read-marker → migrate → bump-marker sequence with one lock
+  keyed by `db_path` (same keying as `_schema_ready`) so only one caller ever
+  performs a migration; the rest wait for the lock and then see the already-
+  bumped version and skip.
 
 Tests: each backend round-trips an `LLMState` through `write`/`read`, including a
 future-proofing extra key; expired `cooldown_until` reads back `AVAILABLE`;
@@ -159,7 +185,20 @@ Files: `src/llmbroker/standalone/registry.py`, `src/llmbroker/protocols/registry
   `ALTER TABLE llmbroker_registry ADD COLUMN metadata TEXT` (sqlite) /
   `ADD COLUMN IF NOT EXISTS metadata JSONB` (postgres) in `ensure_schema`,
   run when the stored version marker is below the new `_SCHEMA_VERSION`, so
-  existing rows keep their data and gain `metadata = NULL`.
+  existing rows keep their data and gain `metadata = NULL`. sqlite's
+  `ALTER TABLE ... ADD COLUMN` has no `IF NOT EXISTS` form and errors on a
+  repeat run — this must execute inside the same per-`db_path` lock added in
+  Step 2, not just behind the version check, since the version check alone
+  does not stop two concurrent callers from both passing it before either
+  bumps the marker.
+- **Version sequencing:** Step 2 already bumps `_SCHEMA_VERSION` once (for the
+  state change); this step bumps it again. A database upgrading directly from
+  the pre-plan version must therefore run *both* the Step 2 state-drop and
+  this step's registry-`ALTER` in one pass. Implement the gate as "if the
+  stored marker is below the current `_SCHEMA_VERSION`, run every pending
+  migration step in order" rather than a single before/after branch — both
+  migrations are cheap and safe to run unconditionally once inside the lock,
+  so there is no need to track intermediate version numbers.
 - `LLMConfig` carries the structured optional config that serializes into
   `metadata`. Its first field is `rate_limit` (a nested rpm/rpd/tpm/tpd value);
   the `RateLimit` type and `LLMConfig.rate_limit` field are **defined here** so
