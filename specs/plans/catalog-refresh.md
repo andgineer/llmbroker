@@ -19,8 +19,9 @@ The four plans form one dependency chain; execute in this order:
 2. **`preset-onboarding-effort.md`** — curated catalog knowledge, effort/value
    onboarding, warm-start seeding, the `EXHAUSTED` phase, and the
    keyless-not-routable pool change.
-3. **`optimizer-learned-profile.md`** — the durable learned half (profile store,
-   bench verdict) and `SeedPolicy.SYNC`; extends the routable predicate from (2).
+3. **`optimizer-learned-profile.md`** — the durable learned half (learned profile
+   carried in the registry, bench verdict) and `SeedPolicy.SYNC`; extends the
+   routable predicate from (2).
 4. **`catalog-refresh.md`** *(this plan)* — the manual re-curation runbook;
    consumes the taxonomies fixed in (2) and may run in parallel with (3).
 

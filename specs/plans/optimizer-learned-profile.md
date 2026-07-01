@@ -3,11 +3,12 @@
 ## Plan sequence — step 3 of 4
 
 > **Prerequisites:** `db-schema-resilience.md` (step 1) — reuse its typed
-> dataclass ⇄ JSON-document boundary and durable version-gated `ensure_schema`
-> path for the new profile store — **and** `preset-onboarding-effort.md`
-> (step 2) — this plan extends its keyless-not-routable pool change and its
-> zero-routable alarm (`routable ⟺ keyed **and** not benched`). Do the
-> onboarding pool change first. **Blocks:** nothing.
+> dataclass ⇄ JSON-document boundary and its durable version-gated `ensure_schema`
+> path for the new `profile` column on the registry row — **and**
+> `preset-onboarding-effort.md` (step 2) — this plan extends its
+> keyless-not-routable pool change and its zero-routable alarm
+> (`routable ⟺ keyed **and** not benched`). Do the onboarding pool change first.
+> **Blocks:** nothing.
 
 The four plans form one dependency chain; execute in this order:
 
@@ -18,8 +19,8 @@ The four plans form one dependency chain; execute in this order:
    onboarding, warm-start seeding, the `EXHAUSTED` phase, and the
    keyless-not-routable pool change.
 3. **`optimizer-learned-profile.md`** *(this plan)* — the durable learned half
-   (profile store, bench verdict) and `SeedPolicy.SYNC`; extends the routable
-   predicate from (2).
+   (learned profile carried in the registry, bench verdict) and
+   `SeedPolicy.SYNC`; extends the routable predicate from (2).
 4. **`catalog-refresh.md`** — the manual re-curation runbook; consumes the
    taxonomies fixed in (2) and may run in parallel with this plan.
 
@@ -33,7 +34,7 @@ keys. Under that concept the persisted data splits cleanly by *owner* and
 
 | Layer | Written by | Durability |
 |---|---|---|
-| **Curated catalog** (`llmbroker_registry`) | preset roll / admin only | durable |
+| **Curated catalog** (`llmbroker_registry` static columns + `metadata`) | preset roll / admin only | durable |
 | **Ephemeral sync-state** (`llmbroker_state`) | the running broker, to coordinate instances | ephemeral — rebuilt from traffic, dropped on schema bump |
 | **Raw call log** (`llmbroker_calls`) | the running broker | durable, but append-only |
 | **Learned per-LLM knowledge** | the optimizer (+ admin overrides) | **durable — missing today** |
@@ -64,19 +65,27 @@ This plan adds the missing durable, optimizer-owned layer — the **learned
 profile** — and the reconcile behaviour that lets the curated catalog *flow* to
 users without ever clobbering it.
 
-## Concept: the catalog has two halves
+## Concept: the catalog has two halves, one store
 
 Logically the LLM catalog is one thing, but it has a **static half** and a
-**dynamic half**, and they must be stored separately so a catalog refresh can
-overwrite one without touching the other:
+**dynamic half**. They must be *field-separated* so a catalog refresh can
+overwrite one without touching the other — but they do **not** need separate
+backends. Both live in the **registry**, keyed by the same `(name, user_id)`:
 
-- **Static half — the curated catalog** (`llmbroker_registry`): `name`,
-  `base_url`, `model`, `api_key_ref`, and curated per-model config
-  (`rate_limit`, …). Owned by the preset / admin. The optimizer never writes
-  here. Freely overwritten by a preset roll.
-- **Dynamic half — the learned profile** (new store): what *this deployment* has
-  learned about each model. Owned by the optimizer (with manual admin
-  overrides). Never overwritten by a preset roll.
+- **Static half — the curated catalog**: `name`, `base_url`, `model`,
+  `api_key_ref`, and curated per-model config (`rate_limit`, …) in `metadata`.
+  Owned by the preset / admin. The optimizer never writes here. Freely
+  overwritten by a preset roll.
+- **Dynamic half — the learned profile**: what *this deployment* has learned
+  about each model. Owned by the optimizer (with manual admin overrides). Stored
+  in the registry's own `profile` field, which the seed **never** writes.
+
+There is deliberately **no separate profile backend**. Adding a fifth store type
+(protocol + four DB implementations + a standalone file) for data that is
+per-model and lives and dies with the registry row is overhead the package does
+not need. The learned profile is another field of the registry, and the
+"never clobber learned data on re-seed" guarantee is a narrow, testable rule —
+*the seed writes only static fields* — not a whole parallel store.
 
 The learned profile carries two things, both genuinely per-model and both more
 than a lone flag:
@@ -93,32 +102,49 @@ live in the disposable sync-state; `benched` is a durable verdict. `EXHAUSTED`
 (from [`preset-onboarding-effort.md`](preset-onboarding-effort.md)) stays in the
 ephemeral state and does **not** move here.
 
-## The profile store
+## The learned profile lives in the registry
 
-A new optional backend, parallel to the state store, keyed by
-`(llm_name, user_id)`:
+Rather than a parallel store, the registry gains the ability to read and write a
+per-`(name, user_id)` learned profile alongside the config it already serves.
 
-- **Protocol** `ProfileStoreProtocol` (`src/llmbroker/protocols/profile.py`):
-  `read(user_id) -> dict[str, LLMProfile]` and
-  `write(name, profile, user_id) -> None`. Queryable/mutable shape mirrors
-  `StateStoreProtocol` so the four DB backends and the standalone file backend
-  can implement it uniformly.
 - **`LLMProfile`** (`src/llmbroker/models.py`, one typed dataclass ⇄ dict
   boundary, same pattern as `LLMState`): a per-operation quality summary plus the
   bench verdict fields. Serialises to a single JSON document — reuse the
   columns-vs-JSON decision from
-  [`db-schema-resilience.md`](db-schema-resilience.md): `llm_name`, `user_id`
-  stay columns; everything else is one JSON body.
-- **Durability is real and separate.** Unlike the state store (dropped on schema
-  bump), the profile store must migrate its rows, not discard them — its whole
-  reason to exist is surviving churn. Use the durable-`ALTER`/version-gated path
-  from `db-schema-resilience.md`, never the `DROP TABLE` path.
-- **Standalone backend** `Profile(path)`: a JSON file, so the no-DB deployment
-  still gets durable learned data (the deployment that "is literally a log" gains
-  a proper place for these properties instead of hanging them off the log).
-- **Default `None`** (in-memory, process-lifetime), exactly like `state_store`:
-  persistence is opt-in; when unconfigured, learned data and manual bench last
-  only for the process, which is an accepted trade-off for zero-config use.
+  [`db-schema-resilience.md`](db-schema-resilience.md): `name`, `user_id` are
+  already the registry row's identity columns; the profile is one JSON body.
+- **Registry protocol** (`src/llmbroker/protocols/registry.py`): add
+  `read_profiles(user_id) -> dict[str, LLMProfile]` and
+  `write_profile(name, profile, user_id) -> None`. No new protocol file, no new
+  backend — these are two more methods on the registry every backend already
+  implements.
+- **DB registries** (`sqlite`, `postgres`, `mongodb`, `redis`): add **one** JSON
+  column `profile` (`JSONB`/`TEXT`) on the existing `llmbroker_registry` row,
+  next to `metadata`. Use the **durable** version-gated `ensure_schema` path from
+  `db-schema-resilience.md` (additive `ALTER`; never `DROP` — the row is the
+  valuable data). `read_profiles` selects `(name, profile)`; `write_profile`
+  updates only the `profile` column. Redis/mongo store the `to_dict()` document
+  in the same record under a `profile` key.
+- **File/TOML registry** (`src/llmbroker/standalone/registry.py`): today
+  read-only. Give it a **write path for the profile only** — the config stays
+  read from `llm.toml`/`.json`, the learned profile is persisted to a **sibling
+  JSON file**:
+  - default path: `<config_stem>.profile.json` next to the config file
+    (e.g. `llm.toml` → `llm.profile.json`);
+  - overridable in `Registry.__init__(path, *, profile_path=None,
+    persist_profile=True)`;
+  - `persist_profile=False` (or `profile_path` unset with persistence disabled)
+    ⇒ profiles live only in memory for the process, writes are no-ops, and
+    `read_profiles` returns `{}`. This is the explicit "do not write any profile
+    file" mode for read-only / zero-write deployments.
+  - Keeping the profile in a **separate sibling file** (not inside `llm.toml`) is
+    what makes a preset overwriting `llm.toml` physically unable to touch learned
+    data — the file registry's version of the "seed never writes profile" rule.
+- **Default is in-memory.** When a deployment does not configure profile
+  persistence (DB registry always persists; file registry with
+  `persist_profile=False`), learned data and manual bench last only for the
+  process — an accepted trade-off for zero-config use, exactly like the state
+  store.
 
 ## Bench verdict
 
@@ -186,24 +212,25 @@ users". Add a new policy and make it the default:
   already present — but **do not remove** models that dropped out of the preset.
   A dropped model simply sits idle; dead models harm nothing, and removing it
   would throw away the user's learned profile for it.
-- Because the learned profile lives in a **separate store**, `apply_seed`
-  (registry + secrets only) structurally cannot touch it — the "never clobber
-  learned data" guarantee is architectural, not a merge rule to get right.
+- `apply_seed` writes **only the static fields** of the registry row
+  (`base_url`, `model`, `api_key_ref`, `metadata`) — never the `profile` column /
+  sibling file. That single rule is the "never clobber learned data" guarantee:
+  learned quality and bench verdict are structurally out of the seed's write set.
 - `MIRROR` (removes dropped models) and `ADD` / `IF_EMPTY` remain available for
   callers who want them; only the default changes.
 
 Note `SYNC`'s `update` overwrites the **static** registry config (e.g. a revised
-`rate_limit`) from the preset — which is correct, that is the curated half doing
-its job — while the profile store's quality aggregate and bench verdict are
-untouched.
+`rate_limit` in `metadata`) from the preset — which is correct, that is the
+curated half doing its job — while the `profile` column's quality aggregate and
+bench verdict are untouched.
 
 ## Relationship to the other plans
 
 - [`db-schema-resilience.md`](db-schema-resilience.md): reuse its typed
   dataclass ⇄ JSON-document boundary and its version-gated `ensure_schema`
-  pattern for the new profile store. The profile store uses the **durable**
-  (`ALTER`, keep rows) path, contrasting the state store's disposable
-  (`DROP`) path. No new decision — same toolkit.
+  pattern for the new `profile` column. That column uses the **durable**
+  (`ALTER`, keep rows) path, contrasting the state store's disposable (`DROP`)
+  path. No new decision, no new backend — same toolkit, one more registry field.
 - [`preset-onboarding-effort.md`](preset-onboarding-effort.md): this plan
   composes with its keyless-not-routable pool change (routable ⟺ keyed **and**
   not benched) and its zero-routable alarm. Do the onboarding pool change first;
@@ -233,27 +260,42 @@ File: `src/llmbroker/models.py`.
 Tests (`tests/test_models.py`): round-trip incl. empty/populated `quality`,
 `None` vs set `benched_source`, unknown extra key preserved.
 
-### Step 2 — `ProfileStoreProtocol` + backends
+### Step 2 — registry reads/writes the learned profile
 
-Files: `src/llmbroker/protocols/profile.py` (new), the four DB profile stores
-(`sqlite`, `postgres`, `mongodb`, `redis`), `src/llmbroker/standalone/profile.py`
-(new JSON-file `Profile`), `sqlite/schema.py`, `postgres/schema.py`.
+Files: `src/llmbroker/protocols/registry.py`, the four DB registries
+(`sqlite`, `postgres`, `mongodb`, `redis`), `src/llmbroker/standalone/registry.py`,
+`sqlite/schema.py`, `postgres/schema.py`.
 
-- Protocol: `read(user_id) -> dict[str, LLMProfile]`,
-  `write(name, profile, user_id) -> None`; `AsyncResourceProtocol.aclose()` where
-  a backend holds a resource.
-- SQL: `llmbroker_profile` with `llm_name`, `user_id` columns + one JSON
-  `profile` column (`JSONB`/`TEXT`), unique index on
-  `(llm_name, COALESCE(user_id))`. Use the **durable** version-gated
-  `ensure_schema` path (create if missing; `ALTER`/additive on upgrade; never
-  `DROP` — rows are the valuable data).
-- Redis/mongo store the `to_dict()` document per name.
-- `Profile(path)` standalone: JSON file, atomic write, read-through on load.
+- Protocol: add `read_profiles(user_id) -> dict[str, LLMProfile]` and
+  `write_profile(name, profile, user_id) -> None`. No new protocol file, no new
+  backend type.
+- SQL: add one JSON column `profile` (`JSONB`/`TEXT`) to `llmbroker_registry`.
+  Keep `name`, `base_url`, `model`, `api_key_ref`, `user_id`, `metadata`. Use the
+  **durable** version-gated `ensure_schema` path (additive
+  `ALTER TABLE llmbroker_registry ADD COLUMN profile …` when the stored version
+  marker is below the new `_SCHEMA_VERSION`; never `DROP`). `read_profiles`
+  selects `(name, profile)` and parses `LLMProfile.from_dict`; `write_profile`
+  `UPDATE`s **only** the `profile` column for `(name, COALESCE(user_id))`. Leave
+  the config `update()` from `db-schema-resilience.md` writing only static
+  columns + `metadata` — it must **not** touch `profile`.
+- Redis/mongo store the `to_dict()` document under a `profile` key in the same
+  record; `read_profiles`/`write_profile` touch only that key.
+- File/TOML registry: config stays read-only from `llm.toml`/`.json`.
+  `Registry.__init__(path, *, profile_path=None, persist_profile=True)`;
+  `read_profiles` reads the sibling JSON (`<stem>.profile.json` by default, or
+  `profile_path`), returns `{}` if missing or `persist_profile=False`;
+  `write_profile` atomically upserts the model's entry in that sibling JSON, or
+  is a no-op when `persist_profile=False`.
 
-Tests (`tests/test_profile_store_*`): each backend round-trips an `LLMProfile`
+Tests (`tests/test_registry_*`): each backend round-trips an `LLMProfile`
 (quality summary + a `manual` bench with tz-aware `since`); a future-proofing
-extra key survives; a migration test seeds an old version marker and asserts rows
-are **kept** (not dropped) after `ensure_schema`.
+extra key survives; config `update()` does **not** clobber a stored `profile`;
+`SeedPolicy` static write leaves `profile` intact (assert directly). Migration
+test (sqlite/postgres): seed an old version marker with no `profile` column, run
+`ensure_schema`, assert the column now exists and pre-existing rows are **kept**.
+File registry: default sibling path is derived from the config path; a
+round-trip through `write_profile`/`read_profiles`; `persist_profile=False`
+writes nothing and reads `{}`.
 
 ### Step 3 — optimizer: durable quality aggregate + auto-bench
 
@@ -296,31 +338,31 @@ Tests (`tests/test_pool.py`): a benched keyed config is in `configs` but never
 acquired; `clear_benched` makes it acquirable; benching the last routable model
 leaves the pool with zero routable slots.
 
-### Step 5 — wire the profile store into the broker
+### Step 5 — wire the profile through the broker
 
 Files: `src/llmbroker/broker/broker.py`, `src/llmbroker/broker/catalog.py`,
 `src/llmbroker/sync.py`.
 
-- `AsyncBroker.__init__`: accept `profile_store: ProfileStoreProtocol | None =
-  None`; default `None` (in-memory, like `state_store`).
+- No new broker constructor argument: the profile is read/written through the
+  **registry** the broker already holds.
 - `ensure_pool` / provision: after `catalog.provision()` and after
-  `seed_from_metrics`, read the profile store, call
+  `seed_from_metrics`, call `registry.read_profiles(user_id)`, feed
   `optimizer.load_profiles(...)`, and apply each `benched` verdict to the pool
   (`pool.set_benched`).
 - Auto-bench path: when `evaluate_bench` flips a verdict during the live event
   stream (`OptimizerTelemetry.record` / `record_quality`), persist the new
-  `LLMProfile` to the profile store and reflect it in the pool. Debounce the
-  aggregate-snapshot writes (verdict changes persist immediately; aggregate
-  snapshots persist on a debounce and on `aclose`).
+  `LLMProfile` via `registry.write_profile(...)` and reflect it in the pool.
+  Debounce the aggregate-snapshot writes (verdict changes persist immediately;
+  aggregate snapshots persist on a debounce and on `aclose`).
 - Manual API: `AsyncBroker.disable_llm(name, *, reason=None)` /
-  `enable_llm(name)` — set/clear a `MANUAL` bench in the profile store and the
-  pool; `enable_llm` also clears any `AUTO` bench and suppresses re-bench for the
-  rating window. Proxy both on the sync `Broker`.
+  `enable_llm(name)` — set/clear a `MANUAL` bench via `registry.write_profile`
+  and the pool; `enable_llm` also clears any `AUTO` bench and suppresses re-bench
+  for the rating window. Proxy both on the sync `Broker`.
 
 Tests (`tests/test_broker_bench.py`, `tests/test_sync.py`): a persisted `benched`
 profile is applied at provision (model not routable); a live auto-bench persists
-and withdraws the slot; `disable_llm`/`enable_llm` round-trip through the store
-and the pool; sync proxies work.
+through the registry and withdraws the slot; `disable_llm`/`enable_llm`
+round-trip through the registry and the pool; sync proxies work.
 
 ### Step 6 — `SeedPolicy.SYNC` default
 
@@ -332,25 +374,29 @@ Files: `src/llmbroker/models.py`, `src/llmbroker/broker/catalog.py`,
   source.
 - Change the default `seed_policy` on `AsyncBroker` (and any preset wiring) from
   `IF_EMPTY` to `SYNC`.
-- Confirm `apply_seed` touches only registry + secrets — the profile store is
-  never passed to it, so learned data is structurally safe across re-seed.
+- Confirm `apply_seed` writes only static fields (`base_url`, `model`,
+  `api_key_ref`, `metadata`) — it must never write `profile` — so learned data
+  is safe across re-seed.
 
 Tests (`tests/test_catalog_seed.py`): `SYNC` adds a preset-new model, updates a
 changed `rate_limit` on an existing one, and leaves a user-only model (dropped
-from the preset) in place; a benched model's profile survives a `SYNC` re-seed
+from the preset) in place; a benched model's `profile` survives a `SYNC` re-seed
 and is **not** re-routed (verdict intact); the default policy is `SYNC`.
 
 ### Step 7 — docs
 
 Files: `README`/docs, `specs/reference/architecture.md`.
 
-- Document the two-halves catalog (curated static vs learned dynamic), the
-  profile store as opt-in durability, `benched` (auto vs manual), and that
-  `SYNC` is the default so catalog updates reach users without losing learned
-  data.
+- Document the two-halves catalog (curated static vs learned dynamic) as one
+  registry with two field groups, profile persistence (DB column always on; file
+  registry sibling JSON, opt-out via `persist_profile=False`), `benched` (auto vs
+  manual), and that `SYNC` is the default so catalog updates reach users without
+  losing learned data.
 
 ## Non-goals
 
+- **A separate profile backend.** The learned profile is a field of the registry
+  row (DB column / file-registry sibling JSON), not a fifth store type.
 - **Moving `EXHAUSTED` or any cooldown/phase into the profile.** Those are
   ephemeral sync-state; only durable learned knowledge lives in the profile.
 - **A telemetry/crowdsourcing pipeline.** The quality aggregate is this

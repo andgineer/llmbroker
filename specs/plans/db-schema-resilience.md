@@ -15,8 +15,9 @@ The four plans form one dependency chain; execute in this order:
 2. **`preset-onboarding-effort.md`** — curated catalog knowledge, effort/value
    onboarding, warm-start seeding, the `EXHAUSTED` phase, and the
    keyless-not-routable pool change.
-3. **`optimizer-learned-profile.md`** — the durable learned half (profile store,
-   bench verdict) and `SeedPolicy.SYNC`; extends the routable predicate from (2).
+3. **`optimizer-learned-profile.md`** — the durable learned half (learned profile
+   carried in the registry, bench verdict) and `SeedPolicy.SYNC`; extends the
+   routable predicate from (2).
 4. **`catalog-refresh.md`** — the manual re-curation runbook; consumes the
    taxonomies fixed in (2) and may run in parallel with (3).
 
@@ -180,6 +181,15 @@ Add a migration test: seed a sqlite/postgres `llmbroker_registry` row in the old
 shape (no `metadata` column, old version marker), run `ensure_schema`, assert
 the column now exists and the pre-existing row is intact with `metadata` `NULL`.
 
+> **Forward note.** [`optimizer-learned-profile.md`](optimizer-learned-profile.md)
+> adds a *second* JSON column — `profile` — on this same `llmbroker_registry` row
+> for the durable learned half (quality aggregate + bench verdict), reusing this
+> step's version-gated additive `ALTER` path. The two are deliberately distinct:
+> `metadata` is curated static config that `apply_seed` overwrites from the
+> preset; `profile` is optimizer-owned and the seed **never** writes it. There is
+> **no** separate profile store — learned data is another field of the registry
+> row, keyed by the same `(name, user_id)`.
+
 ## Non-goals
 
 - **Touching telemetry's columnar schema** — it is the query surface; its fields
@@ -188,6 +198,9 @@ the column now exists and the pre-existing row is intact with `metadata` `NULL`.
   (`base_url`, `model`, `api_key_ref`) stays in transparent columns; only
   nested/open-ended knobs go to JSON.
 - **A data migration for state** — state is ephemeral and rebuilt from traffic.
-- **Persisting the optimizer's live in-memory internals** — out of scope here;
-  this plan only makes the *shape* free to extend. If/when those hints are
-  persisted, they ride in the state document.
+- **Persisting the optimizer's learned profile** — out of scope here; this plan
+  only makes the *shape* free to extend. The durable learned half (quality
+  aggregate + bench verdict) is added by
+  [`optimizer-learned-profile.md`](optimizer-learned-profile.md) as a second JSON
+  column on the registry row (distinct from `metadata`), not a new backend;
+  ephemeral optimizer hints, if ever persisted, ride in the state document.
