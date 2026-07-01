@@ -101,10 +101,23 @@ Files: `src/llmbroker/protocols/state_store.py`, the four state stores
 - Bump `sqlite/_SCHEMA_VERSION` (and the postgres equivalent). State is a live
   cache rebuilt from traffic, so dropping existing state rows on upgrade is
   acceptable — **no data migration**.
+- **`ensure_schema` currently has no upgrade path for an already-provisioned
+  database.** `CREATE TABLE IF NOT EXISTS` is a no-op against a table that
+  already exists in the old shape (`phase`/`cooldown_until`/`fail_count`
+  columns) — bumping the version constant alone does not touch it, and the new
+  code reading/writing a `state` column would then fail against the stale
+  schema. Since state is disposable, the fix is a version-gated
+  `DROP TABLE IF EXISTS llmbroker_state` (sqlite) / equivalent drop (postgres)
+  executed when the stored version marker (`PRAGMA user_version` /
+  `llmbroker_schema_version`) is below `_SCHEMA_VERSION`, before the
+  `CREATE TABLE IF NOT EXISTS` runs — so the table is actually recreated in the
+  new shape instead of silently left in the old one.
 
 Tests: each backend round-trips an `LLMState` through `write`/`read`, including a
 future-proofing extra key; expired `cooldown_until` reads back `AVAILABLE`;
-`OFFLINE`/`PROBING` survive.
+`OFFLINE`/`PROBING` survive. Add a migration test: seed a sqlite/postgres DB
+with the old `llmbroker_state` shape (old version marker), run `ensure_schema`,
+assert the table now has the `state` column and the version marker is current.
 
 ### Step 3 — registry stores nested/open config as JSON
 
@@ -117,18 +130,35 @@ Files: `src/llmbroker/standalone/registry.py`, `src/llmbroker/protocols/registry
   `api_key_ref`, `user_id` as columns (identity stays queryable; core config
   stays transparent). Additive column ⇒ bump the schema version; existing rows
   read back with an empty/`NULL` metadata.
+- **Unlike state, registry rows are durable and must not be dropped**, so this
+  column cannot rely on the `CREATE TABLE IF NOT EXISTS` in `ensure_schema` —
+  that statement is a no-op against a table that already exists, so an
+  already-provisioned `llmbroker_registry` would never actually gain the
+  `metadata` column. Add an explicit, version-gated
+  `ALTER TABLE llmbroker_registry ADD COLUMN metadata TEXT` (sqlite) /
+  `ADD COLUMN IF NOT EXISTS metadata JSONB` (postgres) in `ensure_schema`,
+  run when the stored version marker is below the new `_SCHEMA_VERSION`, so
+  existing rows keep their data and gain `metadata = NULL`.
 - `LLMConfig` carries the structured optional config that serializes into
   `metadata`. Its first field is `rate_limit` (a nested rpm/rpd/tpm/tpd value);
   the `RateLimit` type and `LLMConfig.rate_limit` field are **defined here** so
   registries can round-trip them, and are *populated/consumed* by the onboarding
   plan.
 - Each DB registry writes `LLMConfig`'s structured part into `metadata` and reads
-  it back on `load`/`get`. The file (TOML) registry reads `rate_limit` from the
+  it back on `load`/`get`. **`update()` must also write `metadata`** — today's
+  `sqlite/registry.py` `update()` only sets `base_url`/`model`/`api_key_ref`;
+  extend its `UPDATE` statement to include `metadata` (same for the postgres/
+  mongo registries), otherwise an update silently drops previously-stored
+  `rate_limit`/config. The file (TOML) registry reads `rate_limit` from the
   `[[llms]]` row (see onboarding plan) — it has no DB to migrate.
 
 Tests (`tests/test_registry_*`): a DB registry round-trips an `LLMConfig` whose
 `rate_limit` is set and whose `rate_limit` is `None`; a pre-existing row with
-`NULL` metadata loads as `rate_limit=None`; core columns still queried by name.
+`NULL` metadata loads as `rate_limit=None`; core columns still queried by name;
+`update()` preserves/overwrites `metadata` (round-trips a changed `rate_limit`).
+Add a migration test: seed a sqlite/postgres `llmbroker_registry` row in the old
+shape (no `metadata` column, old version marker), run `ensure_schema`, assert
+the column now exists and the pre-existing row is intact with `metadata` `NULL`.
 
 ## Non-goals
 
