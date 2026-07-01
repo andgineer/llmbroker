@@ -1,5 +1,29 @@
 # Curated catalog & key-effort onboarding
 
+## Plan sequence — step 2 of 4
+
+> **Prerequisites:** `db-schema-resilience.md` (step 1) — it defines `RateLimit`,
+> `LLMConfig.rate_limit`, the JSON-document `LLMState` that carries the new
+> `EXHAUSTED` phase, and the version-gated `ensure_schema` migration path. Do it
+> first. **Blocks:** `optimizer-learned-profile.md` (step 3), which extends the
+> keyless-not-routable pool change and the zero-routable alarm introduced here,
+> and `catalog-refresh.md` (step 4), which consumes the `effort`/`value`/
+> `rate_limit` taxonomies finalized here.
+
+The four plans form one dependency chain; execute in this order:
+
+1. **`db-schema-resilience.md`** — storage-shape foundation: columns-vs-JSON;
+   defines `RateLimit`, `LLMConfig.rate_limit`, the `LLMState` ⇄ dict boundary,
+   and the version-gated `ensure_schema` toolkit.
+2. **`preset-onboarding-effort.md`** *(this plan)* — curated catalog knowledge,
+   effort/value onboarding, warm-start seeding, the `EXHAUSTED` phase, and the
+   keyless-not-routable pool change.
+3. **`optimizer-learned-profile.md`** — the durable learned half (profile store,
+   bench verdict) and `SeedPolicy.SYNC`; extends the routable predicate from
+   this plan.
+4. **`catalog-refresh.md`** — the manual re-curation runbook; consumes the
+   taxonomies fixed here and may run in parallel with (3).
+
 ## Problem statement
 
 llmbroker's value is pooling many free, rate-limited, mediocre LLM endpoints and

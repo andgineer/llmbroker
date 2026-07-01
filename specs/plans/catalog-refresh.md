@@ -1,5 +1,29 @@
 # Catalog refresh — a repeatable prompt for updating the curated preset
 
+## Plan sequence — step 4 of 4
+
+> **Prerequisites:** `preset-onboarding-effort.md` (step 2) — this runbook
+> *consumes* the `effort`/`value`/`rate_limit` taxonomies and the "one useful
+> model per provider" curation rules fixed there; it must not be written before
+> they exist. It also references `SeedPolicy.SYNC` from
+> `optimizer-learned-profile.md` (step 3) in "Interaction with the learned
+> profile" — no code dependency, but that section is only real once step 3
+> lands, so this plan is naturally last. **May run in parallel with step 3**
+> once step 2 is done. **Blocks:** nothing.
+
+The four plans form one dependency chain; execute in this order:
+
+1. **`db-schema-resilience.md`** — storage-shape foundation: columns-vs-JSON;
+   defines `RateLimit`, `LLMConfig.rate_limit`, the `LLMState` ⇄ dict boundary,
+   and the version-gated `ensure_schema` toolkit.
+2. **`preset-onboarding-effort.md`** — curated catalog knowledge, effort/value
+   onboarding, warm-start seeding, the `EXHAUSTED` phase, and the
+   keyless-not-routable pool change.
+3. **`optimizer-learned-profile.md`** — the durable learned half (profile store,
+   bench verdict) and `SeedPolicy.SYNC`; extends the routable predicate from (2).
+4. **`catalog-refresh.md`** *(this plan)* — the manual re-curation runbook;
+   consumes the taxonomies fixed in (2) and may run in parallel with (3).
+
 ## Problem statement
 
 The curated catalog (`presets/freetier.toml` + the effort/value/rate_limit

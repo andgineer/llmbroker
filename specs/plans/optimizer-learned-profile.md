@@ -1,5 +1,28 @@
 # Learned LLM profile — the dynamic, optimizer-owned half of the catalog
 
+## Plan sequence — step 3 of 4
+
+> **Prerequisites:** `db-schema-resilience.md` (step 1) — reuse its typed
+> dataclass ⇄ JSON-document boundary and durable version-gated `ensure_schema`
+> path for the new profile store — **and** `preset-onboarding-effort.md`
+> (step 2) — this plan extends its keyless-not-routable pool change and its
+> zero-routable alarm (`routable ⟺ keyed **and** not benched`). Do the
+> onboarding pool change first. **Blocks:** nothing.
+
+The four plans form one dependency chain; execute in this order:
+
+1. **`db-schema-resilience.md`** — storage-shape foundation: columns-vs-JSON;
+   defines `RateLimit`, `LLMConfig.rate_limit`, the `LLMState` ⇄ dict boundary,
+   and the version-gated `ensure_schema` toolkit.
+2. **`preset-onboarding-effort.md`** — curated catalog knowledge, effort/value
+   onboarding, warm-start seeding, the `EXHAUSTED` phase, and the
+   keyless-not-routable pool change.
+3. **`optimizer-learned-profile.md`** *(this plan)* — the durable learned half
+   (profile store, bench verdict) and `SeedPolicy.SYNC`; extends the routable
+   predicate from (2).
+4. **`catalog-refresh.md`** — the manual re-curation runbook; consumes the
+   taxonomies fixed in (2) and may run in parallel with this plan.
+
 ## Problem statement
 
 llmbroker's concept is shifting: the LLM list is **curated by the maintainers**

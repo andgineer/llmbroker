@@ -1,5 +1,25 @@
 # DB schema resilience — columns vs JSON
 
+## Plan sequence — step 1 of 4
+
+> **Prerequisites:** none. **Blocks:** `preset-onboarding-effort.md` and
+> `optimizer-learned-profile.md` (both build on the storage shape and the
+> `RateLimit` / `LLMConfig.rate_limit` / `LLMState` ⇄ dict artifacts defined
+> here).
+
+The four plans form one dependency chain; execute in this order:
+
+1. **`db-schema-resilience.md`** *(this plan)* — storage-shape foundation:
+   columns-vs-JSON; defines `RateLimit`, `LLMConfig.rate_limit`, the
+   `LLMState` ⇄ dict boundary, and the version-gated `ensure_schema` toolkit.
+2. **`preset-onboarding-effort.md`** — curated catalog knowledge, effort/value
+   onboarding, warm-start seeding, the `EXHAUSTED` phase, and the
+   keyless-not-routable pool change.
+3. **`optimizer-learned-profile.md`** — the durable learned half (profile store,
+   bench verdict) and `SeedPolicy.SYNC`; extends the routable predicate from (2).
+4. **`catalog-refresh.md`** — the manual re-curation runbook; consumes the
+   taxonomies fixed in (2) and may run in parallel with (3).
+
 ## Problem statement
 
 llmbroker persists four kinds of data across four backends (sqlite, postgres,
