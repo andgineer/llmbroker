@@ -168,29 +168,16 @@ No new CLI command — onboarding belongs in the existing `env`. Enrich it to:
 - skip or annotate keys already present in the environment (handles "I already
   have some keys" for free).
 
-### State & optimizer persistence as a JSON document
+### Persistence (prerequisite)
 
-This work adds per-LLM runtime fields (the `EXHAUSTED` phase, and room for the
-optimizer's own hints — seeded delay, `rl_fail_count`, probe cycles). Today the
-SQL state stores keep these as **typed columns** (`phase`, `cooldown_until`,
-`fail_count`), so every new field is a schema change across four backends. That
-cost buys nothing here: unlike telemetry, we never query or aggregate over state
-— we only read/write the whole per-LLM blob by `(llm_name, user_id)`.
-
-So store per-LLM runtime state (and any persisted optimizer hints) as a **single
-JSON document** per `(llm_name, user_id)`:
-
-- The one typed boundary is `LLMState` ↔ `dict` (a `to_dict`/`from_dict` pair).
-- SQL backends replace the typed state columns with one JSON/TEXT `state` column,
-  keyed by `(llm_name, user_id)` (keep that unique index). Redis already
-  JSON-serializes per name; Mongo already stores a document — both just carry the
-  full dict.
-- Adding a field is then a dict key, never a migration.
-
-State is **ephemeral** — it is a live cache of cooldown/health that the system
-rebuilds from traffic. This change may drop existing rows on upgrade; that is
-acceptable and needs no data migration. (Telemetry, which *is* queried, keeps its
-columnar schema and is untouched.)
+This feature adds a new per-LLM state (the `EXHAUSTED` phase) and new per-model
+config (`rate_limit`). Persisting both without a migration per field relies on the
+schema being resilient to churn — the state store persisting a JSON document, and
+the registry carrying nested/open config in a JSON column. That work, and the
+`columns-vs-JSON` decision behind it, is a **prerequisite** and lives in its own
+plan: [`db-schema-resilience.md`](db-schema-resilience.md). It also defines the
+`RateLimit` type and the `LLMConfig.rate_limit` field (so registries can persist
+them); this plan populates and consumes them.
 
 ### Optimizer warm-start
 
@@ -226,8 +213,8 @@ Behavior:
   cooldown, so a provider asking for a long wait is honored;
 - when that cooldown exceeds a `long_cooldown_threshold`, the LLM enters
   **EXHAUSTED** — a first-class `LifecyclePhase`, persisted in the per-LLM state
-  document alongside `cooldown_until` (see the state-storage step; adding this
-  phase costs nothing);
+  document alongside `cooldown_until` (free to add thanks to the persistence
+  prerequisite);
 - an EXHAUSTED LLM does **not** escalate toward OFFLINE (its `rl_fail_count` is
   reset), so a daily-capped provider is not flapped through the probe loop; the
   slot simply re-enqueues when `cooldown_until` passes;
@@ -259,86 +246,57 @@ the next provision/restart — which matches the `env → .env → restart` flow
 
 ## Implementation (hand-off)
 
+**Prerequisite:** [`db-schema-resilience.md`](db-schema-resilience.md) — it makes
+the state store persist a JSON document and the registry carry nested config in a
+JSON column, and defines `RateLimit`, `LLMConfig.rate_limit`, and the
+`LLMState` ⇄ dict boundary. Do that plan first; the `EXHAUSTED` phase and
+`rate_limit` below then persist with no further migration.
+
 Ordered, self-contained steps. Each step lists the files, the change, and the
 tests to add. Run `invoke pre` and `python -m pytest` after each step; both must
 be green (no skips) before moving on.
 
-### Step 1 — DTOs, enums, and config/state fields
+### Step 1 — enums and onboarding DTOs
 
-File: `src/llmbroker/models.py`.
+File: `src/llmbroker/models.py`. (`RateLimit`, `LLMConfig.rate_limit`, and the
+`LLMState` (de)serialization come from the prerequisite plan.)
 
 - Add `class EffortLevel(Enum)` in easiest-first declaration order (reference
   doc): `OAUTH`, `SIGNUP`, `VERIFY`, `CONSOLE`, `WAITLIST`. Sort by
   `list(EffortLevel).index(...)`.
 - Add `class ValueLevel(Enum)`: `HIGH`, `GOOD`, `NICHE` (descending desirability).
-- Add `@dataclass(frozen=True, slots=True) class RateLimit`:
-  `rpm: int | None = None`, `rpd: int | None = None`, `tpm: int | None = None`,
-  `tpd: int | None = None`.
-- **`rate_limit` is per-model:** add `rate_limit: RateLimit | None = None` to
-  `LLMConfig` (limits differ by model even under one key — see reference doc).
 - Add `@dataclass(frozen=True, slots=True) class KeyInfo` (per-provider onboarding
   only, **no** rate_limit): `api_key_ref: str`, `effort: EffortLevel | None`,
   `value: ValueLevel | None`, `help: str`. Tolerate missing/unknown enum strings
   by storing `None` (never raise on an unrecognized bucket).
-- Add `LifecyclePhase.EXHAUSTED = "exhausted"`.
-- Add `LLMState.to_dict()` / `LLMState.from_dict()` (the single typed⇄JSON
-  boundary for state persistence — Step 2). Serialize `phase.value`,
-  `cooldown_until` (ISO or null), `fail_count`, and leave the dict open for
-  future keys.
+- Add `LifecyclePhase.EXHAUSTED = "exhausted"` (persists for free via the state
+  document — prerequisite plan).
 
-Tests (`tests/test_models.py`): enum order; `KeyInfo`/`RateLimit` partial &
-unknown fields → `None`; `LLMState` round-trips through `to_dict`/`from_dict`
-including `EXHAUSTED` and tz-aware `cooldown_until`.
+Tests (`tests/test_models.py`): enum order; `KeyInfo` partial & unknown fields →
+`None`.
 
-### Step 2 — state persistence as a JSON document
+### Step 2 — parse the catalog: per-model `rate_limit` + per-provider `key_info`
 
-Files: `src/llmbroker/protocols/state_store.py`, the four state stores
-(`sqlite`, `postgres`, `mongodb`, `redis`), and `sqlite`/`postgres` schema.
+Files: `src/llmbroker/standalone/registry.py`, `src/llmbroker/protocols/registry.py`.
 
-- Keep the protocol shape (`read() -> dict[str, LLMState]`,
-  `write(name, state)`), but persist each `(llm_name, user_id)` as **one JSON
-  document** built from `LLMState.to_dict()`.
-- SQL backends: replace the typed `phase`/`cooldown_until`/`fail_count` columns
-  with a single `state` TEXT (sqlite) / `JSONB` (postgres) column; keep
-  `llm_name`, `user_id`, and the unique index on `(llm_name, COALESCE(user_id))`.
-  On read, `LLMState.from_dict(json.loads(state))`; apply the same "expired
-  cooldown ⇒ AVAILABLE / trust OFFLINE·PROBING·EXHAUSTED" reconciliation that
-  lives in the stores today, but off the parsed dict.
-- Redis already stores a JSON string per name in a hash, and Mongo stores a
-  document — switch both to the full `to_dict()` payload.
-- Bump the sqlite `_SCHEMA_VERSION`. State is **ephemeral** (a live cache rebuilt
-  from traffic), so this may drop existing state rows on upgrade — acceptable, no
-  data migration. Telemetry schema is untouched.
-
-Tests: each backend round-trips an `LLMState` (incl. `EXHAUSTED` + future extra
-key) through `write`/`read`; expired `cooldown_until` reads back `AVAILABLE`;
-testcontainers cover postgres/mongo, `fakeredis` covers redis (no skips).
-
-### Step 3 — parse the catalog: per-model `rate_limit` + per-provider `key_info`
-
-Files: `src/llmbroker/standalone/registry.py`, `src/llmbroker/protocols/registry.py`,
-the DB registries (`sqlite`, `postgres`, `mongodb`) + their schema.
-
-- `_config_from_entry`: read `rate_limit` from each `[[llms]]` row into
-  `LLMConfig.rate_limit` (build `RateLimit` defensively; absent ⇒ `None`).
-- DB registries must persist `rate_limit`. Store it as a JSON column on the
-  registry row (sqlite TEXT / postgres JSONB / mongo field) rather than four
-  scalar columns — same rationale as state, and it round-trips `RateLimit`
-  wholesale. Bump the sqlite schema version (additive column).
+- `_config_from_entry` (file registry): read `rate_limit` from each `[[llms]]`
+  row into `LLMConfig.rate_limit` (build `RateLimit` defensively; absent ⇒
+  `None`). DB registries persist `rate_limit` via the prerequisite plan — the file
+  registry only parses the TOML.
 - `[keys]` entries become sub-tables carrying `effort`/`value`/`help`; a bare
   string (old flat form) is read as `help` only. Add
   `key_info_from_entry(ref, raw) -> KeyInfo` (defensive enums) in `registry.py`.
 - Generalize the registry key capability: replace `KeyHelpProtocol.key_help()`
   usage with `key_info() -> dict[str, KeyInfo]` on the file `Registry` (keep a
   `key_help()` shim deriving `{ref: info.help}` only if an existing caller needs
-  it). This capability is for hosts/onboarding; the broker seeding path does
-  **not** use it (it reads `cfg.rate_limit` directly).
+  it). This capability is for hosts/onboarding; the broker seeding path reads
+  `cfg.rate_limit` directly and does **not** use it.
 
 Tests (`tests/test_registry_keys.py`): `[[llms]]` `rate_limit` reaches
-`LLMConfig`; DB registry round-trips `rate_limit`; nested `[keys]` parses
-effort/value/help; flat-string `[keys]` → `help` only; unknown `effort` → `None`.
+`LLMConfig`; nested `[keys]` parses effort/value/help; flat-string `[keys]` →
+`help` only; unknown `effort` → `None`.
 
-### Step 4 — optimizer: sticky per-LLM seed
+### Step 3 — optimizer: sticky per-LLM seed
 
 File: `src/llmbroker/optimizer.py`.
 
@@ -353,7 +311,7 @@ File: `src/llmbroker/optimizer.py`.
 Tests (`tests/test_optimizer.py`): after `seed_delay(n, 2.0)`, repeated
 `on_success` floors at 2.0; unseeded LLM still floors at `initial_delay`.
 
-### Step 5 — seed the delay at provision
+### Step 4 — seed the delay at provision
 
 File: `src/llmbroker/broker/broker.py` (`ensure_pool`, after
 `self._catalog.provision()` and **before** `seed_from_metrics`).
@@ -368,7 +326,7 @@ Tests (`tests/test_warm_start.py`): a broker on a preset with `rpm=30` seeds
 `delay_for("groq-...") == 2.0`; a config without `rate_limit` stays at
 `initial_delay`.
 
-### Step 6 — long-cooldown: router, `EXHAUSTED`, FSM
+### Step 5 — long-cooldown: router, `EXHAUSTED`, FSM
 
 Files: `src/llmbroker/chat.py`, `src/llmbroker/broker/router.py`,
 `src/llmbroker/broker/state.py`, `src/llmbroker/broker/pool.py`,
@@ -395,7 +353,7 @@ transition, slot re-enqueues after the window (small threshold + monkeypatched
 clock); a 429 with 30 s `Retry-After` → `COOLING` with the existing escalation
 unchanged; `EXHAUSTED` persists and reloads via the state store.
 
-### Step 7 — onboarding via `env`
+### Step 6 — onboarding via `env`
 
 File: `src/llmbroker/cli.py` (`_cmd_env`, `_api_key_refs`).
 
@@ -411,7 +369,7 @@ Tests (`tests/test_cli_env.py`): ordering Gemini → Groq → OpenRouter for the
 shipped preset; an env var already in `os.environ` is annotated present;
 annotations render.
 
-### Step 8 — catalog consolidation
+### Step 7 — catalog consolidation
 
 Files: `presets/freetier.toml`, delete `presets/smart-freetier.toml`.
 
@@ -424,7 +382,7 @@ Files: `presets/freetier.toml`, delete `presets/smart-freetier.toml`.
 Tests: loading `presets/freetier.toml` via the file `Registry` yields 3 configs
 each with a `rate_limit`, and 3 `key_info` entries with expected effort/value.
 
-### Step 9 — partial-key framing
+### Step 8 — partial-key framing
 
 Files: `src/llmbroker/broker/pool.py`, `src/llmbroker/broker/catalog.py`,
 `src/llmbroker/broker/broker.py`, `src/llmbroker/broker/router.py`, `README`/docs.
