@@ -9,7 +9,7 @@ hang additive, data-preserving ALTERs off the version marker.
 
 import aiosqlite
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 _CREATE_REGISTRY = """
 CREATE TABLE IF NOT EXISTS llmbroker_registry (
@@ -73,11 +73,9 @@ _CREATE_IDX_SECRETS_UNIQUE = (
 
 _CREATE_STATE = """
 CREATE TABLE IF NOT EXISTS llmbroker_state (
-    llm_name       TEXT NOT NULL,
-    phase          TEXT NOT NULL,
-    cooldown_until TEXT,
-    fail_count     INTEGER NOT NULL DEFAULT 0,
-    user_id        TEXT
+    llm_name TEXT NOT NULL,
+    state    TEXT NOT NULL,
+    user_id  TEXT
 )
 """
 
@@ -86,13 +84,19 @@ _CREATE_IDX_STATE_UNIQUE = (
     " ON llmbroker_state(llm_name, COALESCE(user_id, ''))"
 )
 
+_ADD_REGISTRY_METADATA = "ALTER TABLE llmbroker_registry ADD COLUMN metadata TEXT"
+
 _schema_ready: dict[str, int] = {}
 
 
-async def ensure_schema(db: aiosqlite.Connection, db_path: str = "") -> None:
-    """Create the package's tables/indexes if missing. Idempotent, version-aware."""
-    if db_path and db_path != ":memory:" and _schema_ready.get(db_path) == _SCHEMA_VERSION:
-        return
+async def _apply_ddl(db: aiosqlite.Connection) -> None:
+    """Run the version-gated migration phases against *db* (no transaction control)."""
+    cursor = await db.execute("PRAGMA user_version")
+    row = await cursor.fetchone()
+    current = int(row[0]) if row else 0
+    if current < _SCHEMA_VERSION:
+        # State is a live cache rebuilt from traffic; no data migration needed.
+        await db.execute("DROP TABLE IF EXISTS llmbroker_state")
     await db.execute(_CREATE_REGISTRY)
     await db.execute(_CREATE_CALLS)
     await db.execute(_CREATE_SECRETS)
@@ -103,11 +107,37 @@ async def ensure_schema(db: aiosqlite.Connection, db_path: str = "") -> None:
     await db.execute(_CREATE_IDX_REGISTRY_UNIQUE)
     await db.execute(_CREATE_IDX_SECRETS_UNIQUE)
     await db.execute(_CREATE_IDX_STATE_UNIQUE)
-    cursor = await db.execute("PRAGMA user_version")
-    row = await cursor.fetchone()
-    current = int(row[0]) if row else 0
     if current < _SCHEMA_VERSION:
+        table_info = await (await db.execute("PRAGMA table_info(llmbroker_registry)")).fetchall()
+        existing_cols = {r[1] for r in table_info}
+        if "metadata" not in existing_cols:
+            await db.execute(_ADD_REGISTRY_METADATA)
         await db.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
-    await db.commit()
+
+
+async def ensure_schema(db: aiosqlite.Connection, db_path: str = "") -> None:
+    """Create the package's tables/indexes if missing. Idempotent, version-aware.
+
+    A real file path migrates under its own ``isolation_level=None`` connection
+    and a ``BEGIN IMMEDIATE`` transaction, so concurrent OS processes serialize
+    on sqlite's file lock instead of racing. A dedicated connection is required
+    because aiosqlite connections are thread-bound: mutating ``isolation_level``
+    on an already-open connection from the caller's thread raises
+    ``sqlite3.ProgrammingError``. ``:memory:`` has no cross-process concern, so
+    it runs the same migration directly against *db*.
+    """
     if db_path and db_path != ":memory:":
+        if _schema_ready.get(db_path) == _SCHEMA_VERSION:
+            return
+        async with aiosqlite.connect(db_path, isolation_level=None) as migration_db:
+            await migration_db.execute("BEGIN IMMEDIATE")
+            try:
+                await _apply_ddl(migration_db)
+                await migration_db.execute("COMMIT")
+            except BaseException:
+                await migration_db.execute("ROLLBACK")
+                raise
         _schema_ready[db_path] = _SCHEMA_VERSION
+    else:
+        await _apply_ddl(db)
+        await db.commit()

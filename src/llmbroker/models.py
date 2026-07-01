@@ -4,7 +4,7 @@ Pure data and the one cross-cutting capability protocol. No I/O, no driver
 imports — safe to import from anywhere in the package.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
 from typing import Protocol, runtime_checkable
@@ -23,6 +23,10 @@ class LifecyclePhase(Enum):
     PROBING = "probing"
 
 
+_RESERVED_STATE_KEYS = frozenset({"phase", "cooldown_until", "fail_count"})
+_TRUST_STORED_PHASES = frozenset({LifecyclePhase.OFFLINE, LifecyclePhase.PROBING})
+
+
 @dataclass(frozen=True, slots=True)
 class LLMState:
     """Snapshot of one LLM's live runtime state, built fresh on each read."""
@@ -30,6 +34,79 @@ class LLMState:
     phase: LifecyclePhase = LifecyclePhase.AVAILABLE
     cooldown_until: datetime | None = None
     fail_count: int = 0
+    extra: dict[str, object] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize to a plain, JSON-storable dict.
+
+        >>> s = LLMState(fail_count=2, extra={"probe_attempts": 1})
+        >>> d = s.to_dict()
+        >>> LLMState.from_dict(d) == s
+        True
+        >>> LLMState.from_dict({}) == LLMState()
+        True
+        """
+        collision = _RESERVED_STATE_KEYS & self.extra.keys()
+        if collision:
+            raise ValueError(
+                f"LLMState.extra must not contain reserved keys: {sorted(collision)}",
+            )
+        return {
+            "phase": self.phase.value,
+            "cooldown_until": self.cooldown_until.isoformat()
+            if self.cooldown_until is not None
+            else None,
+            "fail_count": self.fail_count,
+            **self.extra,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, object]) -> "LLMState":
+        """Deserialize from a plain dict; a missing key falls back to its dataclass default."""
+        phase = LifecyclePhase(d["phase"]) if "phase" in d else LifecyclePhase.AVAILABLE
+        cooldown_raw = d.get("cooldown_until")
+        cooldown_until = datetime.fromisoformat(cooldown_raw) if cooldown_raw else None
+        fail_count = int(d.get("fail_count", 0))
+        extra = {k: v for k, v in d.items() if k not in _RESERVED_STATE_KEYS}
+        return cls(phase=phase, cooldown_until=cooldown_until, fail_count=fail_count, extra=extra)
+
+
+def reconcile(state: LLMState, now: datetime) -> LLMState:
+    """Derive the effective phase: OFFLINE/PROBING are trusted, else cooldown_until decides.
+
+    >>> from datetime import UTC, datetime, timedelta
+    >>> now = datetime(2030, 1, 1, tzinfo=UTC)
+    >>> reconcile(
+    ...     LLMState(phase=LifecyclePhase.COOLING, cooldown_until=now + timedelta(days=1)), now
+    ... ).phase
+    <LifecyclePhase.COOLING: 'cooling'>
+    """
+    phase = state.phase
+    cooldown_until = state.cooldown_until
+    if phase in _TRUST_STORED_PHASES:
+        if cooldown_until is not None and cooldown_until <= now:
+            cooldown_until = None
+    elif cooldown_until is not None and cooldown_until > now:
+        phase = LifecyclePhase.COOLING
+    elif phase in {LifecyclePhase.AVAILABLE, LifecyclePhase.COOLING}:
+        phase = LifecyclePhase.AVAILABLE
+        cooldown_until = None
+    else:
+        raise ValueError(
+            f"Unexpected stored phase {phase!r}: "
+            "add it to _TRUST_STORED_PHASES or handle it explicitly",
+        )
+    return replace(state, phase=phase, cooldown_until=cooldown_until)
+
+
+@dataclass(frozen=True, slots=True)
+class RateLimit:
+    """Optional per-LLM rate ceilings; any field left ``None`` is not enforced."""
+
+    rpm: int | None = None
+    rpd: int | None = None
+    tpm: int | None = None
+    tpd: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +117,46 @@ class LLMConfig:
     base_url: str
     model: str
     api_key_ref: str
+    rate_limit: RateLimit | None = None
+
+    def to_metadata(self) -> dict[str, object]:
+        """Structured optional config, serialized for the registry's JSON column.
+
+        >>> LLMConfig(name="g", base_url="https://x/v1", model="m", api_key_ref="K").to_metadata()
+        {}
+        """
+        if self.rate_limit is None:
+            return {}
+        return {
+            "rate_limit": {
+                "rpm": self.rate_limit.rpm,
+                "rpd": self.rate_limit.rpd,
+                "tpm": self.rate_limit.tpm,
+                "tpd": self.rate_limit.tpd,
+            },
+        }
+
+    @classmethod
+    def from_metadata(
+        cls,
+        *,
+        name: str,
+        base_url: str,
+        model: str,
+        api_key_ref: str,
+        metadata: dict[str, object] | None,
+    ) -> "LLMConfig":
+        """Reconstruct from the core columns plus the JSON ``metadata`` blob."""
+        metadata = metadata or {}
+        raw_rate_limit = metadata.get("rate_limit")
+        rate_limit = RateLimit(**raw_rate_limit) if raw_rate_limit else None
+        return cls(
+            name=name,
+            base_url=base_url,
+            model=model,
+            api_key_ref=api_key_ref,
+            rate_limit=rate_limit,
+        )
 
 
 class CallStatus(Enum):

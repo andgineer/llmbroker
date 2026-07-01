@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime, timedelta
 
+import llmbroker.mongodb
+
 from llmbroker.models import LifecyclePhase, LLMState
 
 
@@ -75,3 +77,45 @@ async def test_offline_phase(any_state_store):
     result = await any_state_store.read()
     assert result["p1"].phase is LifecyclePhase.OFFLINE
     assert result["p1"].cooldown_until is None
+
+
+async def test_probing_phase(any_state_store):
+    state = LLMState(phase=LifecyclePhase.PROBING, fail_count=0)
+    await any_state_store.write("p1", state)
+    result = await any_state_store.read()
+    assert result["p1"].phase is LifecyclePhase.PROBING
+
+
+async def test_extra_key_round_trips(any_state_store):
+    """A future-proofing key not yet promoted to a named field survives write/read."""
+    state = LLMState(phase=LifecyclePhase.AVAILABLE, fail_count=1, extra={"probe_attempts": 5})
+    await any_state_store.write("p1", state)
+    result = await any_state_store.read()
+    assert result["p1"].extra == {"probe_attempts": 5}
+
+
+# ── MongoDB: pre-migration documents (native BSON datetime cooldown_until) ───
+
+
+async def test_mongodb_legacy_native_datetime_cooldown_reads_back(mongo_db):
+    """Docs written by the pre-``to_dict()`` code stored cooldown_until as a native
+    BSON date, which pymongo returns as a naive datetime (the client is never
+    opened with tz_aware=True); read() must still reconcile it correctly.
+    """
+    store = llmbroker.mongodb.StateStore(mongo_db)
+    future_aware = datetime.now(UTC) + timedelta(seconds=120)
+    await mongo_db["llmbroker_state"].insert_one(
+        {
+            "llm_name": "legacy",
+            "user_id": None,
+            "phase": "cooling",
+            "cooldown_until": future_aware,
+            "fail_count": 1,
+        },
+    )
+    try:
+        result = await store.read()
+        assert result["legacy"].phase is LifecyclePhase.COOLING
+        assert result["legacy"].cooldown_until is not None
+    finally:
+        await mongo_db["llmbroker_state"].delete_many({"llm_name": "legacy"})

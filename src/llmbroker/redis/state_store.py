@@ -6,14 +6,13 @@ One hash per ``(user_id)`` scope.  Key format:
 """
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Self
 
 import redis.asyncio as aioredis
 
-from llmbroker.models import LifecyclePhase, LLMState, check_user_id
-
-_TRUST_STORED_PHASES = frozenset({LifecyclePhase.OFFLINE, LifecyclePhase.PROBING})
+from llmbroker.models import LifecyclePhase, LLMState, check_user_id, reconcile
 
 
 class StateStore:
@@ -38,50 +37,22 @@ class StateStore:
     async def read(self, user_id: int | str | None = None) -> dict[str, LLMState]:
         check_user_id(user_id)
         raw = await self._client.hgetall(self._scope_key(user_id))
-        result: dict[str, LLMState] = {}
         now = datetime.now(UTC)
-        for name, value in raw.items():
-            data = json.loads(value)
-            stored_phase = LifecyclePhase(data["phase"])
-            cooldown_str = data.get("cooldown_until")
-            cooldown_until = datetime.fromisoformat(cooldown_str) if cooldown_str else None
-            fail_count = int(data["fail_count"])
-            if stored_phase in _TRUST_STORED_PHASES:
-                phase = stored_phase
-                if cooldown_until is not None and cooldown_until <= now:
-                    cooldown_until = None
-            elif cooldown_until is not None and cooldown_until > now:
-                phase = LifecyclePhase.COOLING
-            elif stored_phase in {LifecyclePhase.AVAILABLE, LifecyclePhase.COOLING}:
-                phase = LifecyclePhase.AVAILABLE
-                cooldown_until = None
-            else:
-                raise ValueError(
-                    f"Unexpected stored phase {stored_phase!r}: "
-                    "add it to _TRUST_STORED_PHASES or handle it explicitly",
-                )
-            result[str(name)] = LLMState(
-                phase=phase,
-                cooldown_until=cooldown_until,
-                fail_count=fail_count,
-            )
-        return result
+        return {
+            str(name): reconcile(LLMState.from_dict(json.loads(value)), now)
+            for name, value in raw.items()
+        }
 
     async def write(self, name: str, state: LLMState, user_id: int | str | None = None) -> None:
         check_user_id(user_id)
         if state.cooldown_until is not None and state.cooldown_until.tzinfo is None:
             raise ValueError("LLMState.cooldown_until must be timezone-aware")
-        cooldown_iso = (
-            state.cooldown_until.isoformat()
+        cooldown_until = (
+            state.cooldown_until
             if state.cooldown_until is not None and state.phase is not LifecyclePhase.AVAILABLE
             else None
         )
-        payload: dict[str, object] = {
-            "phase": state.phase.value,
-            "fail_count": state.fail_count,
-        }
-        if cooldown_iso is not None:
-            payload["cooldown_until"] = cooldown_iso
+        payload = replace(state, cooldown_until=cooldown_until).to_dict()
         await self._client.hset(self._scope_key(user_id), name, json.dumps(payload))
 
     async def aclose(self) -> None:

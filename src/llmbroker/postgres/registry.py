@@ -1,9 +1,22 @@
 """Postgres-backed mutable registry over ``llmbroker_registry``."""
 
+import json
+
 import asyncpg
 
 from llmbroker.models import LLMConfig, check_user_id
 from llmbroker.postgres.schema import ensure_schema, to_uid
+
+
+def _config_from_row(row: asyncpg.Record) -> LLMConfig:
+    metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+    return LLMConfig.from_metadata(
+        name=row["name"],
+        base_url=row["base_url"],
+        model=row["model"],
+        api_key_ref=row["api_key_ref"],
+        metadata=metadata,
+    )
 
 
 class Registry:
@@ -18,19 +31,11 @@ class Registry:
         await ensure_schema(self._pool)
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT name, base_url, model, api_key_ref FROM llmbroker_registry"
+                "SELECT name, base_url, model, api_key_ref, metadata FROM llmbroker_registry"
                 " WHERE user_id IS NOT DISTINCT FROM $1 ORDER BY name",
                 uid,
             )
-        return [
-            LLMConfig(
-                name=r["name"],
-                base_url=r["base_url"],
-                model=r["model"],
-                api_key_ref=r["api_key_ref"],
-            )
-            for r in rows
-        ]
+        return [_config_from_row(r) for r in rows]
 
     async def get(self, name: str, user_id: int | str | None = None) -> LLMConfig | None:
         check_user_id(user_id)
@@ -38,19 +43,14 @@ class Registry:
         await ensure_schema(self._pool)
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT name, base_url, model, api_key_ref FROM llmbroker_registry"
+                "SELECT name, base_url, model, api_key_ref, metadata FROM llmbroker_registry"
                 " WHERE name = $1 AND user_id IS NOT DISTINCT FROM $2",
                 name,
                 uid,
             )
         if row is None:
             return None
-        return LLMConfig(
-            name=row["name"],
-            base_url=row["base_url"],
-            model=row["model"],
-            api_key_ref=row["api_key_ref"],
-        )
+        return _config_from_row(row)
 
     async def add(self, cfg: LLMConfig, user_id: int | str | None = None) -> None:
         check_user_id(user_id)
@@ -59,12 +59,14 @@ class Registry:
         async with self._pool.acquire() as conn:
             try:
                 await conn.execute(
-                    "INSERT INTO llmbroker_registry (name, base_url, model, api_key_ref, user_id)"
-                    " VALUES ($1, $2, $3, $4, $5)",
+                    "INSERT INTO llmbroker_registry"
+                    " (name, base_url, model, api_key_ref, metadata, user_id)"
+                    " VALUES ($1, $2, $3, $4, $5::jsonb, $6)",
                     cfg.name,
                     cfg.base_url,
                     cfg.model,
                     cfg.api_key_ref,
+                    json.dumps(cfg.to_metadata()),
                     uid,
                 )
             except asyncpg.UniqueViolationError:
@@ -76,11 +78,13 @@ class Registry:
         await ensure_schema(self._pool)
         async with self._pool.acquire() as conn:
             status = await conn.execute(
-                "UPDATE llmbroker_registry SET base_url=$1, model=$2, api_key_ref=$3"
-                " WHERE name=$4 AND user_id IS NOT DISTINCT FROM $5",
+                "UPDATE llmbroker_registry"
+                " SET base_url=$1, model=$2, api_key_ref=$3, metadata=$4::jsonb"
+                " WHERE name=$5 AND user_id IS NOT DISTINCT FROM $6",
                 cfg.base_url,
                 cfg.model,
                 cfg.api_key_ref,
+                json.dumps(cfg.to_metadata()),
                 cfg.name,
                 uid,
             )

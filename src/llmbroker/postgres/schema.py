@@ -9,7 +9,7 @@ import asyncio
 
 import asyncpg
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _schema_ready: set[int] = set()
 _schema_lock = asyncio.Lock()
 
@@ -18,12 +18,18 @@ def to_uid(user_id: int | str | None) -> str | None:
     return str(user_id) if user_id is not None else None
 
 
-_DDL = """\
+_CREATE_VERSION_TABLE = """\
 CREATE TABLE IF NOT EXISTS llmbroker_schema_version (
     id      SMALLINT PRIMARY KEY DEFAULT 1,
     version INTEGER  NOT NULL,
     CHECK (id = 1)
-);
+)\
+"""
+
+# State is a live cache rebuilt from traffic; no data migration needed.
+_DROP_STATE = "DROP TABLE IF EXISTS llmbroker_state"
+
+_DDL = """\
 CREATE TABLE IF NOT EXISTS llmbroker_registry (
     id          BIGSERIAL PRIMARY KEY,
     name        TEXT NOT NULL,
@@ -63,16 +69,16 @@ CREATE TABLE IF NOT EXISTS llmbroker_secrets (
 CREATE UNIQUE INDEX IF NOT EXISTS llmbroker_secrets_unique
     ON llmbroker_secrets(ref, COALESCE(user_id, ''));
 CREATE TABLE IF NOT EXISTS llmbroker_state (
-    id             BIGSERIAL PRIMARY KEY,
-    llm_name       TEXT NOT NULL,
-    phase          TEXT NOT NULL,
-    cooldown_until TIMESTAMPTZ,
-    fail_count     INTEGER NOT NULL DEFAULT 0,
-    user_id        TEXT
+    id       BIGSERIAL PRIMARY KEY,
+    llm_name TEXT NOT NULL,
+    state    JSONB NOT NULL,
+    user_id  TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS llmbroker_state_unique
     ON llmbroker_state(llm_name, COALESCE(user_id, ''));\
 """
+
+_ADD_REGISTRY_METADATA = "ALTER TABLE llmbroker_registry ADD COLUMN IF NOT EXISTS metadata JSONB"
 
 _UPSERT_VERSION = """\
 INSERT INTO llmbroker_schema_version (id, version)
@@ -82,13 +88,25 @@ ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version\
 
 
 async def ensure_schema(pool: asyncpg.Pool) -> None:
-    """Create the package's tables/indexes if missing. Idempotent, version-aware."""
+    """Create the package's tables/indexes if missing. Idempotent, version-aware.
+
+    Migrates inside one transaction; concurrent callers serialize on
+    postgres's own ``ACCESS EXCLUSIVE`` lock for `CREATE`/`ALTER TABLE`, so
+    (unlike sqlite) no separate cross-process lock is needed here.
+    """
     if id(pool) in _schema_ready:
         return
     async with _schema_lock:
         if id(pool) in _schema_ready:
             return
         async with pool.acquire() as conn, conn.transaction():
+            await conn.execute(_CREATE_VERSION_TABLE)
+            row = await conn.fetchrow("SELECT version FROM llmbroker_schema_version WHERE id = 1")
+            current = int(row["version"]) if row else 0
+            if current < _SCHEMA_VERSION:
+                await conn.execute(_DROP_STATE)
             await conn.execute(_DDL)
-            await conn.execute(_UPSERT_VERSION, _SCHEMA_VERSION)
+            if current < _SCHEMA_VERSION:
+                await conn.execute(_ADD_REGISTRY_METADATA)
+                await conn.execute(_UPSERT_VERSION, _SCHEMA_VERSION)
         _schema_ready.add(id(pool))

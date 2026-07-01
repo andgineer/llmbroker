@@ -7,6 +7,16 @@ from llmbroker.models import LLMConfig, check_user_id
 from llmbroker.mongodb.schema import ensure_schema
 
 
+def _config_from_doc(doc: dict) -> LLMConfig:
+    return LLMConfig.from_metadata(
+        name=doc["name"],
+        base_url=doc["base_url"],
+        model=doc["model"],
+        api_key_ref=doc["api_key_ref"],
+        metadata=doc.get("metadata"),
+    )
+
+
 class Registry:
     """MongoDB-backed mutable registry over ``llmbroker_registry``."""
 
@@ -18,15 +28,7 @@ class Registry:
         await ensure_schema(self._db)
         cursor = self._db["llmbroker_registry"].find({"user_id": user_id}).sort("name", 1)
         docs = await cursor.to_list(length=None)
-        return [
-            LLMConfig(
-                name=d["name"],
-                base_url=d["base_url"],
-                model=d["model"],
-                api_key_ref=d["api_key_ref"],
-            )
-            for d in docs
-        ]
+        return [_config_from_doc(d) for d in docs]
 
     async def get(self, name: str, user_id: int | str | None = None) -> LLMConfig | None:
         check_user_id(user_id)
@@ -34,12 +36,7 @@ class Registry:
         doc = await self._db["llmbroker_registry"].find_one({"name": name, "user_id": user_id})
         if doc is None:
             return None
-        return LLMConfig(
-            name=doc["name"],
-            base_url=doc["base_url"],
-            model=doc["model"],
-            api_key_ref=doc["api_key_ref"],
-        )
+        return _config_from_doc(doc)
 
     async def add(self, cfg: LLMConfig, user_id: int | str | None = None) -> None:
         check_user_id(user_id)
@@ -49,6 +46,7 @@ class Registry:
             "base_url": cfg.base_url,
             "model": cfg.model,
             "api_key_ref": cfg.api_key_ref,
+            "metadata": cfg.to_metadata(),
             "user_id": user_id,
         }
         try:
@@ -64,6 +62,7 @@ class Registry:
             "base_url": cfg.base_url,
             "model": cfg.model,
             "api_key_ref": cfg.api_key_ref,
+            "metadata": cfg.to_metadata(),
             "user_id": user_id,
         }
         result = await self._db["llmbroker_registry"].replace_one(
