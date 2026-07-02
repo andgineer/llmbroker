@@ -7,24 +7,24 @@
 | src/llmbroker/\_\_about\_\_.py          |        1 |        1 |      0% |         1 |
 | src/llmbroker/\_\_main\_\_.py           |        4 |        4 |      0% |       3-8 |
 | src/llmbroker/aws/secrets.py            |       43 |        2 |     95% |    55, 71 |
-| src/llmbroker/broker/broker.py          |      154 |       15 |     90% |130, 143, 145-146, 231-232, 269-273, 285-288 |
+| src/llmbroker/broker/broker.py          |      126 |        4 |     97% |68, 127, 213-214 |
 | src/llmbroker/broker/catalog.py         |       84 |        5 |     94% |55-56, 75-77 |
-| src/llmbroker/broker/pool.py            |      137 |        7 |     95% |95, 115-118, 120, 188 |
+| src/llmbroker/broker/pool.py            |      126 |        7 |     94% |98, 118-121, 123, 162 |
 | src/llmbroker/broker/pool\_view.py      |       28 |        0 |    100% |           |
 | src/llmbroker/broker/result.py          |       42 |        4 |     90% |37, 40-41, 76 |
-| src/llmbroker/broker/router.py          |       73 |        2 |     97% |   181-182 |
-| src/llmbroker/broker/state.py           |       32 |        0 |    100% |           |
-| src/llmbroker/chat.py                   |       83 |       10 |     88% |112, 162-172 |
-| src/llmbroker/cli.py                    |       76 |        1 |     99% |        37 |
+| src/llmbroker/broker/router.py          |       82 |        5 |     94% |94-95, 188, 207-208 |
+| src/llmbroker/broker/state.py           |       24 |        0 |    100% |           |
+| src/llmbroker/chat.py                   |       95 |       11 |     88% |41, 125, 175-185 |
+| src/llmbroker/cli.py                    |      104 |        1 |     99% |        73 |
 | src/llmbroker/exceptions.py             |        5 |        0 |    100% |           |
 | src/llmbroker/integrations/alembic.py   |        2 |        0 |    100% |           |
-| src/llmbroker/models.py                 |       97 |        1 |     99% |       250 |
+| src/llmbroker/models.py                 |      101 |        1 |     99% |       271 |
 | src/llmbroker/mongodb/registry.py       |       45 |        0 |    100% |           |
 | src/llmbroker/mongodb/schema.py         |       24 |        2 |     92% |    20, 30 |
 | src/llmbroker/mongodb/secrets.py        |       25 |        0 |    100% |           |
-| src/llmbroker/mongodb/state\_store.py   |       35 |        1 |     97% |        41 |
+| src/llmbroker/mongodb/state\_store.py   |       37 |        1 |     97% |        43 |
 | src/llmbroker/mongodb/telemetry.py      |       53 |        1 |     98% |       136 |
-| src/llmbroker/optimizer.py              |      169 |        6 |     96% |178, 181-183, 186, 235 |
+| src/llmbroker/optimizer.py              |      132 |        6 |     95% |144, 147-149, 152, 191 |
 | src/llmbroker/postgres/registry.py      |       53 |        0 |    100% |           |
 | src/llmbroker/postgres/schema.py        |       29 |        1 |     97% |       101 |
 | src/llmbroker/postgres/secrets.py       |       29 |        0 |    100% |           |
@@ -40,12 +40,12 @@
 | src/llmbroker/sqlite/secrets.py         |       29 |        0 |    100% |           |
 | src/llmbroker/sqlite/state\_store.py    |       29 |        1 |     97% |        41 |
 | src/llmbroker/sqlite/telemetry.py       |       73 |        3 |     96% |139-140, 184 |
-| src/llmbroker/standalone/registry.py    |       36 |        1 |     97% |        57 |
+| src/llmbroker/standalone/registry.py    |       57 |        1 |     98% |        96 |
 | src/llmbroker/standalone/secrets.py     |       39 |        3 |     92% |54, 61, 66 |
 | src/llmbroker/standalone/telemetry.py   |       33 |        2 |     94% |    23, 34 |
 | src/llmbroker/sync.py                   |      106 |       12 |     89% |82, 101, 103, 130-131, 163-164, 212, 215, 218, 221, 226 |
 | src/llmbroker/vault/secrets.py          |       30 |        0 |    100% |           |
-| **TOTAL**                               | **1939** |   **94** | **95%** |           |
+| **TOTAL**                               | **1931** |   **87** | **95%** |           |
 
 
 ## Setup coverage badge
