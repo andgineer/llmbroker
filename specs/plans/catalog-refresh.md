@@ -20,9 +20,10 @@ pool change are already implemented; see
 [`architecture.md`](../reference/architecture.md) and
 [`optimizer.md`](../reference/optimizer.md)):
 
-1. **`optimizer-learned-profile.md`** — the durable learned half (learned profile
-   carried in the registry, bench verdict) and `SeedPolicy.SYNC`; extends the
-   existing routable predicate.
+1. **`optimizer-learned-profile.md`** — the durable learned half
+   (per-operation quality aggregates carried in the registry, derived bench
+   verdicts), cluster-shared aggregates via the state store, and
+   `SeedPolicy.SYNC`; extends the existing routable predicate.
 2. **`catalog-refresh.md`** *(this plan)* — the manual re-curation runbook;
    consumes the already-fixed taxonomies and may run in parallel with (1).
 
@@ -79,12 +80,29 @@ access). It directs the agent to:
      exists to exploit the difference);
    - keep the pool multi-provider (single-provider or paid-tier presets defeat
      the premise).
-4. **Regenerate the outputs**:
+4. **Respect the catalog-identity invariants** (from
+   [`optimizer-learned-profile.md`](optimizer-learned-profile.md) — deployments
+   carry learned per-entry evidence, and `SeedPolicy.SYNC` enforces these):
+   - **a model bump is a new entry with a new name** — never change the
+     `model` of an existing `[[llms]]` entry; `SYNC` refuses such a change
+     with an alert, because the deployment's learned evidence is about the
+     old model. Encode the version in the entry name so successive versions
+     coexist as distinct entries;
+   - **removing an entry from the preset is safe and cheap** — deployments
+     translate it into deprecation (a last-resort demotion: used only when
+     nothing better is available; learned profile kept; reversible by
+     re-adding the entry). When a strictly better sibling replaces an old
+     model, *do remove the old entry*: the two usually share the same
+     provider quota, and a still-endorsed old model keeps burning that quota
+     on worse answers;
+   - keep sibling models of one provider (sharing one quota) in the preset
+     simultaneously only as a deliberate decision, not as leftovers.
+5. **Regenerate the outputs**:
    - rewrite `presets/freetier.toml` — `[[llms]]` rows with `rate_limit`, and
      `[keys.*]` sub-tables with `effort`/`value`/`help`;
    - update `specs/reference/freetier-providers.md` with the refreshed sources,
      exact numbers, and the date of the refresh.
-5. **Validate** before proposing the change:
+6. **Validate** before proposing the change:
    - load `presets/freetier.toml` via the file `Registry` and assert every
      `[[llms]]` row parses into an `LLMConfig` with a `rate_limit`, and every
      `[keys.*]` into a `KeyInfo` with a recognised `effort`/`value`;
@@ -104,16 +122,32 @@ access). It directs the agent to:
 - **Taxonomies are fixed elsewhere.** Changing the `effort`/`value`/`rate_limit`
   shapes means updating the reference doc and the `EffortLevel`/`ValueLevel`
   enums in `models.py`, not ad-hoc drift inside the preset.
+- **Entry identity is immutable.** Never repoint an existing entry name at a
+  different `model` — a version bump is a new entry (see the identity
+  invariants above); `SeedPolicy.SYNC` will refuse the change at deployments
+  anyway.
 
 ## Interaction with the learned profile
 
 Catalog refresh only touches the **static half** of the catalog (the preset).
 Under [`optimizer-learned-profile.md`](optimizer-learned-profile.md), applying a
-refreshed preset to a running deployment goes through `SeedPolicy.SYNC`, which
-upserts the static config and **never** touches the learned profile — so a
-refresh delivers new/updated models and metadata to users **without** discarding
-their per-model usefulness stats or resurrecting a model they benched as
-globally useless.
+refreshed preset to a running deployment goes through `SeedPolicy.SYNC`, which:
+
+- adds new entries and updates the operational fields of existing ones —
+  never `model` (identity is immutable) and **never** the learned profile;
+- translates a removed entry into **deprecation** — a last-resort demotion
+  (the model is picked only when nothing better is available), learned stats
+  kept, reversible by re-adding the entry to a later preset. This is the
+  channel through which "the new sibling is strictly better" actually
+  displaces the old model at deployments: the curator removes the old entry,
+  and the deployment stops spending the shared provider quota on it;
+- never resurrects a model the deployment excluded or demoted (manual
+  latches survive re-seed; quality demotions are derived from the
+  deployment's own evidence).
+
+So a refresh delivers new/updated models to users without discarding their
+per-model, per-operation usefulness stats — and removals are an act of
+curation, not data loss.
 
 ## Implementation
 
