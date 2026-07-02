@@ -14,8 +14,8 @@
 The remaining three plans form one dependency chain; execute in this order:
 
 1. **`preset-onboarding-effort.md`** — curated catalog knowledge, effort/value
-   onboarding, warm-start seeding, the `EXHAUSTED` phase, and the
-   keyless-not-routable pool change.
+   onboarding, a simplified two-phase (AVAILABLE/COOLING) reliability model,
+   and the keyless-not-routable pool change.
 2. **`optimizer-learned-profile.md`** *(this plan)* — the durable learned half
    (learned profile carried in the registry, bench verdict) and
    `SeedPolicy.SYNC`; extends the routable predicate from (1).
@@ -95,10 +95,10 @@ than a lone flag:
   standing decision to exclude a model from routing while keeping its stats.
 
 A "benched" model is deliberately distinct from the ephemeral lifecycle
-`phase` (`AVAILABLE/COOLING/OFFLINE/PROBING/EXHAUSTED`): those are transient and
-live in the disposable sync-state; `benched` is a durable verdict. `EXHAUSTED`
-(from [`preset-onboarding-effort.md`](preset-onboarding-effort.md)) stays in the
-ephemeral state and does **not** move here.
+`phase` (`AVAILABLE/COOLING` — see
+[`preset-onboarding-effort.md`](preset-onboarding-effort.md) for why the phase
+model stays this small): `phase` is transient and lives in the disposable
+sync-state; `benched` is a durable verdict, orthogonal to it.
 
 ## The learned profile lives in the registry
 
@@ -231,15 +231,13 @@ bench verdict are untouched.
   pattern for the new `profile` column. That column uses the **durable**
   (`ALTER`, keep rows) path, contrasting the state store's disposable (`DROP`)
   path. No new decision, no new backend — same toolkit, one more registry
-  field. Note the `EXHAUSTED`-in-`reconcile()` gap called out in
-  `preset-onboarding-effort.md`: it does not affect this plan (the registry's
-  `profile` column round-trips independently of `LLMState`/`reconcile()`), but
-  confirms `models.py`'s trust-set is something later plans must extend
-  explicitly rather than assume is automatically forward-compatible.
+  field. The registry's `profile` column round-trips independently of
+  `LLMState`/`reconcile()`, so it is unaffected by whatever shape `phase` takes.
 - [`preset-onboarding-effort.md`](preset-onboarding-effort.md): this plan
   composes with its keyless-not-routable pool change (routable ⟺ keyed **and**
   not benched) and its zero-routable alarm. Do the onboarding pool change first;
-  this plan extends the same predicate. `EXHAUSTED` stays in ephemeral state.
+  this plan extends the same predicate. `phase` stays limited to
+  `AVAILABLE`/`COOLING`; `benched` never becomes a `LifecyclePhase` value.
 
 ## Implementation
 
@@ -347,9 +345,14 @@ Files: `src/llmbroker/broker/pool.py`, `src/llmbroker/broker/state.py`.
 
 - Track a benched set in the pool. `add` enqueues a slot only when the config is
   **routable** = has a resolved key (onboarding plan) **and** not benched.
-- Add `set_benched(name)` (withdraw the slot; benched models are not re-enqueued
-  by `_reenqueue_config`) and `clear_benched(name)` (make routable again and
-  enqueue if keyed). Benched is orthogonal to `cooldown`/`phase`.
+- Add `set_benched(name)` and `clear_benched(name)` (make routable again and
+  enqueue if keyed). Benched is orthogonal to `cooldown`/`phase`. Note: by the
+  time this plan lands, `_reenqueue_config` (onboarding plan) re-enqueues
+  unconditionally on cooldown expiry — it no longer has a phase check to
+  piggyback an exclusion on (`OFFLINE`/`PROBING` are gone). `set_benched` must
+  add its own guard in `_reenqueue_config` (skip re-enqueue when the config is
+  in the benched set), and `cool_down`'s cooldown-expiry callback must check it
+  too — a benched model can still be mid-cooldown when it gets benched.
 - `state()` / snapshots expose `benched` so `env` and admin views can show it.
 
 Tests (`tests/test_pool.py`): a benched keyed config is in `configs` but never
@@ -415,8 +418,8 @@ Files: `README`/docs, `specs/reference/architecture.md`.
 
 - **A separate profile backend.** The learned profile is a field of the registry
   row (DB column / file-registry sibling JSON), not a fifth store type.
-- **Moving `EXHAUSTED` or any cooldown/phase into the profile.** Those are
-  ephemeral sync-state; only durable learned knowledge lives in the profile.
+- **Moving `cooldown`/`phase` into the profile.** Those are ephemeral
+  sync-state; only durable learned knowledge lives in the profile.
 - **A telemetry/crowdsourcing pipeline.** The quality aggregate is this
   deployment's own ratings materialised for cheap reads and restart survival —
   not shared or uploaded (consistent with the onboarding plan's non-goals).

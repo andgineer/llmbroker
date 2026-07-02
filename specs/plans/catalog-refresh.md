@@ -18,8 +18,8 @@ already implemented; see
 [`architecture.md`](../reference/architecture.md#columns-vs-json)):
 
 1. **`preset-onboarding-effort.md`** — curated catalog knowledge, effort/value
-   onboarding, warm-start seeding, the `EXHAUSTED` phase, and the
-   keyless-not-routable pool change.
+   onboarding, a simplified two-phase (AVAILABLE/COOLING) reliability model,
+   and the keyless-not-routable pool change.
 2. **`optimizer-learned-profile.md`** — the durable learned half (learned profile
    carried in the registry, bench verdict) and `SeedPolicy.SYNC`; extends the
    routable predicate from (1).
