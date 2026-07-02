@@ -1,30 +1,30 @@
 # Catalog refresh — a repeatable prompt for updating the curated preset
 
-## Plan sequence — step 3 of 3
+## Plan sequence — step 2 of 2
 
-> **Prerequisites:** `preset-onboarding-effort.md` (step 1) — this runbook
-> *consumes* the `effort`/`value`/`rate_limit` taxonomies and the "one useful
-> model per provider" curation rules fixed there; it must not be written before
-> they exist. It also references `SeedPolicy.SYNC` from
-> `optimizer-learned-profile.md` (step 2) in "Interaction with the learned
-> profile" — no code dependency, but that section is only real once step 2
-> lands, so this plan is naturally last. **May run in parallel with step 2**
-> once step 1 is done. **Blocks:** nothing.
+> **Prerequisites:** the `effort`/`value`/`rate_limit` taxonomies and the "one
+> useful model per provider" curation rules are already fixed and implemented
+> (`EffortLevel`/`ValueLevel` in `models.py`; see
+> [`freetier-providers.md`](../reference/freetier-providers.md)) — this
+> runbook *consumes* them. It also references `SeedPolicy.SYNC` from
+> `optimizer-learned-profile.md` (step 1) in "Interaction with the learned
+> profile" — no code dependency, but that section is only real once step 1
+> lands. **May run in parallel with step 1. Blocks:** nothing.
 
-The remaining three plans form one dependency chain; execute in this order (the
+The remaining two plans form one dependency chain; execute in this order (the
 storage-shape foundation — columns-vs-JSON, `RateLimit`, `LLMConfig.rate_limit`,
-the `LLMState` ⇄ dict boundary, the version-gated `ensure_schema` toolkit — is
-already implemented; see
-[`architecture.md`](../reference/architecture.md#columns-vs-json)):
+the `LLMState` ⇄ dict boundary, the version-gated `ensure_schema` toolkit — and
+the curated catalog knowledge, effort/value onboarding, the simplified
+two-phase AVAILABLE/COOLING reliability model, and the keyless-not-routable
+pool change are already implemented; see
+[`architecture.md`](../reference/architecture.md) and
+[`optimizer.md`](../reference/optimizer.md)):
 
-1. **`preset-onboarding-effort.md`** — curated catalog knowledge, effort/value
-   onboarding, a simplified two-phase (AVAILABLE/COOLING) reliability model,
-   and the keyless-not-routable pool change.
-2. **`optimizer-learned-profile.md`** — the durable learned half (learned profile
+1. **`optimizer-learned-profile.md`** — the durable learned half (learned profile
    carried in the registry, bench verdict) and `SeedPolicy.SYNC`; extends the
-   routable predicate from (1).
-3. **`catalog-refresh.md`** *(this plan)* — the manual re-curation runbook;
-   consumes the taxonomies fixed in (1) and may run in parallel with (2).
+   existing routable predicate.
+2. **`catalog-refresh.md`** *(this plan)* — the manual re-curation runbook;
+   consumes the already-fixed taxonomies and may run in parallel with (1).
 
 ## Problem statement
 
@@ -37,11 +37,11 @@ right now there is no repeatable procedure: the original curation was a one-off
 "research phase" recorded in
 [`../reference/freetier-providers.md`](../reference/freetier-providers.md).
 
-Per the onboarding plan's non-goals, we deliberately do **not** run a telemetry
-or crowdsourcing pipeline — curation is done **manually from open sources**. This
-plan makes that manual curation repeatable by storing it as a **prompt/runbook**
-an LLM agent (or a human) can execute on demand to regenerate the catalog from
-current sources.
+llmbroker deliberately does **not** run a telemetry or crowdsourcing pipeline
+(see [`freetier-providers.md`](../reference/freetier-providers.md)) — curation
+is done **manually from open sources**. This plan makes that manual curation
+repeatable by storing it as a **prompt/runbook** an LLM agent (or a human) can
+execute on demand to regenerate the catalog from current sources.
 
 ## Deliverable
 
@@ -102,8 +102,8 @@ access). It directs the agent to:
 - **Human-in-the-loop.** The output is a reviewed PR/diff, never an unattended
   commit — matching "no telemetry pipeline, curated manually".
 - **Taxonomies are fixed elsewhere.** Changing the `effort`/`value`/`rate_limit`
-  shapes means updating the reference doc and the enums
-  (`preset-onboarding-effort.md`), not ad-hoc drift inside the preset.
+  shapes means updating the reference doc and the `EffortLevel`/`ValueLevel`
+  enums in `models.py`, not ad-hoc drift inside the preset.
 
 ## Interaction with the learned profile
 
@@ -149,8 +149,8 @@ Files: `README`/docs, `specs/reference/freetier-providers.md`.
 
 - **Automated/scheduled catalog updates.** Refresh is a manual, human-reviewed
   action; there is no cron, no runtime fetch, no auto-commit.
-- **A live provider-stats feed.** Same non-goal as the onboarding plan —
-  curation is manual from open sources at refresh time.
+- **A live provider-stats feed.** Curation is manual from open sources at
+  refresh time (see [`freetier-providers.md`](../reference/freetier-providers.md)).
 - **Redefining the taxonomies here.** `effort`/`value`/`rate_limit` shapes are
-  owned by `preset-onboarding-effort.md` + the reference doc; this prompt
-  *consumes* them.
+  owned by the `EffortLevel`/`ValueLevel` enums in `models.py` + the reference
+  doc; this prompt *consumes* them.

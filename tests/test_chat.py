@@ -1,6 +1,8 @@
 """Tests for the chat.py primitives and tool loop."""
 
 import asyncio
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 from unittest.mock import AsyncMock, MagicMock
 
 
@@ -50,6 +52,17 @@ def test_retry_after_seconds_default_when_missing():
 
 def test_retry_after_seconds_default_on_bad_value():
     assert retry_after_seconds({"Retry-After": "soon"}, 45) == 45
+
+
+def test_retry_after_seconds_http_date():
+    when = datetime.now(UTC) + timedelta(seconds=120)
+    seconds = retry_after_seconds({"Retry-After": format_datetime(when, usegmt=True)}, 60)
+    assert abs(seconds - 120) <= 1
+
+
+def test_retry_after_seconds_http_date_in_past_floors_at_zero():
+    when = datetime.now(UTC) - timedelta(seconds=120)
+    assert retry_after_seconds({"Retry-After": format_datetime(when, usegmt=True)}, 60) == 0
 
 
 def test_build_chat_request_basic():

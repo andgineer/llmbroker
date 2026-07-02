@@ -4,6 +4,10 @@
 
 Turn a crowd of free, rate-limited LLMs into one reliable model — no premium subscription, no single point of failure.
 
+Many free LLMs are unreliable and mediocre on their own. llmbroker pools them and routes
+across the pool, turning quantity into dependable, good-enough quality — without paying
+for a premium model.
+
 No LangChain, no heavy deps.
 
 ```python
@@ -17,11 +21,16 @@ Put your LLMs in `llms.toml` — or grab a preset:
 llmbroker preset freetier > llms.toml
 ```
 
-The only setup is the API keys. Ask llmbroker which ones your pool needs — each with a note on where to get it:
+The only setup is the API keys. Ask llmbroker which ones your pool needs — each with a note on
+where to get it, ordered easiest-and-most-valuable first:
 
 ```bash
 llmbroker env llms.toml > .env
 ```
+
+Running with only some of the keys is the normal, intended mode — add the keys that are easy
+and worth it, and the pool assembles itself from whatever is present. A missing key just means
+that one model stays inactive; it is not an error.
 
 The same `Broker` scales straight to a server or cluster — add Redis or Postgres to share cooldown state across instances, the calling code stays the same.
 

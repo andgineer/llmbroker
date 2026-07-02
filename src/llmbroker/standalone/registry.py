@@ -4,7 +4,22 @@ import json
 import tomllib
 from pathlib import Path
 
-from llmbroker.models import LLMConfig
+from llmbroker.models import EffortLevel, KeyInfo, LLMConfig, RateLimit, ValueLevel
+
+
+def _int_or_none(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
+def _rate_limit_from_entry(raw: object) -> RateLimit | None:
+    if not isinstance(raw, dict):
+        return None
+    return RateLimit(
+        rpm=_int_or_none(raw.get("rpm")),
+        rpd=_int_or_none(raw.get("rpd")),
+        tpm=_int_or_none(raw.get("tpm")),
+        tpd=_int_or_none(raw.get("tpd")),
+    )
 
 
 def _config_from_entry(entry: dict) -> LLMConfig | None:
@@ -17,6 +32,30 @@ def _config_from_entry(entry: dict) -> LLMConfig | None:
         base_url=str(base_url),
         model=str(entry.get("model", "")),
         api_key_ref=str(entry.get("api_key_ref", "")),
+        rate_limit=_rate_limit_from_entry(entry.get("rate_limit")),
+    )
+
+
+def key_info_from_entry(ref: str, raw: object) -> KeyInfo:
+    """Parse one ``[keys.REF]`` entry; a bare string is the legacy help-only form."""
+    if isinstance(raw, str):
+        return KeyInfo(api_key_ref=ref, effort=None, value=None, help=raw)
+    if not isinstance(raw, dict):
+        return KeyInfo(api_key_ref=ref, effort=None, value=None, help="")
+    try:
+        effort = EffortLevel(raw["effort"]) if "effort" in raw else None
+    except ValueError:
+        effort = None
+    try:
+        value = ValueLevel(raw["value"]) if "value" in raw else None
+    except ValueError:
+        value = None
+    help_text = raw.get("help")
+    return KeyInfo(
+        api_key_ref=ref,
+        effort=effort,
+        value=value,
+        help=help_text if isinstance(help_text, str) else "",
     )
 
 
@@ -50,9 +89,9 @@ class Registry:
                 result.append(cfg)
         return result
 
-    async def key_help(self) -> dict[str, str]:
-        """Per-key markdown help from the ``[keys]`` table, keyed by ``api_key_ref``."""
+    async def key_info(self) -> dict[str, KeyInfo]:
+        """Per-provider onboarding metadata from the ``[keys]`` table, keyed by ``api_key_ref``."""
         raw = _read_data(self._path).get("keys", {})
         if not isinstance(raw, dict):
             return {}
-        return {str(ref): text for ref, text in raw.items() if isinstance(text, str)}
+        return {str(ref): key_info_from_entry(str(ref), val) for ref, val in raw.items()}

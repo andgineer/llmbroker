@@ -11,17 +11,13 @@ import logging
 import time
 from datetime import UTC, datetime, timedelta
 
-import httpx
-
 from llmbroker.broker.state import InMemoryState
-from llmbroker.chat import retry_after_seconds
 from llmbroker.models import LifecyclePhase, LLMConfig, LLMState
 from llmbroker.optimizer import SelectionPolicy
 from llmbroker.protocols.state_store import StateStoreProtocol
 
 logger = logging.getLogger("llmbroker.broker")
 
-_DEFAULT_RATE_LIMIT_SEC = 60
 _STORE_CACHE_TTL = 2.0  # seconds
 
 
@@ -70,18 +66,25 @@ class LLMPool:
     # ------------------------------------------------------------------
 
     def add(self, cfg: LLMConfig, key: str | None) -> None:
-        """Register/refresh a config. A ``None`` key leaves any prior key intact."""
+        """Register/refresh a config. A ``None`` key leaves any prior key intact.
+
+        Enqueues a routable slot only on first insertion with a resolved key, or on
+        the keyless→keyed transition of an existing entry — a keyless config stays
+        visible in ``configs`` but is never acquired by the router (see the
+        partial-key framing in architecture.md).
+        """
+        was_keyed = cfg.name in self._resolved_keys
         is_new = cfg.name not in self._configs
         self._configs[cfg.name] = cfg
         if key is not None:
             self._resolved_keys[cfg.name] = key
-        if is_new:
+        now_keyed = cfg.name in self._resolved_keys
+        if now_keyed and (is_new or not was_keyed):
             self._queue.put_nowait(cfg)
 
     def drop(self, name: str) -> None:
         self._configs.pop(name, None)
         self._resolved_keys.pop(name, None)
-        self._state.clear_phase_override(name)
 
     # ------------------------------------------------------------------
     # Slot acquisition
@@ -134,39 +137,10 @@ class LLMPool:
         self._state.clear_cooling(name)
 
     def _reenqueue_config(self, config: LLMConfig) -> None:
-        """Re-enqueue a slot only when the LLM is not in a terminal override phase."""
-        if self._state.get_state(config.name).phase not in (
-            LifecyclePhase.OFFLINE,
-            LifecyclePhase.PROBING,
-        ):
-            self._queue.put_nowait(config)
+        self._queue.put_nowait(config)
 
-    def set_offline(self, name: str) -> None:
-        self._state.set_phase_override(name, LifecyclePhase.OFFLINE)
-
-    def set_probing(self, name: str) -> None:
-        self._state.set_phase_override(name, LifecyclePhase.PROBING)
-
-    def set_available(self, name: str) -> None:
-        self._state.clear_phase_override(name)
-        self._state.clear_cooling(name)
-
-    async def cool_down(
-        self,
-        config: LLMConfig,
-        headers: httpx.Headers,
-        *,
-        delay_override: float | None = None,
-    ) -> None:
-        """Withdraw the slot for the Retry-After window, persisting the new state."""
-        delay = (
-            delay_override
-            if delay_override is not None
-            else retry_after_seconds(
-                headers,
-                _DEFAULT_RATE_LIMIT_SEC,
-            )
-        )
+    async def cool_down(self, config: LLMConfig, delay: float) -> None:
+        """Withdraw the slot for ``delay`` seconds, persisting the new state."""
         cooldown_until = datetime.now(UTC) + timedelta(seconds=delay)
         self._state.set_cooling(
             config.name,

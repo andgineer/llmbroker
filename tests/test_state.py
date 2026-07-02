@@ -85,25 +85,16 @@ def test_llm_state_to_dict_extra_colliding_with_reserved_key_raises():
         state.to_dict()
 
 
-def test_reconcile_trusted_phase_expired_cooldown_clears_cooldown():
+def test_reconcile_expired_cooldown_reports_available():
     now = datetime.now(UTC)
     past = now - timedelta(seconds=1)
-    state = LLMState(phase=LifecyclePhase.OFFLINE, cooldown_until=past)
+    state = LLMState(phase=LifecyclePhase.COOLING, cooldown_until=past)
     result = reconcile(state, now)
-    assert result.phase is LifecyclePhase.OFFLINE
+    assert result.phase is LifecyclePhase.AVAILABLE
     assert result.cooldown_until is None
 
 
-def test_reconcile_trusted_phase_live_cooldown_keeps_cooldown():
-    now = datetime.now(UTC)
-    future = now + timedelta(seconds=60)
-    state = LLMState(phase=LifecyclePhase.PROBING, cooldown_until=future)
-    result = reconcile(state, now)
-    assert result.phase is LifecyclePhase.PROBING
-    assert result.cooldown_until == future
-
-
-def test_reconcile_untrusted_phase_live_cooldown_reports_cooling():
+def test_reconcile_live_cooldown_reports_cooling():
     now = datetime.now(UTC)
     future = now + timedelta(seconds=60)
     state = LLMState(phase=LifecyclePhase.AVAILABLE, cooldown_until=future)
@@ -112,11 +103,12 @@ def test_reconcile_untrusted_phase_live_cooldown_reports_cooling():
     assert result.cooldown_until == future
 
 
-def test_reconcile_unexpected_phase_raises():
-    # dataclasses don't enforce field types at runtime, so this bypasses LifecyclePhase.
-    state = LLMState(phase="bogus")
-    with pytest.raises(ValueError, match="Unexpected stored phase"):
-        reconcile(state, datetime.now(UTC))
+def test_reconcile_no_cooldown_reports_available():
+    now = datetime.now(UTC)
+    state = LLMState(phase=LifecyclePhase.COOLING, cooldown_until=None)
+    result = reconcile(state, now)
+    assert result.phase is LifecyclePhase.AVAILABLE
+    assert result.cooldown_until is None
 
 
 # ── SQLite StateStore tests ───────────────────────────────────────────────────

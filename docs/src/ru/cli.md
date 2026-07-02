@@ -28,8 +28,7 @@ llmbroker preset freetier > llms.toml
 
 Скачивает готовый список LLM и выводит его в stdout. Доступные пресеты:
 
-- `freetier` — бесплатные endpoints от Groq, OpenRouter и других
-- `smart-freetier` — тот же пул, модели отсортированы по качеству
+- `freetier` — бесплатные endpoints от Groq, OpenRouter и Gemini
 
 После сохранения посмотрите, какие API-ключи нужны этому пулу:
 

@@ -51,15 +51,19 @@ import asyncio
 import llmbroker
 
 registry = llmbroker.Registry("llms.toml")
-hints = asyncio.run(registry.key_help())
-# {"GROQ_API_KEY": "Create a free API key at [groq](https://console.groq.com/keys) ...", ...}
+info = asyncio.run(registry.key_info())
+# {"GROQ_API_KEY": KeyInfo(api_key_ref="GROQ_API_KEY", effort=EffortLevel.SIGNUP,
+#                          value=ValueLevel.GOOD, help="Create a free API key at [groq](...) ..."), ...}
 ```
 
-`key_help()` возвращает по одной markdown-строке (ссылка + шаги) на каждый `api_key_ref`.
-Это опциональная возможность реестра (`KeyHelpProtocol` в `llmbroker.protocols.registry`):
-реестры с такими данными её предоставляют, остальные — нет; проверяйте через
-`isinstance(registry, KeyHelpProtocol)`, если принимаете произвольные реестры. Она не
-зависит от брокера — реестр не нужно передавать как `seed=`, чтобы прочитать подсказки.
+`key_info()` возвращает `KeyInfo` (markdown `help`, а также `effort`/`value` для
+сортировки при онбординге) на каждый `api_key_ref`. Это опциональная возможность реестра
+(`KeyInfoProtocol` в `llmbroker.protocols.registry`): реестры с такими данными её
+предоставляют, остальные — нет; проверяйте через `isinstance(registry, KeyInfoProtocol)`,
+если принимаете произвольные реестры. Она не зависит от брокера — реестр не нужно
+передавать как `seed=`, чтобы прочитать подсказки. Отсутствие ключа для части моделей —
+нормальный режим работы llmbroker: пул маршрутизирует по тем ключам, что есть; ошибка —
+только если рабочих моделей не осталось совсем.
 
 ## Вызов брокера
 

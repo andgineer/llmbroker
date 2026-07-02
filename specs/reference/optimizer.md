@@ -1,57 +1,70 @@
 # Optimizer
 
-The `Optimizer` is an optional component that improves pool health over time by learning
-per-LLM retry delay from live traffic and by managing a full lifecycle FSM that includes
-OFFLINE and PROBING phases beyond the basic AVAILABLE / COOLING pair.
+The `Optimizer` is an optional component that improves pool health over time: it computes
+each cooldown from the provider's own signal on the actual response, tracks per-LLM
+success-rate quality, and automatically retires a persistently unreliable LLM. There are
+only two lifecycle phases, AVAILABLE and COOLING, always derived from `cooldown_until`
+vs. now — no separate circuit-breaker state machine sits on top of them.
 
 Pass `optimize=True` (the default) or an explicit `Optimizer(...)` instance to
 `AsyncBroker` / `Broker` to activate it.
 
 ---
 
-## Adaptive cooldown delay
+## Cooldown duration: trust the provider
 
-Every LLM starts with an `initial_delay`. Each rate-limit or unavailability failure
-multiplies the current delay by `backoff_factor`, capped at `max_delay`. Each
-successful call shrinks the delay by `decrease_factor` (floored at `initial_delay`).
-The delay is per-LLM and is used as the cooldown window after a failure.
+On a 429/503, the wait duration is computed fresh from *that response's own* signal —
+never carried forward as persistent per-LLM state between events:
 
----
+- If the provider sends `Retry-After` (seconds, or an HTTP-date), that number is used
+  as-is on the first failure of a streak — the provider is the authority on its own
+  quota and reset schedule.
+- If **this same LLM** is already mid-failure-streak (no success since its last
+  429/503), the response's own number is scaled by `backoff_factor ** consecutive_fails`,
+  where `consecutive_fails` counts how many 429/503s have landed in a row since the
+  last success. A success resets the streak to zero. This means a day-long quota wait
+  followed by an unrelated 60-second rate limit never compounds into "wait two days" —
+  each event is scaled from its own number, not a carried-forward one.
+- If `Retry-After` is absent, a flat default (`60s`) is used as the base before the
+  same streak-scaling is applied.
+- The final wait is capped at `max_delay`.
 
-## Offline / Probing FSM
-
-After `max_fail_count` consecutive rate-limit or unavailability failures on one LLM,
-the LLM transitions to **OFFLINE** — its slot is removed from the pool entirely, not
-just cooled.
-
-A background probe task then waits `offline_sleep` seconds and transitions the LLM to
-**PROBING** by placing exactly one slot back into the pool. The next real incoming
-request that lands on that slot acts as the probe:
-
-- **Probe succeeds** → LLM returns to AVAILABLE; delay resets to `initial_delay`;
-  the consecutive probe-failure counter resets to zero.
-- **Probe fails** → the consecutive probe-failure counter increments; if it reaches
-  `max_probe_cycles` the LLM is **permanently retired** (see Pool retirement below);
-  otherwise the LLM returns to OFFLINE and the probe task restarts.
-
-Probing is intentionally passive: no synthetic request is sent. If there is no
-incoming traffic, recovery is not needed and no probe fires.
-
-Going OFFLINE is auto-recoverable. It does not emit an alert.
+A non-rate-limit failure (a generic HTTP error, a network error, or an HTTP 401/403)
+uses the same formula with the flat default as its base, since there is no
+`Retry-After` to read.
 
 ---
 
-## Pool retirement
+## Automatic retirement
 
-After `max_probe_cycles` consecutive failed probe cycles on one LLM, the LLM is
-permanently dropped from the pool and an alert is emitted. The probe loop does not
-restart. To restore the LLM the operator must fix the underlying issue and re-add it
-via `broker.add(cfg)`.
+There is no probe/offline cycle: after a cooldown ends, the slot simply re-enters the
+normal queue rotation, and the next request routed to it *is* the health check.
 
-An API key that is dead (HTTP 401 or 403) triggers immediate permanent retirement
-without waiting for probe cycles — no amount of retrying will fix an invalid key.
-The emitted alert names the `api_key_ref` so the operator knows which credential to
-fix.
+Instead, retirement is driven by quality: `should_retire` trips when an LLM's rolling
+`usable_rate` (Laplace-smoothed OK fraction, see Rolling aggregates below) has at least
+`min_sample_count` samples and sits below `removal_rate_floor` — a threshold distinct
+from, and stricter than, the routing-only `usable_rate_floor` (which only deprioritizes
+a candidate, with margin to keep it around as a last resort). When it trips, the LLM is
+dropped from the pool and an alert is emitted. To restore it the operator must fix the
+underlying issue and re-add it via `broker.add(cfg)`.
+
+This check runs after every non-`OK` outcome, rate-limit or generic error alike. An
+API key that is dead (HTTP 401 or 403) instead triggers immediate, unconditional
+retirement — no amount of retrying fixes an invalid key, so it bypasses the quality
+signal entirely.
+
+A well-behaved daily-capped LLM (long, honored cooldowns, but successful whenever
+actually tried) is never flagged for removal, however much cumulative time it spends
+cooling: nothing is attempted while a slot is cooling, so an honored wait produces no
+failed samples — only a call that is actually attempted and fails drags `usable_rate`
+down.
+
+Every non-`OK`, non-dead-key outcome fails over to the next available LLM instead of
+raising to the caller of that one request — a generic HTTP error, a network error, and
+now also a 401/403 all cool (or drop) the slot and let the router try the next LLM
+within the same request. `AllLLMsFailedError` is reserved for the genuine "zero usable
+models" case (see the registry/catalog docs for the keyless-pool behavior), never for
+"this one LLM had a bad response".
 
 ---
 
@@ -62,20 +75,11 @@ clear. Three conditions emit alerts:
 
 - **Auth failure** — a call returns HTTP 401 or 403. The LLM is immediately and
   permanently dropped; the alert names the `api_key_ref` to fix.
-- **Retirement** — `max_probe_cycles` consecutive probe failures exhaust auto-recovery.
+- **Retirement** — `usable_rate` drops below `removal_rate_floor` with enough samples.
   The LLM is permanently dropped and an alert is emitted.
 - **Pool under-provisioned** — `NoLLMAvailableError` is raised and all LLMs in the
-  pool are simultaneously non-AVAILABLE (OFFLINE, COOLING, or PROBING). This alert is
-  debounced per broker instance: at most one emission per 60 seconds.
-
----
-
-## Warm-start
-
-On restart, if a queryable telemetry backend is configured, the optimizer reads the
-last-known per-LLM status and primes the delay for any LLM that was rate-limited or
-unavailable at shutdown to `max_delay` — a conservative starting point that prevents
-hammering a still-unhealthy endpoint.
+  pool are simultaneously non-AVAILABLE (COOLING). This alert is debounced per broker
+  instance: at most one emission per 60 seconds.
 
 ---
 
@@ -127,6 +131,6 @@ An LLM with fewer than `min_sample_count` samples receives a neutral prior rate 
 
 A `max_tpm`-based ranking axis was considered and rejected: free-tier LLMs rarely
 publish exact TPM limits, so the field would almost always be absent. Sustained
-rate-limiting is already handled empirically by the circuit-breaker FSM and
+rate-limiting is already handled empirically by the cooldown formula and
 `usable_rate`. TPM awareness can be revisited if a concrete use-case with known
 limits emerges.

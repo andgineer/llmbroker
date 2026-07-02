@@ -8,7 +8,7 @@ import httpx
 import llmbroker.sqlite
 import pytest
 
-from llmbroker.exceptions import AllLLMsFailedError
+from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig, SeedPolicy
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
@@ -93,13 +93,15 @@ def test_broker_ask_happy_path(tmp_path):
             assert result.text == "yes"
 
 
-def test_broker_chat_500_raises_all_failed(tmp_path):
+def test_broker_chat_500_wait0_raises_no_llm_available(tmp_path):
+    """A generic HTTP error cools the slot and fails over rather than raising AllLLMsFailedError;
+    with wait=0 and no other LLM to fail over to, that surfaces as NoLLMAvailableError."""
     with Broker(
         registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
     ) as broker:
         with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(500)):
-            with pytest.raises(AllLLMsFailedError):
-                broker.chat([{"role": "user", "content": "hi"}])
+            with pytest.raises(NoLLMAvailableError):
+                broker.chat([{"role": "user", "content": "hi"}], wait=0)
 
 
 def test_result_record_quality_does_not_raise(tmp_path):

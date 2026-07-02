@@ -8,6 +8,8 @@ reply; ``run_tool_loop`` is its sync wrapper.
 
 import json
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -23,10 +25,21 @@ def is_rate_limit(status_code: int) -> bool:
 
 
 def retry_after_seconds(headers: Mapping[str, str], default_sec: int) -> int:
-    try:
-        return int(headers.get("Retry-After", default_sec))
-    except (ValueError, TypeError):
+    """Parse ``Retry-After`` as either delay-seconds or an HTTP-date, per RFC 9110."""
+    raw = headers.get("Retry-After")
+    if raw is None:
         return default_sec
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        when = parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        return default_sec
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return max(0, int((when - datetime.now(UTC)).total_seconds()))
 
 
 def build_chat_request(

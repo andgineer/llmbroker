@@ -13,7 +13,6 @@ telemetry backend; ``alerts`` is delegated to ``Optimizer``.
 """
 
 import asyncio
-import contextlib
 import time
 from collections.abc import Mapping
 from datetime import datetime
@@ -94,7 +93,6 @@ class AsyncBroker:
                 self._optimizer,
                 telemetry,
                 pool,
-                on_go_offline=self._on_go_offline,
             )
             policy = OptimizerPolicy(self._optimizer)
         else:
@@ -113,7 +111,6 @@ class AsyncBroker:
 
         self._provisioned = False
         self._provision_lock = asyncio.Lock()
-        self._bg_tasks: set[asyncio.Task] = set()
         self._last_underprov_alert: float = float("-inf")
         self._underprov_alert_interval: float = 60.0
 
@@ -129,22 +126,9 @@ class AsyncBroker:
             if self._provisioned:
                 return
             await self._catalog.provision()
-            if self._optimizer is not None and isinstance(
-                self._base_telemetry,
-                QueryableTelemetryProtocol,
-            ):
-                metrics = await self._base_telemetry.metrics()
-                self._optimizer.seed_from_metrics(metrics)
             self._provisioned = True
 
     async def aclose(self) -> None:
-        tasks = list(self._bg_tasks)
-        for task in tasks:
-            task.cancel()
-        for task in tasks:
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-        self._bg_tasks.clear()
         for port in (self._registry, self._secrets, self._telemetry, self._state_store):
             if isinstance(port, AsyncResourceProtocol):
                 await port.aclose()
@@ -220,8 +204,6 @@ class AsyncBroker:
     async def add(self, cfg: LLMConfig) -> None:
         await self.ensure_pool()
         await self._catalog.add(cfg)
-        if self._optimizer is not None:
-            self._optimizer.reset_probe_cycles(cfg.name)
 
     async def update(self, cfg: LLMConfig) -> None:
         await self.ensure_pool()
@@ -247,6 +229,13 @@ class AsyncBroker:
         return self._optimizer.alerts()
 
     def _maybe_alert_underprov(self) -> None:
+        """Fire when zero keyed configs are routable — the genuine "no usable models" alarm.
+
+        A keyless config is never enqueued/acquired/cooled (see the partial-key framing
+        in architecture.md), so it must be excluded here: with even one keyless config
+        present, an unfiltered check could never observe "all non-AVAILABLE", masking
+        the real alarm even when every *keyed* config is COOLING.
+        """
         if self._optimizer is None:
             return
         if not self._pool.configs:
@@ -254,38 +243,15 @@ class AsyncBroker:
         now = time.monotonic()
         if now - self._last_underprov_alert < self._underprov_alert_interval:
             return
+        keyed_names = [name for name in self._pool.configs if self._pool.has_key(name)]
         all_offline = all(
-            self._pool.state(name).phase is not LifecyclePhase.AVAILABLE
-            for name in self._pool.configs
+            self._pool.state(name).phase is not LifecyclePhase.AVAILABLE for name in keyed_names
         )
         if all_offline:
             self._last_underprov_alert = now
             self._optimizer.add_alert(
-                "pool under-provisioned: all LLMs are OFFLINE or COOLING"
-                " — add more LLMs to the registry",
+                "pool under-provisioned: all LLMs are COOLING — add more LLMs to the registry",
             )
-
-    def _on_go_offline(self, llm_name: str) -> None:
-        if any(t.get_name() == f"probe-{llm_name}" and not t.done() for t in self._bg_tasks):
-            return
-        task = asyncio.create_task(self._probe_loop(llm_name), name=f"probe-{llm_name}")
-        self._bg_tasks.add(task)
-        task.add_done_callback(self._bg_tasks.discard)
-
-    async def _probe_loop(self, llm_name: str) -> None:
-        assert self._optimizer is not None
-        await asyncio.sleep(
-            max(self._optimizer.offline_sleep, self._optimizer.delay_for(llm_name)),
-        )
-        if (
-            llm_name not in self._pool
-            or self._pool.state(llm_name).phase is not LifecyclePhase.OFFLINE
-        ):
-            return
-        self._pool.set_probing(llm_name)
-        self._optimizer.on_probing_start(llm_name)
-        config = self._pool.config(llm_name)
-        self._pool.release(config)
 
     def _require_queryable(self) -> QueryableTelemetryProtocol:
         if not isinstance(self._base_telemetry, QueryableTelemetryProtocol):

@@ -1,8 +1,10 @@
 """Unit tests for apply_seed: seed policy branching logic in isolation."""
 
 import asyncio
+import logging
 
-from llmbroker.broker.catalog import apply_seed
+from llmbroker.broker.catalog import Catalog, apply_seed
+from llmbroker.broker.pool import LLMPool
 from llmbroker.models import LLMConfig, SeedPolicy
 
 
@@ -114,3 +116,25 @@ def test_mirror_updates_existing():
         assert loaded["p1"].base_url == "https://new/v1"
 
     asyncio.run(run())
+
+
+# ── Partial-key framing: an unresolved key is normal, not alarming ──────────
+
+
+def test_unresolved_key_logs_info_not_warning(caplog):
+    async def run():
+        pool = LLMPool(state_store=None, user_id=None)
+        catalog = Catalog(
+            _ReadOnlyRegistry([_cfg("p1")]),
+            _NoSecrets(),
+            pool,
+            seed=None,
+            seed_policy=SeedPolicy.IF_EMPTY,
+            user_id=None,
+        )
+        with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
+            await catalog.provision()
+
+    asyncio.run(run())
+    assert any(r.levelno == logging.INFO and "not resolved" in r.message for r in caplog.records)
+    assert not any(r.levelno == logging.WARNING for r in caplog.records)

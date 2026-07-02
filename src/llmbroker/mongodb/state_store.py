@@ -31,7 +31,9 @@ class StateStore:
             if isinstance(cooldown, datetime):
                 # Pre-existing docs store a native BSON date, which pymongo
                 # returns as naive (the client is never opened tz_aware).
-                payload["cooldown_until"] = ensure_utc(cooldown).isoformat()
+                utc_cooldown = ensure_utc(cooldown)
+                if utc_cooldown is not None:
+                    payload["cooldown_until"] = utc_cooldown.isoformat()
             result[name] = reconcile(LLMState.from_dict(payload), now)
         return result
 

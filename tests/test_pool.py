@@ -4,8 +4,6 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
-
 from llmbroker.broker.pool import LLMPool, _STORE_CACHE_TTL
 from llmbroker.models import LifecyclePhase, LLMConfig, LLMState
 from llmbroker.sqlite.state_store import StateStore
@@ -47,6 +45,29 @@ def test_add_with_none_key_for_new_entry_leaves_no_key():
     pool = LLMPool(state_store=None, user_id=None)
     pool.add(_cfg(), None)
     assert not pool.has_key("p1")
+
+
+def test_add_keyless_does_not_enqueue():
+    """A config added without a resolved key stays visible but is never routable."""
+    pool = LLMPool(state_store=None, user_id=None)
+    pool.add(_cfg(), None)
+    assert "p1" in pool
+    assert pool._queue.qsize() == 0
+
+
+def test_add_keyless_then_keyed_enqueues_exactly_one_slot():
+    """The keyless→keyed transition of an existing entry enqueues its slot exactly once.
+
+    Distinct from test_add_existing_does_not_enqueue_extra_slot (which re-adds an
+    already-keyed config) — here the config starts keyless and only later gets a key.
+    """
+    pool = LLMPool(state_store=None, user_id=None)
+    pool.add(_cfg(), None)
+    assert pool._queue.qsize() == 0
+    pool.add(_cfg(), "key")
+    assert pool._queue.qsize() == 1
+    pool.add(_cfg(), "key2")  # already keyed — no second slot
+    assert pool._queue.qsize() == 1
 
 
 def test_drop_removes_config_and_key():
@@ -246,8 +267,7 @@ def test_cool_down_invalidates_cache():
 
         mock_loop = MagicMock()
         with patch("llmbroker.broker.pool.asyncio.get_running_loop", return_value=mock_loop):
-            headers = httpx.Headers({"retry-after": "10"})
-            await pool.cool_down(cfg, headers)
+            await pool.cool_down(cfg, 10)
 
         assert pool._store_cache is None
 
@@ -271,7 +291,7 @@ def test_cross_process_cooldown_shared_via_store(tmp_path):
         cfg_a = await pool_a.acquire(0)  # mirror router: dequeue before cool_down
         mock_loop = MagicMock()
         with patch("llmbroker.broker.pool.asyncio.get_running_loop", return_value=mock_loop):
-            await pool_a.cool_down(cfg_a, httpx.Headers({"retry-after": "30"}))
+            await pool_a.cool_down(cfg_a, 30)
 
         # Dequeue so apply_shared_cooling doesn't add a duplicate slot
         acquired = await pool_b.acquire(0)
@@ -318,7 +338,7 @@ def test_sqlite_cache_invalidated_after_cool_down(tmp_path):
 
         mock_loop = MagicMock()
         with patch("llmbroker.broker.pool.asyncio.get_running_loop", return_value=mock_loop):
-            await pool.cool_down(cfg, httpx.Headers({"retry-after": "30"}))
+            await pool.cool_down(cfg, 30)
         assert pool._store_cache is None  # invalidated by cool_down
 
         fresh = await pool._get_store_cache()
@@ -348,7 +368,7 @@ def test_sqlite_cache_stale_then_refreshes_after_ttl(tmp_path):
         # Pool B cools x, writing COOLING to SQLite. pool_a cache is not invalidated.
         mock_loop = MagicMock()
         with patch("llmbroker.broker.pool.asyncio.get_running_loop", return_value=mock_loop):
-            await pool_b.cool_down(cfg_b, httpx.Headers({"retry-after": "30"}))
+            await pool_b.cool_down(cfg_b, 30)
 
         # Within TTL: pool_a serves the stale (empty) cache, not yet seeing COOLING.
         within_ttl = await pool_a._get_store_cache()

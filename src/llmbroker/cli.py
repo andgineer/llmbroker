@@ -4,6 +4,7 @@ Subcommands: env (emit .env skeleton), preset (download curated preset TOML).
 """
 
 import argparse
+import os
 import re
 import sys
 import tomllib
@@ -11,6 +12,9 @@ import urllib.error
 import urllib.request
 from http import HTTPStatus
 from pathlib import Path
+
+from llmbroker.models import EffortLevel, KeyInfo, ValueLevel
+from llmbroker.standalone.registry import key_info_from_entry
 
 _PRESET_URL = "https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/{name}.toml"
 _PRESET_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -25,6 +29,38 @@ def _api_key_refs(data: dict) -> list[str]:
     return refs
 
 
+def _daily_cap(data: dict, ref: str) -> int | None:
+    """Max advertised ``rpd`` across this ref's ``[[llms]]`` rows; ``None`` if none set."""
+    caps = [
+        entry["rate_limit"]["rpd"]
+        for entry in data.get("llms", [])
+        if entry.get("api_key_ref") == ref
+        and isinstance(entry.get("rate_limit"), dict)
+        and isinstance(entry["rate_limit"].get("rpd"), int)
+    ]
+    return max(caps) if caps else None
+
+
+def _onboarding_sort_key(ref: str, info: KeyInfo, cap: int | None) -> tuple:
+    """Easiest+most-valuable first; unknown effort/value sort last; larger cap sorts earlier."""
+    effort_idx = (
+        list(EffortLevel).index(info.effort) if info.effort is not None else len(EffortLevel)
+    )
+    value_idx = list(ValueLevel).index(info.value) if info.value is not None else len(ValueLevel)
+    return (effort_idx, value_idx, -(cap or 0), ref)
+
+
+def _annotation(info: KeyInfo, cap: int | None) -> str | None:
+    parts = []
+    if info.effort is not None:
+        parts.append(f"effort={info.effort.value}")
+    if info.value is not None:
+        parts.append(f"value={info.value.value}")
+    if cap is not None:
+        parts.append(f"daily cap={cap}")
+    return ", ".join(parts) if parts else None
+
+
 def _cmd_env(args: argparse.Namespace) -> int:
     toml_path = Path(args.config)
     if not toml_path.exists():
@@ -32,16 +68,28 @@ def _cmd_env(args: argparse.Namespace) -> int:
         return 1
     with toml_path.open("rb") as fh:
         data = tomllib.load(fh)
-    key_help = data.get("keys", {})
-    if not isinstance(key_help, dict):
-        key_help = {}
+    raw_keys = data.get("keys", {})
+    if not isinstance(raw_keys, dict):
+        raw_keys = {}
+
+    refs = _api_key_refs(data)
+    infos = {ref: key_info_from_entry(ref, raw_keys.get(ref)) for ref in refs}
+    caps = {ref: _daily_cap(data, ref) for ref in refs}
+    refs.sort(key=lambda ref: _onboarding_sort_key(ref, infos[ref], caps[ref]))
+
     lines: list[str] = []
-    for ref in _api_key_refs(data):
-        help_text = key_help.get(ref)
-        if isinstance(help_text, str) and help_text.strip():
-            for i, line in enumerate(help_text.splitlines()):
+    for ref in refs:
+        info = infos[ref]
+        if info.help.strip():
+            for i, line in enumerate(info.help.splitlines()):
                 lines.append(f"# {ref} — {line}" if i == 0 else f"# {line}")
-        lines.append(f"{ref}=")
+        annotation = _annotation(info, caps[ref])
+        if annotation is not None:
+            lines.append(f"# {annotation}")
+        if ref in os.environ:
+            lines.append(f"# {ref} already set")
+        else:
+            lines.append(f"{ref}=")
     print("\n".join(lines))
     return 0
 
@@ -99,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
             "Print a curated preset TOML to stdout. To save: preset freetier > freetier.toml"
         ),
     )
-    preset_p.add_argument("name", help="preset name (e.g. freetier, smart-freetier)")
+    preset_p.add_argument("name", help="preset name (e.g. freetier)")
     preset_p.set_defaults(func=_cmd_preset)
 
     args = parser.parse_args(argv)

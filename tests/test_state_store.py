@@ -71,21 +71,6 @@ async def test_user_id_none_unscoped(any_state_store):
     assert result["shared"].fail_count == 5
 
 
-async def test_offline_phase(any_state_store):
-    state = LLMState(phase=LifecyclePhase.OFFLINE, fail_count=0)
-    await any_state_store.write("p1", state)
-    result = await any_state_store.read()
-    assert result["p1"].phase is LifecyclePhase.OFFLINE
-    assert result["p1"].cooldown_until is None
-
-
-async def test_probing_phase(any_state_store):
-    state = LLMState(phase=LifecyclePhase.PROBING, fail_count=0)
-    await any_state_store.write("p1", state)
-    result = await any_state_store.read()
-    assert result["p1"].phase is LifecyclePhase.PROBING
-
-
 async def test_extra_key_round_trips(any_state_store):
     """A future-proofing key not yet promoted to a named field survives write/read."""
     state = LLMState(phase=LifecyclePhase.AVAILABLE, fail_count=1, extra={"probe_attempts": 5})

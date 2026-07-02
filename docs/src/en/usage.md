@@ -52,15 +52,19 @@ import asyncio
 import llmbroker
 
 registry = llmbroker.Registry("llms.toml")
-hints = asyncio.run(registry.key_help())
-# {"GROQ_API_KEY": "Create a free API key at [groq](https://console.groq.com/keys) ...", ...}
+info = asyncio.run(registry.key_info())
+# {"GROQ_API_KEY": KeyInfo(api_key_ref="GROQ_API_KEY", effort=EffortLevel.SIGNUP,
+#                          value=ValueLevel.GOOD, help="Create a free API key at [groq](...) ..."), ...}
 ```
 
-`key_help()` returns one markdown string (link + steps) per `api_key_ref`. It is an
-optional registry capability (`KeyHelpProtocol` in `llmbroker.protocols.registry`):
-registries that carry the metadata expose it, others do not — probe with
-`isinstance(registry, KeyHelpProtocol)` if you accept arbitrary registries. It is
-independent of the broker, so you do not need to wire the registry as a `seed=` to read it.
+`key_info()` returns a `KeyInfo` (markdown `help`, plus `effort`/`value` for onboarding
+sort order) per `api_key_ref`. It is an optional registry capability (`KeyInfoProtocol`
+in `llmbroker.protocols.registry`): registries that carry the metadata expose it, others
+do not — probe with `isinstance(registry, KeyInfoProtocol)` if you accept arbitrary
+registries. It is independent of the broker, so you do not need to wire the registry as
+a `seed=` to read it. Missing a key for some models is the normal way to run
+llmbroker — the pool routes over whatever keys are present; only zero usable models
+is an error.
 
 ## Calling the broker
 

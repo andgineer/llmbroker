@@ -4,14 +4,13 @@ Verifies port wiring and persistence across the backend boundary.
 HTTP is mocked at llmbroker.chat.httpx.AsyncClient.
 """
 
-import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
 from llmbroker.exceptions import NoLLMAvailableError
-from llmbroker.models import Call, CallStatus, LLMConfig, LifecyclePhase
+from llmbroker.models import CallStatus, LLMConfig, LifecyclePhase
 from llmbroker.protocols.registry import MutableRegistryProtocol
 from llmbroker.protocols.secrets import MutableSecretsProtocol
 from llmbroker.standalone.secrets import DictSecrets
@@ -98,28 +97,6 @@ async def test_provision_loads_registry_and_resolves_keys(stack, monkeypatch):
         assert await broker.count() == 2
         assert broker._pool._resolved_keys.get("llm1") == "test-key"
         assert broker._pool._resolved_keys.get("llm2") == "test-key"
-
-
-# ---------------------------------------------------------------------------
-# E2 — warm-start primes delay from persisted calls
-# ---------------------------------------------------------------------------
-
-
-async def test_warm_start_primes_delay_from_persisted_calls(persistent_stack, monkeypatch):
-    """Optimizer seeds max_delay from a persisted RATE_LIMITED metric on restart."""
-    await _seed_stack(persistent_stack, [_cfg("llm1")], {"KEY": "test-key"}, monkeypatch)
-    await persistent_stack.telemetry.record(
-        Call(
-            id=str(uuid.uuid4()),
-            llm_name="llm1",
-            operation=None,
-            trace_id=None,
-            status=CallStatus.RATE_LIMITED,
-        )
-    )
-    async with persistent_stack.make_broker() as broker:
-        assert broker._optimizer is not None
-        assert broker._optimizer.delay_for("llm1") == broker._optimizer.max_delay
 
 
 # ---------------------------------------------------------------------------

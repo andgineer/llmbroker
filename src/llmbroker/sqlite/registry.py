@@ -10,7 +10,7 @@ from llmbroker.models import LLMConfig, check_user_id
 from llmbroker.sqlite.schema import ensure_schema
 
 
-def _config_from_row(row: tuple) -> LLMConfig:
+def _config_from_row(row: sqlite3.Row) -> LLMConfig:
     metadata = json.loads(row[4]) if row[4] else {}
     return LLMConfig.from_metadata(
         name=str(row[0]),

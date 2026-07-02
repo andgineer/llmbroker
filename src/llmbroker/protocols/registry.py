@@ -2,7 +2,7 @@
 
 from typing import Protocol, runtime_checkable
 
-from llmbroker.models import LLMConfig
+from llmbroker.models import KeyInfo, LLMConfig
 
 
 class RegistryProtocol(Protocol):
@@ -18,14 +18,14 @@ class MutableRegistryProtocol(RegistryProtocol, Protocol):
 
 
 @runtime_checkable
-class KeyHelpProtocol(Protocol):
-    """Optional capability: per-key, human-readable acquisition help.
+class KeyInfoProtocol(Protocol):
+    """Optional capability: per-key onboarding metadata (effort, value, help).
 
-    Maps each ``api_key_ref`` to a markdown string (a link plus short steps for
-    getting that key). Keyed by the env-var name because one key is usually shared
-    by several LLMs. A source without such metadata simply does not implement this
-    protocol; callers probe with ``isinstance(reg, KeyHelpProtocol)``. It is
-    independent of the broker — hosts query whichever registry they built.
+    Maps each ``api_key_ref`` to a ``KeyInfo``. Keyed by the env-var name because
+    one key is usually shared by several LLMs. A source without such metadata
+    simply does not implement this protocol; callers probe with
+    ``isinstance(reg, KeyInfoProtocol)``. It is independent of the broker — hosts
+    query whichever registry they built.
     """
 
-    async def key_help(self) -> dict[str, str]: ...
+    async def key_info(self) -> dict[str, KeyInfo]: ...

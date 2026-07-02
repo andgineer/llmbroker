@@ -7,7 +7,11 @@ limit dimensions mean, how the `effort` and `value` axes are defined, and where
 to re-check the numbers when they drift.
 
 Free-tier numbers change often. Treat the figures here as catalog-build-time
-snapshots, not contracts.
+snapshots, not contracts. They are curated manually from public sources, not
+from telemetry or crowdsourcing — the install base is too small for
+crowdsourced numbers to be representative, and there is no live-stats
+pipeline — so refreshing this document is a periodic, human-reviewed
+maintenance action.
 
 ---
 
@@ -15,15 +19,17 @@ snapshots, not contracts.
 
 Free tiers impose several independent windows; a single number is insufficient:
 
-- **RPM (requests per minute)** — short request spacing. This is the one window
-  the optimizer consumes: it seeds the warm-start delay (≈ `60 / rpm` seconds
-  between calls).
+- **RPM (requests per minute)** — short request spacing. Onboarding/display
+  metadata only — the optimizer does not seed anything from it; the live
+  cooldown is always driven by the provider's own `Retry-After` on the actual
+  response (or a flat fallback if absent), never by a catalog number, so a
+  nominal `rpm` figure cannot go stale in a way that affects routing.
 - **RPD (requests per day)** — a hard daily cap. Once exhausted the provider
   returns 429 for the *remainder of the day* — a multi-hour outage, distinct
   from short spacing. Daily quotas reset on a wall-clock boundary (Gemini at
   midnight Pacific; Groq and OpenRouter at ≈ midnight UTC). When this happens the
-  provider's own `Retry-After`/reset header carries the time-until-reset, so the
-  long cooldown is driven by that signal, not by this catalog number — `rpd` is
+  provider's own `Retry-After`/reset header carries the time-until-reset, which
+  the router honors directly as an ordinary (if long) cooldown — `rpd` is
   onboarding/display metadata (and documents which providers have a daily cap),
   not a value the optimizer reads.
 - **TPM / TPD** (token windows) — exist on some providers but llmbroker routes on

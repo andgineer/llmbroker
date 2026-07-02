@@ -44,8 +44,9 @@ Every host plugs in up to four backends; only the registry is required:
 - `Broker` — synchronous wrapper over `AsyncBroker` on a dedicated background
   event-loop thread. First-class shipped surface, not an afterthought.
 - `optimize` parameter shape (`bool | Optimizer`) is locked. `optimize=True` (default)
-  activates the `Optimizer` component: adaptive per-LLM cooldown delay, OFFLINE/PROBING
-  FSM, and alert emission. See [optimizer.md](optimizer.md) for the behavior spec.
+  activates the `Optimizer` component: provider-trusted cooldown durations, automatic
+  quality-based retirement, and alert emission. See [optimizer.md](optimizer.md) for
+  the behavior spec.
 - `ensure_pool()` — lazy idempotent pool initializer with double-checked locking.
   Applies the constructor `seed=` source first, then loads the registry into the
   pool. Called automatically by `chat`, `snapshot`, `get`, `count`, `add`,
@@ -77,7 +78,10 @@ Every host plugs in up to four backends; only the registry is required:
 
 ### CLI
 
-- `python -m llmbroker env <config>` — emit a `.env` skeleton of `api_key_ref` names
+- `python -m llmbroker env <config>` — emit a `.env` skeleton of `api_key_ref` names,
+  ordered easiest-and-most-valuable-first with effort/value/daily-cap annotations
+  (see "Key acquisition help" above). Onboarding is folded into this command rather
+  than a separate `setup`/`status` command, to keep the CLI surface small.
 - `python -m llmbroker preset <name>` — print a curated preset TOML to stdout (redirect to save: `preset freetier > freetier.toml`)
 
 ### DB schema
@@ -162,27 +166,48 @@ A list update is a plain commit, independent of any package version. The
 https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/<name>.toml
 ```
 
+Presets are curated, multi-provider free-tier pools only: a paid-tier preset
+defeats the point (anyone willing to pay uses one good model directly — no
+pooling needed), and a single-provider preset defeats the point too (the
+pool's resilience comes from spilling onto other providers when one is
+rate-limited). Presets are not task-specialized or quality-ranked — the pool
+has no quality-aware routing to exploit such a distinction, so a preset lists
+one genuinely useful model per provider rather than several ranked ones.
+
 ---
 
 ## Key acquisition help
 
-A config source may carry, per `api_key_ref`, a short markdown string describing
-how to obtain that key (a link plus a step or two). It is keyed by the env-var
-name, not by LLM, because one key is typically shared by several LLMs. The format
-is deliberately just markdown — no structured provider/free/url fields to keep in
-sync.
+A config source may carry, per `api_key_ref`, structured onboarding metadata: how
+hard the key is to obtain (`effort`), how good the model it unlocks is (`value`),
+and a short markdown `help` string (a link plus a step or two). It is keyed by the
+env-var name, not by LLM, because one key is typically shared by several LLMs. See
+[`freetier-providers.md`](freetier-providers.md) for the `effort`/`value`
+taxonomies.
 
 The same data feeds two consumers:
 
-- the `env` CLI prints each string as a comment above its variable, prefixed with
-  the variable name so the comment is unambiguously tied to its key;
-- a host can pull the strings to render its own setup UI.
+- the `env` CLI orders keys by effort and value (easiest and most valuable first)
+  and prints each one's help plus an annotation line above its variable;
+- a host can pull the structured fields to render its own setup UI (e.g. "you have
+  N active models; this easy key unlocks M more").
 
-Surfacing it is an **optional registry capability**, independent of the broker. A
-registry that has the metadata exposes it; one that does not simply omits the
-capability. Hosts query whichever registry they hold — there is no requirement
-that the broker was constructed with a seed, and no coupling between obtaining the
-help and routing.
+Surfacing it is an **optional registry capability** (`key_info() -> dict[str,
+KeyInfo]`), independent of the broker. A registry that has the metadata exposes
+it; one that does not simply omits the capability. Hosts query whichever registry
+they hold — there is no requirement that the broker was constructed with a seed,
+and no coupling between obtaining the help and routing.
+
+An unresolved `api_key_ref` is normal, not an error: the pool routes over whatever
+keys are present, and a config without a resolvable key simply stays inactive
+(logged at `info`, not `warning`) rather than enqueued for routing. The only
+genuine alarm is **zero** keyed configs at all — see the reliability model in
+[`optimizer.md`](optimizer.md) for how that's detected and raised.
+
+There is no background key re-resolve loop: a key added to the environment
+after startup takes effect at the next `ensure_pool()` call (fresh process, or
+an explicit re-provision) or immediately if the host calls `update()` for that
+config — never via a polling task.
 
 ---
 

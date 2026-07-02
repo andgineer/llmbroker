@@ -11,20 +11,13 @@ from typing import Protocol, runtime_checkable
 
 
 class LifecyclePhase(Enum):
-    """The FSM label for one LLM's lifecycle.
-
-    AVAILABLE/COOLING are derived from cooldown_until vs now.
-    OFFLINE/PROBING are set by the Optimizer circuit-breaker.
-    """
+    """The FSM label for one LLM's lifecycle, always derived from cooldown_until vs now."""
 
     AVAILABLE = "available"
     COOLING = "cooling"
-    OFFLINE = "offline"
-    PROBING = "probing"
 
 
 _RESERVED_STATE_KEYS = frozenset({"phase", "cooldown_until", "fail_count"})
-_TRUST_STORED_PHASES = frozenset({LifecyclePhase.OFFLINE, LifecyclePhase.PROBING})
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,14 +58,17 @@ class LLMState:
         """Deserialize from a plain dict; a missing key falls back to its dataclass default."""
         phase = LifecyclePhase(d["phase"]) if "phase" in d else LifecyclePhase.AVAILABLE
         cooldown_raw = d.get("cooldown_until")
-        cooldown_until = datetime.fromisoformat(cooldown_raw) if cooldown_raw else None
-        fail_count = int(d.get("fail_count", 0))
+        cooldown_until = (
+            datetime.fromisoformat(cooldown_raw) if isinstance(cooldown_raw, str) else None
+        )
+        fail_count_raw = d.get("fail_count", 0)
+        fail_count = fail_count_raw if isinstance(fail_count_raw, int) else 0
         extra = {k: v for k, v in d.items() if k not in _RESERVED_STATE_KEYS}
         return cls(phase=phase, cooldown_until=cooldown_until, fail_count=fail_count, extra=extra)
 
 
 def reconcile(state: LLMState, now: datetime) -> LLMState:
-    """Derive the effective phase: OFFLINE/PROBING are trusted, else cooldown_until decides.
+    """Derive the effective phase from cooldown_until vs now.
 
     >>> from datetime import UTC, datetime, timedelta
     >>> now = datetime(2030, 1, 1, tzinfo=UTC)
@@ -81,21 +77,12 @@ def reconcile(state: LLMState, now: datetime) -> LLMState:
     ... ).phase
     <LifecyclePhase.COOLING: 'cooling'>
     """
-    phase = state.phase
     cooldown_until = state.cooldown_until
-    if phase in _TRUST_STORED_PHASES:
-        if cooldown_until is not None and cooldown_until <= now:
-            cooldown_until = None
-    elif cooldown_until is not None and cooldown_until > now:
+    if cooldown_until is not None and cooldown_until > now:
         phase = LifecyclePhase.COOLING
-    elif phase in {LifecyclePhase.AVAILABLE, LifecyclePhase.COOLING}:
+    else:
         phase = LifecyclePhase.AVAILABLE
         cooldown_until = None
-    else:
-        raise ValueError(
-            f"Unexpected stored phase {phase!r}: "
-            "add it to _TRUST_STORED_PHASES or handle it explicitly",
-        )
     return replace(state, phase=phase, cooldown_until=cooldown_until)
 
 
@@ -107,6 +94,40 @@ class RateLimit:
     rpd: int | None = None
     tpm: int | None = None
     tpd: int | None = None
+
+
+class EffortLevel(Enum):
+    """How hard an api_key_ref is to obtain, easiest first.
+
+    Declaration order is the onboarding sort key: ``list(EffortLevel).index(...)``.
+    """
+
+    OAUTH = "oauth"
+    SIGNUP = "signup"
+    VERIFY = "verify"
+    CONSOLE = "console"
+    WAITLIST = "waitlist"
+
+
+class ValueLevel(Enum):
+    """How good the best model an api_key_ref unlocks is, most desirable first."""
+
+    HIGH = "high"
+    GOOD = "good"
+    NICHE = "niche"
+
+
+@dataclass(frozen=True, slots=True)
+class KeyInfo:
+    """Per-provider onboarding metadata for one ``api_key_ref``.
+
+    ``rate_limit`` is not here — it's per-model, not per-key.
+    """
+
+    api_key_ref: str
+    effort: EffortLevel | None
+    value: ValueLevel | None
+    help: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,7 +170,7 @@ class LLMConfig:
         """Reconstruct from the core columns plus the JSON ``metadata`` blob."""
         metadata = metadata or {}
         raw_rate_limit = metadata.get("rate_limit")
-        rate_limit = RateLimit(**raw_rate_limit) if raw_rate_limit else None
+        rate_limit = RateLimit(**raw_rate_limit) if isinstance(raw_rate_limit, dict) else None
         return cls(
             name=name,
             base_url=base_url,

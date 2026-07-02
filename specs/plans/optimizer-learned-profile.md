@@ -1,26 +1,29 @@
 # Learned LLM profile — the dynamic, optimizer-owned half of the catalog
 
-## Plan sequence — step 2 of 3
+## Plan sequence — step 1 of 2
 
 > **Prerequisites:** the typed dataclass ⇄ JSON-document boundary and the
 > durable version-gated `ensure_schema` path this plan reuses for the new
 > `profile` column are already implemented (see
 > [`architecture.md`](../reference/architecture.md#columns-vs-json)) — **and**
-> `preset-onboarding-effort.md` (step 1) — this plan extends its
-> keyless-not-routable pool change and its zero-routable alarm
-> (`routable ⟺ keyed **and** not benched`). Do the onboarding pool change first.
-> **Blocks:** nothing.
+> the keyless-not-routable pool change and the zero-routable alarm from the
+> preset-onboarding effort are already implemented (`routable ⟺ keyed **and**
+> not benched` extends the existing `routable ⟺ keyed` predicate; see
+> [`architecture.md`](../reference/architecture.md#key-acquisition-help) and
+> [`optimizer.md`](../reference/optimizer.md)). **Blocks:** nothing.
 
-The remaining three plans form one dependency chain; execute in this order:
+The remaining two plans form one dependency chain; execute in this order (the
+curated catalog knowledge, effort/value onboarding, the simplified two-phase
+AVAILABLE/COOLING reliability model, and the keyless-not-routable pool change
+are already implemented; see
+[`architecture.md`](../reference/architecture.md) and
+[`optimizer.md`](../reference/optimizer.md)):
 
-1. **`preset-onboarding-effort.md`** — curated catalog knowledge, effort/value
-   onboarding, a simplified two-phase (AVAILABLE/COOLING) reliability model,
-   and the keyless-not-routable pool change.
-2. **`optimizer-learned-profile.md`** *(this plan)* — the durable learned half
+1. **`optimizer-learned-profile.md`** *(this plan)* — the durable learned half
    (learned profile carried in the registry, bench verdict) and
-   `SeedPolicy.SYNC`; extends the routable predicate from (1).
-3. **`catalog-refresh.md`** — the manual re-curation runbook; consumes the
-   taxonomies fixed in (1) and may run in parallel with this plan.
+   `SeedPolicy.SYNC`; extends the existing routable predicate.
+2. **`catalog-refresh.md`** — the manual re-curation runbook; consumes the
+   already-fixed taxonomies and may run in parallel with this plan.
 
 ## Problem statement
 
@@ -96,9 +99,9 @@ than a lone flag:
 
 A "benched" model is deliberately distinct from the ephemeral lifecycle
 `phase` (`AVAILABLE/COOLING` — see
-[`preset-onboarding-effort.md`](preset-onboarding-effort.md) for why the phase
-model stays this small): `phase` is transient and lives in the disposable
-sync-state; `benched` is a durable verdict, orthogonal to it.
+[`optimizer.md`](../reference/optimizer.md) for why the phase model stays this
+small): `phase` is transient and lives in the disposable sync-state; `benched`
+is a durable verdict, orthogonal to it.
 
 ## The learned profile lives in the registry
 
@@ -190,9 +193,9 @@ rating window (an explicit human "I know, use it anyway").
 
 A benched model stays visible in `configs` (snapshots, `env`, stats) but is
 **not routable**: its slot is never enqueued. This is the same
-"present-but-not-routable" mechanic that
-[`preset-onboarding-effort.md`](preset-onboarding-effort.md) introduces for
-keyless configs, so the routable predicate becomes:
+"present-but-not-routable" mechanic already used for keyless configs (see
+[`architecture.md`](../reference/architecture.md#key-acquisition-help)), so
+the routable predicate becomes:
 
 > a config is routable ⟺ it has a resolved key **and** it is not benched.
 
@@ -233,11 +236,13 @@ bench verdict are untouched.
   path. No new decision, no new backend — same toolkit, one more registry
   field. The registry's `profile` column round-trips independently of
   `LLMState`/`reconcile()`, so it is unaffected by whatever shape `phase` takes.
-- [`preset-onboarding-effort.md`](preset-onboarding-effort.md): this plan
-  composes with its keyless-not-routable pool change (routable ⟺ keyed **and**
-  not benched) and its zero-routable alarm. Do the onboarding pool change first;
-  this plan extends the same predicate. `phase` stays limited to
-  `AVAILABLE`/`COOLING`; `benched` never becomes a `LifecyclePhase` value.
+- The preset-onboarding foundation (already implemented; see
+  [`architecture.md`](../reference/architecture.md#key-acquisition-help) and
+  [`optimizer.md`](../reference/optimizer.md)): this plan composes with its
+  keyless-not-routable pool change and its zero-routable alarm, extending the
+  existing `routable ⟺ keyed` predicate to `routable ⟺ keyed **and** not
+  benched`. `phase` stays limited to `AVAILABLE`/`COOLING`; `benched` never
+  becomes a `LifecyclePhase` value.
 
 ## Implementation
 
@@ -422,7 +427,8 @@ Files: `README`/docs, `specs/reference/architecture.md`.
   sync-state; only durable learned knowledge lives in the profile.
 - **A telemetry/crowdsourcing pipeline.** The quality aggregate is this
   deployment's own ratings materialised for cheap reads and restart survival —
-  not shared or uploaded (consistent with the onboarding plan's non-goals).
+  not shared or uploaded (consistent with the curated catalog being manually
+  sourced; see [`freetier-providers.md`](../reference/freetier-providers.md)).
 - **Quality-ranked routing beyond the existing soft floor.** Bench is a binary
   exclusion for globally-useless models; per-request quality routing stays the
   existing per-operation soft floor.

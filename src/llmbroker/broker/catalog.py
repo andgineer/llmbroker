@@ -80,9 +80,9 @@ class Catalog:
         try:
             return await self._secrets.resolve(cfg.api_key_ref, self._user_id)
         except KeyError:
-            logger.warning(
-                "LLM %s: api_key_ref %r could not be resolved — calls will fail"
-                " until the env var / secret is set",
+            logger.info(
+                "LLM %s: api_key_ref %r not resolved — inactive until the env var /"
+                " secret is set; this is normal, the pool routes over whatever keys are present",
                 cfg.name,
                 cfg.api_key_ref,
             )

@@ -191,14 +191,17 @@ def test_chat_429_increments_fail_count(tmp_path):
     asyncio.run(run())
 
 
-def test_chat_500_raises_all_llms_failed(tmp_path):
+def test_chat_500_wait0_raises_no_llm_available(tmp_path):
+    """A generic HTTP error cools the slot and fails over rather than raising AllLLMsFailedError;
+    with wait=0 and no other LLM to fail over to, that surfaces as NoLLMAvailableError."""
+
     async def run():
         async with AsyncBroker(
             registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
         ) as broker:
             with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(500)):
-                with pytest.raises(AllLLMsFailedError):
-                    await broker.chat([{"role": "user", "content": "hi"}])
+                with pytest.raises(NoLLMAvailableError):
+                    await broker.chat([{"role": "user", "content": "hi"}], wait=0)
 
     asyncio.run(run())
 

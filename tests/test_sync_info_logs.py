@@ -1,4 +1,9 @@
-"""Warning-count invariants for ensure_pool with constructor seed, sqlite registry + secrets."""
+"""Info-log-count invariants for ensure_pool with constructor seed, sqlite registry + secrets.
+
+An unresolved api_key_ref is normal (partial-key framing), so it logs at INFO, not
+WARNING — these tests guard against a regression where the same missing-key event
+gets logged more than once per resolution attempt.
+"""
 
 import asyncio
 import logging
@@ -25,11 +30,11 @@ def _broker(db: str, tmp_path) -> llmbroker.AsyncBroker:
     )
 
 
-def _warn_count(caplog) -> int:
-    return sum(1 for r in caplog.records if "could not be resolved" in r.message)
+def _info_count(caplog) -> int:
+    return sum(1 for r in caplog.records if "not resolved" in r.message)
 
 
-def test_fresh_db_env_set_zero_warnings(tmp_path, monkeypatch, caplog):
+def test_fresh_db_env_set_zero_info_logs(tmp_path, monkeypatch, caplog):
     monkeypatch.setenv(_KEY_REF, "secret")
     db = str(tmp_path / "b.db")
 
@@ -37,12 +42,12 @@ def test_fresh_db_env_set_zero_warnings(tmp_path, monkeypatch, caplog):
         async with _broker(db, tmp_path):
             pass
 
-    with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
+    with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         asyncio.run(run())
-    assert _warn_count(caplog) == 0
+    assert _info_count(caplog) == 0
 
 
-def test_fresh_db_env_absent_one_warning(tmp_path, monkeypatch, caplog):
+def test_fresh_db_env_absent_one_info_log(tmp_path, monkeypatch, caplog):
     monkeypatch.delenv(_KEY_REF, raising=False)
     db = str(tmp_path / "b.db")
 
@@ -50,12 +55,13 @@ def test_fresh_db_env_absent_one_warning(tmp_path, monkeypatch, caplog):
         async with _broker(db, tmp_path):
             pass
 
-    with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
+    with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         asyncio.run(run())
-    assert _warn_count(caplog) == 1
+    assert _info_count(caplog) == 1
+    assert not any(r.levelno == logging.WARNING for r in caplog.records)
 
 
-def test_restart_secret_persisted_zero_warnings(tmp_path, monkeypatch, caplog):
+def test_restart_secret_persisted_zero_info_logs(tmp_path, monkeypatch, caplog):
     monkeypatch.delenv(_KEY_REF, raising=False)
     db = str(tmp_path / "b.db")
 
@@ -72,13 +78,13 @@ def test_restart_secret_persisted_zero_warnings(tmp_path, monkeypatch, caplog):
             pass
 
     caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
+    with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         asyncio.run(restart())
-    assert _warn_count(caplog) == 0
+    assert _info_count(caplog) == 0
 
 
-def test_restart_secret_absent_everywhere_exactly_one_warning(tmp_path, monkeypatch, caplog):
-    """Regression: before the pool-init refactor, two warnings were emitted on restart with missing secret."""
+def test_restart_secret_absent_everywhere_exactly_one_info_log(tmp_path, monkeypatch, caplog):
+    """Regression: before the pool-init refactor, two log lines were emitted on restart with missing secret."""
     monkeypatch.delenv(_KEY_REF, raising=False)
     db = str(tmp_path / "b.db")
 
@@ -93,12 +99,12 @@ def test_restart_secret_absent_everywhere_exactly_one_warning(tmp_path, monkeypa
             pass
 
     caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
+    with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         asyncio.run(restart())
-    assert _warn_count(caplog) == 1
+    assert _info_count(caplog) == 1
 
 
-def test_restart_env_set_sqlite_missing_zero_warnings(tmp_path, monkeypatch, caplog):
+def test_restart_env_set_sqlite_missing_zero_info_logs(tmp_path, monkeypatch, caplog):
     monkeypatch.delenv(_KEY_REF, raising=False)
     db = str(tmp_path / "b.db")
 
@@ -115,6 +121,6 @@ def test_restart_env_set_sqlite_missing_zero_warnings(tmp_path, monkeypatch, cap
             pass
 
     caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
+    with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         asyncio.run(restart())
-    assert _warn_count(caplog) == 0
+    assert _info_count(caplog) == 0
