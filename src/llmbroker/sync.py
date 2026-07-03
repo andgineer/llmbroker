@@ -24,6 +24,7 @@ from llmbroker.models import (
     SeedPolicy,
 )
 from llmbroker.optimizer import Optimizer
+from llmbroker.protocols.backend_stack import UNSET, BackendStack, _UnsetType
 from llmbroker.protocols.registry import RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
 from llmbroker.protocols.state_store import StateStoreProtocol
@@ -87,10 +88,11 @@ class Broker:
 
     def __init__(  # noqa: PLR0913
         self,
-        registry: RegistryProtocol | str | Path,
+        registry: RegistryProtocol | str | Path | None = None,
         *,
+        stack: BackendStack | None = None,
         secrets: SecretsProtocol | None = None,
-        state_store: StateStoreProtocol | None = None,
+        state_store: StateStoreProtocol | None | _UnsetType = UNSET,
         telemetry: TelemetryProtocol | None = None,
         optimize: bool | Optimizer = True,
         seed: RegistryProtocol | str | Path | None = None,
@@ -118,6 +120,7 @@ class Broker:
                 fut.set_result(
                     AsyncBroker(
                         registry,
+                        stack=stack,
                         secrets=secrets,
                         state_store=state_store,
                         telemetry=telemetry,

@@ -255,8 +255,7 @@ import llmbroker.sqlite
 from datetime import UTC, datetime
 
 with llmbroker.Broker(
-    registry=llmbroker.sqlite.Registry("broker.db"),
-    telemetry=llmbroker.sqlite.Telemetry("broker.db"),
+    stack=llmbroker.sqlite.Stack("broker.db"),
     seed="llms.toml",
     seed_policy=llmbroker.SeedPolicy.SYNC,  # the default — safe to omit
 ) as llms:
@@ -303,6 +302,28 @@ with llmbroker.Broker(
 | `SeedPolicy.IF_EMPTY` | fill only if DB is empty, otherwise no-op |
 | `SeedPolicy.ADD` | only add entries not already present by name |
 
+### Mixing backends
+
+`stack=` wires registry, secrets, telemetry, and state store from one shared
+connection; any of the four can be overridden individually, including
+disabling the state store entirely (`state_store=None`). Available for
+`llmbroker.sqlite.Stack`, `llmbroker.postgres.Stack`, and `llmbroker.mongodb.Stack`
+— the three backends that implement all four ports.
+
+```python
+import llmbroker
+import llmbroker.postgres
+import llmbroker.redis
+
+# Postgres for registry/secrets/telemetry, Redis for cross-node cooldown state
+pool = await asyncpg.create_pool(dsn)
+async with llmbroker.AsyncBroker(
+    stack=llmbroker.postgres.Stack(pool),
+    state_store=llmbroker.redis.StateStore.from_url("redis://localhost"),
+) as llms:
+    reply = await llms.ask("Hello")
+```
+
 ### Multi-user (per-user scoping)
 
 In a multi-user application each end user can have their own API keys and
@@ -318,17 +339,13 @@ import llmbroker
 import llmbroker.sqlite
 
 # App startup — shared infrastructure
-registry   = llmbroker.sqlite.Registry("broker.db")
-secrets    = llmbroker.sqlite.Secrets("broker.db")
-telemetry  = llmbroker.sqlite.Telemetry("broker.db")
-# state_store = <backend>  # required for stateless servers — see note below
+stack = llmbroker.sqlite.Stack("broker.db")
+# state_store=<backend>  # override for stateless servers — see note below
 
 # Per-request — cheap, single-tenant view
 async def handle_request(user_id: str, prompt: str) -> str:
     async with llmbroker.AsyncBroker(
-        registry=registry,
-        secrets=secrets,
-        telemetry=telemetry,
+        stack=stack,
         # state_store=state_store,
         user_id=user_id,
     ) as llms:

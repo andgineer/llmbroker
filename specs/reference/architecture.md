@@ -31,6 +31,17 @@ Every host plugs in up to four backends; only the registry is required:
   `llmbroker.postgres`/`redis`/… as they ship). Importing the submodule is the dependency
   declaration: a bare `import llmbroker` never pulls in a driver.
 
+**Backend stack sugar.** When all four ports share one backend (sqlite, postgres,
+or mongodb — the three that implement every port), a `stack=` argument bundles
+them from a single shared connection, replacing four separate constructor calls
+with one. Individual ports can still be overridden: an explicit
+`registry`/`secrets`/`telemetry`/`state_store` argument always wins over the one
+the stack supplies, including passing `state_store=None` to disable the state
+store the stack would otherwise provide. Either `registry` or `stack` must be
+supplied. `redis`/`aws`/`vault` are single-port backends and stay override-only;
+the standalone (file-based) family is already covered by the bare TOML-path
+shortcut, so it gets no stack of its own.
+
 ---
 
 ## What is implemented

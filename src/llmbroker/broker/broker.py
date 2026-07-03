@@ -42,6 +42,7 @@ from llmbroker.models import (
     SeedPolicy,
 )
 from llmbroker.optimizer import Optimizer, OptimizerPolicy, OptimizerTelemetry
+from llmbroker.protocols.backend_stack import UNSET, BackendStack, _UnsetType
 from llmbroker.protocols.registry import RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
 from llmbroker.protocols.state_store import StateStoreProtocol
@@ -315,20 +316,43 @@ class AsyncBroker:
 
     def __init__(  # noqa: PLR0913
         self,
-        registry: RegistryProtocol | str | Path,
+        registry: RegistryProtocol | str | Path | None = None,
         *,
+        stack: BackendStack | None = None,
         secrets: SecretsProtocol | None = None,
-        state_store: StateStoreProtocol | None = None,
+        state_store: StateStoreProtocol | None | _UnsetType = UNSET,
         telemetry: TelemetryProtocol | None = None,
         optimize: bool | Optimizer = True,
         seed: RegistryProtocol | str | Path | None = None,
         seed_policy: SeedPolicy = SeedPolicy.SYNC,
         user_id: int | str | None = None,
     ) -> None:
-        registry = Registry(registry) if isinstance(registry, (str, Path)) else registry
-        secrets = as_secrets(secrets) if secrets is not None else Secrets()
-        telemetry = telemetry if telemetry is not None else Telemetry()
+        if registry is None and stack is None:
+            raise ValueError("AsyncBroker requires either `registry` or `stack`")
+
+        if registry is None:
+            assert stack is not None
+            registry = stack.registry
+        elif isinstance(registry, (str, Path)):
+            registry = Registry(registry)
+
+        secrets = (
+            as_secrets(secrets)
+            if secrets is not None
+            else (stack.secrets if stack is not None else Secrets())
+        )
+        telemetry = (
+            telemetry
+            if telemetry is not None
+            else (stack.telemetry if stack is not None else Telemetry())
+        )
         seed = Registry(seed) if isinstance(seed, (str, Path)) else seed
+
+        resolved_state_store: StateStoreProtocol | None
+        if isinstance(state_store, _UnsetType):
+            resolved_state_store = stack.state_store if stack is not None else None
+        else:
+            resolved_state_store = state_store
 
         if isinstance(optimize, Optimizer):
             self._optimizer: Optimizer | None = optimize
@@ -340,11 +364,11 @@ class AsyncBroker:
         self._registry = registry
         self._secrets = secrets
         self._base_telemetry = telemetry
-        self._state_store = state_store
+        self._state_store = resolved_state_store
         self._user_id = user_id
         self._benched_meta: dict[str, tuple[datetime | None, str | None]] = {}
 
-        pool = LLMPool(state_store, user_id, on_degraded_tier=self._on_degraded_tier)
+        pool = LLMPool(resolved_state_store, user_id, on_degraded_tier=self._on_degraded_tier)
         self._pool = pool
         self._catalog = Catalog(
             registry,
@@ -360,7 +384,7 @@ class AsyncBroker:
             opt_telemetry = OptimizerTelemetry(self._optimizer, telemetry, pool)
             self._profile_sync = _ProfileSync(
                 registry,
-                state_store,
+                resolved_state_store,
                 pool,
                 self._optimizer,
                 user_id,

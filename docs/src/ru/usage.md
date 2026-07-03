@@ -258,8 +258,7 @@ import llmbroker.sqlite
 from datetime import UTC, datetime
 
 with llmbroker.Broker(
-    registry=llmbroker.sqlite.Registry("broker.db"),
-    telemetry=llmbroker.sqlite.Telemetry("broker.db"),
+    stack=llmbroker.sqlite.Stack("broker.db"),
     seed="llms.toml",
     seed_policy=llmbroker.SeedPolicy.SYNC,  # значение по умолчанию — можно не указывать
 ) as llms:
@@ -306,6 +305,28 @@ with llmbroker.Broker(
 | `SeedPolicy.IF_EMPTY` | заполнить только если DB пуста, иначе ничего |
 | `SeedPolicy.ADD` | только добавить новые по имени, существующие не трогать |
 
+### Смешивание бэкендов
+
+`stack=` собирает реестр, секреты, телеметрию и стор состояния из одного общего
+подключения; любой из четырёх портов можно переопределить отдельно, включая
+полное отключение стора состояния (`state_store=None`). Доступно для
+`llmbroker.sqlite.Stack`, `llmbroker.postgres.Stack` и `llmbroker.mongodb.Stack`
+— трёх бэкендов, реализующих все четыре порта.
+
+```python
+import llmbroker
+import llmbroker.postgres
+import llmbroker.redis
+
+# Postgres для registry/secrets/telemetry, Redis для межнодового cooldown-состояния
+pool = await asyncpg.create_pool(dsn)
+async with llmbroker.AsyncBroker(
+    stack=llmbroker.postgres.Stack(pool),
+    state_store=llmbroker.redis.StateStore.from_url("redis://localhost"),
+) as llms:
+    reply = await llms.ask("Hello")
+```
+
 ### Мультипользовательский режим (per-user scoping)
 
 В многопользовательском приложении у каждого пользователя могут быть свои
@@ -321,17 +342,13 @@ import llmbroker
 import llmbroker.sqlite
 
 # Старт приложения — общая инфраструктура
-registry   = llmbroker.sqlite.Registry("broker.db")
-secrets    = llmbroker.sqlite.Secrets("broker.db")
-telemetry  = llmbroker.sqlite.Telemetry("broker.db")
-# state_store = <backend>  # нужен для stateless-серверов — см. примечание ниже
+stack = llmbroker.sqlite.Stack("broker.db")
+# state_store=<backend>  # переопределить для stateless-серверов — см. примечание ниже
 
 # На каждый запрос — дешёвый экземпляр для одного пользователя
 async def handle_request(user_id: str, prompt: str) -> str:
     async with llmbroker.AsyncBroker(
-        registry=registry,
-        secrets=secrets,
-        telemetry=telemetry,
+        stack=stack,
         # state_store=state_store,
         user_id=user_id,
     ) as llms:
