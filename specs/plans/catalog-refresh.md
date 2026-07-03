@@ -151,16 +151,18 @@ File: `tasks.py` (invoke).
   `specs/reference/catalog-refresh-prompt.md` so the maintainer can hand it to an
   agent. No runtime code, no dependency on the broker.
 
-Tests: a lightweight test asserting the prompt file exists and that the invoke
-task resolves the path (no network, no LLM call — the prompt is executed
-manually, not in CI).
+Tests: a lightweight test asserting the prompt file exists at the expected
+path (no network, no LLM call — the prompt is executed manually, not in CI).
 
 ### Step 3 — cross-link docs
 
-Files: `README`/docs, `specs/reference/freetier-providers.md`.
+Files: `README.md`, `docs/src/en/usage.md`, `docs/src/ru/usage.md`,
+`specs/reference/freetier-providers.md`.
 
 - Note that the catalog is refreshed via the stored prompt, and that
   `freetier-providers.md` is the source-of-record the prompt reads and updates.
+- Update the English and Russian docs together — this repo maintains both in
+  parallel, not via auto-translation.
 
 ## Non-goals
 
