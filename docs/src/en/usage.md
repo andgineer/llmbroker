@@ -24,6 +24,11 @@ A ready-made list of free LLMs is available as a preset:
 llmbroker preset freetier > llms.toml
 ```
 
+Free-tier offerings drift, so this preset is refreshed periodically from current
+sources — see `presets/freetier-refresh-prompt.md` (run `invoke catalog-refresh`
+to print it) and [`freetier-providers.md`](https://github.com/andgineer/llmbroker/blob/main/specs/reference/freetier-providers.md),
+the source-of-record it reads and updates.
+
 `api_key_ref` is the name of the environment variable holding the key. To print the
 required variable names for a config file:
 

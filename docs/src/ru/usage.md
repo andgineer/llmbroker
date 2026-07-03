@@ -24,6 +24,12 @@ api_key_ref = "GROQ_API_KEY"
 llmbroker preset freetier > llms.toml
 ```
 
+Условия бесплатных тарифов постоянно меняются, поэтому пресет периодически
+обновляется из актуальных источников — см. `presets/freetier-refresh-prompt.md`
+(команда `invoke catalog-refresh` печатает его) и
+[`freetier-providers.md`](https://github.com/andgineer/llmbroker/blob/main/specs/reference/freetier-providers.md) —
+документ, который этот промпт читает и обновляет.
+
 `api_key_ref` — имя переменной окружения с ключом. Получить список нужных переменных для конкретного файла:
 
 ```bash

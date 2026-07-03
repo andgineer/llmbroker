@@ -11,7 +11,9 @@ snapshots, not contracts. They are curated manually from public sources, not
 from telemetry or crowdsourcing — the install base is too small for
 crowdsourced numbers to be representative, and there is no live-stats
 pipeline — so refreshing this document is a periodic, human-reviewed
-maintenance action.
+maintenance action, done by following
+[`../../presets/freetier-refresh-prompt.md`](../../presets/freetier-refresh-prompt.md)
+(`invoke catalog-refresh` prints it).
 
 ---
 

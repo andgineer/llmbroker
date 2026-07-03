@@ -80,6 +80,10 @@ For more information about a script run:
 
     invoke <script> --help
 
+The bundled `freetier` preset drifts as providers change their free tiers; refresh
+it with `invoke catalog-refresh`, which prints the maintenance runbook
+(`presets/freetier-refresh-prompt.md`).
+
 ## Coverage report
 * [Codecov](https://app.codecov.io/gh/andgineer/llmbroker/tree/main/src%2Fllmbroker)
 * [Coveralls](https://coveralls.io/github/andgineer/llmbroker)

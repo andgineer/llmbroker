@@ -113,6 +113,13 @@ def pre(c):
     c.run("pre-commit run --verbose --all-files")
 
 
+@task
+def catalog_refresh(c: Context):
+    """Print the freetier preset refresh prompt for handing to a maintainer or an agent."""
+    prompt_path = Path("presets/freetier-refresh-prompt.md")
+    print(prompt_path.read_text())
+
+
 
 namespace = Collection.from_module(sys.modules[__name__])
 for name in ALLOWED_VERSION_TYPES:

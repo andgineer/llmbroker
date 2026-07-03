@@ -188,6 +188,16 @@ rate-limited). Presets are not task-specialized or quality-ranked — the pool
 has no quality-aware routing to exploit such a distinction, so a preset lists
 one genuinely useful model per provider rather than several ranked ones.
 
+When curation replaces a model with a strictly better sibling from the same
+provider, the old entry is removed rather than left alongside the new one:
+the two usually share one provider quota, and a still-endorsed old entry
+would keep spending that shared quota on worse answers. Because entry
+identity is immutable (see [`optimizer.md`](optimizer.md#the-learned-profile-durable-cluster-shared-per-operation)),
+this removal is safe — `SeedPolicy.SYNC` turns it into a reversible
+deprecation, never a deletion, at any deployment already running the old
+entry. See [`freetier-providers.md`](freetier-providers.md) for how the
+curated free-tier preset specifically is kept current.
+
 ---
 
 ## Key acquisition help
