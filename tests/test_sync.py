@@ -138,6 +138,38 @@ def test_broker_gc_stops_thread_without_close(tmp_path):
     assert not thread.is_alive()
 
 
+def test_broker_disable_llm_benches_and_excludes_from_pool(tmp_path):
+    db = str(tmp_path / "b.db")
+    with Broker(registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()) as broker:
+        broker.add(LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K"))
+        broker.disable_llm("p1", reason="manual review")
+        assert broker._async._pool.is_benched("p1")
+
+
+def test_broker_enable_llm_readmits_after_disable(tmp_path):
+    db = str(tmp_path / "b.db")
+    with Broker(registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()) as broker:
+        broker.add(LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K"))
+        broker.disable_llm("p1")
+        broker.enable_llm("p1")
+        assert not broker._async._pool.is_benched("p1")
+
+
+def test_broker_disable_llm_persists_reason_to_registry(tmp_path):
+    db = str(tmp_path / "b.db")
+    reg_path = llmbroker.sqlite.Registry(db)
+    with Broker(registry=reg_path, telemetry=NoTelemetry()) as broker:
+        broker.add(LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K"))
+        broker.disable_llm("p1", reason="manual review")
+
+    async def read_back():
+        return await llmbroker.sqlite.Registry(db).read_profiles()
+
+    profiles = asyncio.run(read_back())
+    assert profiles["p1"].benched is True
+    assert profiles["p1"].benched_reason == "manual review"
+
+
 def test_broker_update_changes_config(tmp_path):
     db = str(tmp_path / "b.db")
     with Broker(registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()) as broker:

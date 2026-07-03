@@ -15,7 +15,7 @@ Every host plugs in up to four backends; only the registry is required:
 |---|---|---|---|
 | **config** | `RegistryProtocol` | `Registry(path)` (file: `.toml`/`.json`) | where LLM configurations are stored |
 | **secrets** | `SecretsProtocol` | `Secrets()` (env vars) | how `api_key_ref` names resolve to real keys |
-| **state store** | `StateStoreProtocol` | absent — single-process only | persists cooldown state between requests (any stateless server, not just clusters) |
+| **state store** | `StateStoreProtocol` | absent — single-process only | persists cooldown state between requests, and cluster-shares the optimizer's decayed learned summaries, via server-side atomic folds (any stateless server, not just clusters) |
 | **telemetry** | `TelemetryProtocol` | `Telemetry()` (Python logging) | append-only call journal |
 
 **Where each kind lives:**
@@ -60,9 +60,9 @@ Every host plugs in up to four backends; only the registry is required:
   state over the in-process state. The store read is batched (one call
   for `snapshot`, one call per `state()` invocation); `InMemoryState` is the
   fallback when the store has no entry for that LLM.
-- `SeedPolicy` enum (`IF_EMPTY` / `ADD` / `MIRROR`) — controls how the constructor
-  `seed=` source reconciles the registry on first `ensure_pool`. See "Provider
-  seeding" below.
+- `SeedPolicy` enum (`SYNC` (default) / `IF_EMPTY` / `ADD` / `MIRROR`) — controls how
+  the constructor `seed=` source reconciles the registry on first `ensure_pool`. See
+  "Provider seeding" below.
 - **Per-user scoping** — a single `user_id` on the broker scopes every backend call to
   one tenant; all backends scope records exactly to it (`None` = unscoped /
   single-tenant). See "Per-user scoping" below.
@@ -122,10 +122,22 @@ Per table:
   rows are disposable) — safe because state is a live cache, not durable data.
 - **Registry** (`llmbroker_registry`) — hybrid: `name`, `base_url`, `model`,
   `api_key_ref`, `user_id` stay columns (identity, plus stable human-meaningful
-  config); nested/open-ended per-LLM config (e.g. `rate_limit`) lives in one
-  `metadata` JSON column. Because registry rows are durable, a schema-version
-  bump for this table is an **additive** migration (`ALTER TABLE ... ADD
-  COLUMN`) that preserves existing rows rather than dropping them.
+  config); nested/open-ended per-LLM config (e.g. `rate_limit`), plus the curated
+  `origin`/`deprecated` markers, live in the `metadata` JSON column. The learned
+  profile (per-operation decayed quality/transport/latency summaries, plus the manual
+  bench latch — see [`optimizer.md`](optimizer.md#the-learned-profile-durable-cluster-shared-per-operation))
+  is a second, sibling JSON column, `profile`, on the same row — field-separated from
+  `metadata` so the seed path (which writes only static fields) can never clobber
+  learned data. Because registry rows are durable, a schema-version bump for this
+  table is an **additive** migration (`ALTER TABLE ... ADD COLUMN`) that preserves
+  existing rows rather than dropping them — `metadata` and `profile` migrated the
+  same way.
+- **Summaries** (`llmbroker_summaries`, state-store side) — the cluster-shared,
+  disposable counterpart of the registry `profile` column: one row/document per
+  `(name, operation, kind, user_id)` holding the same four decayed numbers, updated by
+  a server-side atomic fold (never client read-modify-write). Ephemeral like
+  `llmbroker_state`: a schema-version bump drops and recreates it rather than
+  migrating it — the registry `profile` snapshot is what survives.
 - **Secrets** (`llmbroker_secrets`) — unchanged: `value` is a single opaque
   scalar with no sub-structure, so JSON buys nothing.
 
@@ -138,11 +150,13 @@ transaction, since multiple OS processes can share one sqlite file and an
 in-process lock alone cannot serialize them; postgres gets the same guarantee
 for free from `CREATE`/`ALTER TABLE`'s table-level lock.
 
-`LLMState` and `LLMConfig` (`src/llmbroker/models.py`) are the typed dataclass
-boundary for the JSON payloads — `LLMState.to_dict()`/`from_dict()` round-trip
-the state document (with a generic `extra` field for forward-compatible keys),
-and `LLMConfig.rate_limit` (an optional `RateLimit` of rpm/rpd/tpm/tpd) is the
-first structured field persisted through the registry's `metadata` column.
+`LLMState`, `LLMConfig`, and `LLMProfile` (`src/llmbroker/models.py`) are the typed
+dataclass boundary for the JSON payloads — each has a `to_dict()`/`from_dict()`
+round-trip (with a generic `extra` field for forward-compatible keys).
+`LLMConfig.rate_limit` (an optional `RateLimit` of rpm/rpd/tpm/tpd) plus the curated
+`origin`/`deprecated` markers persist through the registry's `metadata` column;
+`LLMProfile` (the learned profile — see [`optimizer.md`](optimizer.md)) persists
+through the sibling `profile` column.
 
 ### Host migration coexistence
 
@@ -230,9 +244,16 @@ await llms.ensure_pool()   # eager init at startup
 
 | Policy | Behavior |
 |---|---|
-| `IF_EMPTY` (default) | Seeds only when the registry is empty; no-op on restart if providers are present |
+| `SYNC` (default) | Adds new preset entries (`origin: preset`); updates operational static fields (`base_url`, `api_key_ref`, `metadata`) of existing preset-origin entries; refuses (and alerts on) a changed `model` under an existing name — entry identity is immutable, a model bump is a new entry name; deprecates preset-origin entries absent from the preset instead of deleting them, lifting the deprecation if the entry reappears; never touches `origin: user` entries; never deletes; never writes the learned `profile` |
+| `IF_EMPTY` | Seeds only when the registry is empty; no-op on restart if providers are present |
 | `ADD` | Adds providers absent by name; never removes or updates existing entries |
-| `MIRROR` | Keeps the registry identical to the seed source: adds new, updates changed, removes absent |
+| `MIRROR` | Keeps the registry identical to the seed source: adds new, updates changed, hard-removes (including the learned profile) absent entries — the one policy without a "never delete" guarantee, for callers who explicitly want pruning |
+
+`broker.add(cfg)` marks the new entry `origin: user`, which is what protects it from
+every `SYNC` update/deprecation pass thereafter. See
+[`optimizer.md`](optimizer.md#the-learned-profile-durable-cluster-shared-per-operation)
+for the full two-halves catalog model and the `deprecated` marker's routing effect
+(a soft demotion to tier 1 — the entry keeps its slot and its learned profile).
 
 When seeding, the broker also bootstraps secrets: for each provider config whose
 `api_key_ref` cannot be resolved by the configured `secrets=` backend, the broker
@@ -242,8 +263,8 @@ Once the secrets store is populated, env vars are not consulted again at runtime
 
 `IF_EMPTY` with a non-empty registry exits early without re-seeding secrets — by
 design: a non-empty registry means secrets were already bootstrapped during the
-initial seed. `ADD` and `MIRROR` always attempt to fill missing secrets on every
-startup.
+initial seed. `SYNC`, `ADD`, and `MIRROR` always attempt to fill missing secrets on
+every startup.
 
 ---
 

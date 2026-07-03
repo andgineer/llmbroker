@@ -2,11 +2,20 @@
 
 from typing import Protocol, runtime_checkable
 
-from llmbroker.models import KeyInfo, LLMConfig
+from llmbroker.models import KeyInfo, LLMConfig, LLMProfile
 
 
 class RegistryProtocol(Protocol):
     async def load(self, user_id: int | str | None = None) -> list[LLMConfig]: ...
+
+    async def read_profiles(self, user_id: int | str | None = None) -> dict[str, LLMProfile]: ...
+
+    async def write_profile(
+        self,
+        name: str,
+        profile: LLMProfile,
+        user_id: int | str | None = None,
+    ) -> None: ...
 
 
 @runtime_checkable

@@ -94,7 +94,7 @@ class Broker:
         telemetry: TelemetryProtocol | None = None,
         optimize: bool | Optimizer = True,
         seed: RegistryProtocol | str | Path | None = None,
-        seed_policy: SeedPolicy = SeedPolicy.IF_EMPTY,
+        seed_policy: SeedPolicy = SeedPolicy.SYNC,
         user_id: int | str | None = None,
     ) -> None:
         if isinstance(registry, (str, Path)):
@@ -210,6 +210,12 @@ class Broker:
 
     def remove(self, name: str) -> None:
         self._run(self._async.remove(name))
+
+    def disable_llm(self, name: str, *, reason: str | None = None) -> None:
+        self._run(self._async.disable_llm(name, reason=reason))
+
+    def enable_llm(self, name: str) -> None:
+        self._run(self._async.enable_llm(name))
 
     def calls(self, *, limit: int) -> list[Call]:
         return self._run(self._async.calls(limit=limit))

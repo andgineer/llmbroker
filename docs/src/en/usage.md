@@ -126,7 +126,55 @@ reply.record_quality(1.0)   # good answer
 reply.record_quality(0.0)   # bad answer
 ```
 
-The score is stored in telemetry (when using the SQLite backend).
+The score is stored in telemetry (when using the SQLite backend) and, when the
+optimizer is active (the default), folded into that model's learned quality profile —
+see "Operations" and "Learned profile" below.
+
+### Operations
+
+Tag a call with the kind of task it is doing via `operation=`. Everything
+quality-related — the decayed quality aggregate, per-operation demotions, and
+`background_operations` ranking — is keyed by `(llm, operation)`, because a model's
+usefulness is genuinely task-shaped: fine on simple tasks, weak on hard ones. Calls
+made without `operation=` fall into one shared `None` bucket.
+
+```python
+reply = await llms.ask("Summarize this contract clause", operation="summarize")
+reply.record_quality(0.9)  # rated against the "summarize" bucket specifically
+
+# Background (non-interactive) work ranks by quality first, latency second
+reply = await llms.ask("Nightly batch classification", operation="classify")
+```
+
+Mark an operation as background (batch/offline, not waiting on a human) by listing it
+in `Optimizer(background_operations={"classify", ...})` — the ranking objective then
+becomes `(-usable_rate, latency)` instead of the interactive default
+`(latency, -usable_rate)`.
+
+### Learned profile
+
+When the optimizer is active, every rated call and every quality score is folded into
+a durable, per-operation "how good is this model at this kind of task" profile that
+survives restarts, preset updates, and (with a shared state store) is visible to every
+instance in a cluster. A model whose measured quality is consistently poor for an
+operation is **demoted** — moved to the back of the routing queue for that
+operation — never silently excluded, because the quality signal is your own opinion
+and may be miscalibrated. The only thing that actually excludes a model is the manual
+bench below. See [`optimizer.md`](https://github.com/andgineer/llmbroker/blob/main/specs/reference/optimizer.md)
+for the full mechanics (decayed aggregates, the decision band, tiered selection).
+
+### Manual bench
+
+```python
+await llms.disable_llm("groq-llama", reason="hallucinating on our eval set")
+# ... later ...
+await llms.enable_llm("groq-llama")
+```
+
+`disable_llm` is the one verdict that actually excludes a model from routing —
+covering every operation including future ones, surviving preset rolls, and never
+overridden by the optimizer. `enable_llm` clears the latch and resets that model's
+learned quality history, giving it a clean trial period.
 
 ## Tools & agents
 
@@ -205,7 +253,7 @@ with llmbroker.Broker(
     registry=llmbroker.sqlite.Registry("broker.db"),
     telemetry=llmbroker.sqlite.Telemetry("broker.db"),
     seed="llms.toml",
-    seed_policy=llmbroker.SeedPolicy.IF_EMPTY,
+    seed_policy=llmbroker.SeedPolicy.SYNC,  # the default — safe to omit
 ) as llms:
     reply = llms.ask("Question")
 
@@ -245,8 +293,9 @@ with llmbroker.Broker(
 
 | Policy | Behaviour |
 |---|---|
-| `SeedPolicy.MIRROR` | DB = source exactly: add new, update changed, remove dropped |
-| `SeedPolicy.IF_EMPTY` (default) | fill only if DB is empty, otherwise no-op |
+| `SeedPolicy.SYNC` (default) | curator-managed sync: adds new preset entries, updates their operational fields (`base_url`, `api_key_ref`, `metadata`), deprecates (never deletes) entries the preset has dropped, and never touches an entry you added yourself with `add()`. A preset row that changes an existing entry's `model` is refused with an alert instead of applied — a model bump is meant to be a new entry name, so old learned data is never silently reattributed. Never touches the learned profile. |
+| `SeedPolicy.MIRROR` | DB = source exactly: add new, update changed, remove dropped — including that entry's learned profile. The one policy without a "never delete" guarantee, for callers who explicitly want pruning |
+| `SeedPolicy.IF_EMPTY` | fill only if DB is empty, otherwise no-op |
 | `SeedPolicy.ADD` | only add entries not already present by name |
 
 ### Multi-user (per-user scoping)

@@ -285,7 +285,7 @@ async def test_operation_stats_are_isolated(any_telemetry):
     """Failures under operation A do not lower usable_rate for operation B."""
     pool = LLMPool(state_store=None, user_id=None)
     pool.add(_cfg("llm1"), "key")
-    opt = Optimizer(min_sample_count=5, rolling_window=50)
+    opt = Optimizer(min_sample_count=5)
     opt_tel = _opt_tel(opt, any_telemetry, pool)
 
     for _ in range(10):
@@ -301,11 +301,15 @@ async def test_operation_stats_are_isolated(any_telemetry):
     assert rate_b > 0.9
 
 
-async def test_rolling_window_evicts_old_failures(any_telemetry):
-    """Old failures evicted after rolling_window good calls — no permanent statistical penalty."""
+async def test_stale_failures_forgiven_by_decay(any_telemetry):
+    """Old failures are forgiven by per-event decay — no permanent statistical penalty.
+
+    Hand-computed (d=9/11): 10 ERROR from scratch give rate~=0.0868; 10 subsequent OK
+    calls bring it back above a 0.7 floor (well past the ~4 needed to clear 0.5).
+    """
     pool = LLMPool(state_store=None, user_id=None)
     pool.add(_cfg("llm1"), "key")
-    opt = Optimizer(min_sample_count=5, rolling_window=10, usable_rate_floor=0.7)
+    opt = Optimizer(min_sample_count=5, usable_rate_floor=0.7)
     opt_tel = _opt_tel(opt, any_telemetry, pool)
 
     for _ in range(10):

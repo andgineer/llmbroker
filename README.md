@@ -45,6 +45,9 @@ The same `Broker` scales straight to a server or cluster — add Redis or Postgr
 - **Pluggable backends** — swap registry, state store, and telemetry independently: DB, Redis etc.
 - **API keys configurable storage** — environment variables, DB, AWS, Vault, your own store.
 - **Multi-user mode** -- optionally separate secrets and LLMs list for each application user.
+- **Self-regulating pool** — rate a reply's quality and llmbroker learns, per kind of
+  task, which models are actually worth routing to; a consistently weak model quietly
+  drops to the back of the queue instead of being nagged about by a human.
 
 # Documentation
 

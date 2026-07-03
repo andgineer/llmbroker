@@ -3,7 +3,7 @@
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 
-from llmbroker.models import LLMConfig, check_user_id
+from llmbroker.models import LLMConfig, LLMProfile, check_user_id
 from llmbroker.mongodb.schema import ensure_schema
 
 
@@ -55,19 +55,19 @@ class Registry:
             raise ValueError(f"LLM {cfg.name!r} already exists") from None
 
     async def update(self, cfg: LLMConfig, user_id: int | str | None = None) -> None:
+        """Update only the static fields — must never touch ``profile`` (learned data)."""
         check_user_id(user_id)
         await ensure_schema(self._db)
-        doc = {
-            "name": cfg.name,
-            "base_url": cfg.base_url,
-            "model": cfg.model,
-            "api_key_ref": cfg.api_key_ref,
-            "metadata": cfg.to_metadata(),
-            "user_id": user_id,
-        }
-        result = await self._db["llmbroker_registry"].replace_one(
+        result = await self._db["llmbroker_registry"].update_one(
             {"name": cfg.name, "user_id": user_id},
-            doc,
+            {
+                "$set": {
+                    "base_url": cfg.base_url,
+                    "model": cfg.model,
+                    "api_key_ref": cfg.api_key_ref,
+                    "metadata": cfg.to_metadata(),
+                },
+            },
         )
         if result.matched_count == 0:
             raise KeyError(cfg.name)
@@ -79,6 +79,28 @@ class Registry:
             {"name": name, "user_id": user_id},
         )
         if result.deleted_count == 0:
+            raise KeyError(name)
+
+    async def read_profiles(self, user_id: int | str | None = None) -> dict[str, LLMProfile]:
+        check_user_id(user_id)
+        await ensure_schema(self._db)
+        cursor = self._db["llmbroker_registry"].find({"user_id": user_id})
+        docs = await cursor.to_list(length=None)
+        return {d["name"]: LLMProfile.from_dict(d.get("profile") or {}) for d in docs}
+
+    async def write_profile(
+        self,
+        name: str,
+        profile: LLMProfile,
+        user_id: int | str | None = None,
+    ) -> None:
+        check_user_id(user_id)
+        await ensure_schema(self._db)
+        result = await self._db["llmbroker_registry"].update_one(
+            {"name": name, "user_id": user_id},
+            {"$set": {"profile": profile.to_dict()}},
+        )
+        if result.matched_count == 0:
             raise KeyError(name)
 
     async def aclose(self) -> None:

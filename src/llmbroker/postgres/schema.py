@@ -9,7 +9,7 @@ import asyncio
 
 import asyncpg
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 4
 _schema_ready: set[int] = set()
 _schema_lock = asyncio.Lock()
 
@@ -26,8 +26,9 @@ CREATE TABLE IF NOT EXISTS llmbroker_schema_version (
 )\
 """
 
-# State is a live cache rebuilt from traffic; no data migration needed.
+# State/summaries are live caches rebuilt from traffic; no data migration needed.
 _DROP_STATE = "DROP TABLE IF EXISTS llmbroker_state"
+_DROP_SUMMARIES = "DROP TABLE IF EXISTS llmbroker_summaries"
 
 _DDL = """\
 CREATE TABLE IF NOT EXISTS llmbroker_registry (
@@ -75,10 +76,25 @@ CREATE TABLE IF NOT EXISTS llmbroker_state (
     user_id  TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS llmbroker_state_unique
-    ON llmbroker_state(llm_name, COALESCE(user_id, ''));\
+    ON llmbroker_state(llm_name, COALESCE(user_id, ''));
+CREATE TABLE IF NOT EXISTS llmbroker_summaries (
+    id            BIGSERIAL PRIMARY KEY,
+    name          TEXT NOT NULL,
+    operation     TEXT,
+    kind          TEXT NOT NULL,
+    weight        DOUBLE PRECISION NOT NULL DEFAULT 0,
+    weighted_good DOUBLE PRECISION NOT NULL DEFAULT 0,
+    weight_sq     DOUBLE PRECISION NOT NULL DEFAULT 0,
+    count         INTEGER NOT NULL DEFAULT 0,
+    user_id       TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS llmbroker_summaries_unique
+    ON llmbroker_summaries(name, COALESCE(operation, ''), kind, COALESCE(user_id, ''));\
 """
 
 _ADD_REGISTRY_METADATA = "ALTER TABLE llmbroker_registry ADD COLUMN IF NOT EXISTS metadata JSONB"
+
+_ADD_REGISTRY_PROFILE = "ALTER TABLE llmbroker_registry ADD COLUMN IF NOT EXISTS profile JSONB"
 
 _UPSERT_VERSION = """\
 INSERT INTO llmbroker_schema_version (id, version)
@@ -105,8 +121,10 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
             current = int(row["version"]) if row else 0
             if current < _SCHEMA_VERSION:
                 await conn.execute(_DROP_STATE)
+                await conn.execute(_DROP_SUMMARIES)
             await conn.execute(_DDL)
             if current < _SCHEMA_VERSION:
                 await conn.execute(_ADD_REGISTRY_METADATA)
+                await conn.execute(_ADD_REGISTRY_PROFILE)
                 await conn.execute(_UPSERT_VERSION, _SCHEMA_VERSION)
         _schema_ready.add(id(pool))

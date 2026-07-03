@@ -17,7 +17,13 @@ from llmbroker.models import (
     LLMMetrics,
     Usage,
 )
-from llmbroker.optimizer import FirstAvailablePolicy, Optimizer, OptimizerPolicy, OptimizerTelemetry
+from llmbroker.optimizer import (
+    _CALL_INDEX_CAP,
+    FirstAvailablePolicy,
+    Optimizer,
+    OptimizerPolicy,
+    OptimizerTelemetry,
+)
 from llmbroker.protocols.telemetry import QueryableTelemetryProtocol
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets
@@ -100,26 +106,32 @@ def test_alerts_consume_and_clear():
 def test_should_retire_below_removal_floor_with_enough_samples():
     opt = Optimizer(min_sample_count=5, removal_rate_floor=0.5)
     for _ in range(10):
-        opt._record_rolling("x", None, _call("x", CallStatus.ERROR))
+        opt._record_transport("x", None, _call("x", CallStatus.ERROR))
     assert opt.should_retire("x", None) is True
 
 
 def test_should_not_retire_without_enough_samples():
     opt = Optimizer(min_sample_count=10, removal_rate_floor=0.9)
     for _ in range(3):
-        opt._record_rolling("x", None, _call("x", CallStatus.ERROR))
+        opt._record_transport("x", None, _call("x", CallStatus.ERROR))
     assert opt.should_retire("x", None) is False
 
 
 def test_between_removal_floor_and_usable_floor_not_retired():
-    """Distinguishes the two thresholds: below usable_rate_floor but above removal_rate_floor."""
+    """Distinguishes the two thresholds: below usable_rate_floor but above removal_rate_floor.
+
+    Hand-computed decayed Jeffreys rate (d=9/11) for 3 OK then 7 ERROR: weight~=4.7606,
+    weighted_good~=0.6106 -> rate~=0.1928: below usable floor (0.6), above removal floor (0.1).
+    """
     opt = Optimizer(min_sample_count=10, usable_rate_floor=0.6, removal_rate_floor=0.1)
-    # 3/10 OK -> Laplace rate (3+1)/(10+2) = 0.333: below usable floor, above removal floor.
     for _ in range(3):
-        opt._record_rolling("x", None, _call("x", CallStatus.OK))
+        opt._record_transport("x", None, _call("x", CallStatus.OK))
     for _ in range(7):
-        opt._record_rolling("x", None, _call("x", CallStatus.ERROR))
-    assert opt.usable_rate("x", None) < opt.usable_rate_floor
+        opt._record_transport("x", None, _call("x", CallStatus.ERROR))
+    rate = opt.usable_rate("x", None)
+    assert rate is not None
+    assert rate == pytest.approx(0.192785, abs=1e-5)
+    assert rate < opt.usable_rate_floor
     assert opt.should_retire("x", None) is False
 
 
@@ -127,7 +139,7 @@ def test_well_behaved_daily_capped_llm_not_flagged_for_removal():
     """A long, honored cooldown produces no failed attempts, so usable_rate stays high."""
     opt = Optimizer(min_sample_count=5, removal_rate_floor=0.5)
     for _ in range(20):
-        opt._record_rolling("x", None, _call("x", CallStatus.OK))
+        opt._record_transport("x", None, _call("x", CallStatus.OK))
     assert opt.should_retire("x", None) is False
 
 
@@ -292,42 +304,97 @@ def test_optimizer_telemetry_proxies_queryable():
 
 
 # ---------------------------------------------------------------------------
-# Rolling-aggregate and stats tests
+# Decayed ranking-aggregate tests (d_rank = 9/11, no window — no eviction)
 # ---------------------------------------------------------------------------
 
 
-def test_record_rolling_populates_deque():
-    opt = Optimizer(rolling_window=3)
-    for i in range(4):
-        opt._record_rolling("x", "op", _call("x", CallStatus.OK))
-    deque = opt._rolling[("x", "op")]
-    assert len(deque) == 3  # maxlen=3 enforced
+def test_record_transport_count_is_not_windowed():
+    """Unlike the old rolling deque, count keeps growing — there is no window to evict from."""
+    opt = Optimizer()
+    for _ in range(50):
+        opt._record_transport("x", "op", _call("x", CallStatus.OK))
+    assert opt._ranking[("x", "op")].count == 50
 
 
 def test_usable_rate_none_below_min_sample_count():
     opt = Optimizer(min_sample_count=10)
     for _ in range(9):
-        opt._record_rolling("x", None, _call("x", CallStatus.OK))
+        opt._record_transport("x", None, _call("x", CallStatus.OK))
     assert opt.usable_rate("x", None) is None
 
 
-def test_usable_rate_laplace_smoothed():
+def test_usable_rate_becomes_non_none_exactly_at_min_sample_count():
+    """The trust gate reads count, not the asymptotic weight."""
+    opt = Optimizer(min_sample_count=10)
+    for _ in range(9):
+        opt._record_transport("x", None, _call("x", CallStatus.OK))
+    assert opt.usable_rate("x", None) is None
+    opt._record_transport("x", None, _call("x", CallStatus.OK))
+    assert opt.usable_rate("x", None) is not None
+
+
+def test_usable_rate_jeffreys_smoothed_decayed():
+    """Hand-computed decayed Jeffreys rate (d=9/11) for 5 OK then 5 ERROR: weight~=4.7606,
+    weighted_good~=1.2772 -> rate~=0.3085 (not the old Laplace (5+1)/(10+2)=0.5)."""
     opt = Optimizer(min_sample_count=10)
     for _ in range(5):
-        opt._record_rolling("x", None, _call("x", CallStatus.OK))
+        opt._record_transport("x", None, _call("x", CallStatus.OK))
     for _ in range(5):
-        opt._record_rolling("x", None, _call("x", CallStatus.ERROR))
+        opt._record_transport("x", None, _call("x", CallStatus.ERROR))
     rate = opt.usable_rate("x", None)
     assert rate is not None
-    assert abs(rate - (5 + 1) / (10 + 2)) < 1e-9
+    assert rate == pytest.approx(0.3085069042, abs=1e-6)
+
+
+def test_usable_rate_saturated_good_crosses_floor_after_four_failures():
+    """Regression: a saturated-good model's recent regression is no longer masked.
+
+    Hand-computed: saturating at all-OK gives weight~=5.5 (ceiling 1/(1-d)), rate~=0.9231.
+    Exactly 4 consecutive failures from that state drop it below 0.5 (rate~=0.4561).
+    """
+    opt = Optimizer(min_sample_count=1, usable_rate_floor=0.5)
+    for _ in range(500):
+        opt._record_transport("x", None, _call("x", CallStatus.OK))
+    assert opt.usable_rate("x", None) == pytest.approx(0.923077, abs=1e-5)
+    for _ in range(3):
+        opt._record_transport("x", None, _call("x", CallStatus.ERROR))
+    assert opt.usable_rate("x", None) >= opt.usable_rate_floor
+    opt._record_transport("x", None, _call("x", CallStatus.ERROR))
+    rate = opt.usable_rate("x", None)
+    assert rate is not None
+    assert rate < opt.usable_rate_floor
+    assert rate == pytest.approx(0.456106, abs=1e-5)
+
+
+def test_usable_rate_stale_bad_streak_forgiven_after_comparable_good_streak():
+    """A model is not permanently punished — decay forgives an old failure streak.
+
+    Hand-computed: 10 fails from scratch give rate~=0.0868 (retirement reachable, <0.15);
+    4 subsequent OK events bring it back above the 0.5 routing floor (rate~=0.5731).
+    """
+    opt = Optimizer(min_sample_count=1, usable_rate_floor=0.5, removal_rate_floor=0.15)
+    for _ in range(10):
+        opt._record_transport("x", None, _call("x", CallStatus.ERROR))
+    rate = opt.usable_rate("x", None)
+    assert rate is not None
+    assert rate == pytest.approx(0.086796, abs=1e-5)
+    assert opt.should_retire("x", None) is True
+    for _ in range(4):
+        opt._record_transport("x", None, _call("x", CallStatus.OK))
+    rate = opt.usable_rate("x", None)
+    assert rate is not None
+    assert rate >= opt.usable_rate_floor
+    assert rate == pytest.approx(0.573108, abs=1e-5)
 
 
 def test_mean_latency_ignores_non_ok():
+    """Hand-computed decayed mean (d=9/11) for OK(100) then OK(200): weight~=1.8182,
+    weighted_good~=281.8182 -> mean~=155.0 (not the plain average 150 — recency-weighted)."""
     opt = Optimizer(min_sample_count=1)
-    opt._record_rolling("x", None, _call("x", CallStatus.ERROR, latency_ms=9999))
-    opt._record_rolling("x", None, _call("x", CallStatus.OK, latency_ms=100))
-    opt._record_rolling("x", None, _call("x", CallStatus.OK, latency_ms=200))
-    assert opt.mean_latency_ms("x", None) == 150.0
+    opt._record_transport("x", None, _call("x", CallStatus.ERROR, latency_ms=9999))
+    opt._record_transport("x", None, _call("x", CallStatus.OK, latency_ms=100))
+    opt._record_transport("x", None, _call("x", CallStatus.OK, latency_ms=200))
+    assert opt.mean_latency_ms("x", None) == pytest.approx(155.0)
 
 
 # ---------------------------------------------------------------------------
@@ -353,13 +420,13 @@ def _opt_with_samples(
     operation: str | None,
     min_sample_count: int = 5,
 ) -> Optimizer:
-    opt = Optimizer(min_sample_count=min_sample_count, rolling_window=100)
+    opt = Optimizer(min_sample_count=min_sample_count)
     for _ in range(ok):
-        opt._record_rolling(
+        opt._record_transport(
             llm_name, operation, _call(llm_name, CallStatus.OK, latency_ms=latency_ms)
         )
     for _ in range(err):
-        opt._record_rolling(llm_name, operation, _call(llm_name, CallStatus.ERROR))
+        opt._record_transport(llm_name, operation, _call(llm_name, CallStatus.ERROR))
     return opt
 
 
@@ -375,9 +442,9 @@ def test_optimizer_policy_quality_floor_gates():
     opt = Optimizer(min_sample_count=5, usable_rate_floor=0.6, exploration_fraction=0.0)
     # "a" has a low usable rate; "b" has high rate
     for _ in range(5):
-        opt._record_rolling("a", "op", _call("a", CallStatus.ERROR))
+        opt._record_transport("a", "op", _call("a", CallStatus.ERROR))
     for _ in range(5):
-        opt._record_rolling("b", "op", _call("b", CallStatus.OK, latency_ms=50))
+        opt._record_transport("b", "op", _call("b", CallStatus.OK, latency_ms=50))
     policy = OptimizerPolicy(opt)
     result = policy.select([_cfg("a"), _cfg("b")], operation="op")
     assert result is not None
@@ -389,7 +456,7 @@ def test_optimizer_policy_quality_floor_fallback_when_all_fail():
     opt = Optimizer(min_sample_count=5, usable_rate_floor=0.99, exploration_fraction=0.0)
     for name in ("a", "b"):
         for _ in range(5):
-            opt._record_rolling(name, None, _call(name, CallStatus.ERROR))
+            opt._record_transport(name, None, _call(name, CallStatus.ERROR))
     policy = OptimizerPolicy(opt)
     result = policy.select([_cfg("a"), _cfg("b")], operation=None)
     assert result is not None
@@ -402,7 +469,7 @@ def test_floor_alert_debounced():
     opt = Optimizer(min_sample_count=5, usable_rate_floor=0.99, exploration_fraction=0.0)
     for name in ("a", "b"):
         for _ in range(5):
-            opt._record_rolling(name, None, _call(name, CallStatus.ERROR))
+            opt._record_transport(name, None, _call(name, CallStatus.ERROR))
     policy = OptimizerPolicy(opt)
     policy.select([_cfg("a"), _cfg("b")], operation=None)
     policy.select([_cfg("a"), _cfg("b")], operation=None)
@@ -414,8 +481,8 @@ def test_floor_alert_debounce_separate_operations():
     opt = Optimizer(min_sample_count=5, usable_rate_floor=0.99, exploration_fraction=0.0)
     for name in ("a", "b"):
         for _ in range(5):
-            opt._record_rolling(name, "op1", _call(name, CallStatus.ERROR))
-            opt._record_rolling(name, "op2", _call(name, CallStatus.ERROR))
+            opt._record_transport(name, "op1", _call(name, CallStatus.ERROR))
+            opt._record_transport(name, "op2", _call(name, CallStatus.ERROR))
     policy = OptimizerPolicy(opt)
     policy.select([_cfg("a"), _cfg("b")], operation="op1")
     policy.select([_cfg("a"), _cfg("b")], operation="op2")
@@ -430,12 +497,12 @@ def test_optimizer_policy_background_ranks_by_quality():
         usable_rate_floor=0.0,
         background_operations=frozenset({"batch"}),
     )
-    # "hi": 5/5 OK → Laplace rate = 6/7 ≈ 0.857; "lo": 1/5 OK → 2/7 ≈ 0.286; same latency
+    # "hi": 5/5 OK → high decayed rate; "lo": 1 OK after 4 ERROR → low decayed rate; same latency
     for _ in range(5):
-        opt._record_rolling("hi", "batch", _call("hi", CallStatus.OK, latency_ms=100))
+        opt._record_transport("hi", "batch", _call("hi", CallStatus.OK, latency_ms=100))
     for _ in range(4):
-        opt._record_rolling("lo", "batch", _call("lo", CallStatus.ERROR))
-    opt._record_rolling("lo", "batch", _call("lo", CallStatus.OK, latency_ms=100))
+        opt._record_transport("lo", "batch", _call("lo", CallStatus.ERROR))
+    opt._record_transport("lo", "batch", _call("lo", CallStatus.OK, latency_ms=100))
     policy = OptimizerPolicy(opt)
     result = policy.select([_cfg("lo"), _cfg("hi")], operation="batch")
     assert result is not None
@@ -446,9 +513,9 @@ def test_optimizer_policy_interactive_ranks_by_latency():
     opt = Optimizer(min_sample_count=5, exploration_fraction=0.0)
     # Both have identical good quality; "fast" has lower latency
     for _ in range(5):
-        opt._record_rolling("fast", "op", _call("fast", CallStatus.OK, latency_ms=10))
+        opt._record_transport("fast", "op", _call("fast", CallStatus.OK, latency_ms=10))
     for _ in range(5):
-        opt._record_rolling("slow", "op", _call("slow", CallStatus.OK, latency_ms=500))
+        opt._record_transport("slow", "op", _call("slow", CallStatus.OK, latency_ms=500))
     policy = OptimizerPolicy(opt)
     result = policy.select([_cfg("slow"), _cfg("fast")], operation="op")
     assert result is not None
@@ -459,9 +526,9 @@ def test_optimizer_policy_exploration_bypasses_ranking():
     # With exploration_fraction=1.0, select is random — run enough times to observe non-determinism
     opt = Optimizer(min_sample_count=5, exploration_fraction=1.0)
     for _ in range(5):
-        opt._record_rolling("fast", "op", _call("fast", CallStatus.OK, latency_ms=1))
+        opt._record_transport("fast", "op", _call("fast", CallStatus.OK, latency_ms=1))
     for _ in range(5):
-        opt._record_rolling("slow", "op", _call("slow", CallStatus.OK, latency_ms=9999))
+        opt._record_transport("slow", "op", _call("slow", CallStatus.OK, latency_ms=9999))
     policy = OptimizerPolicy(opt)
     candidates = [_cfg("fast"), _cfg("slow")]
     seen = {policy.select(candidates, operation="op").name for _ in range(50)}
@@ -472,7 +539,7 @@ def test_optimizer_policy_unknown_latency_ranked_last_interactive():
     opt = Optimizer(min_sample_count=5, exploration_fraction=0.0)
     # "known" has measured latency; "unknown" has no OK calls → latency=inf
     for _ in range(5):
-        opt._record_rolling("known", "op", _call("known", CallStatus.OK, latency_ms=999))
+        opt._record_transport("known", "op", _call("known", CallStatus.OK, latency_ms=999))
     policy = OptimizerPolicy(opt)
     result = policy.select([_cfg("unknown"), _cfg("known")], operation="op")
     assert result is not None
@@ -756,5 +823,218 @@ def test_alerts_returns_empty_optimize_false(tmp_path):
             optimize=False,
         ) as broker:
             assert await broker.alerts() == []
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Quality aggregate + derived demotions (d_quality = 35/37)
+# ---------------------------------------------------------------------------
+
+
+def test_quality_aggregate_matches_hand_computed_values():
+    """Hand-computed (d=35/37) for ratings [0.8, 0.6, 1.0]:
+    weight~=2.8408, weighted_good~=2.2834, weight_sq~=2.6955, count=3 (un-decayed)."""
+    opt = Optimizer()
+    for score in (0.8, 0.6, 1.0):
+        opt._record_quality("x", "op", score)
+    summary = opt._quality[("x", "op")]
+    assert summary.count == 3
+    assert summary.weight == pytest.approx(2.840760, abs=1e-5)
+    assert summary.weighted_good == pytest.approx(2.283419, abs=1e-5)
+    assert summary.weight_sq == pytest.approx(2.695505, abs=1e-5)
+
+
+def _saturate_quality(
+    opt: Optimizer,
+    name: str,
+    operation: str | None,
+    score: float,
+    n: int = 500,
+) -> None:
+    for _ in range(n):
+        opt._record_quality(name, operation, score)
+
+
+def test_evaluate_demotions_all_evidenced_ops_bad_globally_demoted():
+    opt = Optimizer()
+    _saturate_quality(opt, "x", "op_a", 0.1)
+    _saturate_quality(opt, "x", "op_b", 0.05)
+    demotions = opt.evaluate_demotions("x")
+    assert demotions == {"op_a": True, "op_b": True}
+    assert opt.is_globally_demoted("x") is True
+
+
+def test_evaluate_demotions_mixed_only_bad_op_demoted():
+    opt = Optimizer()
+    _saturate_quality(opt, "x", "op_a", 0.1)  # bad
+    _saturate_quality(opt, "x", "op_b", 0.9)  # good
+    demotions = opt.evaluate_demotions("x")
+    assert demotions == {"op_a": True, "op_b": False}
+    assert opt.is_globally_demoted("x") is False
+
+
+def test_evaluate_demotions_below_min_count_nothing_demoted():
+    opt = Optimizer()
+    for _ in range(5):  # well below quality_effective_n=36
+        opt._record_quality("x", "op", 0.05)
+    demotions = opt.evaluate_demotions("x")
+    assert demotions == {"op": False}
+    assert opt.is_globally_demoted("x") is False
+
+
+def test_evaluate_demotions_no_evidence_returns_empty_and_not_globally_demoted():
+    opt = Optimizer()
+    assert opt.evaluate_demotions("ghost") == {}
+    assert opt.is_globally_demoted("ghost") is False
+
+
+def test_is_globally_demoted_ignores_under_evidenced_operation():
+    """Regression: a model confidently demoted on one operation must still be flagged
+    globally demoted even though a brand-new operation has too few samples to judge —
+    the under-evidenced operation must not count as "not demoted" and mask the rest."""
+    opt = Optimizer()
+    _saturate_quality(opt, "x", "op_a", 0.05)  # confidently bad, sufficient evidence
+    for _ in range(5):  # well below quality_effective_n=36 — insufficient evidence
+        opt._record_quality("x", "op_b", 0.95)
+    demotions = opt.evaluate_demotions("x")
+    assert demotions == {"op_a": True, "op_b": False}  # op_b's False masks "no evidence"
+    assert opt.is_globally_demoted("x") is True
+
+
+def test_decision_band_floor_minus_margin_trips_bound_floor_does_not():
+    """Hand-computed at saturation (n_eff~=36, z~=1.9600 for 95% confidence):
+    p=quality_floor-quality_margin=0.15 -> Wilson upper~=0.2996 < 0.3 (demoted);
+    p=quality_floor=0.3 -> Wilson upper~=0.4629 >= 0.3 (never demoted)."""
+    opt = Optimizer(quality_floor=0.3, quality_margin=0.15, quality_confidence=0.95)
+    _saturate_quality(opt, "bad", "op", 0.15, n=2000)
+    _saturate_quality(opt, "good", "op", 0.30, n=2000)
+    assert opt.evaluate_demotions("bad") == {"op": True}
+    assert opt.evaluate_demotions("good") == {"op": False}
+
+
+def test_manual_latch_suppresses_evaluate_demotions_entirely():
+    opt = Optimizer()
+    _saturate_quality(opt, "x", "op", 0.05)
+    assert opt.evaluate_demotions("x") == {"op": True}
+    opt.set_benched("x")
+    assert opt.evaluate_demotions("x") == {}
+    assert opt.is_globally_demoted("x") is False
+    opt.clear_benched("x")
+    assert opt.evaluate_demotions("x") == {"op": True}
+
+
+def test_demoted_op_with_no_further_events_keeps_frozen_aggregate():
+    opt = Optimizer()
+    _saturate_quality(opt, "x", "op", 0.05)
+    summary = opt._quality[("x", "op")]
+    before = (summary.weight, summary.weighted_good, summary.weight_sq, summary.count)
+    assert opt.evaluate_demotions("x") == {"op": True}
+    assert opt.evaluate_demotions("x") == {"op": True}
+    after = (summary.weight, summary.weighted_good, summary.weight_sq, summary.count)
+    assert before == after
+
+
+def test_derived_recovery_globally_demoted_model_rated_well_on_new_operation():
+    """No explicit un-demote call — new evidence on an untried operation changes the derivation."""
+    opt = Optimizer()
+    _saturate_quality(opt, "x", "op_a", 0.05)
+    assert opt.is_globally_demoted("x") is True
+    _saturate_quality(opt, "x", "op_b", 0.95)
+    assert opt.evaluate_demotions("x") == {"op_a": True, "op_b": False}
+    assert opt.is_globally_demoted("x") is False
+
+
+def test_reset_quality_clears_all_operations_for_model():
+    opt = Optimizer()
+    _saturate_quality(opt, "x", "op_a", 0.05)
+    _saturate_quality(opt, "x", "op_b", 0.05)
+    opt._record_quality("y", "op_a", 0.05)
+    opt.reset_quality("x")
+    assert opt.evaluate_demotions("x") == {}
+    assert ("y", "op_a") in opt._quality
+
+
+# ---------------------------------------------------------------------------
+# load_summaries / to_profile round trip
+# ---------------------------------------------------------------------------
+
+
+def test_to_profile_and_load_summaries_round_trip_reproduces_same_bounds():
+    opt = Optimizer()
+    for _ in range(20):
+        opt._record_transport("x", "op", _call("x", CallStatus.OK, latency_ms=100))
+    _saturate_quality(opt, "x", "op", 0.05)
+    demotions_before = opt.evaluate_demotions("x")
+    rate_before = opt.usable_rate("x", "op")
+    latency_before = opt.mean_latency_ms("x", "op")
+
+    profile = opt.to_profile("x")
+
+    opt2 = Optimizer()
+    opt2.load_summaries("x", profile)
+    assert opt2.evaluate_demotions("x") == demotions_before
+    assert opt2.usable_rate("x", "op") == pytest.approx(rate_before)
+    assert opt2.mean_latency_ms("x", "op") == pytest.approx(latency_before)
+
+
+# ---------------------------------------------------------------------------
+# record_quality via OptimizerTelemetry: call_id -> (name, operation) resolution
+# ---------------------------------------------------------------------------
+
+
+def test_record_quality_updates_the_right_name_and_operation():
+    async def run():
+        pool = LLMPool(state_store=None, user_id=None)
+        pool.add(_cfg(), "key")
+        opt = Optimizer()
+        opt_tel = _opt_tel(opt, pool)
+
+        call = _call("x", CallStatus.OK, operation="summarize")
+        await opt_tel.record(call)
+        await opt_tel.record_quality(call.id, 0.8)
+
+        summary = opt._quality[("x", "summarize")]
+        assert summary.count == 1
+        assert summary.weighted_good == pytest.approx(0.8)
+
+    asyncio.run(run())
+
+
+def test_record_quality_unknown_call_id_warns_and_is_dropped(caplog):
+    async def run():
+        pool = LLMPool(state_store=None, user_id=None)
+        pool.add(_cfg(), "key")
+        opt = Optimizer()
+        opt_tel = _opt_tel(opt, pool)
+
+        with caplog.at_level("WARNING"):
+            await opt_tel.record_quality("never-recorded", 0.8)
+
+        assert opt._quality == {}
+        assert any("not indexed" in r.message for r in caplog.records)
+
+    asyncio.run(run())
+
+
+def test_call_index_never_exceeds_cap_under_sustained_traffic():
+    async def run():
+        pool = LLMPool(state_store=None, user_id=None)
+        pool.add(_cfg(), "key")
+        opt = Optimizer()
+        opt_tel = _opt_tel(opt, pool)
+
+        for i in range(_CALL_INDEX_CAP + 500):
+            await opt_tel.record(
+                Call(
+                    id=f"call-{i}",
+                    llm_name="x",
+                    operation=None,
+                    trace_id=None,
+                    status=CallStatus.OK,
+                )
+            )
+
+        assert len(opt_tel._call_index) <= _CALL_INDEX_CAP
 
     asyncio.run(run())

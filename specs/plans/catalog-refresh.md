@@ -1,31 +1,14 @@
 # Catalog refresh — a repeatable prompt for updating the curated preset
 
-## Plan sequence — step 2 of 2
-
 > **Prerequisites:** the `effort`/`value`/`rate_limit` taxonomies and the "one
 > useful model per provider" curation rules are already fixed and implemented
 > (`EffortLevel`/`ValueLevel` in `models.py`; see
 > [`freetier-providers.md`](../reference/freetier-providers.md)) — this
-> runbook *consumes* them. It also references `SeedPolicy.SYNC` from
-> `optimizer-learned-profile.md` (step 1) in "Interaction with the learned
-> profile" — no code dependency, but that section is only real once step 1
-> lands. **May run in parallel with step 1. Blocks:** nothing.
-
-The remaining two plans form one dependency chain; execute in this order (the
-storage-shape foundation — columns-vs-JSON, `RateLimit`, `LLMConfig.rate_limit`,
-the `LLMState` ⇄ dict boundary, the version-gated `ensure_schema` toolkit — and
-the curated catalog knowledge, effort/value onboarding, the simplified
-two-phase AVAILABLE/COOLING reliability model, and the keyless-not-routable
-pool change are already implemented; see
-[`architecture.md`](../reference/architecture.md) and
-[`optimizer.md`](../reference/optimizer.md)):
-
-1. **`optimizer-learned-profile.md`** — the durable learned half
-   (per-operation quality aggregates carried in the registry, derived bench
-   verdicts), cluster-shared aggregates via the state store, and
-   `SeedPolicy.SYNC`; extends the existing routable predicate.
-2. **`catalog-refresh.md`** *(this plan)* — the manual re-curation runbook;
-   consumes the already-fixed taxonomies and may run in parallel with (1).
+> runbook *consumes* them. The learned-profile plan it also depends on
+> (`SeedPolicy.SYNC`, the two-halves catalog, entry-identity immutability) is
+> likewise already implemented; see
+> [`architecture.md`](../reference/architecture.md) and
+> [`optimizer.md`](../reference/optimizer.md). **Blocks:** nothing.
 
 ## Problem statement
 
@@ -80,9 +63,9 @@ access). It directs the agent to:
      exists to exploit the difference);
    - keep the pool multi-provider (single-provider or paid-tier presets defeat
      the premise).
-4. **Respect the catalog-identity invariants** (from
-   [`optimizer-learned-profile.md`](optimizer-learned-profile.md) — deployments
-   carry learned per-entry evidence, and `SeedPolicy.SYNC` enforces these):
+4. **Respect the catalog-identity invariants** (see
+   [`optimizer.md`](../reference/optimizer.md) — deployments carry learned
+   per-entry evidence, and `SeedPolicy.SYNC` enforces these):
    - **a model bump is a new entry with a new name** — never change the
      `model` of an existing `[[llms]]` entry; `SYNC` refuses such a change
      with an alert, because the deployment's learned evidence is about the
@@ -130,8 +113,8 @@ access). It directs the agent to:
 ## Interaction with the learned profile
 
 Catalog refresh only touches the **static half** of the catalog (the preset).
-Under [`optimizer-learned-profile.md`](optimizer-learned-profile.md), applying a
-refreshed preset to a running deployment goes through `SeedPolicy.SYNC`, which:
+Applying a refreshed preset to a running deployment goes through
+`SeedPolicy.SYNC` (see [`optimizer.md`](../reference/optimizer.md)), which:
 
 - adds new entries and updates the operational fields of existing ones —
   never `model` (identity is immutable) and **never** the learned profile;

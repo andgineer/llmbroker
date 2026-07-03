@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _schema_ready: set[int] = set()
 _schema_lock = asyncio.Lock()
 
@@ -54,6 +54,11 @@ async def ensure_schema(db: AsyncIOMotorDatabase) -> None:
             [("llm_name", 1), ("user_id", 1)],
             unique=True,
             name="llmbroker_state_unique",
+        )
+        await db["llmbroker_summaries"].create_index(
+            [("name", 1), ("operation", 1), ("kind", 1), ("user_id", 1)],
+            unique=True,
+            name="llmbroker_summaries_unique",
         )
         await db["llmbroker_schema_version"].replace_one(
             {},

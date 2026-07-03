@@ -258,9 +258,11 @@ async def any_state_store(request, tmp_path_factory, pg_pool, mongo_db) -> State
         yield llmbroker.postgres.StateStore(pg_pool)
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM llmbroker_state")
+            await conn.execute("DELETE FROM llmbroker_summaries")
     elif param == "mongodb":
         yield llmbroker.mongodb.StateStore(mongo_db)
         await mongo_db["llmbroker_state"].delete_many({})
+        await mongo_db["llmbroker_summaries"].delete_many({})
     elif param == "redis":
         client = fakeredis.aioredis.FakeRedis(decode_responses=True)
         yield llmbroker.redis.StateStore(client)
@@ -281,8 +283,20 @@ _ALL_STACKS = [
 ]
 _PERSISTENT_STACKS = ["all_sqlite", "all_postgres", "all_mongodb", "scaled"]
 
-_PG_TABLES = ("llmbroker_registry", "llmbroker_calls", "llmbroker_secrets", "llmbroker_state")
-_MONGO_COLLS = ("llmbroker_registry", "llmbroker_calls", "llmbroker_secrets", "llmbroker_state")
+_PG_TABLES = (
+    "llmbroker_registry",
+    "llmbroker_calls",
+    "llmbroker_secrets",
+    "llmbroker_state",
+    "llmbroker_summaries",
+)
+_MONGO_COLLS = (
+    "llmbroker_registry",
+    "llmbroker_calls",
+    "llmbroker_secrets",
+    "llmbroker_state",
+    "llmbroker_summaries",
+)
 
 
 @contextlib.asynccontextmanager

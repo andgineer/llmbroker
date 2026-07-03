@@ -9,7 +9,7 @@ hang additive, data-preserving ALTERs off the version marker.
 
 import aiosqlite
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 4
 
 _CREATE_REGISTRY = """
 CREATE TABLE IF NOT EXISTS llmbroker_registry (
@@ -84,7 +84,27 @@ _CREATE_IDX_STATE_UNIQUE = (
     " ON llmbroker_state(llm_name, COALESCE(user_id, ''))"
 )
 
+_CREATE_SUMMARIES = """
+CREATE TABLE IF NOT EXISTS llmbroker_summaries (
+    name          TEXT NOT NULL,
+    operation     TEXT,
+    kind          TEXT NOT NULL,
+    weight        REAL NOT NULL DEFAULT 0,
+    weighted_good REAL NOT NULL DEFAULT 0,
+    weight_sq     REAL NOT NULL DEFAULT 0,
+    count         INTEGER NOT NULL DEFAULT 0,
+    user_id       TEXT
+)
+"""
+
+_CREATE_IDX_SUMMARIES_UNIQUE = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS llmbroker_summaries_unique"
+    " ON llmbroker_summaries(name, COALESCE(operation, ''), kind, COALESCE(user_id, ''))"
+)
+
 _ADD_REGISTRY_METADATA = "ALTER TABLE llmbroker_registry ADD COLUMN metadata TEXT"
+
+_ADD_REGISTRY_PROFILE = "ALTER TABLE llmbroker_registry ADD COLUMN profile TEXT"
 
 _schema_ready: dict[str, int] = {}
 
@@ -95,23 +115,28 @@ async def _apply_ddl(db: aiosqlite.Connection) -> None:
     row = await cursor.fetchone()
     current = int(row[0]) if row else 0
     if current < _SCHEMA_VERSION:
-        # State is a live cache rebuilt from traffic; no data migration needed.
+        # State/summaries are live caches rebuilt from traffic; no data migration needed.
         await db.execute("DROP TABLE IF EXISTS llmbroker_state")
+        await db.execute("DROP TABLE IF EXISTS llmbroker_summaries")
     await db.execute(_CREATE_REGISTRY)
     await db.execute(_CREATE_CALLS)
     await db.execute(_CREATE_SECRETS)
     await db.execute(_CREATE_STATE)
+    await db.execute(_CREATE_SUMMARIES)
     await db.execute(_CREATE_IDX_LLM_NAME)
     await db.execute(_CREATE_IDX_CALLED_AT)
     await db.execute(_CREATE_IDX_CALLS_USER_ID)
     await db.execute(_CREATE_IDX_REGISTRY_UNIQUE)
     await db.execute(_CREATE_IDX_SECRETS_UNIQUE)
     await db.execute(_CREATE_IDX_STATE_UNIQUE)
+    await db.execute(_CREATE_IDX_SUMMARIES_UNIQUE)
     if current < _SCHEMA_VERSION:
         table_info = await (await db.execute("PRAGMA table_info(llmbroker_registry)")).fetchall()
         existing_cols = {r[1] for r in table_info}
         if "metadata" not in existing_cols:
             await db.execute(_ADD_REGISTRY_METADATA)
+        if "profile" not in existing_cols:
+            await db.execute(_ADD_REGISTRY_PROFILE)
         await db.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
 
 

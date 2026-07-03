@@ -34,15 +34,17 @@ async def test_sqlite_ensure_schema_migrates_old_state_and_registry_shape(tmp_pa
         table_info = await (await db.execute("PRAGMA table_info(llmbroker_registry)")).fetchall()
         col_names = {c[1] for c in table_info}
         assert "metadata" in col_names
+        assert "profile" in col_names
 
         row = await (
             await db.execute(
-                "SELECT base_url, metadata FROM llmbroker_registry WHERE name = ?",
+                "SELECT base_url, metadata, profile FROM llmbroker_registry WHERE name = ?",
                 ["legacy-llm"],
             )
         ).fetchone()
         assert row[0] == "https://legacy/v1"
         assert row[1] is None
+        assert row[2] is None
 
         state_cols = {
             c[1] for c in await (await db.execute("PRAGMA table_info(llmbroker_state)")).fetchall()
@@ -84,13 +86,17 @@ async def test_postgres_ensure_schema_migrates_old_state_and_registry_shape(pg_p
                 "SELECT column_name FROM information_schema.columns"
                 " WHERE table_name = 'llmbroker_registry'",
             )
-            assert "metadata" in {r["column_name"] for r in cols}
+            col_names = {r["column_name"] for r in cols}
+            assert "metadata" in col_names
+            assert "profile" in col_names
 
             row = await conn.fetchrow(
-                "SELECT base_url, metadata FROM llmbroker_registry WHERE name = 'legacy-llm'",
+                "SELECT base_url, metadata, profile FROM llmbroker_registry"
+                " WHERE name = 'legacy-llm'",
             )
             assert row["base_url"] == "https://legacy/v1"
             assert row["metadata"] is None
+            assert row["profile"] is None
 
             state_cols = await conn.fetch(
                 "SELECT column_name FROM information_schema.columns"
@@ -102,3 +108,120 @@ async def test_postgres_ensure_schema_migrates_old_state_and_registry_shape(pg_p
     finally:
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM llmbroker_registry WHERE name = 'legacy-llm'")
+
+
+async def test_sqlite_ensure_schema_adds_profile_column_from_v2_shape(tmp_path):
+    """Version 2 already has ``metadata`` but not ``profile`` — the narrower migration step."""
+    db_path = str(tmp_path / "v2.db")
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "CREATE TABLE llmbroker_registry (name TEXT NOT NULL, base_url TEXT NOT NULL,"
+            " model TEXT NOT NULL, api_key_ref TEXT NOT NULL, metadata TEXT, user_id TEXT)",
+        )
+        await db.execute(
+            "INSERT INTO llmbroker_registry (name, base_url, model, api_key_ref, user_id)"
+            " VALUES ('v2-llm', 'https://v2/v1', 'm', 'K', NULL)",
+        )
+        await db.execute("PRAGMA user_version = 2")
+        await db.commit()
+
+    async with aiosqlite.connect(db_path) as db:
+        await sqlite_schema.ensure_schema(db, db_path)
+
+        table_info = await (await db.execute("PRAGMA table_info(llmbroker_registry)")).fetchall()
+        col_names = {c[1] for c in table_info}
+        assert "profile" in col_names
+
+        row = await (
+            await db.execute(
+                "SELECT base_url, profile FROM llmbroker_registry WHERE name = ?",
+                ["v2-llm"],
+            )
+        ).fetchone()
+        assert row[0] == "https://v2/v1"
+        assert row[1] is None
+
+
+async def test_postgres_ensure_schema_adds_profile_column_from_v2_shape(pg_pool):
+    async with pg_pool.acquire() as conn:
+        await conn.execute("ALTER TABLE llmbroker_registry DROP COLUMN IF EXISTS profile")
+        await conn.execute(
+            "INSERT INTO llmbroker_registry (name, base_url, model, api_key_ref, user_id)"
+            " VALUES ('v2-llm', 'https://v2/v1', 'm', 'K', NULL)",
+        )
+        await conn.execute(
+            "INSERT INTO llmbroker_schema_version (id, version) VALUES (1, 2)"
+            " ON CONFLICT (id) DO UPDATE SET version = 2",
+        )
+
+    pg_schema._schema_ready.discard(id(pg_pool))
+    try:
+        await pg_schema.ensure_schema(pg_pool)
+
+        async with pg_pool.acquire() as conn:
+            cols = await conn.fetch(
+                "SELECT column_name FROM information_schema.columns"
+                " WHERE table_name = 'llmbroker_registry'",
+            )
+            assert "profile" in {r["column_name"] for r in cols}
+
+            row = await conn.fetchrow(
+                "SELECT base_url, profile FROM llmbroker_registry WHERE name = 'v2-llm'",
+            )
+            assert row["base_url"] == "https://v2/v1"
+            assert row["profile"] is None
+    finally:
+        async with pg_pool.acquire() as conn:
+            await conn.execute("DELETE FROM llmbroker_registry WHERE name = 'v2-llm'")
+
+
+async def test_sqlite_ensure_schema_drops_and_recreates_summaries_on_version_bump(tmp_path):
+    """llmbroker_summaries is disposable — dropped and recreated empty on a version bump."""
+    db_path = str(tmp_path / "sum.db")
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "CREATE TABLE llmbroker_summaries (name TEXT NOT NULL, operation TEXT,"
+            " kind TEXT NOT NULL, weight REAL, weighted_good REAL, weight_sq REAL,"
+            " count INTEGER, user_id TEXT)",
+        )
+        await db.execute(
+            "INSERT INTO llmbroker_summaries"
+            " (name, operation, kind, weight, weighted_good, weight_sq, count, user_id)"
+            " VALUES ('stale', NULL, 'quality', 1.0, 1.0, 1.0, 1, NULL)",
+        )
+        await db.execute("PRAGMA user_version = 3")
+        await db.commit()
+
+    async with aiosqlite.connect(db_path) as db:
+        await sqlite_schema.ensure_schema(db, db_path)
+        rows = await (await db.execute("SELECT * FROM llmbroker_summaries")).fetchall()
+        assert rows == []
+
+
+async def test_postgres_ensure_schema_drops_and_recreates_summaries_on_version_bump(pg_pool):
+    async with pg_pool.acquire() as conn:
+        await conn.execute("DROP TABLE IF EXISTS llmbroker_summaries")
+        await conn.execute(
+            "CREATE TABLE llmbroker_summaries (name TEXT NOT NULL, operation TEXT,"
+            " kind TEXT NOT NULL, weight DOUBLE PRECISION, weighted_good DOUBLE PRECISION,"
+            " weight_sq DOUBLE PRECISION, count INTEGER, user_id TEXT)",
+        )
+        await conn.execute(
+            "INSERT INTO llmbroker_summaries"
+            " (name, operation, kind, weight, weighted_good, weight_sq, count, user_id)"
+            " VALUES ('stale', NULL, 'quality', 1.0, 1.0, 1.0, 1, NULL)",
+        )
+        await conn.execute(
+            "INSERT INTO llmbroker_schema_version (id, version) VALUES (1, 3)"
+            " ON CONFLICT (id) DO UPDATE SET version = 3",
+        )
+
+    pg_schema._schema_ready.discard(id(pg_pool))
+    try:
+        await pg_schema.ensure_schema(pg_pool)
+        async with pg_pool.acquire() as conn:
+            rows = await conn.fetch("SELECT * FROM llmbroker_summaries")
+            assert rows == []
+    finally:
+        async with pg_pool.acquire() as conn:
+            await conn.execute("DELETE FROM llmbroker_summaries")

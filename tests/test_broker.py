@@ -296,6 +296,15 @@ class _FakeStateStore:
     async def write(self, name: str, state: LLMState, user_id: int | str | None = None) -> None:
         pass
 
+    async def apply_summary_delta(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    async def read_summaries(self, user_id: int | str | None = None) -> dict:
+        return {}
+
+    async def seed_summary(self, *args: object, **kwargs: object) -> None:
+        pass
+
 
 class _PerUserStateStore:
     """StateStoreProtocol that segregates state by user_id."""
@@ -308,6 +317,15 @@ class _PerUserStateStore:
 
     async def write(self, name: str, state: LLMState, user_id: int | str | None = None) -> None:
         self._data.setdefault(user_id, {})[name] = state
+
+    async def apply_summary_delta(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    async def read_summaries(self, user_id: int | str | None = None) -> dict:
+        return {}
+
+    async def seed_summary(self, *args: object, **kwargs: object) -> None:
+        pass
 
 
 def test_snapshot_picks_up_state_store(tmp_path):
