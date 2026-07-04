@@ -2,17 +2,25 @@
 
 Prerequisites: `specs/plans/simplify-core.md` (Plan 1) and
 `specs/plans/simplify-learning.md` (Plan 2) are fully landed and green. Plan 2
-already removed the summaries/fold machinery, so the state store here is
-**cooldowns only** — plain keyed records, no atomic arithmetic anywhere.
+removed the summaries/fold machinery **and the state store concept** (shared
+cooldowns derive from the journal) — this plan deletes the leftover state-store
+modules and the Redis backend, and replaces stacks with the single source
+parameter.
 
-Zero functional change. Public API stays intact: `AsyncBroker`/`Broker` surface,
-subpackage class names (`llmbroker.sqlite.Registry`, …), every port protocol.
+Zero functional change beyond the agreed API cuts: `stack=` is replaced by the
+source parameter (see 3.3); the Redis extra disappears; the registry protocol
+drops its `user_id` parameters (the registry is global — Plan 2 already passes
+`None` everywhere, this plan deletes the parameter and the table column).
+Subpackage class names (`llmbroker.sqlite.Registry`, …) and the other port
+protocols stay, modulo Plan 2's telemetry→knowledge rename.
 
 Expected outcome: backend code shrinks to roughly one driver file (~150–200
 lines) per DB plus one shared ports module; adding a new DB backend = one driver
-file. Per-call DB cost: one telemetry insert, one journal-rebuild read per 60s
-activity window (Plan 2), state reads/writes only around failures (cached 2s);
-profile writes only on `disable_llm`/`enable_llm`. Idle: 0.
+file. Per-call DB cost: one journal insert, one journal-rebuild read per 60s
+activity window (Plan 2 — it also carries shared cooldowns);
+registry writes only on `sync`; disabled-map writes only on `set_disabled`
+(plus the name-seeding at `sync`);
+retention purge at most once per hour of activity (Plan 2 step 2.7). Idle: 0.
 
 ## Rules for the implementer (read first)
 
@@ -52,66 +60,75 @@ every driver's `ensure_schema`:
 @dataclass(frozen=True)
 class TableSpec:
     name: str                      # "llmbroker_registry", ...
-    key: tuple[str, ...]           # identity columns, e.g. ("name",); user scope implicit
+    key: tuple[str, ...]           # identity columns, matched null-safe; where a user
+                                   # scope exists it is just a key column: secrets key
+                                   # is ("ref", "user_id"), registry key is ("name",)
     columns: dict[str, str]        # portable types: "text" | "int" | "real" | "json" | "timestamp"
     indexes: tuple[tuple[str, ...], ...] = ()
 
-TABLES: dict[str, TableSpec] = {...}   # registry, calls, secrets, state
-SCHEMA_VERSION = 5                     # bump: llmbroker_summaries is gone (Plan 2)
+TABLES: dict[str, TableSpec] = {...}   # registry, calls, disabled, secrets
+SCHEMA_VERSION = 5                     # bump: summaries and state tables gone; registry becomes
+                                       # a pure preset mirror (user_id, origin, profile columns
+                                       # gone — Plan 2); calls gains cooldown_until + key_hash;
+                                       # new tiny llmbroker_disabled (admin verdicts)
 ```
 
 Column sets mirror the current DDL (`sqlite/schema.py:14-107`) minus the
-`llmbroker_summaries` table. Registry keeps `metadata` and `profile` as **two
-separate** json columns — after Plan 2 `profile` holds only the manual bench
-latch (+ `quality_reset_at`), and the seed path must still never be able to
-touch it.
+`llmbroker_summaries` table. The registry table keeps `metadata` as its single
+json column and has **no `user_id`, `origin`, `profile`, or `disabled`
+columns** — it is a pure mirror of the preset, written only by `sync`
+(Plan 2). Admin verdicts live in the new tiny `llmbroker_disabled` table (key
+`name`, column `disabled`), written by `set_disabled` and seeded
+with model names at `sync` (Plan 2).
+The calls table keeps `user_id` as a plain attribution column (not a scope)
+and gains `cooldown_until` and `key_hash` (Plan 2); quality rows are
+self-contained (Plan 2) — nothing references call rows.
 
 **Schema policy (single known installation).** `ensure_schema` creates missing
 tables/indexes and stamps `SCHEMA_VERSION` on a fresh database. On a
 version-marker mismatch it raises a clear, actionable error, e.g.
 `"llmbroker schema version 4 found, this release expects 5 — drop the llmbroker_*
-tables and restart (llmbroker_state is a disposable cache; export
-registry/secrets/calls first if you need them)"`. **No upgrade machinery**:
+tables and restart (export registry/secrets/calls first if you need them)"`. **No upgrade machinery**:
 delete the additive `ALTER TABLE` path, the `PRAGMA table_info` column sniffing
 (`sqlite/schema.py:133-140`), and the drop-before-create ordering — there is
 exactly one known installation, upgraded manually by its operator.
 
 **`backends/driver.py`** — the per-DB contract. Record-shaped, not domain-shaped.
-`Row = dict[str, object]`, `Key = tuple[object, ...]`, `Scope = int | str | None`:
+`Row = dict[str, object]`, `Key = tuple[object, ...]`. Key columns are matched
+**null-safe** (`IS NOT DISTINCT FROM` / explicit `None` in mongo) — required by
+the nullable `user_id` key column of secrets, harmless for the rest:
 
 ```python
 class Driver(Protocol):
     async def ensure_schema(self) -> None: ...
-    # keyed records (registry, secrets, state)
-    async def fetch(self, table: str, scope: Scope) -> list[Row]: ...
+    # keyed records (registry, disabled, secrets)
+    async def fetch(self, table: str) -> list[Row]: ...
         # ordered by key columns — registry load order feeds selection priority,
         # matching today's ORDER BY name (postgres/registry.py:35)
-    async def get(self, table: str, key: Key, scope: Scope) -> Row | None: ...
-    async def insert(self, table: str, key: Key, row: Row, scope: Scope) -> None: ...  # DuplicateKeyError
-    async def upsert(self, table: str, key: Key, row: Row, scope: Scope) -> None: ...
-    async def update(self, table: str, key: Key, fields: Row, scope: Scope) -> bool: ...  # False if absent
-    async def delete(self, table: str, key: Key, scope: Scope) -> bool: ...
-    # journal ops (llmbroker_calls)
+    async def get(self, table: str, key: Key) -> Row | None: ...
+    async def upsert(self, table: str, key: Key, row: Row) -> None: ...
+    async def delete(self, table: str, key: Key) -> bool: ...
+    # journal ops (llmbroker_calls) — strictly append-only: no update op exists;
+    # quality is its own appended record, metrics derive from the cached tail (Plan 2)
     async def append(self, table: str, row: Row) -> None: ...
-    async def recent(self, table: str, scope: Scope, limit: int) -> list[Row]: ...
-    async def set_field(self, table: str, key: Key, field: str, value: object) -> bool: ...
-    async def metrics_rows(self, table: str, scope: Scope, since: datetime | None) -> list[Row]: ...
-        # one row per llm_name: {"llm_name", "call_count", "last_status", "last_at"};
-        # any correct query shape is fine — carrying over the current
-        # per-name last-status lookup (sqlite/telemetry.py:130-143) is acceptable
-    async def purge(self, table: str, before: datetime) -> int: ...   # cross-tenant by design
+    async def recent(self, table: str, limit: int, match: Row | None = None) -> list[Row]: ...
+        # match = optional equality filter (the `calls(user_id=…)` query API);
+        # the rebuild reads unfiltered (learning is global, Plan 2)
+    async def purge(self, table: str, before: datetime) -> int: ...   # ignores users by design
     async def aclose(self) -> None: ...
 ```
 
-Note there are **no state-specific driver ops**: after Plan 2 the state store is
-plain keyed records (`fetch`/`upsert` on `llmbroker_state`), so the generic ops
-cover it.
+Note there is **no state table and no state-specific driver ops**: after Plan 2
+shared cooldowns ride on the journal rows, so nothing beyond registry, calls,
+disabled, and secrets exists in storage.
 
-`DuplicateKeyError` lives in `llmbroker/exceptions.py`. The generic layer (not the
-drivers) owns: `check_user_id`, lazy one-time `ensure_schema` gating,
-JSON⇄dataclass translation, `KeyError`/`ValueError` semantics, `reconcile()` on
-state reads. A driver method body is the one statement that is genuinely
-DB-specific.
+There is no create-only op, no partial-update op, and no `DuplicateKeyError`:
+model CRUD died in Plan 2 (sync mirrors via upsert/delete), secrets `set` is
+an upsert, and a disabled verdict is a whole-row upsert of a two-column row.
+The generic layer (not the drivers) owns: `check_user_id` (secrets only), lazy
+one-time `ensure_schema` gating, JSON⇄dataclass translation,
+`KeyError` semantics. A driver method body is the one statement that is
+genuinely DB-specific.
 
 **`ensure_schema` gating**: a plain boolean on the driver instance — checked
 before every operation, flipped after the first successful `ensure_schema`. Do
@@ -131,21 +148,23 @@ to users as a test double and to our port unit tests).
 
 | Class | Implements | Driver ops used |
 |---|---|---|
-| `StoreRegistry(driver)` | `MutableRegistryProtocol` | fetch/get/insert/update/delete; `update` on the `profile` column only for `read_profiles`/`write_profile` |
-| `StoreSecrets(driver, require_user_id=False)` | `MutableSecretsProtocol` | get/upsert (+ the `UserScopeError` guard, written once) |
-| `StoreTelemetry(driver)` | `QueryableTelemetryProtocol` | append/recent/set_field/metrics_rows/purge |
-| `StoreStateStore(driver)` | `StateStoreProtocol` | fetch/upsert on `llmbroker_state` |
+| `StoreRegistry(driver)` | registry protocol (post-Plan 2) | fetch/upsert/delete — globally scoped, no user parameter; consumers: load + mirror `sync` (nothing else writes) |
+| `StoreKnowledge(driver, retention=...)` | knowledge protocol (journal + disabled map) | journal: append/recent/purge (`calls(user_id=…)` maps to the `match` filter, the rebuild read passes none); disabled map: fetch/upsert on `llmbroker_disabled` |
+| `StoreSecrets(driver, require_user_id=False)` | `MutableSecretsProtocol` | get/upsert with key `(ref, user_id)` (+ the `UserScopeError` guard, written once); lookups stay exact-scope — the own→shared key fallback lives in the broker (Plan 2) |
 
-Semantics carried over exactly: `add` create-only → `ValueError` on
-`DuplicateKeyError`; `update`/`remove`/`write_profile` → `KeyError` when the driver
-returns False; `record_quality` on an unknown call id → `KeyError`
-(`sqlite/telemetry.py:104-105`); `purge_calls` ignores scope (admin op); registry
-`update` never writes `profile`, `write_profile` never writes `metadata`; state
-reads apply `reconcile()` and tz-awareness checks
-(`postgres/state_store.py:53-63`).
+Semantics carried over exactly: `set_disabled` validates the model
+name against the loaded registry (broker layer) and upserts the disabled row;
+`record_quality` appends a
+self-contained quality record unconditionally (no call-row lookup exists,
+Plan 2); retention purge (Plan 2 step 2.7) ignores scope, never touches the
+disabled map, and runs inside `StoreKnowledge` on the write-path debounce.
 
-**Port protocols do not change.** `broker/` and `catalog` are untouched by this
-plan.
+**Port protocols change only for the registry**: Plan 2 already deleted the
+model-CRUD verbs; this plan removes the `user_id` parameters from what
+remains (Plan 2 passes `None` everywhere, so this is a mechanical parameter
+deletion across the protocol, the standalone file registry, and call sites in
+`broker/`/`catalog`). The secrets and knowledge protocols stay as Plan 2
+left them (it already removed `StateStoreProtocol` and `state_store=`).
 
 ## 3.3 Concrete drivers and facades
 
@@ -155,16 +174,16 @@ plan.
   — the latter now only serializes concurrent first-run creates across OS
   processes.
 - `postgres/driver.py` — asyncpg; the caller owns the pool, `aclose()` is a no-op
-  (unchanged contract); version via the `llmbroker_schema_version` row; the
-  `user_id IS NOT DISTINCT FROM $n` scoping idiom written once.
-- `mongodb/driver.py` — motor; `user_id: None` stored explicitly in every document
-  (unique-index correctness — unchanged); version via the
+  (unchanged contract); version via the `llmbroker_schema_version` row;
+  null-safe key matching (`IS NOT DISTINCT FROM`) written once — user scope
+  survives only as the nullable `user_id` key column of `llmbroker_secrets`.
+- `mongodb/driver.py` — motor; `user_id: None` stored explicitly in secrets
+  documents (unique-index correctness — unchanged); version via the
   `llmbroker_schema_version` document.
-- **Redis stays a direct `StateStoreProtocol` implementation** (one port; the
-  generic layer buys it nothing). After Plan 2 it shrinks to the cooldown hash
-  only: `read` + `write` over `llmbroker_state:{scope}` — delete the summaries
-  hash, the CAS fold loop, and the field-separator encoding
-  (`redis/state_store.py:57-197`). ~50 lines.
+- **The Redis backend is deleted entirely** — its only role was the state
+  store, which no longer exists (Plan 2 derives shared cooldowns from the
+  journal). Remove `src/llmbroker/redis/`, the `redis` optional extra from
+  `pyproject.toml`, `fakeredis` from the dev group, and the redis test files.
 - `aws/secrets.py`, `vault/secrets.py` — unchanged (single-port SDK glue, already
   minimal).
 
@@ -175,17 +194,40 @@ Facades preserve every public name and constructor signature — e.g.
 class Registry(StoreRegistry):
     def __init__(self, db_path: str | Path) -> None:
         super().__init__(SqliteDriver(db_path))
-# likewise Secrets (require_user_id passthrough), Telemetry, StateStore
+# likewise Secrets (require_user_id passthrough), Knowledge
 ```
 
 Same pattern for `postgres` (wrapping `asyncpg.Pool`) and `mongodb` (wrapping a
-Motor database). `BackendStack` builds **one driver** per stack and shares it
-across the four ports — simplify its wiring accordingly.
+Motor database).
+
+**Stacks are replaced by the single source parameter** (user decision, see
+`mission-cost.md`). Delete `sqlite.Stack`/`postgres.Stack`/`mongodb.Stack`, the
+`BackendStack` protocol, and the `stack=` parameter. Instead, the broker's
+first positional argument is the data source:
+
+```python
+Broker("config.toml")                    # file registry + state/ sibling + env secrets
+Broker("llm.db")                         # sqlite: registry+knowledge+secrets, one file
+Broker("postgresql://host/db")           # postgres, one driver shared by all ports
+Broker("mongodb://host/db")              # mongodb
+Broker("config.toml", secrets=Vault(…))  # explicit overrides still win
+```
+
+Dispatch rules are dumb and explicit: `.toml` → file config; `sqlite://` /
+`.db` / `.sqlite` → sqlite; `postgresql://` / `mongodb://` → by scheme;
+anything else → a clear error naming the accepted forms. The chosen backend
+package is imported lazily (a bare `import llmbroker` must never pull in a
+driver package); a missing extra produces "pip install llmbroker[postgres]".
+Internally: one driver per source, shared by `StoreRegistry`/`StoreSecrets`/
+`StoreKnowledge` (~40 lines including dispatch). Explicit `registry=` /
+`knowledge=` / `secrets=` kwargs remain for mixed setups and take precedence.
 
 Migrate one DB at a time — sqlite → postgres → mongodb. For each: add the driver,
 point the facade at the `Store*` classes, run the full suite, then delete that DB's
 superseded `{registry,secrets,telemetry,state_store,schema}.py` modules. No
-re-export shims — importers already use the facade names, which survive.
+re-export shims — importers already use the facade names, which survive. The
+redis package removal and the stack→source swap land as their own steps after
+the three DB migrations.
 
 ## 3.4 Tests
 
@@ -195,23 +237,32 @@ copy of a behavior test. Disposition:
 
 | File | Action |
 |---|---|
-| `tests/test_registry.py`, `test_secrets.py`, `test_telemetry_backends.py`, `test_telemetry.py` | keep as-is — port behavior through the facades, which don't change |
-| `tests/test_state_store.py` | shrink to the cooldown-only contract (same parametrized fixture; keep the mongo legacy-datetime and redis repro tests that still apply) |
+| `tests/test_registry.py`, `test_secrets.py`, `test_telemetry_backends.py`, `test_telemetry.py` | keep as-is (modulo Plan 2's knowledge rename) — port behavior through the facades |
+| `tests/test_state_store.py` | delete — the state store no longer exists (shared cooling is covered by Plan 2's journal tests; the mongo legacy-datetime repro moves to the driver conformance suite if the underlying datetime handling survives there) |
 | `tests/test_schema_migration.py` | shrink: per driver, (a) fresh-DB create is idempotent and stamps the marker, (b) a wrong marker makes `ensure_schema` raise the actionable error |
-| new `tests/test_driver_conformance.py` | one suite parametrized over sqlite(file) / sqlite(:memory:) / postgres / mongodb / inmemory drivers: CRUD + `DuplicateKeyError`; scoping exactness (scoped vs unscoped never mix); fetch ordering; journal ops |
-| `tests/test_stack.py` | update only if wiring assertions touch internals |
+| new `tests/test_driver_conformance.py` | one suite parametrized over sqlite(file) / sqlite(:memory:) / postgres / mongodb / inmemory drivers: keyed-op round-trips (get/upsert/delete); null-safe key matching (secrets: a `(ref, user_id)` row and a `(ref, None)` row never mix); fetch ordering; journal ops incl. `recent` with and without a `match` filter |
+| `tests/test_stack.py` | replace with source-parameter tests: each source form wires the right backend; `.toml` vs `.db` discrimination; unknown source → clear error; missing extra → actionable message; explicit kwargs override the source |
 | everything else | unchanged by this plan |
 
 ## 3.5 Spec touch-up
 
-`specs/reference/architecture.md`: the four-backend table and battery matrix stay.
-In "Where each kind lives", state that dependency-carrying backends are one
-storage driver per DB behind shared port logic, and that a custom backend is
-either one driver or one full port. State store description: cooldown records
-only. Rewrite the "DB schema" section: schema created on first use; version
-mismatch fails fast with an actionable error; no in-place upgrades. Remove the
-summaries table from the schema list. Specs state the current rule only — no
-"previously X, now Y" history.
+`specs/reference/architecture.md`: update the backend table and battery matrix
+(sqlite, postgres, mongodb, aws/vault — no redis). In "Where each kind lives",
+state that dependency-carrying backends are one storage driver per DB behind
+shared port logic, and that a custom backend is either one driver or one full
+port. Remove the state-store description (shared cooldowns come from the
+journal) and the stack section (source parameter instead). Rewrite the "DB
+schema" section: schema created on first use; version mismatch fails fast with
+an actionable error; no in-place upgrades; **the table schema is not a public
+contract** — hosts may query `llmbroker_calls` directly but at their own risk,
+the supported read surface is `snapshot()` (raw per-model facts + metrics).
+Remove the
+summaries and state tables from the schema list; add `llmbroker_disabled`
+(admin verdicts, seeded with model names at `sync`). State the scoping matrix:
+registry and learning are global; secrets are optionally per-user with
+fallback to the shared key; 429 cooldowns and dead-key drops follow the key
+hash, 5xx cooldowns are global; journal `user_id` is attribution only. Specs
+state the current rule only — no "previously X, now Y" history.
 
 ---
 
@@ -220,8 +271,10 @@ summaries table from the schema list. Specs state the current rule only — no
 1. **3.1–3.2** spec.py + driver protocol + generic ports + in-memory driver (new
    code only — nothing deleted, suite stays green)
 2. **3.3** sqlite driver+facade → delete old sqlite modules → postgres → mongodb
-   (one DB per step, full suite between); redis shrink
-3. **3.4** conformance suite + test consolidation
-4. **3.5** spec touch-up
+   (one DB per step, full suite between)
+3. **3.3b** delete the redis package/extra/fakeredis; replace stacks with the
+   source parameter
+4. **3.4** conformance suite + test consolidation
+5. **3.5** spec touch-up
 
 **Final gate:** `invoke pre` + full `python -m pytest` green, zero skips.

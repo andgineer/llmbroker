@@ -52,7 +52,7 @@ class _Slot:
     in_flight: bool = False
     cooldown_until: datetime | None = None   # aware UTC
     fail_count: int = 0
-    benched: bool = False
+    disabled: bool = False                   # manual admin verdict; renames "benched"
     deprecated: bool = False
     pick_seq: int = 0                        # monotone counter for round-robin
 ```
@@ -70,7 +70,7 @@ with `cooldown_until=None`; `fail_count` passed through.
 def _available(self, slot: _Slot, now: datetime) -> bool:
     return (
         slot.key is not None
-        and not slot.benched
+        and not slot.disabled
         and not slot.in_flight
         and (slot.cooldown_until is None or slot.cooldown_until <= now)
     )
@@ -105,10 +105,10 @@ async with self._cond:
 ```
 
 `_wake_timeout(now, deadline)`: wake-up sources are (a) the nearest
-`cooldown_until` among slots that are keyed, not benched, not in-flight, and
+`cooldown_until` among slots that are keyed, not disabled, not in-flight, and
 cooling (they become available by pure time passage), and (b) the caller deadline.
 Return the smallest delta in seconds, or `None` when neither exists (then wait
-solely on notification — a release, `add`, `clear_benched`). Spurious wakeups are
+solely on notification — a release, `add`, `clear_disabled`). Spurious wakeups are
 handled by the loop.
 
 Notes:
@@ -133,9 +133,10 @@ Notes:
 - `apply_shared_cooling(config)`: store-cache read unchanged (`pool.py:314-320`);
   on a stored COOLING entry copy `cooldown_until`, `fail_count = max(local, stored)`
   into the slot, `in_flight = False`, return True. No timer.
-- `set_benched(name)`: set the flag only — no queue drain. An in-flight call
-  finishes normally; the flag excludes the slot afterwards. `clear_benched(name)`:
-  clear flag; notify.
+- `set_disabled(name)`: set the flag only — no queue drain. An in-flight call
+  finishes normally; the flag excludes the slot afterwards. `clear_disabled(name)`:
+  clear flag; notify. (Renamed from `set_benched`/`clear_benched` — the bench
+  vocabulary is retired; the broker-side write is `set_disabled`, Plan 2.)
 - `add(cfg, key)`: upsert the slot, preserving `cooldown_until`/`fail_count`/
   `in_flight` of an existing one; `key=None` leaves a prior key intact (as today);
   notify. The keyless→keyed enqueue special-casing (`pool.py:102-109`) disappears.
@@ -154,7 +155,7 @@ acquires — follow exactly):
   the availability check and the `wait()` must not be separated by an `await`
   outside the lock, or a notify can slip between them.
 - Every mutator that can create availability (`release`, `cool_down`, `add`,
-  `clear_benched`, `drop`) does its slot-field changes and `notify_all()` inside
+  `clear_disabled`, `drop`) does its slot-field changes and `notify_all()` inside
   a short `async with self._cond:` block.
 - **Never await I/O while holding the lock.** `cool_down` mutates fields and
   notifies under the lock, then performs the state-store write after releasing it
@@ -164,7 +165,7 @@ acquires — follow exactly):
   propagates, so the `async with` block stays consistent.
 
 Trivial accessors (`__contains__`, `__len__`, `configs`, `config`, `has_key`,
-`resolved_key`, `is_benched`, `is_deprecated`, `tier_of`, the demotion getters)
+`resolved_key`, `is_disabled` (was `is_benched`), `is_deprecated`, `tier_of`, the demotion getters)
 reroute mechanically to slot fields — no lock, no behavior change.
 
 **Router** (`router.py`): delete lines 86-98 (stale-slot check + defensive keyless
@@ -182,7 +183,7 @@ a read-only mapping.
   `tests/test_pool.py`.
 - `tests/test_pool.py` (48 tests): rewrite queue-internal tests against the public
   surface (`acquire`/`release`/`cool_down`/`state`). Behavioral assertions stay.
-- Add: benched-while-in-flight (call finishes, slot excluded after); a waiter in
+- Add: disabled-while-in-flight (call finishes, slot excluded after); a waiter in
   `acquire(wait=None)` wakes when a cooldown expires, without any timer; `wait=0`
   raises immediately; finite `wait` times out at the deadline; round-robin order
   under `policy=None` (a-b-c-a-b-c); `policy.select` raising leaves the pool clean.
@@ -200,22 +201,26 @@ providers tolerate parallel requests fine; a few always 429 under concurrency. N
 rule: **parallel calls to one LLM are allowed by default; a per-LLM cap opts into
 serialization.**
 
-- `RateLimit` (`models.py:264-270`) gains `parallel: int | None = None` — max
-  simultaneous in-flight requests; `None` = unlimited, consistent with the other
-  fields' "not enforced" semantics. Round-trip it through
-  `LLMConfig.to_metadata`/`from_metadata` (`models.py:331+`) next to rpm/rpd/tpm/tpd.
-  TOML: `rate_limit = { parallel = 1 }`.
+- `RateLimit` (`models.py:264-270`) is **deleted** — `rpm`/`rpd`/`tpm`/`tpd`
+  were never enforced anywhere (user decision, see `mission-cost.md`), and a
+  one-field dataclass is pointless. Instead `LLMConfig` gains
+  `parallel: int | None = None` — max simultaneous in-flight requests, `None` =
+  unlimited. Round-trip it through `LLMConfig.to_metadata`/`from_metadata`
+  (`models.py:331+`, whose `rate_limit` block dies). TOML: `parallel = 1` on
+  the `[[llms]]` entry. The `env` command's daily-cap annotation
+  (`cli.py:_daily_cap`) dies with `rpd`.
 - `_Slot.in_flight` becomes `int = 0`. Availability clause becomes:
-  `cap is None or slot.in_flight < cap` where
-  `cap = slot.config.rate_limit.parallel if slot.config.rate_limit else None`.
+  `cap is None or slot.in_flight < cap` where `cap = slot.config.parallel`.
 - `acquire` does `in_flight += 1`; `release` / `cool_down` /
   `apply_shared_cooling` do `in_flight = max(0, in_flight - 1)` (each caller holds
   exactly one).
 - A 429 while siblings are in flight: the failing call cools the slot down (blocks
   new acquisitions); in-flight siblings finish normally and decrement on their own
   release/cool_down. Consecutive-fail backoff scaling applies per event, as today.
-- Round-robin (`pick_seq`) and ranked selection are otherwise unchanged. Do not add
-  load-based tie-breaking (YAGNI — 429/cooldown already handles overload).
+- Round-robin (`pick_seq`) and ranked selection are otherwise unchanged in this
+  plan (behavior-preserving); Plan 2 step 2.2 replaces round-robin with curated
+  priority (`s.order`) and deletes `pick_seq`. Do not add load-based
+  tie-breaking (YAGNI — 429/cooldown already handles overload).
 
 **Tests:** two concurrent `acquire`s of a single-LLM pool both succeed by default;
 with `parallel=1` the second blocks until release (i.e. today's behavior is exactly
@@ -225,7 +230,7 @@ metadata round-trip of `parallel` through a registry backend.
 
 **Spec (same step):** update `architecture.md` "Core" bullet — replace the
 one-in-flight/queue/`call_later` sentence with: "Parallel requests to one LLM are
-allowed by default; `rate_limit.parallel` caps simultaneous in-flight requests per
+allowed by default; `parallel` caps simultaneous in-flight requests per
 LLM (1 = serialize). A cooling LLM is skipped until its cooldown expires."
 
 ## 1.3 Simplify `sync.py` construction
