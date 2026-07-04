@@ -26,12 +26,14 @@ This plan **changes implementation mechanics, not the learning capability**:
   immediate refresh on an own failure. No separate TTL/2s cache exists.
   Coordination is advisory: failover is the correctness mechanism; the cost of
   staleness is one wasted roundtrip that fails over transparently.
-- **Scopes narrow to keys** (decision in `mission-cost.md`): the registry and
-  learning are always global — score windows, verdicts, and metrics aggregate
-  the whole journal regardless of `user_id`. Per-user remains only for secrets
-  (own key, falling back to the shared one) and journal attribution. Quota
-  failures follow the key: a 429/401/403 row carries a short hash of the key
-  used; peer cooldowns and dead-key drops apply only where the hash matches
+- **Scopes narrow to keys, and the scope is an opaque string** (decisions in
+  `mission-cost.md`): the registry and learning are always global — score
+  windows, verdicts, and metrics aggregate the whole journal regardless of
+  scope. The typed `user_id` on the broker facade is replaced by
+  `scope: str | None`; it prefixes secret refs (own key, falling back to the
+  shared one) and attributes journal rows — storage never learns about users.
+  Quota failures follow the key: a 429/401/403 row carries a short hash of the
+  key used; peer cooldowns and dead-key drops apply only where the hash matches
   the instance's current key; 5xx rows apply unconditionally.
 - The knowledge store is llmbroker-internal, **not logging**: plain-text
   `Telemetry` is deleted; the default becomes a `state/` directory next to the
@@ -189,8 +191,8 @@ overwrite — cluster consistency needs no folds and no merging.
   debounce (`_REBUILD_TTL = 60.0` seconds, checked on activity — no background
   task, an idle broker does zero reads). Rebuild = fetch the most recent
   records (reuse `calls(limit=quality_rebuild_limit)`, default 300 — one
-  query, portable; the read is **unscoped** — the tail spans all users,
-  per-user attribution survives only as a filter of the `calls()` query API)
+  query, portable; the read is **unscoped** — the tail spans all scopes,
+  attribution survives only as a filter of the `calls()` query API)
   and split in Python: rated records feed the score windows
   (bucket by `(llm_name, operation)`, keep the newest `quality_window` per
   bucket, `optimizer.load_scores`); failed records feed shared cooldowns
@@ -228,13 +230,22 @@ overwrite — cluster consistency needs no folds and no merging.
   than the retention horizon, so old ratings age out of rebuilds. The public
   `purge_calls` API is deleted.
 
-**Optional per-user keys.** Key resolution (catalog, at provisioning) tries
-`resolve(ref, user_id)` and falls back to `resolve(ref, None)` on `KeyError` —
-the fallback policy lives in the broker, written once; secrets backends keep
-their exact-scope lookups (today none of them falls back). `key_hash` is
+**Optional per-user keys via the scope string.** `AsyncBroker`/`Broker`
+replace `user_id: int | str | None` with `scope: str | None` — an opaque
+non-empty string (e.g. `"user/42"`; the facade rejects `""`, which replaces
+`check_user_id`). Key resolution (catalog, at provisioning) tries
+`resolve(f"{scope}/{ref}")` and falls back to `resolve(ref)` on `KeyError` —
+the fallback policy lives in the broker, written once; secrets backends stay
+exact-lookup key-value stores. In this plan the existing backends keep their
+`user_id` parameter — the broker simply always passes `None` (the scope rides
+inside the ref string); Plan 3 deletes the parameter from the protocols and
+backends. Env secrets need no special case: the prefixed name is simply not
+set, so resolution falls through to the shared ref — today's behavior.
+Journal rows carry `scope` as a plain string field (attribution only, the
+`calls(scope=…)` filter; llmbroker never interprets it). `key_hash` is
 computed from the resolved key **value**, so identical key values (env
-secrets, which ignore `user_id`; duplicated rows) coalesce into one quota
-scope by construction — no own/shared labeling is needed anywhere.
+secrets; duplicated rows) coalesce into one quota scope by construction — no
+own/shared labeling is needed anywhere.
 
 **What this deletes:** `_ProfileSync` and `_ProfileSyncTelemetry` entirely
 (`broker/broker.py:60-311`), `seed_summary`/`apply_summary_delta`/`read_summaries`
@@ -364,8 +375,8 @@ models keeps its own preset file.
   one model list, one `sync` for all users. The broker, catalog, and `sync`
   stop scoping registry operations by user (pass `None` for now — Plan 3
   removes the parameter from the registry protocol and the `user_id` column
-  from the table). `AsyncBroker`/`Broker` keep their `user_id=` parameter: it
-  scopes secrets resolution and journal attribution only.
+  from the table). `AsyncBroker`/`Broker` expose `scope=` instead of
+  `user_id=` (2.3): it prefixes secret refs and attributes journal rows only.
 - Update `architecture.md`: replace the `SeedPolicy` table and policy text
   with the mirror `sync` (current state only, no history).
 
@@ -416,7 +427,8 @@ telemetry vocabulary is renamed throughout (protocols, classes, the
   ```
 - **Record format** (`standalone/telemetry.py`): one JSON object per line,
   `kind: call | quality`; a quality record is self-contained (`llm`,
-  `operation`, `score`, optional `call_id` passthrough — never joined); drop
+  `operation`, `score`, optional `call_id` passthrough — never joined); a call
+  record carries `scope` when the broker has one (2.3); drop
   `None` fields at serialization, add `ts` (aware
   UTC ISO-8601) to every record — today records carry no timestamp at all
   (`called_at` exists only in DB backends). Rebuild (2.3) reads day files
@@ -440,9 +452,11 @@ to two screens) stating the current rules only:
   + log line; shared across instances via the journal (failed rows carry
   `cooldown_until` and `key_hash`), refreshed by the debounced rebuild read
   and on own failures — no state store exists;
-- scoping: registry and learning are global; per-user only keys (own key with
-  fallback to the shared one) and journal attribution; 429 cooldowns and
-  dead-key drops follow the key hash, 5xx cooldowns are global;
+- scoping: registry and learning are global; the scope is an opaque string
+  the broker turns into a secret-ref prefix (own key, falling back to the
+  shared ref) and a journal attribution field — no typed user exists in
+  storage or protocols; 429 cooldowns and dead-key drops follow the key hash,
+  5xx cooldowns are global;
 - learning: per `(model, operation)` window of the last `quality_window` ratings;
   demoted ⟺ ≥ `quality_min_count` ratings and Wilson upper bound <
   `quality_floor`; recovery via new ratings and last-resort traffic — no
@@ -479,7 +493,7 @@ knowledge-store defaults, state-store description).
 | File | Action |
 |---|---|
 | `tests/test_optimizer.py` (1040) | rewrite small: windowed Wilson verdicts per (name, op), per-op flips (log lines via `caplog`), backoff counters, dead-key drop |
-| `tests/test_optimizer_integration.py` | rewrite: rating→demotion→demoted-last selection end-to-end; journal rebuild round-trip (sqlite **and file** knowledge stores); **two brokers sharing one journal converge on the same verdicts** — including brokers with different `user_id` (learning is global); a 429 on the shared key cools peers on the shared key but not a broker holding a personal key; a personal dead key (401/403) drops the model only for its owner; a user without a personal key falls back to the shared secret; registry edit from a second connection picked up by the debounced re-read |
+| `tests/test_optimizer_integration.py` | rewrite: rating→demotion→demoted-last selection end-to-end; journal rebuild round-trip (sqlite **and file** knowledge stores); **two brokers sharing one journal converge on the same verdicts** — including brokers with different `scope` (learning is global); a 429 on the shared key cools peers on the shared key but not a broker holding an own (scope-prefixed) key; a dead own key (401/403) drops the model only for its scope; a scope without an own key falls back to the shared secret; registry edit from a second connection picked up by the debounced re-read |
 | `tests/test_pool.py` | demoted-last sort (demoted for the operation goes last, curated order otherwise); demoted-only pool still serves |
 | `tests/test_catalog.py` | drop IF_EMPTY/ADD/MIRROR and model-CRUD cases; mirror `sync`: new added, changed updated, absent deleted (replaces deprecation cases), `disabled` preserved across sync; identity-change refusal raises; empty-registry fail-fast |
 | `tests/test_broker_bench.py` | keep, rename to `test_broker_disable.py`; disable as a knowledge disabled-map verdict via `set_disabled(name, flag)`; readable via `get(name).disabled` and the `disabled` snapshot field; survives restart with any persistent knowledge backend and **survives `sync`** (which rewrites only the registry); sync/provision seed missing names without touching values; a hand-edited `state/disabled.yml` and a second process's write are picked up by the debounced re-read |

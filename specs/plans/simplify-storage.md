@@ -10,7 +10,10 @@ parameter.
 Zero functional change beyond the agreed API cuts: `stack=` is replaced by the
 source parameter (see 3.3); the Redis extra disappears; the registry protocol
 drops its `user_id` parameters (the registry is global — Plan 2 already passes
-`None` everywhere, this plan deletes the parameter and the table column).
+`None` everywhere, this plan deletes the parameter and the table column); the
+secrets protocols drop `user_id` too (Plan 2 moved the scope into the ref
+string as a prefix and passes `None` — this plan deletes the parameter, the
+column, and the `check_user_id`/`require_user_id`/`UserIdRequired` trio).
 Subpackage class names (`llmbroker.sqlite.Registry`, …) and the other port
 protocols stay, modulo Plan 2's telemetry→knowledge rename.
 
@@ -60,16 +63,19 @@ every driver's `ensure_schema`:
 @dataclass(frozen=True)
 class TableSpec:
     name: str                      # "llmbroker_registry", ...
-    key: tuple[str, ...]           # identity columns, matched null-safe; where a user
-                                   # scope exists it is just a key column: secrets key
-                                   # is ("ref", "user_id"), registry key is ("name",)
+    key: tuple[str, ...]           # identity columns; every key is a single non-null
+                                   # text column: registry ("name",), disabled ("name",),
+                                   # secrets ("ref",) — the user scope rides inside the
+                                   # ref string (Plan 2), no scope columns exist
     columns: dict[str, str]        # portable types: "text" | "int" | "real" | "json" | "timestamp"
     indexes: tuple[tuple[str, ...], ...] = ()
 
 TABLES: dict[str, TableSpec] = {...}   # registry, calls, disabled, secrets
 SCHEMA_VERSION = 5                     # bump: summaries and state tables gone; registry becomes
                                        # a pure preset mirror (user_id, origin, profile columns
-                                       # gone — Plan 2); calls gains cooldown_until + key_hash;
+                                       # gone — Plan 2); calls gains cooldown_until + key_hash
+                                       # and its attribution column is scope (text); secrets
+                                       # keyed by ref alone (scope is a ref prefix, Plan 2);
                                        # new tiny llmbroker_disabled (admin verdicts)
 ```
 
@@ -80,9 +86,11 @@ columns** — it is a pure mirror of the preset, written only by `sync`
 (Plan 2). Admin verdicts live in the new tiny `llmbroker_disabled` table (key
 `name`, column `disabled`), written by `set_disabled` and seeded
 with model names at `sync` (Plan 2).
-The calls table keeps `user_id` as a plain attribution column (not a scope)
+The calls table carries `scope` as a plain text attribution column
 and gains `cooldown_until` and `key_hash` (Plan 2); quality rows are
-self-contained (Plan 2) — nothing references call rows.
+self-contained (Plan 2) — nothing references call rows. The secrets table is
+a flat `ref → value` store: no `user_id` column exists anywhere — the scope
+is a ref-string prefix built by the broker (Plan 2).
 
 **Schema policy (single known installation).** `ensure_schema` creates missing
 tables/indexes and stamps `SCHEMA_VERSION` on a fresh database. On a
@@ -94,9 +102,10 @@ delete the additive `ALTER TABLE` path, the `PRAGMA table_info` column sniffing
 exactly one known installation, upgraded manually by its operator.
 
 **`backends/driver.py`** — the per-DB contract. Record-shaped, not domain-shaped.
-`Row = dict[str, object]`, `Key = tuple[object, ...]`. Key columns are matched
-**null-safe** (`IS NOT DISTINCT FROM` / explicit `None` in mongo) — required by
-the nullable `user_id` key column of secrets, harmless for the rest:
+`Row = dict[str, object]`, `Key = tuple[object, ...]`. Every key column is
+non-null text (the nullable `user_id` secrets key is gone — the scope rides
+inside the ref string), so key matching is plain equality — no
+`IS NOT DISTINCT FROM` machinery:
 
 ```python
 class Driver(Protocol):
@@ -112,7 +121,7 @@ class Driver(Protocol):
     # quality is its own appended record, metrics derive from the cached tail (Plan 2)
     async def append(self, table: str, row: Row) -> None: ...
     async def recent(self, table: str, limit: int, match: Row | None = None) -> list[Row]: ...
-        # match = optional equality filter (the `calls(user_id=…)` query API);
+        # match = optional equality filter (the `calls(scope=…)` query API);
         # the rebuild reads unfiltered (learning is global, Plan 2)
     async def purge(self, table: str, before: datetime) -> int: ...   # ignores users by design
     async def aclose(self) -> None: ...
@@ -125,7 +134,7 @@ disabled, and secrets exists in storage.
 There is no create-only op, no partial-update op, and no `DuplicateKeyError`:
 model CRUD died in Plan 2 (sync mirrors via upsert/delete), secrets `set` is
 an upsert, and a disabled verdict is a whole-row upsert of a two-column row.
-The generic layer (not the drivers) owns: `check_user_id` (secrets only), lazy
+The generic layer (not the drivers) owns: lazy
 one-time `ensure_schema` gating, JSON⇄dataclass translation,
 `KeyError` semantics. A driver method body is the one statement that is
 genuinely DB-specific.
@@ -149,8 +158,8 @@ to users as a test double and to our port unit tests).
 | Class | Implements | Driver ops used |
 |---|---|---|
 | `StoreRegistry(driver)` | registry protocol (post-Plan 2) | fetch/upsert/delete — globally scoped, no user parameter; consumers: load + mirror `sync` (nothing else writes) |
-| `StoreKnowledge(driver, retention=...)` | knowledge protocol (journal + disabled map) | journal: append/recent/purge (`calls(user_id=…)` maps to the `match` filter, the rebuild read passes none); disabled map: fetch/upsert on `llmbroker_disabled` |
-| `StoreSecrets(driver, require_user_id=False)` | `MutableSecretsProtocol` | get/upsert with key `(ref, user_id)` (+ the `UserScopeError` guard, written once); lookups stay exact-scope — the own→shared key fallback lives in the broker (Plan 2) |
+| `StoreKnowledge(driver, retention=...)` | knowledge protocol (journal + disabled map) | journal: append/recent/purge (`calls(scope=…)` maps to the `match` filter, the rebuild read passes none); disabled map: fetch/upsert on `llmbroker_disabled` |
+| `StoreSecrets(driver)` | `MutableSecretsProtocol` | get/upsert with key `(ref,)` — a flat key-value store; lookups stay exact — the own→shared prefix fallback lives in the broker (Plan 2) |
 
 Semantics carried over exactly: `set_disabled` validates the model
 name against the loaded registry (broker layer) and upserts the disabled row;
@@ -159,12 +168,15 @@ self-contained quality record unconditionally (no call-row lookup exists,
 Plan 2); retention purge (Plan 2 step 2.7) ignores scope, never touches the
 disabled map, and runs inside `StoreKnowledge` on the write-path debounce.
 
-**Port protocols change only for the registry**: Plan 2 already deleted the
-model-CRUD verbs; this plan removes the `user_id` parameters from what
-remains (Plan 2 passes `None` everywhere, so this is a mechanical parameter
-deletion across the protocol, the standalone file registry, and call sites in
-`broker/`/`catalog`). The secrets and knowledge protocols stay as Plan 2
-left them (it already removed `StateStoreProtocol` and `state_store=`).
+**Port protocols change for the registry and secrets**: Plan 2 already
+deleted the model-CRUD verbs and moved the user scope into the ref string;
+this plan removes the `user_id` parameters from both protocols (Plan 2 passes
+`None` everywhere, so this is a mechanical parameter deletion across the
+protocols, the standalone file registry, the env secrets backend, and call
+sites in `broker/`/`catalog`). Delete `check_user_id` (`models.py`), the
+`require_user_id=` constructor flags, and the `UserIdRequired` exception
+along with the last caller. The knowledge protocol stays as Plan 2 left it
+(it already removed `StateStoreProtocol` and `state_store=`).
 
 ## 3.3 Concrete drivers and facades
 
@@ -174,18 +186,17 @@ left them (it already removed `StateStoreProtocol` and `state_store=`).
   — the latter now only serializes concurrent first-run creates across OS
   processes.
 - `postgres/driver.py` — asyncpg; the caller owns the pool, `aclose()` is a no-op
-  (unchanged contract); version via the `llmbroker_schema_version` row;
-  null-safe key matching (`IS NOT DISTINCT FROM`) written once — user scope
-  survives only as the nullable `user_id` key column of `llmbroker_secrets`.
-- `mongodb/driver.py` — motor; `user_id: None` stored explicitly in secrets
-  documents (unique-index correctness — unchanged); version via the
-  `llmbroker_schema_version` document.
+  (unchanged contract); version via the `llmbroker_schema_version` row.
+- `mongodb/driver.py` — motor; version via the `llmbroker_schema_version`
+  document.
 - **The Redis backend is deleted entirely** — its only role was the state
   store, which no longer exists (Plan 2 derives shared cooldowns from the
   journal). Remove `src/llmbroker/redis/`, the `redis` optional extra from
   `pyproject.toml`, `fakeredis` from the dev group, and the redis test files.
-- `aws/secrets.py`, `vault/secrets.py` — unchanged (single-port SDK glue, already
-  minimal).
+- `aws/secrets.py`, `vault/secrets.py` — stay single-port SDK glue; drop the
+  `user_id` parameter, the `require_user_id` flag, and the
+  `llmbroker/users/{user_id}/…` path branching — the ref (scope prefix
+  included) is the full secret name.
 
 Facades preserve every public name and constructor signature — e.g.
 `src/llmbroker/sqlite/__init__.py`:
@@ -194,7 +205,7 @@ Facades preserve every public name and constructor signature — e.g.
 class Registry(StoreRegistry):
     def __init__(self, db_path: str | Path) -> None:
         super().__init__(SqliteDriver(db_path))
-# likewise Secrets (require_user_id passthrough), Knowledge
+# likewise Secrets, Knowledge
 ```
 
 Same pattern for `postgres` (wrapping `asyncpg.Pool`) and `mongodb` (wrapping a
@@ -237,10 +248,11 @@ copy of a behavior test. Disposition:
 
 | File | Action |
 |---|---|
-| `tests/test_registry.py`, `test_secrets.py`, `test_telemetry_backends.py`, `test_telemetry.py` | keep as-is (modulo Plan 2's knowledge rename) — port behavior through the facades |
+| `tests/test_registry.py`, `test_telemetry_backends.py`, `test_telemetry.py` | keep as-is (modulo Plan 2's knowledge rename) — port behavior through the facades |
+| `tests/test_secrets.py` | user-scope cases become plain prefixed-ref round-trips (the `user_id` parameter is gone); the own→shared fallback is broker-level and covered by Plan 2's tests |
 | `tests/test_state_store.py` | delete — the state store no longer exists (shared cooling is covered by Plan 2's journal tests; the mongo legacy-datetime repro moves to the driver conformance suite if the underlying datetime handling survives there) |
 | `tests/test_schema_migration.py` | shrink: per driver, (a) fresh-DB create is idempotent and stamps the marker, (b) a wrong marker makes `ensure_schema` raise the actionable error |
-| new `tests/test_driver_conformance.py` | one suite parametrized over sqlite(file) / sqlite(:memory:) / postgres / mongodb / inmemory drivers: keyed-op round-trips (get/upsert/delete); null-safe key matching (secrets: a `(ref, user_id)` row and a `(ref, None)` row never mix); fetch ordering; journal ops incl. `recent` with and without a `match` filter |
+| new `tests/test_driver_conformance.py` | one suite parametrized over sqlite(file) / sqlite(:memory:) / postgres / mongodb / inmemory drivers: keyed-op round-trips (get/upsert/delete) over single-column text keys (incl. slash-containing secret refs like `user/42/GROQ_API_KEY`); fetch ordering; journal ops incl. `recent` with and without a `match` filter |
 | `tests/test_stack.py` | replace with source-parameter tests: each source form wires the right backend; `.toml` vs `.db` discrimination; unknown source → clear error; missing extra → actionable message; explicit kwargs override the source |
 | everything else | unchanged by this plan |
 
@@ -259,9 +271,11 @@ the supported read surface is `snapshot()` (raw per-model facts + metrics).
 Remove the
 summaries and state tables from the schema list; add `llmbroker_disabled`
 (admin verdicts, seeded with model names at `sync`). State the scoping matrix:
-registry and learning are global; secrets are optionally per-user with
-fallback to the shared key; 429 cooldowns and dead-key drops follow the key
-hash, 5xx cooldowns are global; journal `user_id` is attribution only. Specs
+registry and learning are global; the scope is an opaque string the broker
+turns into a secret-ref prefix (own key, falling back to the shared ref) and
+a journal attribution field — storage and protocols have no user concept;
+429 cooldowns and dead-key drops follow the key hash, 5xx cooldowns are
+global. Specs
 state the current rule only — no "previously X, now Y" history.
 
 ---
