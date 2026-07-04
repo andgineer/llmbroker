@@ -1,9 +1,11 @@
 """The live in-memory routing substrate behind ``AsyncBroker``.
 
-One ``asyncio.Queue`` slot per LLM ⇒ at most one in-flight request per LLM.
-A slot is withdrawn from the queue while the LLM is cooling after a 429/503 and
-re-added when the cooldown expires. The pool also owns the in-memory
-``LLMState`` (cooldown + quality counters) and persists it via the state store.
+Each LLM has one ``_Slot`` carrying its config, resolved key, and live
+cooldown/quality/in-flight state. ``acquire()`` picks an available slot under
+an ``asyncio.Condition`` and blocks (optionally with a deadline) until one
+frees up or a cooldown expires. Parallel calls to one LLM are allowed by
+default; ``LLMConfig.parallel`` caps simultaneous in-flight requests per slot
+(1 = serialize).
 
 Tiered selection: candidates for an operation partition into tier 0 (normal),
 tier 1 (``deprecated`` — curator withdrew the endorsement), tier 2 (a
@@ -11,17 +13,17 @@ globally-demoted model's untried operation — new evidence territory), tier 3
 (quality-demoted for this specific operation — evidenced bad). ``acquire()``
 serves the best non-empty tier; the caller's ``SelectionPolicy`` ranks only
 within that tier. ``deprecated``/demotion markers are soft (consulted at
-acquire time, never withdraw a slot) — only the manual bench and a missing key
-withdraw a slot from the queue outright.
+acquire time, never withdraw a slot) — only ``disabled`` and a missing key
+make a slot unavailable.
 """
 
 import asyncio
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from llmbroker.broker.state import InMemoryState
 from llmbroker.models import LifecyclePhase, LLMConfig, LLMState
 from llmbroker.optimizer import SelectionPolicy
 from llmbroker.protocols.state_store import StateStoreProtocol
@@ -38,6 +40,20 @@ TIER_DEMOTED_UNTRIED = 2
 TIER_DEMOTED_EVIDENCED = 3
 
 
+@dataclass
+class _Slot:
+    """Live per-LLM state: static config plus everything routing needs to know now."""
+
+    config: LLMConfig
+    key: str | None = None
+    in_flight: int = 0  # count of concurrently running calls; capped by config.parallel
+    cooldown_until: datetime | None = None  # aware UTC
+    fail_count: int = 0
+    disabled: bool = False  # manual admin verdict
+    deprecated: bool = False
+    pick_seq: int = 0  # monotone counter for round-robin
+
+
 class LLMPool:
     """The pool of LLM slots and their live cooldown / quality state."""
 
@@ -48,16 +64,13 @@ class LLMPool:
         *,
         on_degraded_tier: Callable[[str, str | None, int], None] | None = None,
     ) -> None:
-        self._queue: asyncio.Queue[LLMConfig] = asyncio.Queue()
-        self._configs: dict[str, LLMConfig] = {}
-        self._resolved_keys: dict[str, str] = {}
-        self._state = InMemoryState()
+        self._slots: dict[str, _Slot] = {}
+        self._cond = asyncio.Condition()
+        self._pick_counter = 0
         self._state_store = state_store
         self._user_id = user_id
         self._store_cache: dict[str, LLMState] | None = None
         self._store_cache_expires: float = 0.0
-        self._benched: set[str] = set()
-        self._deprecated: set[str] = set()
         self._demoted_operations: dict[str, frozenset[str | None]] = {}
         self._globally_demoted: set[str] = set()
         self._on_degraded_tier = on_degraded_tier
@@ -68,98 +81,94 @@ class LLMPool:
     # ------------------------------------------------------------------
 
     def __contains__(self, name: str) -> bool:
-        return name in self._configs
+        return name in self._slots
 
     def __len__(self) -> int:
-        return len(self._configs)
+        return len(self._slots)
 
     @property
     def configs(self) -> dict[str, LLMConfig]:
-        return self._configs
+        return {name: slot.config for name, slot in self._slots.items()}
 
     def config(self, name: str) -> LLMConfig:
-        return self._configs[name]
+        return self._slots[name].config
 
     def has_key(self, name: str) -> bool:
-        return name in self._resolved_keys
+        slot = self._slots.get(name)
+        return slot is not None and slot.key is not None
 
     def resolved_key(self, name: str) -> str:
-        return self._resolved_keys[name]
+        slot = self._slots[name]
+        if slot.key is None:
+            raise KeyError(name)
+        return slot.key
 
     # ------------------------------------------------------------------
     # Membership mutation
     # ------------------------------------------------------------------
 
-    def add(self, cfg: LLMConfig, key: str | None) -> None:
+    async def add(self, cfg: LLMConfig, key: str | None) -> None:
         """Register/refresh a config. A ``None`` key leaves any prior key intact.
 
-        Enqueues a routable slot only on first insertion with a resolved key, or on
-        the keyless→keyed transition of an existing entry — a keyless config stays
-        visible in ``configs`` but is never acquired by the router (see the
-        partial-key framing in architecture.md). A manually-benched config is never
-        enqueued either, regardless of key transitions.
+        Upserts in place so an existing slot's live state (cooldown, fail count,
+        in-flight, disabled, deprecated) survives a config refresh.
         """
-        was_keyed = cfg.name in self._resolved_keys
-        is_new = cfg.name not in self._configs
-        self._configs[cfg.name] = cfg
-        if key is not None:
-            self._resolved_keys[cfg.name] = key
-        now_keyed = cfg.name in self._resolved_keys
-        if now_keyed and (is_new or not was_keyed) and cfg.name not in self._benched:
-            self._queue.put_nowait(cfg)
+        async with self._cond:
+            slot = self._slots.get(cfg.name)
+            if slot is None:
+                self._slots[cfg.name] = _Slot(config=cfg, key=key)
+            else:
+                slot.config = cfg
+                if key is not None:
+                    slot.key = key
+            self._cond.notify_all()
 
-    def drop(self, name: str) -> None:
-        """Remove a config and every per-name tier marker, so a later re-add under the
-        same name starts clean rather than inheriting stale bench/demotion state."""
-        self._configs.pop(name, None)
-        self._resolved_keys.pop(name, None)
-        self._benched.discard(name)
-        self._deprecated.discard(name)
-        self._demoted_operations.pop(name, None)
-        self._globally_demoted.discard(name)
-        for key in [k for k in self._last_degraded_alert if k[0] == name]:
-            del self._last_degraded_alert[key]
+    async def drop(self, name: str) -> None:
+        """Remove a slot entirely, so a later re-add under the same name starts clean
+        rather than inheriting stale tier/alert state."""
+        async with self._cond:
+            self._slots.pop(name, None)
+            self._demoted_operations.pop(name, None)
+            self._globally_demoted.discard(name)
+            for key in [k for k in self._last_degraded_alert if k[0] == name]:
+                del self._last_degraded_alert[key]
+            self._cond.notify_all()
 
     # ------------------------------------------------------------------
-    # Manual bench (hard exclusion) / deprecated / demotion markers (soft, tiered)
+    # Manual disable (hard exclusion) / deprecated / demotion markers (soft, tiered)
     # ------------------------------------------------------------------
 
-    def set_benched(self, name: str) -> None:
-        """Withdraw the slot — the one verdict that actually excludes.
+    def set_disabled(self, name: str) -> None:
+        """Withdraw the slot. An in-flight call finishes normally; the flag excludes
+        the slot from every acquisition afterward."""
+        slot = self._slots.get(name)
+        if slot is not None:
+            slot.disabled = True
 
-        Drains any currently-queued slot for ``name`` synchronously (no ``await``
-        inside the loop, so no other task can interleave) and leaves the latch set
-        so ``_reenqueue_config`` refuses to re-admit it later (mid-cooldown or
-        released after an in-flight call completes).
-        """
-        self._benched.add(name)
-        drained = []
-        while True:
-            try:
-                drained.append(self._queue.get_nowait())
-            except asyncio.QueueEmpty:
-                break
-        for cfg in drained:
-            if cfg.name != name:
-                self._queue.put_nowait(cfg)
+    async def clear_disabled(self, name: str) -> None:
+        async with self._cond:
+            slot = self._slots.get(name)
+            if slot is not None:
+                slot.disabled = False
+            self._cond.notify_all()
 
-    def clear_benched(self, name: str) -> None:
-        """Readmit the slot if the config is still known and keyed."""
-        self._benched.discard(name)
-        if name in self._configs and name in self._resolved_keys:
-            self._queue.put_nowait(self._configs[name])
-
-    def is_benched(self, name: str) -> bool:
-        return name in self._benched
+    def is_disabled(self, name: str) -> bool:
+        slot = self._slots.get(name)
+        return slot is not None and slot.disabled
 
     def set_deprecated(self, name: str) -> None:
-        self._deprecated.add(name)
+        slot = self._slots.get(name)
+        if slot is not None:
+            slot.deprecated = True
 
     def clear_deprecated(self, name: str) -> None:
-        self._deprecated.discard(name)
+        slot = self._slots.get(name)
+        if slot is not None:
+            slot.deprecated = False
 
     def is_deprecated(self, name: str) -> bool:
-        return name in self._deprecated
+        slot = self._slots.get(name)
+        return slot is not None and slot.deprecated
 
     def update_demotions(
         self,
@@ -190,7 +199,7 @@ class LLMPool:
             return TIER_DEMOTED_EVIDENCED
         if name in self._globally_demoted:
             return TIER_DEMOTED_UNTRIED
-        if name in self._deprecated:
+        if self.is_deprecated(name):
             return TIER_DEPRECATED
         return TIER_NORMAL
 
@@ -210,26 +219,39 @@ class LLMPool:
     # Slot acquisition
     # ------------------------------------------------------------------
 
-    async def _queue_acquire(self, wait: float | None) -> LLMConfig:
-        if wait is None:
-            return await self._queue.get()
-        if wait == 0:
-            return self._queue.get_nowait()
-        return await asyncio.wait_for(self._queue.get(), timeout=wait)
+    def _available(self, slot: _Slot, now: datetime) -> bool:
+        cap = slot.config.parallel
+        return (
+            slot.key is not None
+            and not slot.disabled
+            and (cap is None or slot.in_flight < cap)
+            and (slot.cooldown_until is None or slot.cooldown_until <= now)
+        )
 
     def _partition_by_tier(
         self,
-        available: list[LLMConfig],
+        available: list[_Slot],
         operation: str | None,
-    ) -> tuple[int, list[LLMConfig], list[LLMConfig]]:
-        """Split into (best_tier, best_tier_candidates, everything_else)."""
-        tiered: dict[int, list[LLMConfig]] = {}
-        for cfg in available:
-            tiered.setdefault(self.tier_of(cfg.name, operation), []).append(cfg)
+    ) -> tuple[int, list[_Slot]]:
+        """Split into (best_tier, best_tier_slots)."""
+        tiered: dict[int, list[_Slot]] = {}
+        for slot in available:
+            tiered.setdefault(self.tier_of(slot.config.name, operation), []).append(slot)
         best_tier = min(tiered)
-        candidates = tiered.pop(best_tier)
-        others = [cfg for lst in tiered.values() for cfg in lst]
-        return best_tier, candidates, others
+        return best_tier, tiered[best_tier]
+
+    def _wake_timeout(self, now: datetime, deadline: float | None) -> float | None:
+        """Seconds until the nearest event that could make a slot available, or
+        ``None`` when nothing is scheduled (wait solely on notification)."""
+        candidates: list[float] = []
+        for slot in self._slots.values():
+            if slot.key is None or slot.disabled or slot.in_flight:
+                continue
+            if slot.cooldown_until is not None and slot.cooldown_until > now:
+                candidates.append((slot.cooldown_until - now).total_seconds())
+        if deadline is not None:
+            candidates.append(deadline - time.monotonic())
+        return min(candidates) if candidates else None
 
     async def acquire(
         self,
@@ -238,72 +260,96 @@ class LLMPool:
         policy: SelectionPolicy | None = None,
         operation: str | None = None,
     ) -> LLMConfig:
-        first = await self._queue_acquire(wait)
-        if policy is None:
-            return first
-        available = [first]
-        while True:
-            try:
-                available.append(self._queue.get_nowait())
-            except asyncio.QueueEmpty:
-                break
-        best_tier, candidates, others = self._partition_by_tier(available, operation)
-        try:
-            picked = policy.select(candidates, operation=operation)
-        except Exception:
-            for cfg in available:
-                self._reenqueue_config(cfg)
-            raise
-        if picked is None:
-            picked = candidates[0]
-        for cfg in candidates:
-            if cfg is not picked:
-                self._reenqueue_config(cfg)
-        for cfg in others:
-            self._reenqueue_config(cfg)
-        self._maybe_alert_degraded_tier(picked.name, operation, best_tier)
-        return picked
+        deadline = None if wait is None else time.monotonic() + wait
+        async with self._cond:
+            while True:
+                now = datetime.now(UTC)
+                avail = [s for s in self._slots.values() if self._available(s, now)]
+                if avail:
+                    best_tier, candidates = self._partition_by_tier(avail, operation)
+                    picked_cfg = (
+                        policy.select([s.config for s in candidates], operation=operation)
+                        if policy is not None
+                        else None
+                    )
+                    slot = (
+                        self._slots[picked_cfg.name]
+                        if picked_cfg is not None
+                        else min(candidates, key=lambda s: s.pick_seq)
+                    )
+                    slot.in_flight += 1
+                    self._pick_counter += 1
+                    slot.pick_seq = self._pick_counter
+                    self._maybe_alert_degraded_tier(slot.config.name, operation, best_tier)
+                    return slot.config
+                if wait == 0:
+                    raise TimeoutError("no LLM slot available and wait=0")
+                timeout = self._wake_timeout(now, deadline)
+                if deadline is not None and timeout is not None and timeout <= 0:
+                    raise TimeoutError("no LLM slot came free within wait")
+                try:
+                    await asyncio.wait_for(self._cond.wait(), timeout)
+                except TimeoutError:
+                    # Re-check: a cooldown may have expired, or the deadline hit (next loop raises).
+                    continue
 
-    def release(self, config: LLMConfig) -> None:
-        self._reenqueue_config(config)
+    async def release(self, config: LLMConfig) -> None:
+        """A missing name is legal (removed mid-flight) — no-op."""
+        async with self._cond:
+            slot = self._slots.get(config.name)
+            if slot is not None:
+                slot.in_flight = max(0, slot.in_flight - 1)
+            self._cond.notify_all()
 
     # ------------------------------------------------------------------
     # Cooldown / state
     # ------------------------------------------------------------------
 
     def clear_cooling(self, name: str) -> None:
-        self._state.clear_cooling(name)
-
-    def _reenqueue_config(self, config: LLMConfig) -> None:
-        """Re-admit a slot to circulation — refuses a config that got benched meanwhile."""
-        if config.name in self._benched:
-            return
-        self._queue.put_nowait(config)
+        slot = self._slots.get(name)
+        if slot is not None:
+            slot.cooldown_until = None
 
     async def cool_down(self, config: LLMConfig, delay: float) -> None:
         """Withdraw the slot for ``delay`` seconds, persisting the new state."""
         cooldown_until = datetime.now(UTC) + timedelta(seconds=delay)
-        self._state.set_cooling(
-            config.name,
-            cooldown_until,
-            self._state.fail_count(config.name) + 1,
-        )
-        if self._state_store is not None:
+        async with self._cond:
+            slot = self._slots.get(config.name)
+            if slot is not None:
+                slot.cooldown_until = cooldown_until
+                slot.fail_count += 1
+                slot.in_flight = max(0, slot.in_flight - 1)
+            self._cond.notify_all()
+        if slot is not None and self._state_store is not None:
             await self._state_store.write(
                 config.name,
-                self._state.get_state(config.name),
+                self.state(config.name),
                 self._user_id,
             )
             self._store_cache = None
-        loop = asyncio.get_running_loop()
-        loop.call_later(float(delay), self._reenqueue_config, config)
         logger.warning("LLM %s cooling for %ds", config.name, delay)
 
     def mark_quality_fail(self, name: str) -> None:
-        self._state.record_quality_fail(name)
+        slot = self._slots.get(name)
+        if slot is not None:
+            slot.fail_count += 1
 
     def state(self, name: str) -> LLMState:
-        return self._state.get_state(name)
+        slot = self._slots.get(name)
+        if slot is None:
+            return LLMState()
+        now = datetime.now(UTC)
+        if slot.cooldown_until is not None and slot.cooldown_until > now:
+            return LLMState(
+                phase=LifecyclePhase.COOLING,
+                cooldown_until=slot.cooldown_until,
+                fail_count=slot.fail_count,
+            )
+        return LLMState(
+            phase=LifecyclePhase.AVAILABLE,
+            cooldown_until=None,
+            fail_count=slot.fail_count,
+        )
 
     async def stored_states(self) -> dict[str, LLMState]:
         """Read persisted per-LLM state from the store, or ``{}`` if none configured."""
@@ -319,11 +365,26 @@ class LLMPool:
         self._store_cache_expires = now + _STORE_CACHE_TTL
         return self._store_cache
 
+    @staticmethod
+    def _active_shared_cooldown(stored: LLMState | None, now: datetime) -> datetime | None:
+        """The stored cooldown_until, or ``None`` if it does not represent an active cooldown.
+
+        A naive cooldown_until can't be compared to an aware ``now``; treat it as "not
+        cooling" rather than risk a TypeError mid-routing.
+        """
+        if stored is None or stored.phase is not LifecyclePhase.COOLING:
+            return None
+        if stored.cooldown_until is None or stored.cooldown_until.tzinfo is None:
+            return None
+        if stored.cooldown_until <= now:
+            return None
+        return stored.cooldown_until
+
     async def apply_shared_cooling(self, config: LLMConfig) -> bool:
         """Return True if shared store shows this LLM cooling and the slot was deferred.
 
-        The caller must have already dequeued ``config`` via ``acquire()``; this method
-        re-queues it via ``call_later`` and must not be called on a slot still in the queue.
+        The caller must have already acquired ``config`` via ``acquire()`` (so its
+        slot is marked in-flight); this clears that claim and marks it cooling instead.
         """
         if self._state_store is None:
             return False
@@ -335,24 +396,15 @@ class LLMPool:
                 config.name,
             )
             return False
-        stored = shared.get(config.name)
-        if stored is None or stored.phase is not LifecyclePhase.COOLING:
-            return False
-        # A naive cooldown_until can't be compared to the aware now_utc below;
-        # treat it as "not cooling" rather than risk a TypeError mid-routing.
-        if stored.cooldown_until is None or stored.cooldown_until.tzinfo is None:
-            return False
         now_utc = datetime.now(UTC)
-        if stored.cooldown_until <= now_utc:
+        stored = shared.get(config.name)
+        cooldown_until = self._active_shared_cooldown(stored, now_utc)
+        slot = self._slots.get(config.name)
+        if cooldown_until is None or slot is None or stored is None:
             return False
-        local_fail_count = self._state.fail_count(config.name)
-        self._state.set_cooling(
-            config.name,
-            stored.cooldown_until,
-            max(local_fail_count, stored.fail_count),
-        )
-        delay = (stored.cooldown_until - now_utc).total_seconds()
-        loop = asyncio.get_running_loop()
-        loop.call_later(delay, self._reenqueue_config, config)
+        slot.fail_count = max(slot.fail_count, stored.fail_count)
+        slot.cooldown_until = cooldown_until
+        slot.in_flight = max(0, slot.in_flight - 1)
+        delay = (cooldown_until - now_utc).total_seconds()
         logger.info("LLM %s: shared cooldown applied, %.0fs remaining", config.name, delay)
         return True

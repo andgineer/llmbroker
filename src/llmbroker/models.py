@@ -260,16 +260,6 @@ class LLMProfile:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class RateLimit:
-    """Optional per-LLM rate ceilings; any field left ``None`` is not enforced."""
-
-    rpm: int | None = None
-    rpd: int | None = None
-    tpm: int | None = None
-    tpd: int | None = None
-
-
 class EffortLevel(Enum):
     """How hard an api_key_ref is to obtain, easiest first.
 
@@ -324,7 +314,7 @@ class LLMConfig:
     base_url: str
     model: str
     api_key_ref: str
-    rate_limit: RateLimit | None = None
+    parallel: int | None = None
     origin: Origin | None = None
     deprecated: bool = False
 
@@ -335,13 +325,8 @@ class LLMConfig:
         {}
         """
         metadata: dict[str, object] = {}
-        if self.rate_limit is not None:
-            metadata["rate_limit"] = {
-                "rpm": self.rate_limit.rpm,
-                "rpd": self.rate_limit.rpd,
-                "tpm": self.rate_limit.tpm,
-                "tpd": self.rate_limit.tpd,
-            }
+        if self.parallel is not None:
+            metadata["parallel"] = self.parallel
         if self.origin is not None:
             metadata["origin"] = self.origin.value
         if self.deprecated:
@@ -360,8 +345,8 @@ class LLMConfig:
     ) -> "LLMConfig":
         """Reconstruct from the core columns plus the JSON ``metadata`` blob."""
         metadata = metadata or {}
-        raw_rate_limit = metadata.get("rate_limit")
-        rate_limit = RateLimit(**raw_rate_limit) if isinstance(raw_rate_limit, dict) else None
+        raw_parallel = metadata.get("parallel")
+        parallel = raw_parallel if isinstance(raw_parallel, int) else None
         raw_origin = metadata.get("origin")
         origin = Origin(raw_origin) if isinstance(raw_origin, str) else None
         return cls(
@@ -369,7 +354,7 @@ class LLMConfig:
             base_url=base_url,
             model=model,
             api_key_ref=api_key_ref,
-            rate_limit=rate_limit,
+            parallel=parallel,
             origin=origin,
             deprecated=bool(metadata.get("deprecated", False)),
         )

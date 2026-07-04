@@ -57,9 +57,9 @@ class Catalog:
         names = {c.name for c in configs}
         for name in list(self._pool.configs):
             if name not in names:
-                self._pool.drop(name)
+                await self._pool.drop(name)
         for cfg in configs:
-            self._pool.add(cfg, await self._resolve_key(cfg))
+            await self._pool.add(cfg, await self._resolve_key(cfg))
             self._sync_deprecated(cfg)
         return alerts
 
@@ -69,7 +69,7 @@ class Catalog:
             raise ValueError(f"LLM {cfg.name!r} already exists; use update()")
         cfg = replace(cfg, origin=Origin.USER)
         await registry.add(cfg, self._user_id)
-        self._pool.add(cfg, await self._resolve_key(cfg))
+        await self._pool.add(cfg, await self._resolve_key(cfg))
         self._sync_deprecated(cfg)
 
     async def update(self, cfg: LLMConfig) -> None:
@@ -78,12 +78,12 @@ class Catalog:
             raise KeyError(cfg.name)
         cfg = replace(cfg, origin=Origin.USER)
         await registry.update(cfg, self._user_id)
-        self._pool.add(cfg, await self._resolve_key(cfg))
+        await self._pool.add(cfg, await self._resolve_key(cfg))
         self._sync_deprecated(cfg)
 
     def _sync_deprecated(self, cfg: LLMConfig) -> None:
         """Mirror the curated ``deprecated`` marker (static half) into the pool's
-        soft tier-1 marker — never a queue withdrawal (see broker/pool.py)."""
+        soft tier-1 marker — never withdraws the slot (see broker/pool.py)."""
         if cfg.deprecated:
             self._pool.set_deprecated(cfg.name)
         else:
@@ -92,7 +92,7 @@ class Catalog:
     async def remove(self, name: str) -> None:
         registry = self._require_mutable_registry()
         await registry.remove(name, self._user_id)
-        self._pool.drop(name)
+        await self._pool.drop(name)
 
     async def _resolve_key(self, cfg: LLMConfig) -> str | None:
         try:

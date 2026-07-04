@@ -95,8 +95,8 @@ async def test_provision_loads_registry_and_resolves_keys(stack, monkeypatch):
     await _seed_stack(stack, [_cfg("llm1"), _cfg("llm2")], {"KEY": "test-key"}, monkeypatch)
     async with stack.make_broker() as broker:
         assert await broker.count() == 2
-        assert broker._pool._resolved_keys.get("llm1") == "test-key"
-        assert broker._pool._resolved_keys.get("llm2") == "test-key"
+        assert broker._pool.resolved_key("llm1") == "test-key"
+        assert broker._pool.resolved_key("llm2") == "test-key"
 
 
 # ---------------------------------------------------------------------------

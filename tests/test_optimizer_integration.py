@@ -58,7 +58,7 @@ def _opt_tel(opt: Optimizer, telemetry: object, pool: LLMPool) -> OptimizerTelem
 async def test_low_usable_rate_retires_llm_across_backends(any_telemetry, status):
     """Enough RATE_LIMITED/UNAVAILABLE calls via any backend drop the LLM once usable_rate is low."""
     pool = LLMPool(state_store=None, user_id=None)
-    pool.add(_cfg("llm1"), "key")
+    await pool.add(_cfg("llm1"), "key")
     opt = Optimizer(min_sample_count=3, removal_rate_floor=0.9)
     opt_tel = _opt_tel(opt, any_telemetry, pool)
 
@@ -74,7 +74,7 @@ async def test_low_usable_rate_retires_llm_across_backends(any_telemetry, status
 async def test_repeated_ok_calls_keep_llm_available(any_telemetry):
     """Sustained OK calls keep the LLM AVAILABLE and its usable_rate high."""
     pool = LLMPool(state_store=None, user_id=None)
-    pool.add(_cfg("llm1"), "key")
+    await pool.add(_cfg("llm1"), "key")
     opt = Optimizer(min_sample_count=5)
     opt_tel = _opt_tel(opt, any_telemetry, pool)
 
@@ -93,7 +93,7 @@ async def test_auth_failure_drops_llm_cleanly(any_telemetry, http_status):
     Verifies a re-added LLM starts fresh — no stale bookkeeping survives the drop.
     """
     pool = LLMPool(state_store=None, user_id=None)
-    pool.add(_cfg("llm1"), "key")
+    await pool.add(_cfg("llm1"), "key")
     opt = Optimizer()
     opt_tel = _opt_tel(opt, any_telemetry, pool)
 
@@ -104,7 +104,7 @@ async def test_auth_failure_drops_llm_cleanly(any_telemetry, http_status):
     assert len(alerts) == 1
     assert "API key" in alerts[0].message
     assert str(http_status) in alerts[0].message
-    pool.add(_cfg("llm1"), "key")
+    await pool.add(_cfg("llm1"), "key")
     assert pool.state("llm1").phase is LifecyclePhase.AVAILABLE
 
 
@@ -120,8 +120,8 @@ async def test_optimizer_retires_unreliable_prefers_stable(any_telemetry):
     first-available selection.
     """
     pool = LLMPool(state_store=None, user_id=None)
-    pool.add(_cfg("stable"), "key")
-    pool.add(_cfg("flaky"), "key")
+    await pool.add(_cfg("stable"), "key")
+    await pool.add(_cfg("flaky"), "key")
     opt = Optimizer(
         min_sample_count=5,
         removal_rate_floor=0.5,
@@ -147,8 +147,8 @@ async def test_optimizer_retires_unreliable_prefers_stable(any_telemetry):
 async def test_policy_prefers_lower_latency_when_quality_equal(any_telemetry):
     """OptimizerPolicy picks the faster LLM when success rates are equal."""
     pool = LLMPool(state_store=None, user_id=None)
-    pool.add(_cfg("fast"), "key")
-    pool.add(_cfg("slow"), "key")
+    await pool.add(_cfg("fast"), "key")
+    await pool.add(_cfg("slow"), "key")
     opt = Optimizer(min_sample_count=10, exploration_fraction=0.0, usable_rate_floor=0.0)
     opt_tel = _opt_tel(opt, any_telemetry, pool)
 
@@ -164,8 +164,8 @@ async def test_policy_prefers_lower_latency_when_quality_equal(any_telemetry):
 async def test_policy_quality_floor_gates_failing_llm(any_telemetry):
     """OptimizerPolicy excludes an LLM whose success rate is below usable_rate_floor."""
     pool = LLMPool(state_store=None, user_id=None)
-    pool.add(_cfg("reliable"), "key")
-    pool.add(_cfg("broken"), "key")
+    await pool.add(_cfg("reliable"), "key")
+    await pool.add(_cfg("broken"), "key")
     opt = Optimizer(
         min_sample_count=10,
         usable_rate_floor=0.7,
@@ -198,8 +198,8 @@ async def test_policy_floor_drops_all_falls_back_and_alerts(any_telemetry):
     _FLOOR_ALERT_INTERVAL).
     """
     pool = LLMPool(state_store=None, user_id=None)
-    pool.add(_cfg("bad1"), "key")
-    pool.add(_cfg("bad2"), "key")
+    await pool.add(_cfg("bad1"), "key")
+    await pool.add(_cfg("bad2"), "key")
     opt = Optimizer(
         min_sample_count=5,
         usable_rate_floor=0.9,
@@ -227,8 +227,8 @@ async def test_policy_floor_drops_all_falls_back_and_alerts(any_telemetry):
 async def test_policy_exploration_returns_random(any_telemetry, monkeypatch):
     """Explore path (random.random < exploration_fraction) can bypass the quality floor."""
     pool = LLMPool(state_store=None, user_id=None)
-    pool.add(_cfg("good"), "key")
-    pool.add(_cfg("floored"), "key")
+    await pool.add(_cfg("good"), "key")
+    await pool.add(_cfg("floored"), "key")
     opt = Optimizer(
         min_sample_count=5,
         usable_rate_floor=0.9,
@@ -251,8 +251,8 @@ async def test_policy_exploration_returns_random(any_telemetry, monkeypatch):
 async def test_policy_background_operation_ranks_quality_first(any_telemetry):
     """background_operations → rate-first ranking; slow-but-reliable beats fast-but-flaky."""
     pool = LLMPool(state_store=None, user_id=None)
-    pool.add(_cfg("reliable"), "key")
-    pool.add(_cfg("fast_flaky"), "key")
+    await pool.add(_cfg("reliable"), "key")
+    await pool.add(_cfg("fast_flaky"), "key")
     opt = Optimizer(
         min_sample_count=10,
         exploration_fraction=0.0,
@@ -284,7 +284,7 @@ async def test_policy_background_operation_ranks_quality_first(any_telemetry):
 async def test_operation_stats_are_isolated(any_telemetry):
     """Failures under operation A do not lower usable_rate for operation B."""
     pool = LLMPool(state_store=None, user_id=None)
-    pool.add(_cfg("llm1"), "key")
+    await pool.add(_cfg("llm1"), "key")
     opt = Optimizer(min_sample_count=5)
     opt_tel = _opt_tel(opt, any_telemetry, pool)
 
@@ -308,7 +308,7 @@ async def test_stale_failures_forgiven_by_decay(any_telemetry):
     calls bring it back above a 0.7 floor (well past the ~4 needed to clear 0.5).
     """
     pool = LLMPool(state_store=None, user_id=None)
-    pool.add(_cfg("llm1"), "key")
+    await pool.add(_cfg("llm1"), "key")
     opt = Optimizer(min_sample_count=5, usable_rate_floor=0.7)
     opt_tel = _opt_tel(opt, any_telemetry, pool)
 
@@ -325,7 +325,7 @@ async def test_stale_failures_forgiven_by_decay(any_telemetry):
 async def test_cold_start_not_gated(any_telemetry):
     """Below min_sample_count usable_rate returns None — floor does not gate the LLM."""
     pool = LLMPool(state_store=None, user_id=None)
-    pool.add(_cfg("llm1"), "key")
+    await pool.add(_cfg("llm1"), "key")
     opt = Optimizer(
         min_sample_count=10,
         usable_rate_floor=0.9,

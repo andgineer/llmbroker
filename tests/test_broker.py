@@ -265,7 +265,7 @@ def test_update_absent_raises_key_error(tmp_path):
     asyncio.run(run())
 
 
-def test_update_changes_config_without_extra_queue_slot(tmp_path):
+def test_update_changes_config_without_extra_slot(tmp_path):
     async def run():
         db = str(tmp_path / "b.db")
         async with AsyncBroker(
@@ -273,13 +273,13 @@ def test_update_changes_config_without_extra_queue_slot(tmp_path):
         ) as broker:
             original = LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")
             await broker.add(original)
-            queue_size_before = broker._pool._queue.qsize()
+            slot_count_before = len(broker._pool)
 
             updated = LLMConfig(name="p1", base_url="https://new/v1", model="m2", api_key_ref="K")
             await broker.update(updated)
 
             assert (await broker.get("p1")).config.base_url == "https://new/v1"
-            assert broker._pool._queue.qsize() == queue_size_before  # no extra slot enqueued
+            assert len(broker._pool) == slot_count_before  # no extra slot created
 
     asyncio.run(run())
 
@@ -670,8 +670,8 @@ def test_two_users_have_isolated_secrets(tmp_path):
             telemetry=NoTelemetry(),
         )
         async with broker_a, broker_b:
-            assert broker_a._pool._resolved_keys["llm"] == "alice-secret"
-            assert broker_b._pool._resolved_keys["llm"] == "bob-secret"
+            assert broker_a._pool.resolved_key("llm") == "alice-secret"
+            assert broker_b._pool.resolved_key("llm") == "bob-secret"
 
     asyncio.run(run())
 

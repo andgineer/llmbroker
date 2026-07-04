@@ -26,10 +26,10 @@ def _cfg(name="p1"):
     return LLMConfig(name=name, base_url="https://x/v1", model="m", api_key_ref="K")
 
 
-def _pool(*cfgs, key="secret") -> LLMPool:
+async def _pool(*cfgs, key="secret") -> LLMPool:
     pool = LLMPool(state_store=None, user_id=None)
     for cfg in cfgs:
-        pool.add(cfg, key)
+        await pool.add(cfg, key)
     return pool
 
 
@@ -69,7 +69,7 @@ _PATCH = "llmbroker.broker.router.call_provider"
 
 def test_happy_path_returns_result():
     async def run():
-        router = _router(_pool(_cfg()))
+        router = _router(await _pool(_cfg()))
         with patch(_PATCH, new=AsyncMock(return_value=("hello", None, None))):
             result = await router.chat([{"role": "user", "content": "hi"}])
         assert result.text == "hello"
@@ -79,7 +79,7 @@ def test_happy_path_returns_result():
 
 def test_missing_api_key_raises_all_llms_failed():
     async def run():
-        router = _router(_pool(_cfg(), key=None))
+        router = _router(await _pool(_cfg(), key=None))
         with pytest.raises(AllLLMsFailedError, match="api_key_ref"):
             await router.chat([{"role": "user", "content": "hi"}], wait=0)
 
@@ -89,11 +89,11 @@ def test_missing_api_key_raises_all_llms_failed():
 def test_zero_keyed_configs_raises_immediately_with_default_wait():
     """Regression for the eager-guard/hang fix: a keyless-only pool must not block on
 
-    the default wait=None forever — the check runs before any queue acquisition."""
+    the default wait=None forever — the check runs before any slot acquisition."""
 
     async def run():
         pool = LLMPool(state_store=None, user_id=None)
-        pool.add(_cfg(), None)  # keyless — never enqueued
+        await pool.add(_cfg(), None)  # keyless — never acquirable
         router = _router(pool)
         with pytest.raises(AllLLMsFailedError, match="api_key_ref"):
             await router.chat([{"role": "user", "content": "hi"}])
@@ -102,14 +102,14 @@ def test_zero_keyed_configs_raises_immediately_with_default_wait():
 
 
 def test_mixed_keyed_and_keyless_pool_routes_over_keyed_only():
-    """A keyless config never enters the queue, so the router routes to the keyed one
+    """A keyless config is never acquirable, so the router routes to the keyed one
     without raising and without ever blocking on the keyless slot."""
 
     async def run():
         keyed, keyless = _cfg("keyed"), _cfg("keyless")
         pool = LLMPool(state_store=None, user_id=None)
-        pool.add(keyed, "secret")
-        pool.add(keyless, None)
+        await pool.add(keyed, "secret")
+        await pool.add(keyless, None)
         router = _router(pool)
         with patch(_PATCH, new=AsyncMock(return_value=("ok", None, None))):
             result = await router.chat([{"role": "user", "content": "hi"}], wait=0)
@@ -121,7 +121,7 @@ def test_mixed_keyed_and_keyless_pool_routes_over_keyed_only():
 
 def test_http_429_wait0_raises_no_llm_available():
     async def run():
-        router = _router(_pool(_cfg()))
+        router = _router(await _pool(_cfg()))
         with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(429))):
             with pytest.raises(NoLLMAvailableError):
                 await router.chat([{"role": "user", "content": "hi"}], wait=0)
@@ -131,7 +131,7 @@ def test_http_429_wait0_raises_no_llm_available():
 
 def test_http_503_wait0_raises_no_llm_available():
     async def run():
-        router = _router(_pool(_cfg()))
+        router = _router(await _pool(_cfg()))
         with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(503))):
             with pytest.raises(NoLLMAvailableError):
                 await router.chat([{"role": "user", "content": "hi"}], wait=0)
@@ -144,7 +144,7 @@ def test_http_500_fails_over_to_next_llm():
 
     async def run():
         a, b = _cfg("a"), _cfg("b")
-        pool = _pool(a, b)
+        pool = await _pool(a, b)
         router = _router(pool)
         with patch(
             _PATCH,
@@ -160,7 +160,7 @@ def test_http_500_fails_over_to_next_llm():
 def test_network_error_fails_over_to_next_llm():
     async def run():
         a, b = _cfg("a"), _cfg("b")
-        pool = _pool(a, b)
+        pool = await _pool(a, b)
         router = _router(pool)
         with patch(
             _PATCH,
@@ -178,7 +178,7 @@ def test_401_fails_over_to_next_llm_within_same_request():
 
     async def run():
         a, b = _cfg("a"), _cfg("b")
-        pool = _pool(a, b)
+        pool = await _pool(a, b)
         opt = Optimizer()
         router = _router_with_optimizer(pool, opt)
         with patch(
@@ -193,14 +193,16 @@ def test_401_fails_over_to_next_llm_within_same_request():
     asyncio.run(run())
 
 
-def test_stale_slot_is_skipped():
-    """A config dropped from the pool while already enqueued is silently skipped."""
+def test_dropped_slot_mid_flight_is_skipped_by_release():
+    """A config dropped from the pool after being acquired is a legal no-op on release."""
 
     async def run():
         cfg = _cfg()
-        pool = _pool(cfg)
-        pool.drop(cfg.name)  # stale: slot in queue, but name not in pool
+        pool = await _pool(cfg)
         router = _router(pool)
+        acquired = await pool.acquire(0)
+        await pool.drop(cfg.name)  # removed while in flight
+        await pool.release(acquired)  # must not raise
         with pytest.raises(NoLLMAvailableError):
             await router.chat([{"role": "user", "content": "hi"}], wait=0)
 
@@ -221,7 +223,7 @@ def test_router_skips_slot_shared_cooling():
 
     async def run():
         cfg = _cfg()
-        pool = _pool(cfg)
+        pool = await _pool(cfg)
         router = _router(pool)
 
         call_count = 0
@@ -230,7 +232,7 @@ def test_router_skips_slot_shared_cooling():
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                pool._queue.put_nowait(c)  # simulate call_later re-scheduling
+                pool._slots[c.name].in_flight = False  # simulate the skip releasing the slot
                 return True
             return False
 
@@ -253,7 +255,7 @@ def test_router_skips_slot_shared_cooling():
 def test_first_429_in_streak_trusts_provider_number_verbatim():
     async def run():
         cfg = _cfg()
-        pool = _pool(cfg)
+        pool = await _pool(cfg)
         opt = Optimizer(backoff_factor=2.0, max_delay=999_999)
         router = _router_with_optimizer(pool, opt)
         captured = _spy_cool_down(pool)
@@ -279,7 +281,7 @@ def test_second_consecutive_429_scales_its_own_number_not_the_first():
 
     async def run():
         cfg = _cfg()
-        pool = _pool(cfg)
+        pool = await _pool(cfg)
         opt = Optimizer(backoff_factor=2.0, max_delay=999_999)
         router = _router_with_optimizer(pool, opt)
         captured = _spy_cool_down(pool)
@@ -311,7 +313,7 @@ def test_second_consecutive_429_scales_its_own_number_not_the_first():
 def test_success_resets_streak_so_later_429_trusted_verbatim_again():
     async def run():
         cfg = _cfg()
-        pool = _pool(cfg)
+        pool = await _pool(cfg)
         opt = Optimizer(backoff_factor=2.0, max_delay=999_999)
         router = _router_with_optimizer(pool, opt)
         captured = _spy_cool_down(pool)
@@ -334,7 +336,7 @@ def test_success_resets_streak_so_later_429_trusted_verbatim_again():
 def test_429_without_retry_after_falls_back_to_default_before_scaling():
     async def run():
         cfg = _cfg()
-        pool = _pool(cfg)
+        pool = await _pool(cfg)
         opt = Optimizer(backoff_factor=2.0, max_delay=999_999)
         router = _router_with_optimizer(pool, opt)
         captured = _spy_cool_down(pool)
@@ -357,7 +359,7 @@ def test_429_without_retry_after_falls_back_to_default_before_scaling():
 def test_wait_time_capped_at_max_delay():
     async def run():
         cfg = _cfg()
-        pool = _pool(cfg)
+        pool = await _pool(cfg)
         opt = Optimizer(backoff_factor=2.0, max_delay=500.0)
         router = _router_with_optimizer(pool, opt)
         captured = _spy_cool_down(pool)

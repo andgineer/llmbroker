@@ -143,7 +143,7 @@ def test_broker_disable_llm_benches_and_excludes_from_pool(tmp_path):
     with Broker(registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()) as broker:
         broker.add(LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K"))
         broker.disable_llm("p1", reason="manual review")
-        assert broker._async._pool.is_benched("p1")
+        assert broker._async._pool.is_disabled("p1")
 
 
 def test_broker_enable_llm_readmits_after_disable(tmp_path):
@@ -152,7 +152,7 @@ def test_broker_enable_llm_readmits_after_disable(tmp_path):
         broker.add(LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K"))
         broker.disable_llm("p1")
         broker.enable_llm("p1")
-        assert not broker._async._pool.is_benched("p1")
+        assert not broker._async._pool.is_disabled("p1")
 
 
 def test_broker_disable_llm_persists_reason_to_registry(tmp_path):

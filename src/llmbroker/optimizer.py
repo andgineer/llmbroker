@@ -280,7 +280,7 @@ class OptimizerTelemetry:
             self._call_index[call.id] = (call.llm_name, call.operation)
             if len(self._call_index) > _CALL_INDEX_CAP:
                 self._call_index.popitem(last=False)
-            self._drive_fsm(call)
+            await self._drive_fsm(call)
 
     def peek_call(self, call_id: str) -> tuple[str, str | None] | None:
         """The ``(name, operation)`` a not-yet-rated ``call_id`` belongs to, or ``None``.
@@ -331,32 +331,32 @@ class OptimizerTelemetry:
     def __getattr__(self, name: str) -> object:
         return getattr(self._inner, name)
 
-    def _maybe_retire(self, name: str, operation: str | None) -> None:
+    async def _maybe_retire(self, name: str, operation: str | None) -> None:
         if self._opt.should_retire(name, operation):
-            self._pool.drop(name)
+            await self._pool.drop(name)
             self._opt.add_alert(f"{name}: retired — success rate too low over recent calls")
 
-    def _drive_fsm(self, call: Call) -> None:
+    async def _drive_fsm(self, call: Call) -> None:
         name = call.llm_name
         self._opt._record_transport(name, call.operation, call)  # noqa: SLF001
 
         if call.status in (CallStatus.RATE_LIMITED, CallStatus.UNAVAILABLE):
             self._opt.on_rate_limited(name)
-            self._maybe_retire(name, call.operation)
+            await self._maybe_retire(name, call.operation)
         elif call.status == CallStatus.OK:
             self._opt.on_success(name)
         elif call.status == CallStatus.ERROR:
             if call.http_status in (401, 403):
                 cfg = self._pool.configs.get(name)
                 ref = cfg.api_key_ref if cfg else "unknown"
-                self._pool.drop(name)
+                await self._pool.drop(name)
                 self._opt.add_alert(
                     f"{name}: API key appears dead (HTTP {call.http_status})"
                     f" — check api_key_ref '{ref}'",
                 )
             else:
                 self._opt.on_rate_limited(name)
-                self._maybe_retire(name, call.operation)
+                await self._maybe_retire(name, call.operation)
 
 
 class OptimizerPolicy:

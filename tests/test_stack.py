@@ -31,7 +31,7 @@ async def test_sqlite_stack_wires_all_four_ports(tmp_path):
     cooldown_until = datetime.now(UTC) + timedelta(hours=1)
     async with AsyncBroker(stack=stack) as broker:
         assert await broker.count() == 1
-        assert broker._pool._resolved_keys.get("llm1") == "secret-value"
+        assert broker._pool.resolved_key("llm1") == "secret-value"
         await stack.state_store.write(
             "llm1",
             LLMState(phase=LifecyclePhase.COOLING, cooldown_until=cooldown_until),
@@ -49,7 +49,7 @@ async def test_stack_with_explicit_secrets_override(tmp_path):
     override_secrets = DictSecrets({"KEY": "from-override"})
 
     async with AsyncBroker(stack=stack, secrets=override_secrets) as broker:
-        assert broker._pool._resolved_keys.get("llm1") == "from-override"
+        assert broker._pool.resolved_key("llm1") == "from-override"
 
 
 async def test_stack_with_state_store_none_disables_it(tmp_path):
@@ -94,7 +94,7 @@ async def test_postgres_stack_wires_all_four_ports(pg_pool):
 
         async with AsyncBroker(stack=stack) as broker:
             assert await broker.count() == 1
-            assert broker._pool._resolved_keys.get("llm1") == "secret-value"
+            assert broker._pool.resolved_key("llm1") == "secret-value"
             await broker._telemetry.record(
                 Call(
                     id="c1",
@@ -126,7 +126,7 @@ async def test_mongodb_stack_wires_all_four_ports(mongo_db):
 
         async with AsyncBroker(stack=stack) as broker:
             assert await broker.count() == 1
-            assert broker._pool._resolved_keys.get("llm1") == "secret-value"
+            assert broker._pool.resolved_key("llm1") == "secret-value"
     finally:
         for coll in (
             "llmbroker_registry",

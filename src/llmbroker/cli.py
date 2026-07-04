@@ -29,35 +29,21 @@ def _api_key_refs(data: dict) -> list[str]:
     return refs
 
 
-def _daily_cap(data: dict, ref: str) -> int | None:
-    """Max advertised ``rpd`` across this ref's ``[[llms]]`` rows; ``None`` if none set."""
-    caps = [
-        entry["rate_limit"]["rpd"]
-        for entry in data.get("llms", [])
-        if entry.get("api_key_ref") == ref
-        and isinstance(entry.get("rate_limit"), dict)
-        and isinstance(entry["rate_limit"].get("rpd"), int)
-    ]
-    return max(caps) if caps else None
-
-
-def _onboarding_sort_key(ref: str, info: KeyInfo, cap: int | None) -> tuple:
-    """Easiest+most-valuable first; unknown effort/value sort last; larger cap sorts earlier."""
+def _onboarding_sort_key(ref: str, info: KeyInfo) -> tuple:
+    """Easiest+most-valuable first; unknown effort/value sort last."""
     effort_idx = (
         list(EffortLevel).index(info.effort) if info.effort is not None else len(EffortLevel)
     )
     value_idx = list(ValueLevel).index(info.value) if info.value is not None else len(ValueLevel)
-    return (effort_idx, value_idx, -(cap or 0), ref)
+    return (effort_idx, value_idx, ref)
 
 
-def _annotation(info: KeyInfo, cap: int | None) -> str | None:
+def _annotation(info: KeyInfo) -> str | None:
     parts = []
     if info.effort is not None:
         parts.append(f"effort={info.effort.value}")
     if info.value is not None:
         parts.append(f"value={info.value.value}")
-    if cap is not None:
-        parts.append(f"daily cap={cap}")
     return ", ".join(parts) if parts else None
 
 
@@ -74,8 +60,7 @@ def _cmd_env(args: argparse.Namespace) -> int:
 
     refs = _api_key_refs(data)
     infos = {ref: key_info_from_entry(ref, raw_keys.get(ref)) for ref in refs}
-    caps = {ref: _daily_cap(data, ref) for ref in refs}
-    refs.sort(key=lambda ref: _onboarding_sort_key(ref, infos[ref], caps[ref]))
+    refs.sort(key=lambda ref: _onboarding_sort_key(ref, infos[ref]))
 
     lines: list[str] = []
     for ref in refs:
@@ -83,7 +68,7 @@ def _cmd_env(args: argparse.Namespace) -> int:
         if info.help.strip():
             for i, line in enumerate(info.help.splitlines()):
                 lines.append(f"# {ref} — {line}" if i == 0 else f"# {line}")
-        annotation = _annotation(info, caps[ref])
+        annotation = _annotation(info)
         if annotation is not None:
             lines.append(f"# {annotation}")
         if ref in os.environ:

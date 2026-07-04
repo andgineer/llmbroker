@@ -12,7 +12,6 @@ from llmbroker.models import (
     KeyInfo,
     LLMConfig,
     LLMProfile,
-    RateLimit,
     ValueLevel,
     check_user_id,
 )
@@ -20,17 +19,6 @@ from llmbroker.models import (
 
 def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) else None
-
-
-def _rate_limit_from_entry(raw: object) -> RateLimit | None:
-    if not isinstance(raw, dict):
-        return None
-    return RateLimit(
-        rpm=_int_or_none(raw.get("rpm")),
-        rpd=_int_or_none(raw.get("rpd")),
-        tpm=_int_or_none(raw.get("tpm")),
-        tpd=_int_or_none(raw.get("tpd")),
-    )
 
 
 def _config_from_entry(entry: dict) -> LLMConfig | None:
@@ -43,7 +31,7 @@ def _config_from_entry(entry: dict) -> LLMConfig | None:
         base_url=str(base_url),
         model=str(entry.get("model", "")),
         api_key_ref=str(entry.get("api_key_ref", "")),
-        rate_limit=_rate_limit_from_entry(entry.get("rate_limit")),
+        parallel=_int_or_none(entry.get("parallel")),
     )
 
 

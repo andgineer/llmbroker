@@ -93,7 +93,7 @@ class _ProfileSync:
         profiles = await self._registry.read_profiles(user_id=self._user_id)
         for name, profile in profiles.items():
             if profile.benched:
-                self._pool.set_benched(name)
+                self._pool.set_disabled(name)
                 self._optimizer.set_benched(name)
                 self._benched_meta[name] = (profile.benched_since, profile.benched_reason)
             if self._state_store is not None:
@@ -235,7 +235,7 @@ class _ProfileSync:
         since, reason = self._benched_meta.get(name, (None, None))
         profile = replace(
             profile,
-            benched=self._pool.is_benched(name),
+            benched=self._pool.is_disabled(name),
             benched_since=since,
             benched_reason=reason,
         )
@@ -554,7 +554,7 @@ class AsyncBroker:
         """Set the manual latch: withdraws the slot, survives preset rolls, covers
         every operation including future ones. Only ``enable_llm`` clears it."""
         await self.ensure_pool()
-        self._pool.set_benched(name)
+        self._pool.set_disabled(name)
         if self._optimizer is not None:
             self._optimizer.set_benched(name)
         since = datetime.now(UTC)
@@ -566,7 +566,7 @@ class AsyncBroker:
         """Clear the manual latch and reset the model's quality aggregates — a
         clean trial period so stale evidence cannot immediately re-derive a demotion."""
         await self.ensure_pool()
-        self._pool.clear_benched(name)
+        await self._pool.clear_disabled(name)
         self._benched_meta.pop(name, None)
         if self._optimizer is not None:
             self._optimizer.clear_benched(name)

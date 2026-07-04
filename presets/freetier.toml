@@ -6,21 +6,18 @@ name        = "groq-llama-3.3-70b"
 base_url    = "https://api.groq.com/openai/v1"
 model       = "llama-3.3-70b-versatile"
 api_key_ref = "GROQ_API_KEY"
-rate_limit  = { rpm = 30, rpd = 1000 }
 
 [[llms]]
 name        = "openrouter-gpt-oss-120b"
 base_url    = "https://openrouter.ai/api/v1"
 model       = "openai/gpt-oss-120b:free"
 api_key_ref = "OPENROUTER_API_KEY"
-rate_limit  = { rpm = 20, rpd = 50 }
 
 [[llms]]
 name        = "google-gemini-2.5-flash"
 base_url    = "https://generativelanguage.googleapis.com/v1beta/openai"
 model       = "gemini-2.5-flash"
 api_key_ref = "GEMINI_API_KEY"
-rate_limit  = { rpm = 15, rpd = 1500 }
 
 # Per-provider onboarding: how to get the key, how hard it is (effort), and how
 # good the model it unlocks is (value). See specs/reference/freetier-providers.md

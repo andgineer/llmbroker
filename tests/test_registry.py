@@ -10,7 +10,7 @@ import llmbroker.postgres
 import llmbroker.sqlite
 import pytest
 
-from llmbroker.models import LLMConfig, LLMProfile, QualitySummary, RateLimit
+from llmbroker.models import LLMConfig, LLMProfile, QualitySummary
 from llmbroker.standalone.registry import Registry
 
 
@@ -285,13 +285,13 @@ async def test_mutable_remove_missing_raises_key_error(mutable_registry):
 # ── LLMConfig ⇄ metadata round-trip (model level) ────────────────────────────
 
 
-def test_llmconfig_metadata_round_trip_with_rate_limit():
+def test_llmconfig_metadata_round_trip_with_parallel():
     cfg = LLMConfig(
         name="g",
         base_url="https://x/v1",
         model="m",
         api_key_ref="K",
-        rate_limit=RateLimit(rpm=60, rpd=1000),
+        parallel=3,
     )
     metadata = cfg.to_metadata()
     restored = LLMConfig.from_metadata(
@@ -304,7 +304,7 @@ def test_llmconfig_metadata_round_trip_with_rate_limit():
     assert restored == cfg
 
 
-def test_llmconfig_metadata_round_trip_without_rate_limit():
+def test_llmconfig_metadata_round_trip_without_parallel():
     cfg = _cfg("g")
     assert cfg.to_metadata() == {}
     restored = LLMConfig.from_metadata(
@@ -317,49 +317,49 @@ def test_llmconfig_metadata_round_trip_without_rate_limit():
     assert restored == cfg
 
 
-# ── rate_limit round-trip through DB registries ──────────────────────────────
+# ── parallel round-trip through DB registries ──────────────────────────────
 
 
-async def test_mutable_registry_rate_limit_round_trip(mutable_registry):
+async def test_mutable_registry_parallel_round_trip(mutable_registry):
     cfg = LLMConfig(
         name="p1",
         base_url="https://x/v1",
         model="m",
         api_key_ref="K",
-        rate_limit=RateLimit(rpm=30),
+        parallel=3,
     )
     await mutable_registry.add(cfg)
     result = await mutable_registry.get("p1")
     assert result is not None
-    assert result.rate_limit == RateLimit(rpm=30)
+    assert result.parallel == 3
 
 
-async def test_mutable_registry_rate_limit_none_round_trip(mutable_registry):
+async def test_mutable_registry_parallel_none_round_trip(mutable_registry):
     await mutable_registry.add(_cfg("p1"))
     result = await mutable_registry.get("p1")
     assert result is not None
-    assert result.rate_limit is None
+    assert result.parallel is None
 
 
-async def test_mutable_registry_update_preserves_changed_rate_limit(mutable_registry):
+async def test_mutable_registry_update_preserves_changed_parallel(mutable_registry):
     await mutable_registry.add(_cfg("p1"))
     updated = LLMConfig(
         name="p1",
         base_url="https://new/v1",
         model="m",
         api_key_ref="K",
-        rate_limit=RateLimit(tpm=1000),
+        parallel=1,
     )
     await mutable_registry.update(updated)
     result = await mutable_registry.get("p1")
     assert result is not None
-    assert result.rate_limit == RateLimit(tpm=1000)
+    assert result.parallel == 1
 
 
 # ── Legacy rows with NULL/absent metadata (pre-migration shape) ──────────────
 
 
-def test_sqlite_registry_legacy_null_metadata_loads_rate_limit_none(tmp_path):
+def test_sqlite_registry_legacy_null_metadata_loads_parallel_none(tmp_path):
     db = str(tmp_path / "b.db")
     reg = llmbroker.sqlite.Registry(db)
 
@@ -370,12 +370,12 @@ def test_sqlite_registry_legacy_null_metadata_loads_rate_limit_none(tmp_path):
             await conn.commit()
         result = await reg.get("p1")
         assert result is not None
-        assert result.rate_limit is None
+        assert result.parallel is None
 
     asyncio.run(run())
 
 
-async def test_postgres_registry_legacy_null_metadata_loads_rate_limit_none(pg_pool):
+async def test_postgres_registry_legacy_null_metadata_loads_parallel_none(pg_pool):
     reg = llmbroker.postgres.Registry(pg_pool)
     try:
         await reg.add(_cfg("legacy-null-meta"))
@@ -385,7 +385,7 @@ async def test_postgres_registry_legacy_null_metadata_loads_rate_limit_none(pg_p
             )
         result = await reg.get("legacy-null-meta")
         assert result is not None
-        assert result.rate_limit is None
+        assert result.parallel is None
     finally:
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM llmbroker_registry WHERE name = 'legacy-null-meta'")
@@ -566,7 +566,7 @@ def test_toml_registry_profile_with_benched_latch_round_trip(tmp_path):
     assert result["p1"] == profile
 
 
-async def test_mongodb_registry_legacy_doc_without_metadata_loads_rate_limit_none(mongo_db):
+async def test_mongodb_registry_legacy_doc_without_metadata_loads_parallel_none(mongo_db):
     reg = llmbroker.mongodb.Registry(mongo_db)
     try:
         await mongo_db["llmbroker_registry"].insert_one(
@@ -580,6 +580,6 @@ async def test_mongodb_registry_legacy_doc_without_metadata_loads_rate_limit_non
         )
         result = await reg.get("legacy-doc")
         assert result is not None
-        assert result.rate_limit is None
+        assert result.parallel is None
     finally:
         await mongo_db["llmbroker_registry"].delete_many({"name": "legacy-doc"})

@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -146,7 +146,7 @@ def test_well_behaved_daily_capped_llm_not_flagged_for_removal():
 def test_auth_failure_401_drops_llm_and_alerts():
     async def run():
         pool = LLMPool(state_store=None, user_id=None)
-        pool.add(_cfg(), "key")
+        await pool.add(_cfg(), "key")
         opt = Optimizer()
         opt_tel = _opt_tel(opt, pool)
 
@@ -165,7 +165,7 @@ def test_auth_failure_401_drops_llm_and_alerts():
 def test_auth_failure_403_drops_llm_and_alerts():
     async def run():
         pool = LLMPool(state_store=None, user_id=None)
-        pool.add(_cfg(), "key")
+        await pool.add(_cfg(), "key")
         opt = Optimizer()
         opt_tel = _opt_tel(opt, pool)
 
@@ -182,7 +182,7 @@ def test_auth_failure_403_drops_llm_and_alerts():
 def test_generic_error_below_removal_floor_retires_with_alert():
     async def run():
         pool = LLMPool(state_store=None, user_id=None)
-        pool.add(_cfg(), "key")
+        await pool.add(_cfg(), "key")
         opt = Optimizer(min_sample_count=3, removal_rate_floor=0.9)
         opt_tel = _opt_tel(opt, pool)
 
@@ -200,7 +200,7 @@ def test_generic_error_below_removal_floor_retires_with_alert():
 def test_rate_limit_below_removal_floor_retires_with_alert():
     async def run():
         pool = LLMPool(state_store=None, user_id=None)
-        pool.add(_cfg(), "key")
+        await pool.add(_cfg(), "key")
         opt = Optimizer(min_sample_count=3, removal_rate_floor=0.9)
         opt_tel = _opt_tel(opt, pool)
 
@@ -218,7 +218,7 @@ def test_rate_limit_below_removal_floor_retires_with_alert():
 def test_ok_calls_do_not_retire():
     async def run():
         pool = LLMPool(state_store=None, user_id=None)
-        pool.add(_cfg(), "key")
+        await pool.add(_cfg(), "key")
         opt = Optimizer(min_sample_count=3, removal_rate_floor=0.9)
         opt_tel = _opt_tel(opt, pool)
 
@@ -231,21 +231,14 @@ def test_ok_calls_do_not_retire():
     asyncio.run(run())
 
 
-def test_drop_removes_config_but_not_queue_slot():
-    """drop() removes from _configs but leaves the stale slot in the queue.
-
-    This verifies the pool-side precondition for the router guard
-    (`if config.name not in self._pool: continue`). The guard itself is
-    pre-existing code exercised in router integration tests, not here.
-    """
-
+def test_drop_removes_the_slot_entirely():
     async def run():
         pool = LLMPool(state_store=None, user_id=None)
-        pool.add(_cfg(), "key")
-        pool.drop("x")
-        stale = await pool.acquire(0)  # stale slot still drainable from queue
-        assert stale.name == "x"
-        assert "x" not in pool  # _configs was cleared by drop
+        await pool.add(_cfg(), "key")
+        await pool.drop("x")
+        assert "x" not in pool
+        with pytest.raises(TimeoutError):
+            await pool.acquire(0)
 
     asyncio.run(run())
 
@@ -547,66 +540,9 @@ def test_optimizer_policy_unknown_latency_ranked_last_interactive():
 
 
 # ---------------------------------------------------------------------------
-# Pool drain-and-pick tests
+# Pool acquire()/policy interaction — see tests/test_pool.py for coverage of
+# slot selection, round-robin, and policy wiring.
 # ---------------------------------------------------------------------------
-
-
-def test_pool_acquire_drain_and_pick():
-    """Multiple available slots: policy picks non-first; others returned to queue."""
-
-    async def run():
-        pool = LLMPool(state_store=None, user_id=None)
-        a, b, c = _cfg("a"), _cfg("b"), _cfg("c")
-        pool.add(a, "k")
-        pool.add(b, "k")
-        pool.add(c, "k")
-
-        policy = MagicMock()
-        policy.select.return_value = b
-
-        result = await pool.acquire(0, policy=policy, operation="op")
-        assert result is b
-        assert pool._queue.qsize() == 2
-        remaining = {pool._queue.get_nowait().name, pool._queue.get_nowait().name}
-        assert remaining == {"a", "c"}
-
-    asyncio.run(run())
-
-
-def test_pool_acquire_single_slot_no_drain():
-    """Single slot: policy receives list of one; no put_nowait overflow."""
-
-    async def run():
-        pool = LLMPool(state_store=None, user_id=None)
-        a = _cfg("a")
-        pool.add(a, "k")
-
-        policy = MagicMock()
-        policy.select.return_value = a
-
-        result = await pool.acquire(0, policy=policy, operation=None)
-        assert result is a
-        assert pool._queue.qsize() == 0
-        policy.select.assert_called_once_with([a], operation=None)
-
-    asyncio.run(run())
-
-
-def test_pool_acquire_no_policy_returns_first():
-    """Without policy, acquire returns the first slot without drain."""
-
-    async def run():
-        pool = LLMPool(state_store=None, user_id=None)
-        a, b = _cfg("a"), _cfg("b")
-        pool.add(a, "k")
-        pool.add(b, "k")
-
-        result = await pool.acquire(0)
-        assert result in (a, b)
-        assert pool._queue.qsize() == 1
-
-    asyncio.run(run())
-
 
 # ---------------------------------------------------------------------------
 # Router and Broker wiring tests
@@ -642,7 +578,7 @@ def test_router_passes_policy_to_acquire():
 
         router = Router(pool, NoTelemetry(), user_id=None, policy=sentinel_policy)
         with patch("llmbroker.broker.router.call_provider", fake_call_provider):
-            pool.release = MagicMock()
+            pool.release = AsyncMock()
             pool.clear_cooling = MagicMock()
             result = await router.chat([{"role": "user", "content": "hi"}], operation="myop")
         assert result._llm_name == "x"
@@ -685,8 +621,9 @@ def test_broker_no_policy_when_no_optimizer(tmp_path):
 
 def _make_unavailable(broker, name: str) -> None:
     """Simulate a cooling LLM without going through a real cool_down cycle."""
-    future = datetime.now(UTC) + timedelta(seconds=300)
-    broker._pool._state.set_cooling(name, future, 1)
+    slot = broker._pool._slots[name]
+    slot.cooldown_until = datetime.now(UTC) + timedelta(seconds=300)
+    slot.fail_count = 1
 
 
 def test_underprovisioned_alert_when_all_cooling(tmp_path):
@@ -798,7 +735,7 @@ def test_underprov_alert_via_ask_wiring(tmp_path):
             telemetry=NoTelemetry(),
             optimize=True,
         ) as broker:
-            # Drain the queue so the next acquire raises QueueEmpty → NoLLMAvailableError.
+            # Occupy the only slot so the next acquire raises TimeoutError → NoLLMAvailableError.
             # _make_unavailable marks p1 non-AVAILABLE so _maybe_alert_underprov fires.
             await broker._pool.acquire(0)
             _make_unavailable(broker, "p1")
@@ -986,7 +923,7 @@ def test_to_profile_and_load_summaries_round_trip_reproduces_same_bounds():
 def test_record_quality_updates_the_right_name_and_operation():
     async def run():
         pool = LLMPool(state_store=None, user_id=None)
-        pool.add(_cfg(), "key")
+        await pool.add(_cfg(), "key")
         opt = Optimizer()
         opt_tel = _opt_tel(opt, pool)
 
@@ -1004,7 +941,7 @@ def test_record_quality_updates_the_right_name_and_operation():
 def test_record_quality_unknown_call_id_warns_and_is_dropped(caplog):
     async def run():
         pool = LLMPool(state_store=None, user_id=None)
-        pool.add(_cfg(), "key")
+        await pool.add(_cfg(), "key")
         opt = Optimizer()
         opt_tel = _opt_tel(opt, pool)
 
@@ -1020,7 +957,7 @@ def test_record_quality_unknown_call_id_warns_and_is_dropped(caplog):
 def test_call_index_never_exceeds_cap_under_sustained_traffic():
     async def run():
         pool = LLMPool(state_store=None, user_id=None)
-        pool.add(_cfg(), "key")
+        await pool.add(_cfg(), "key")
         opt = Optimizer()
         opt_tel = _opt_tel(opt, pool)
 

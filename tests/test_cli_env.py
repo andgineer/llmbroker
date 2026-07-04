@@ -1,4 +1,4 @@
-"""Tests for `env`'s onboarding ordering: effort/value/daily-cap sort and annotations."""
+"""Tests for `env`'s onboarding ordering: effort/value sort and annotations."""
 
 from llmbroker.cli import main
 
@@ -58,25 +58,23 @@ def test_unknown_value_sorts_after_known_at_same_effort(tmp_path, capsys):
     assert out.index("KNOWN_KEY=") < out.index("UNKNOWN_KEY=")
 
 
-def test_daily_cap_breaks_tie_within_same_effort_and_value(tmp_path, capsys):
+def test_same_effort_and_value_sorts_alphabetically_by_ref(tmp_path, capsys):
     body = (
-        '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="SMALL_KEY"\n'
-        "rate_limit = { rpd = 50 }\n"
-        '[[llms]]\nname="b"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="BIG_KEY"\n'
-        "rate_limit = { rpd = 1000 }\n"
-        "[keys.SMALL_KEY]\n"
+        '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="ZZZ_KEY"\n'
+        '[[llms]]\nname="b"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="AAA_KEY"\n'
+        "[keys.ZZZ_KEY]\n"
         'effort = "signup"\n'
         'value = "good"\n'
-        'help = "s"\n'
-        "[keys.BIG_KEY]\n"
+        'help = "z"\n'
+        "[keys.AAA_KEY]\n"
         'effort = "signup"\n'
         'value = "good"\n'
-        'help = "b"\n'
+        'help = "a"\n'
     )
     rc = main(["env", _write_toml(tmp_path, body)])
     out = capsys.readouterr().out
     assert rc == 0
-    assert out.index("BIG_KEY=") < out.index("SMALL_KEY=")
+    assert out.index("AAA_KEY=") < out.index("ZZZ_KEY=")
 
 
 def test_already_set_env_var_is_annotated(tmp_path, capsys, monkeypatch):
@@ -89,10 +87,9 @@ def test_already_set_env_var_is_annotated(tmp_path, capsys, monkeypatch):
     assert "KEY_A=" not in out
 
 
-def test_annotations_render_effort_value_and_cap(tmp_path, capsys):
+def test_annotations_render_effort_and_value(tmp_path, capsys):
     body = (
         '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n'
-        "rate_limit = { rpd = 1000 }\n"
         "[keys.KEY_A]\n"
         'effort = "signup"\n'
         'value = "good"\n'
@@ -103,4 +100,3 @@ def test_annotations_render_effort_value_and_cap(tmp_path, capsys):
     assert rc == 0
     assert "effort=signup" in out
     assert "value=good" in out
-    assert "daily cap=1000" in out

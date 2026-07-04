@@ -9,7 +9,7 @@ import llmbroker.sqlite
 from llmbroker.broker import AsyncBroker
 from llmbroker.broker.catalog import Catalog, apply_seed
 from llmbroker.broker.pool import TIER_DEPRECATED, LLMPool
-from llmbroker.models import LLMConfig, LLMProfile, Origin, RateLimit, SeedPolicy
+from llmbroker.models import LLMConfig, LLMProfile, Origin, SeedPolicy
 from llmbroker.optimizer import FirstAvailablePolicy
 from llmbroker.standalone.registry import Registry as TomlRegistry
 from llmbroker.standalone.secrets import DictSecrets
@@ -170,7 +170,7 @@ def test_sync_adds_preset_new_model():
     asyncio.run(run())
 
 
-def test_sync_updates_changed_rate_limit():
+def test_sync_updates_changed_parallel():
     async def run():
         old = LLMConfig(
             name="p1",
@@ -185,12 +185,12 @@ def test_sync_updates_changed_rate_limit():
             base_url="https://x/v1",
             model="m",
             api_key_ref="K",
-            rate_limit=RateLimit(rpm=30),
+            parallel=3,
         )
         source = _ReadOnlyRegistry([new_cfg])
         await apply_seed(registry, _NoSecrets(), source, SeedPolicy.SYNC, None)
         loaded = {c.name: c for c in await registry.load()}
-        assert loaded["p1"].rate_limit == RateLimit(rpm=30)
+        assert loaded["p1"].parallel == 3
 
     asyncio.run(run())
 
@@ -433,7 +433,7 @@ async def test_manual_latch_survives_sync_reseed(tmp_path):
         seed=TomlRegistry(seed_path),
         seed_policy=SeedPolicy.SYNC,
     ) as broker:
-        assert broker._pool.is_benched("p1")
+        assert broker._pool.is_disabled("p1")
         profiles = await reg.read_profiles()
         assert profiles["p1"].benched is True
         assert profiles["p1"].benched_reason == "manual review"

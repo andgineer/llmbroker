@@ -1,27 +1,26 @@
-"""Tests for per-model rate_limit and per-provider key_info parsing in the file Registry."""
+"""Tests for per-model parallel cap and per-provider key_info parsing in the file Registry."""
 
 import asyncio
 
-from llmbroker.models import EffortLevel, KeyInfo, RateLimit, ValueLevel
+from llmbroker.models import EffortLevel, KeyInfo, ValueLevel
 from llmbroker.protocols.registry import KeyInfoProtocol
 from llmbroker.standalone.registry import Registry
 
 
-def test_llms_rate_limit_reaches_llmconfig(tmp_path):
+def test_llms_parallel_reaches_llmconfig(tmp_path):
     f = tmp_path / "llms.toml"
     f.write_text(
-        '[[llms]]\nname="g"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
-        "rate_limit = { rpm = 30, rpd = 1000 }\n",
+        '[[llms]]\nname="g"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\nparallel = 3\n',
     )
     configs = asyncio.run(Registry(f).load())
-    assert configs[0].rate_limit == RateLimit(rpm=30, rpd=1000)
+    assert configs[0].parallel == 3
 
 
-def test_llms_without_rate_limit_is_none(tmp_path):
+def test_llms_without_parallel_is_none(tmp_path):
     f = tmp_path / "llms.toml"
     f.write_text('[[llms]]\nname="g"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n')
     configs = asyncio.run(Registry(f).load())
-    assert configs[0].rate_limit is None
+    assert configs[0].parallel is None
 
 
 def test_nested_keys_table_parses_effort_value_help(tmp_path):
@@ -97,10 +96,9 @@ def test_registry_satisfies_key_info_protocol(tmp_path):
 # ── Shipped catalog (presets/freetier.toml) ──────────────────────────────────
 
 
-def test_shipped_freetier_preset_configs_carry_rate_limit():
+def test_shipped_freetier_preset_configs_load():
     configs = asyncio.run(Registry("presets/freetier.toml").load())
     assert len(configs) == 3
-    assert all(c.rate_limit is not None for c in configs)
 
 
 def test_shipped_freetier_preset_key_info_effort_and_value():

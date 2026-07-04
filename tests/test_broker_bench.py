@@ -40,7 +40,7 @@ async def test_persisted_manual_latch_applied_at_provision(tmp_path):
         secrets=DictSecrets({"K": "key"}),
         telemetry=NoTelemetry(),
     ) as broker:
-        assert broker._pool.is_benched("p1")
+        assert broker._pool.is_disabled("p1")
         assert broker._optimizer is not None
         assert broker._optimizer.evaluate_demotions("p1") == {}  # latch suppresses derivation
 
@@ -152,13 +152,13 @@ async def test_disable_enable_llm_round_trip_and_resets_quality_aggregates(tmp_p
         assert opt._quality[("p1", "summarize")].count == 5
 
         await broker.disable_llm("p1", reason="manual review")
-        assert broker._pool.is_benched("p1")
+        assert broker._pool.is_disabled("p1")
         profiles = await reg.read_profiles()
         assert profiles["p1"].benched is True
         assert profiles["p1"].benched_reason == "manual review"
 
         await broker.enable_llm("p1")
-        assert not broker._pool.is_benched("p1")
+        assert not broker._pool.is_disabled("p1")
         assert ("p1", "summarize") not in opt._quality
         profiles2 = await reg.read_profiles()
         assert profiles2["p1"].benched is False
@@ -201,7 +201,7 @@ async def test_disable_enable_llm_without_optimizer_preserves_existing_profile_s
 async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path):
     """Regression: removing a benched model used to leave the pool's stale benched
     latch behind, so a fresh config re-added under the same name was silently stuck
-    non-routable — no error, just never enqueued."""
+    non-routable — no error, just never acquirable."""
     db = str(tmp_path / "b.db")
     reg = llmbroker.sqlite.Registry(db)
     await reg.add(_cfg())
@@ -212,14 +212,15 @@ async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path):
         telemetry=NoTelemetry(),
     ) as broker:
         await broker.disable_llm("p1", reason="manual review")
-        assert broker._pool.is_benched("p1")
+        assert broker._pool.is_disabled("p1")
 
         await broker.remove("p1")
         assert "p1" not in broker._benched_meta
 
         await broker.add(_cfg())
-        assert not broker._pool.is_benched("p1")
-        assert broker._pool._queue.qsize() == 1
+        assert not broker._pool.is_disabled("p1")
+        picked = await broker._pool.acquire(0)
+        assert picked.name == "p1"
 
 
 async def test_snapshot_lands_in_registry_on_aclose(tmp_path):

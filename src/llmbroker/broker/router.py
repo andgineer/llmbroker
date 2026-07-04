@@ -4,7 +4,6 @@ Acquires a free slot, calls the provider, and on a 429/503 cools that LLM down
 and tries the next free one; every attempt is recorded to telemetry.
 """
 
-import asyncio
 import logging
 import time
 import uuid
@@ -67,10 +66,10 @@ class Router:
         trace_id: str | None = None,
         wait: float | None = None,
     ) -> AsyncResult:
-        # Eager, wait-independent: a keyless config is never enqueued (see pool.add), so a
-        # pool with zero keyed configs leaves the queue permanently empty. Without this check,
-        # the default wait=None would block on that empty queue forever instead of raising the
-        # "zero usable models" error this is meant to guarantee.
+        # Eager, wait-independent: a keyless slot is never available (see pool._available), so a
+        # pool with zero keyed configs never has anything to acquire. Without this check, the
+        # default wait=None would block forever instead of raising the "zero usable models"
+        # error this is meant to guarantee.
         if self._pool.configs and not any(self._pool.has_key(name) for name in self._pool.configs):
             raise AllLLMsFailedError(
                 "no LLM has a resolved api_key_ref — set at least one env var or configure"
@@ -80,22 +79,8 @@ class Router:
         while True:
             try:
                 config = await self._pool.acquire(wait, policy=self._policy, operation=operation)
-            except (asyncio.QueueEmpty, TimeoutError) as exc:
+            except TimeoutError as exc:
                 raise NoLLMAvailableError("no LLM slot came free within wait") from exc
-
-            if config.name not in self._pool:
-                # Removed since enqueued — drop the stale slot, try next.
-                continue
-
-            if not self._pool.has_key(config.name):
-                # Defensive: keyless configs are no longer enqueued (see pool.add), so this
-                # should not fire in normal routing — the eager check above already covers
-                # the "zero usable models" case before a slot is ever acquired.
-                self._pool.release(config)
-                raise AllLLMsFailedError(
-                    f"{config.name}: api_key_ref {config.api_key_ref!r} not resolved"
-                    " — set the env var or configure a secrets backend",
-                )
 
             if await self._pool.apply_shared_cooling(config):
                 continue
@@ -188,7 +173,7 @@ class Router:
                 raise NoLLMAvailableError(f"{config.name} failed and wait=0") from exc
             return None
 
-        self._pool.release(config)
+        await self._pool.release(config)
         self._pool.clear_cooling(config.name)
         await record(CallStatus.OK, http_status=200, usage=usage)
         return AsyncResult(

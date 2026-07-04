@@ -107,8 +107,8 @@ def test_broker_resolves_key_not_on_config(tmp_path, monkeypatch):
             cfg = (await broker.get("p1")).config
             assert cfg.api_key_ref == "MY_API_KEY"
             assert "the-secret" not in (cfg.api_key_ref, cfg.base_url, cfg.model, cfg.name)
-            # the resolved key lives only in the private map
-            assert broker._pool._resolved_keys["p1"] == "the-secret"
+            # the resolved key lives only in the pool's private slot
+            assert broker._pool.resolved_key("p1") == "the-secret"
 
     asyncio.run(run())
 

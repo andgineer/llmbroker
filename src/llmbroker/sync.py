@@ -9,7 +9,6 @@ import asyncio
 import threading
 import weakref
 from collections.abc import Callable, Coroutine, Mapping
-from concurrent.futures import Future
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -103,6 +102,17 @@ class Broker:
             registry = Registry(registry)
         if isinstance(seed, (str, Path)):
             seed = Registry(seed)
+        self._async = AsyncBroker(
+            registry,
+            stack=stack,
+            secrets=secrets,
+            state_store=state_store,
+            telemetry=telemetry,
+            optimize=optimize,
+            seed=seed,
+            seed_policy=seed_policy,
+            user_id=user_id,
+        )
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=_run_loop,
@@ -111,30 +121,6 @@ class Broker:
             name="llmbroker-loop",
         )
         self._thread.start()
-        # AsyncBroker.__init__ creates an asyncio.Queue, which binds to the
-        # running loop — construct it on the broker's own loop thread.
-        fut: Future[AsyncBroker] = Future()
-
-        def _build() -> None:
-            try:
-                fut.set_result(
-                    AsyncBroker(
-                        registry,
-                        stack=stack,
-                        secrets=secrets,
-                        state_store=state_store,
-                        telemetry=telemetry,
-                        optimize=optimize,
-                        seed=seed,
-                        seed_policy=seed_policy,
-                        user_id=user_id,
-                    ),
-                )
-            except BaseException as exc:  # noqa: BLE001
-                fut.set_exception(exc)
-
-        self._loop.call_soon_threadsafe(_build)
-        self._async = fut.result()
         # Backstop: if the caller never closes the Broker, stop the loop and
         # join the thread when the instance is garbage-collected. The callback
         # holds only loop + thread (never self), so it does not pin the Broker.

@@ -48,10 +48,11 @@ shortcut, so it gets no stack of its own.
 
 ### Core
 
-- `AsyncBroker` — async engine. One `asyncio.Queue` slot per LLM; at most one
-  in-flight request per LLM. On 429/503: cooldown via `loop.call_later` re-enqueue.
-  Lazy start (no `start()` call required). `aclose()` / `async with` lifecycle.
-  LLMs are identified by name; access is always by name.
+- `AsyncBroker` — async engine. Parallel requests to one LLM are allowed by
+  default; `parallel` caps simultaneous in-flight requests per LLM (1 =
+  serialize). A cooling LLM is skipped until its cooldown expires. Lazy start
+  (no `start()` call required). `aclose()` / `async with` lifecycle. LLMs are
+  identified by name; access is always by name.
 - `Broker` — synchronous wrapper over `AsyncBroker` on a dedicated background
   event-loop thread. First-class shipped surface, not an afterthought.
 - `optimize` parameter shape (`bool | Optimizer`) is locked. `optimize=True` (default)
@@ -305,8 +306,8 @@ or one user's 429 would cool an LLM for everyone.
   shared; in a stateless server the broker is cheap and constructed *per request*
   with that request's `user_id`.
 - **A broker instance is one tenant's view.** The broker never multiplexes users
-  internally — resolved keys and the per-LLM queue are single-user. `user_id` absent
-  (the default) is exactly the single-tenant behavior, untouched.
+  internally — resolved keys and the per-LLM slot table are single-user. `user_id`
+  absent (the default) is exactly the single-tenant behavior, untouched.
 - **`None` means unscoped / single-tenant** and is a legitimate value. The broker
   passes whatever it has — `None` or an id — and the batteries decide what to do
   with it.
