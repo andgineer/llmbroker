@@ -132,7 +132,10 @@ Notes:
   **No `call_later`.**
 - `apply_shared_cooling(config)`: store-cache read unchanged (`pool.py:314-320`);
   on a stored COOLING entry copy `cooldown_until`, `fail_count = max(local, stored)`
-  into the slot, `in_flight = False`, return True. No timer.
+  into the slot, `in_flight = False`, return True. No timer. (Transitional:
+  Plan 2 step 2.3 deletes this method together with the state store and replaces
+  it with rebuild-fed `apply_peer_cooldowns` — keep it working here, don't
+  invest in it.)
 - `set_disabled(name)`: set the flag only — no queue drain. An in-flight call
   finishes normally; the flag excludes the slot afterwards. `clear_disabled(name)`:
   clear flag; notify. (Renamed from `set_benched`/`clear_benched` — the bench
@@ -201,9 +204,10 @@ providers tolerate parallel requests fine; a few always 429 under concurrency. N
 rule: **parallel calls to one LLM are allowed by default; a per-LLM cap opts into
 serialization.**
 
-- `RateLimit` (`models.py:264-270`) is **deleted** — `rpm`/`rpd`/`tpm`/`tpd`
-  were never enforced anywhere (user decision, see `mission-cost.md`), and a
-  one-field dataclass is pointless. Instead `LLMConfig` gains
+- `RateLimit` (`models.py:264-270`) is **deleted** — its four fields
+  `rpm`/`rpd`/`tpm`/`tpd` were never enforced anywhere (user decision, see
+  `specs/plans/simplify-rationale.md`). The cap is a **new** field directly on
+  `LLMConfig` (no `parallel` exists anywhere today, so do not look for one):
   `parallel: int | None = None` — max simultaneous in-flight requests, `None` =
   unlimited. Round-trip it through `LLMConfig.to_metadata`/`from_metadata`
   (`models.py:331+`, whose `rate_limit` block dies). TOML: `parallel = 1` on

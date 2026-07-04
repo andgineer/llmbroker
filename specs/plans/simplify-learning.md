@@ -2,7 +2,8 @@
 
 Prerequisite: `specs/plans/simplify-core.md` (Plan 1) is fully landed and green.
 Follow-up: `specs/plans/simplify-storage.md` (Plan 3).
-Mission context and open decisions: `specs/mission-cost.md`.
+Mission context: `specs/reference/mission.md`; the decisions behind the plans:
+`specs/plans/simplify-rationale.md`.
 
 This plan **changes implementation mechanics, not the learning capability**:
 
@@ -27,7 +28,7 @@ This plan **changes implementation mechanics, not the learning capability**:
   Coordination is advisory: failover is the correctness mechanism; the cost of
   staleness is one wasted roundtrip that fails over transparently.
 - **Scopes narrow to keys, and the scope is an opaque string** (decisions in
-  `mission-cost.md`): the registry and learning are always global — score
+  `specs/plans/simplify-rationale.md`): the registry and learning are always global — score
   windows, verdicts, and metrics aggregate the whole journal regardless of
   scope. The typed `user_id` on the broker facade is replaced by
   `scope: str | None`; it prefixes secret refs (own key, falling back to the
@@ -148,7 +149,7 @@ is not reimplemented): demotion is always per (model, operation).
 
 ## 2.2 Selection: demoted-last sort — tiers deleted as a concept
 
-Selection is one sort key (decision in `specs/mission-cost.md`):
+Selection is one sort key (decision in `specs/plans/simplify-rationale.md`):
 
 ```python
 min(candidates, key=lambda s: (optimizer.is_demoted(s.config.name, operation), s.order))
@@ -183,6 +184,18 @@ hole: a rating whose call row has already left the rebuild tail (or an old day
 file) still counts. Concurrent instances add records, never
 overwrite — cluster consistency needs no folds and no merging.
 
+**Record representation in Python** (one type, so `calls()` stays a single
+stream): `Call` gains `kind: str = "call"`, `ts: datetime | None = None`
+(aware UTC, set at record time — see 2.7), and `call_id: str | None = None`.
+A quality record is a `Call` with `kind="quality"` filling only `llm_name`,
+`operation`, `quality_score`, `ts`, and optionally `call_id`; `status` becomes
+`CallStatus | None` and is `None` exactly on quality records. `calls()`
+returns both kinds interleaved — the rebuild splits on `kind`; a host that
+wants execution rows only filters `kind == "call"` itself. `Call.id` stays the
+record's own uuid; its docstring ("the uuid record_quality updates by") dies
+with the row-update mechanism. The DB calls table gains the `kind` column in
+Plan 3's schema spec.
+
 **Mechanism:**
 
 - **Own ratings apply instantly**: `record_quality` appends to the in-memory
@@ -196,8 +209,10 @@ overwrite — cluster consistency needs no folds and no merging.
   and split in Python: rated records feed the score windows
   (bucket by `(llm_name, operation)`, keep the newest `quality_window` per
   bucket, `optimizer.load_scores`); failed records feed shared cooldowns
-  (below); all records feed `LLMMetrics`. At provision, run one rebuild as the
-  warm start.
+  (below); all records feed `LLMMetrics`. The tail is shared across all models
+  and operations — a chatty model can crowd a quiet model's ratings out of the
+  last `quality_rebuild_limit` records; accepted consequence, the limit is the
+  tuning knob. At provision, run one rebuild as the warm start.
   The file knowledge store supports the same rebuild by reading its day files
   newest-first (up to `quality_rebuild_limit` records) — the default setup
   learns across runs. Only the in-memory opt-out degrades to session-scoped
@@ -212,7 +227,17 @@ overwrite — cluster consistency needs no folds and no merging.
   `key_hash` matches the instance's current key for that llm (quota belongs
   to the key: a shared key shares its cooldown, a personal key cools only its
   owner); 401/403 rows with a matching hash re-apply the dead-key drop. The
-  result feeds `pool.apply_shared_cooling`; an own failure triggers an out-of-band refresh
+  result feeds the pool through a **reshaped method**: Plan 1's
+  `apply_shared_cooling(config)` (post-acquire, reads the store cache,
+  decrements `in_flight`) is **deleted** together with the state store and
+  replaced by `apply_peer_cooldowns(cooldowns: dict[str, datetime])` — called
+  from the rebuild, it only raises each named slot's `cooldown_until` to the
+  given value (never lowers it, and **never touches `in_flight`** — nothing was
+  acquired in this code path); the shared fail-streak (count of recent failed
+  rows per llm) folds in as `fail_count = max(local, peer)`. The router's
+  post-acquire `apply_shared_cooling` call (`router.py:100` area) is deleted —
+  peer cooldowns now arrive via the rebuild, and `acquire` already skips
+  cooling slots. An own failure triggers an out-of-band refresh
   (`maybe_rebuild(force=True)`), because coordination only matters around
   failures. The shared fail-streak is the count of recent failed rows. This
   replaces the state store entirely — its 2s cache, `reconcile()`, protocol,
@@ -304,7 +329,8 @@ optional passthrough for the host's journal UI — llmbroker never resolves it.
 
 ## 2.4 The `alerts()` API is deleted; events are log lines; raw facts in `snapshot()`
 
-Delete the alerts API entirely (user decision, see `mission-cost.md`):
+Delete the alerts API entirely (user decision, see
+`specs/plans/simplify-rationale.md`):
 `alerts()`, `add_alert`, the drain-on-read list, and the `Alert` model. The
 three important situations remain as logging only, un-debounced except (c):
 
@@ -343,7 +369,7 @@ flip-flop. Seeding becomes an explicit call the operator makes when a fresh
 preset is downloaded or the application DB is initialized.
 
 The preset file is the **only source of model definitions** (decision in
-`mission-cost.md`); the registry is its pure mirror. `sync(preset)`
+`specs/plans/simplify-rationale.md`); the registry is its pure mirror. `sync(preset)`
 semantics: add new entries, update existing ones, **delete absent ones**
 (replaces deprecation — nothing is lost: keys live in the secrets store,
 learned state is derived from the journal, journal rows stay until retention,
@@ -371,7 +397,8 @@ models keeps its own preset file.
   for DB-init workflows.
 - Provisioning against an **empty registry fails fast** with an error telling
   the user to call `sync(preset)` — no silent empty pool.
-- **The registry becomes globally scoped** (decision in `mission-cost.md`):
+- **The registry becomes globally scoped** (decision in
+  `specs/plans/simplify-rationale.md`):
   one model list, one `sync` for all users. The broker, catalog, and `sync`
   stop scoping registry operations by user (pass `None` for now — Plan 3
   removes the parameter from the registry protocol and the `user_id` column

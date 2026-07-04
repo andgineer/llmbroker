@@ -71,12 +71,15 @@ class TableSpec:
     indexes: tuple[tuple[str, ...], ...] = ()
 
 TABLES: dict[str, TableSpec] = {...}   # registry, calls, disabled, secrets
-SCHEMA_VERSION = 5                     # bump: summaries and state tables gone; registry becomes
-                                       # a pure preset mirror (user_id, origin, profile columns
-                                       # gone — Plan 2); calls gains cooldown_until + key_hash
-                                       # and its attribution column is scope (text); secrets
-                                       # keyed by ref alone (scope is a ref prefix, Plan 2);
-                                       # new tiny llmbroker_disabled (admin verdicts)
+SCHEMA_VERSION = 5                     # one shared constant replaces the per-DB markers
+                                       # (today: sqlite/postgres 4, mongodb 2 — mongodb jumps
+                                       # straight to 5). Bump rationale: summaries and state
+                                       # tables gone; registry becomes a pure preset mirror
+                                       # (user_id, origin, profile columns gone — Plan 2);
+                                       # calls gains kind, cooldown_until + key_hash and its
+                                       # attribution column is scope (text); secrets keyed by
+                                       # ref alone (scope is a ref prefix, Plan 2); new tiny
+                                       # llmbroker_disabled (admin verdicts)
 ```
 
 Column sets mirror the current DDL (`sqlite/schema.py:14-107`) minus the
@@ -87,8 +90,8 @@ columns** — it is a pure mirror of the preset, written only by `sync`
 `name`, column `disabled`), written by `set_disabled` and seeded
 with model names at `sync` (Plan 2).
 The calls table carries `scope` as a plain text attribution column
-and gains `cooldown_until` and `key_hash` (Plan 2); quality rows are
-self-contained (Plan 2) — nothing references call rows. The secrets table is
+and gains `kind`, `cooldown_until`, and `key_hash` (Plan 2); quality rows are
+self-contained (Plan 2, `kind = "quality"`) — nothing references call rows. The secrets table is
 a flat `ref → value` store: no `user_id` column exists anywhere — the scope
 is a ref-string prefix built by the broker (Plan 2).
 
@@ -121,6 +124,8 @@ class Driver(Protocol):
     # quality is its own appended record, metrics derive from the cached tail (Plan 2)
     async def append(self, table: str, row: Row) -> None: ...
     async def recent(self, table: str, limit: int, match: Row | None = None) -> list[Row]: ...
+        # newest-first by the calls table's timestamp column (`called_at`;
+        # the jsonl store orders by `ts`, Plan 2 step 2.7);
         # match = optional equality filter (the `calls(scope=…)` query API);
         # the rebuild reads unfiltered (learning is global, Plan 2)
     async def purge(self, table: str, before: datetime) -> int: ...   # ignores users by design
@@ -212,7 +217,7 @@ Same pattern for `postgres` (wrapping `asyncpg.Pool`) and `mongodb` (wrapping a
 Motor database).
 
 **Stacks are replaced by the single source parameter** (user decision, see
-`mission-cost.md`). Delete `sqlite.Stack`/`postgres.Stack`/`mongodb.Stack`, the
+`specs/plans/simplify-rationale.md`). Delete `sqlite.Stack`/`postgres.Stack`/`mongodb.Stack`, the
 `BackendStack` protocol, and the `stack=` parameter. Instead, the broker's
 first positional argument is the data source:
 
