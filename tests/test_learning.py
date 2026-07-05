@@ -10,7 +10,7 @@ from llmbroker.broker.learning import _LearningHook
 from llmbroker.broker.pool import LLMPool
 from llmbroker.models import Call, CallStatus, LLMConfig, key_hash
 from llmbroker.optimizer import Optimizer
-from llmbroker.sqlite.knowledge import Knowledge as SqliteKnowledge
+from llmbroker.sqlite import Knowledge as SqliteKnowledge
 from llmbroker.standalone.knowledge import InMemoryKnowledge
 
 

@@ -27,24 +27,29 @@ Every host plugs in up to three backends; only the registry is required:
   `DictSecrets`, `InMemoryKnowledge`). This is the simplest usage — a config file,
   env-var secrets, a file-backed knowledge store, no integration code.
 - **Dependency-carrying backends** are submodules imported explicitly
-  (`llmbroker.sqlite.Registry`, …), one subpackage per driver (`llmbroker.sqlite`, and
-  `llmbroker.postgres`/`redis`/… as they ship). Importing the submodule is the dependency
-  declaration: a bare `import llmbroker` never pulls in a driver.
+  (`llmbroker.sqlite.Registry`, …), one subpackage per driver (`llmbroker.sqlite`,
+  `llmbroker.postgres`, `llmbroker.mongodb`, `llmbroker.aws`, `llmbroker.vault`).
+  Importing the submodule is the dependency declaration: a bare `import llmbroker`
+  never pulls in a driver. Internally, each of sqlite/postgres/mongodb is one
+  storage `Driver` (`backends/driver.py` — `fetch`/`get`/`upsert`/`delete` for
+  registry/disabled/secrets, `append`/`recent`/`purge` for the journal) behind
+  one shared port implementation (`backends/ports.py`) written once against the
+  `Driver` protocol; adding a new DB backend is one driver file. A custom backend
+  outside this package implements either one `Driver` (to reuse the shared ports)
+  or a full port protocol directly.
 
-**Backend stack sugar.** When all three ports share one backend (sqlite, postgres,
-or mongodb — the three that implement every port), a `stack=` argument bundles
-them from a single shared connection, replacing three separate constructor calls
-with one. Individual ports can still be overridden: an explicit
-`registry`/`secrets`/`knowledge` argument always wins over the one the stack
-supplies. Either `registry` or `stack` must be supplied. `redis`/`aws`/`vault` are
-single-port backends and stay override-only; the standalone (file-based) family is
-already covered by the bare TOML-path shortcut, so it gets no stack of its own.
-
-A `StateStoreProtocol` also exists (`llmbroker.sqlite.StateStore`,
-`llmbroker.redis.StateStore`, …) but is not one of the three broker ports —
-shared cooldowns and learned quality now derive from the knowledge journal (see
-[`optimizer.md`](optimizer.md)). It stays importable standalone for hosts that
-want a plain cross-process key-value cache.
+**Source-parameter dispatch.** The broker's first positional argument is the data
+source; passing a plain string/`Path` dispatches on its form: `.toml`/`.json` → a
+file registry with env-var secrets; a sqlite path/URL (`.db`, `.sqlite`,
+`sqlite://…`) → sqlite backing all three ports from one file; `postgresql://…` /
+`mongodb://…` → postgres/mongodb backing all three ports from one driver. An
+unrecognized form raises a clear error naming the accepted ones; a missing extra
+raises an actionable `pip install llmbroker[...]` message. Each backend package is
+imported lazily so a bare `import llmbroker` still never pulls in a driver.
+Explicit `registry=`/`secrets=`/`knowledge=` arguments always win over whatever the
+source would have supplied — passing a already-constructed `RegistryProtocol`
+object as the first argument (instead of a string) skips dispatch entirely.
+`aws`/`vault` are single-port secrets backends and stay override-only.
 
 ---
 
@@ -83,7 +88,6 @@ want a plain cross-process key-value cache.
 | Registry | `Registry(path)` (file, `.toml`/`.json`), `llmbroker.sqlite.Registry`, `llmbroker.postgres.Registry`, `llmbroker.mongodb.Registry` |
 | Secrets | `Secrets()` (env), `DictSecrets(mapping)` (test double), `llmbroker.sqlite.Secrets`, `llmbroker.postgres.Secrets`, `llmbroker.mongodb.Secrets`, `llmbroker.aws.Secrets`, `llmbroker.vault.Secrets` |
 | Knowledge | `FileKnowledge(path)` (day-split journal + YAML disabled map), `InMemoryKnowledge()`, `llmbroker.sqlite.Knowledge`, `llmbroker.postgres.Knowledge`, `llmbroker.mongodb.Knowledge` |
-| State store (standalone, unused by the broker) | `llmbroker.sqlite.StateStore`, `llmbroker.redis.StateStore`, `llmbroker.postgres.StateStore`, `llmbroker.mongodb.StateStore` |
 
 ### CLI
 
@@ -97,34 +101,44 @@ want a plain cross-process key-value cache.
 
 ### DB schema
 
-Every DB backend self-manages its schema via `ensure_schema`: idempotent, called on
-first use, version-aware. Every table/collection is `llmbroker_`-prefixed so the
-host's migration tool can ignore them by prefix. Single-known-installation policy:
-`ensure_schema` creates the current shape fresh when no version marker exists, and
-raises an actionable `RuntimeError` on any other version mismatch — there is no
-in-place `ALTER`-based migration path. `llmbroker_state`/`llmbroker_summaries`
-tables/collections still exist (dead weight, kept only so the standalone
-`StateStore` classes stay functional).
+Every DB backend self-manages its schema via `ensure_schema`: idempotent, checked
+once per driver instance before any operation, version-aware. Every
+table/collection is `llmbroker_`-prefixed so the host's migration tool can ignore
+them by prefix. Single-known-installation policy: `ensure_schema` creates the
+current shape fresh when no version marker exists, and raises an actionable
+`RuntimeError`/error on any other version mismatch — there is no in-place
+`ALTER`-based migration path; upgrading means dropping the `llmbroker_*`
+tables/collections and restarting (export registry/secrets/calls first if needed).
+
+**The table schema is not a public contract.** A host may query `llmbroker_calls`
+or the other tables directly, but at its own risk — column names and shapes may
+change between releases without notice. The supported read surface is
+`snapshot()` (raw per-model facts + metrics); hosts that need more should read
+through a `QueryableKnowledgeProtocol`/`DisabledMapProtocol` backend, not the
+raw table.
+
+Four tables/collections exist: **registry**, **secrets**, **disabled** (admin
+verdicts, seeded with model names at `sync`), and **calls** (the journal). There
+is no state or summaries table — shared cooldowns and learned quality derive
+entirely from the calls journal (see [`optimizer.md`](optimizer.md)).
 
 - **SQLite** tracks version via `PRAGMA user_version`.
 - **Postgres** tracks version via a single-row `llmbroker_schema_version` table
-  (no PRAGMA in Postgres). The caller owns the `asyncpg.Pool` lifecycle; `aclose()`
-  on every class is a no-op by design so the pool is not closed prematurely.
-- **MongoDB** tracks version via a document in `llmbroker_schema_version`. The caller
-  owns the Motor database handle. `user_id: None` is stored explicitly in every
-  document (not as an absent field) so MongoDB null participates correctly in unique
-  indexes.
-- **Redis** stores one hash per `(user_id)` scope under `llmbroker_state:*` keys;
-  keys have no TTL (standalone `StateStore` only — unused by the broker).
+  (no PRAGMA in Postgres). Passing an existing `asyncpg.Pool` means the caller
+  owns its lifecycle and `aclose()` is a no-op; passing a `postgresql://…` source
+  string instead makes the driver create and own the pool, closed by `aclose()`.
+- **MongoDB** tracks version via a document in `llmbroker_schema_version`. Passing
+  an existing Motor database means the caller owns the client; passing a
+  `mongodb://…` source string instead makes the driver create and own the client.
 
 #### Columns vs. JSON
 
 A field earns a dedicated column only if it appears (or realistically will) in a
 `WHERE`/`JOIN`/`ORDER BY`/`GROUP BY`/aggregate; everything else is payload and
-lives in a single JSON column (JSONB on postgres, TEXT on sqlite; native
-document/hash on mongo/redis) keyed by the row's identity. This is a hybrid, not
-"JSON everywhere" — identity and queried fields stay first-class columns and keep
-their indexes.
+lives in a single JSON column (JSONB on postgres, TEXT on sqlite; a native
+sub-document on mongo) keyed by the row's identity. This is a hybrid, not "JSON
+everywhere" — identity and queried fields stay first-class columns and keep their
+indexes.
 
 Per table:
 
@@ -134,15 +148,18 @@ Per table:
   `cooldown_until`/`key_hash` ride on failed rows for the shared-cooldown rebuild
   (see [`optimizer.md`](optimizer.md)).
 - **Registry** (`llmbroker_registry`) — hybrid: `name`, `base_url`, `model`,
-  `api_key_ref`, `user_id` stay columns (identity, plus stable human-meaningful
-  config); nested/open-ended per-LLM config (e.g. `parallel`) lives in the
-  `metadata` JSON column. The registry is a pure mirror of a preset (see
-  "Provider seeding") — nothing but `sync` writes it, and it holds no learned data.
+  `api_key_ref` stay columns (identity, plus stable human-meaningful config);
+  nested/open-ended per-LLM config (e.g. `parallel`) lives in the `metadata`
+  JSON column. The registry is global (no scope column) and a pure mirror of a
+  preset (see "Provider seeding") — nothing but `sync` writes it, and it holds
+  no learned data.
 - **Disabled** (`llmbroker_disabled`) — the admin disabled-verdict map: a flat
   `name -> disabled` mapping, one row per model name. Written only by
   `set_disabled` or seeded (missing names only, `disabled: false`) by `sync`/
   provisioning.
-- **Secrets** (`llmbroker_secrets`) — `value` is a single opaque scalar with no
+- **Secrets** (`llmbroker_secrets`) — a flat `ref -> value` store, keyed by `ref`
+  alone (no scope column — the broker folds the scope into the ref string as a
+  prefix, see "Per-user scoping"); `value` is a single opaque scalar with no
   sub-structure, so JSON buys nothing.
 
 `LLMState` and `LLMConfig` (`src/llmbroker/models.py`) are the typed dataclass
@@ -269,7 +286,10 @@ rejected — use `None` for unscoped) is the one knob:
 
 - **The registry and everything the optimizer learns are always global** — one
   model list, one set of quality windows and cooldowns, shared by every scope.
-  There is no per-tenant registry partition.
+  There is no per-tenant registry partition. Storage and the protocols
+  (`RegistryProtocol`, `SecretsProtocol`, `KnowledgeProtocol`) have no user concept
+  at all — `scope` is an opaque string the broker itself interprets, never a
+  parameter any backend or protocol method accepts.
 - **Secrets are the one thing that is actually per-scope.** Key resolution
   tries `resolve(f"{scope}/{api_key_ref}")` first, falling back to
   `resolve(api_key_ref)` on `KeyError` — an own key if one is set, the shared
@@ -278,43 +298,34 @@ rejected — use `None` for unscoped) is the one knob:
   string itself, only the already-prefixed ref.
 - **The journal carries `scope` as a plain attribution field** (`Call.scope`),
   filterable via `calls(scope=...)`, but it does not partition learning — the
-  rebuild's tail read is unscoped by design (a 429 on the shared key should cool
-  every scope holding that key; a dead *own* key should drop the model only for
-  its scope, which the key-hash match in [`optimizer.md`](optimizer.md) already
-  handles without any registry-level partition).
+  rebuild's tail read is unscoped by design. 429 cooldowns and dead-key drops
+  follow the key hash (a dead *own* key drops the model only for its scope,
+  which the key-hash match in [`optimizer.md`](optimizer.md) already handles
+  without any registry-level partition); 5xx cooldowns are global (a
+  provider-side outage cools the model for every scope, since it has nothing to
+  do with which key was used).
 - **A broker instance is one scope's view.** The broker never multiplexes
   scopes internally — resolved keys and the per-LLM slot table are per-instance.
   `scope=None` (the default) is exactly the single-tenant behavior.
-- **Optional paranoia guard.** A secrets battery may be constructed to *require*
-  a user id on its own calls (`require_user_id`), raising `UserScopeError` if
-  ever asked to resolve/set with none — orthogonal to the broker's `scope`
-  fallback logic above, which always passes an explicit value.
 
 ---
 
 ## Secret naming conventions
 
 Each managed-secret backend uses a deterministic, namespaced path so secrets written by
-llmbroker are identifiable and isolated from the rest of the account.
+llmbroker are identifiable and isolated from the rest of the account. Neither backend
+has a user/scope parameter — `ref` is the whole identity, already carrying any scope
+prefix the broker added (see "Per-user scoping" above).
 
 ### AWS Secrets Manager (`llmbroker.aws.Secrets`)
 
-| `user_id` | Secret name in Secrets Manager |
-|-----------|-------------------------------|
-| `None`    | `{prefix}{ref}`               |
-| `"alice"` | `{prefix}{ref}/alice`         |
-
-`prefix` defaults to `"llmbroker/"`.  Secrets created via `set()` carry the tag
-`{"Key": "llmbroker", "Value": "1"}` for independent enumeration and cleanup.
+Secret name in Secrets Manager: `{prefix}{ref}` — `prefix` defaults to `"llmbroker/"`.
+Secrets created via `set()` carry the tag `{"Key": "llmbroker", "Value": "1"}` for
+independent enumeration and cleanup.
 
 ### HashiCorp Vault (`llmbroker.vault.Secrets`)
 
-KV v2 engine.
-
-| `user_id` | KV path                          |
-|-----------|----------------------------------|
-| `None`    | `llmbroker/{ref}`                |
-| `"alice"` | `llmbroker/users/alice/{ref}`    |
+KV v2 engine. KV path: `llmbroker/{ref}`.
 
 ---
 

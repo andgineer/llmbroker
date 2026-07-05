@@ -65,7 +65,7 @@ class Registry:
     def path(self) -> Path:
         return self._path
 
-    async def load(self, user_id: int | str | None = None) -> list[LLMConfig]:  # noqa: ARG002
+    async def load(self) -> list[LLMConfig]:
         data = _read_data(self._path)
         result: list[LLMConfig] = []
         for entry in data.get("llms", []):

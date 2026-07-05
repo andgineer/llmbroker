@@ -15,11 +15,9 @@ from typing import Any
 from llmbroker.broker import AsyncBroker, AsyncResult
 from llmbroker.models import Call, LLMConfig, LLMMetrics, LLMSnapshot, LLMState
 from llmbroker.optimizer import Optimizer
-from llmbroker.protocols.backend_stack import BackendStack
 from llmbroker.protocols.knowledge import KnowledgeProtocol
 from llmbroker.protocols.registry import RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
-from llmbroker.standalone.registry import Registry
 
 
 def _run_loop(loop: asyncio.AbstractEventLoop) -> None:
@@ -80,17 +78,13 @@ class Broker:
         self,
         registry: RegistryProtocol | str | Path | None = None,
         *,
-        stack: BackendStack | None = None,
         secrets: SecretsProtocol | None = None,
         knowledge: KnowledgeProtocol | None = None,
         optimize: bool | Optimizer = True,
         scope: str | None = None,
     ) -> None:
-        if isinstance(registry, (str, Path)):
-            registry = Registry(registry)
         self._async = AsyncBroker(
             registry,
-            stack=stack,
             secrets=secrets,
             knowledge=knowledge,
             optimize=optimize,

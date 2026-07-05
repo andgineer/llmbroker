@@ -6,12 +6,12 @@ from llmbroker.models import KeyInfo, LLMConfig
 
 
 class RegistryProtocol(Protocol):
-    async def load(self, user_id: int | str | None = None) -> list[LLMConfig]: ...
+    async def load(self) -> list[LLMConfig]: ...
 
 
 @runtime_checkable
 class MutableRegistryProtocol(RegistryProtocol, Protocol):
-    async def mirror(self, configs: list[LLMConfig], user_id: int | str | None = None) -> None:
+    async def mirror(self, configs: list[LLMConfig]) -> None:
         """Total mirror: add entries absent from the store, update existing ones,
         delete stored entries absent from ``configs``. The only registry write path."""
         ...

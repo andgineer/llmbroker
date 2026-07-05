@@ -15,7 +15,3 @@ class AllLLMsFailedError(LLMRequestError):
 
 class SecretsReadOnlyError(Exception):
     """Raised when ``.set()`` is called on a read-only secrets backend."""
-
-
-class UserScopeError(Exception):
-    """Raised when ``user_id`` is ``None`` and ``require_user_id=True``."""

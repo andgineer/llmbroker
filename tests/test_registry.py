@@ -78,58 +78,11 @@ def test_load_empty_llms_section(tmp_path):
     assert asyncio.run(Registry(f).load()) == []
 
 
-# ── SQLite registry per-user scoping tests ────────────────────────────────────
+# ── SQLite registry tests ─────────────────────────────────────────────────────
 
 
 def _cfg(name: str, url: str = "https://x/v1") -> LLMConfig:
     return LLMConfig(name=name, base_url=url, model="m", api_key_ref="K")
-
-
-def test_sqlite_registry_per_user_row_isolated(tmp_path):
-    """Per-user rows are not visible to other users."""
-    db = str(tmp_path / "b.db")
-    reg = llmbroker.sqlite.Registry(db)
-
-    async def run():
-        await reg.mirror([_cfg("alice-llm")], "alice")
-        alice_rows = await reg.load("alice")
-        bob_rows = await reg.load("bob")
-        assert len(alice_rows) == 1
-        assert len(bob_rows) == 0
-
-    asyncio.run(run())
-
-
-def test_sqlite_registry_same_name_different_users_allowed(tmp_path):
-    """Two users can have rows with the same name without conflict."""
-    db = str(tmp_path / "b.db")
-    reg = llmbroker.sqlite.Registry(db)
-
-    async def run():
-        await reg.mirror([_cfg("llm", "https://a/v1")], "alice")
-        await reg.mirror([_cfg("llm", "https://b/v1")], "bob")
-        alice_rows = await reg.load("alice")
-        bob_rows = await reg.load("bob")
-        assert alice_rows[0].base_url == "https://a/v1"
-        assert bob_rows[0].base_url == "https://b/v1"
-
-    asyncio.run(run())
-
-
-def test_sqlite_registry_load_none_returns_only_unscoped(tmp_path):
-    """load(None) returns only NULL-scoped rows and does not bleed named-user rows."""
-    db = str(tmp_path / "b.db")
-    reg = llmbroker.sqlite.Registry(db)
-
-    async def run():
-        await reg.mirror([_cfg("shared")])
-        await reg.mirror([_cfg("alice-llm")], "alice")
-        none_rows = await reg.load()
-        alice_rows = await reg.load("alice")
-        assert [r.name for r in none_rows] == ["shared"]
-        assert [r.name for r in alice_rows] == ["alice-llm"]
-
-    asyncio.run(run())
 
 
 def test_sqlite_registry_mirror_updates_existing(tmp_path):
@@ -183,28 +136,6 @@ async def test_mutable_mirror_adds(mutable_registry):
     await mutable_registry.mirror([_cfg("llm1")])
     rows = await mutable_registry.load()
     assert any(r.name == "llm1" for r in rows)
-
-
-async def test_mutable_load_returns_only_matching_user(mutable_registry):
-    await mutable_registry.mirror([_cfg("alice-llm")], "alice")
-    alice = await mutable_registry.load("alice")
-    bob = await mutable_registry.load("bob")
-    assert len(alice) == 1
-    assert len(bob) == 0
-
-
-async def test_mutable_same_name_different_users_allowed(mutable_registry):
-    await mutable_registry.mirror([_cfg("llm", "https://a/v1")], "alice")
-    await mutable_registry.mirror([_cfg("llm", "https://b/v1")], "bob")
-    assert (await mutable_registry.load("alice"))[0].base_url == "https://a/v1"
-    assert (await mutable_registry.load("bob"))[0].base_url == "https://b/v1"
-
-
-async def test_mutable_load_none_returns_unscoped_only(mutable_registry):
-    await mutable_registry.mirror([_cfg("shared")])
-    await mutable_registry.mirror([_cfg("alice-llm")], "alice")
-    none_rows = await mutable_registry.load()
-    assert [r.name for r in none_rows] == ["shared"]
 
 
 async def test_mutable_mirror_updates_existing_fields(mutable_registry):

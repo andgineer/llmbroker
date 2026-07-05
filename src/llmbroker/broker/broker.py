@@ -32,6 +32,7 @@ from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.pool_view import PoolView
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.broker.router import Router
+from llmbroker.broker.source import resolve_source
 from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import (
     AsyncResourceProtocol,
@@ -40,7 +41,6 @@ from llmbroker.models import (
     LLMSnapshot,
 )
 from llmbroker.optimizer import Optimizer
-from llmbroker.protocols.backend_stack import BackendStack
 from llmbroker.protocols.knowledge import (
     DisabledMapProtocol,
     KnowledgeProtocol,
@@ -71,7 +71,6 @@ class AsyncBroker:
         self,
         registry: RegistryProtocol | str | Path | None = None,
         *,
-        stack: BackendStack | None = None,
         secrets: SecretsProtocol | None = None,
         knowledge: KnowledgeProtocol | None = None,
         optimize: bool | Optimizer = True,
@@ -79,24 +78,19 @@ class AsyncBroker:
     ) -> None:
         if scope == "":
             raise ValueError("scope must not be empty string; use None for unscoped")
-        if registry is None and stack is None:
-            raise ValueError("AsyncBroker requires either `registry` or `stack`")
-
         if registry is None:
-            assert stack is not None
-            registry = stack.registry
-        elif isinstance(registry, (str, Path)):
-            registry = Registry(registry)
+            raise ValueError("AsyncBroker requires a `registry` source")
 
-        secrets = (
-            as_secrets(secrets)
-            if secrets is not None
-            else (stack.secrets if stack is not None else Secrets())
-        )
+        source_secrets: SecretsProtocol | None = None
+        source_knowledge: KnowledgeProtocol | None = None
+        if isinstance(registry, (str, Path)):
+            registry, source_secrets, source_knowledge = resolve_source(registry)
+
+        secrets = as_secrets(secrets) if secrets is not None else (source_secrets or Secrets())
         knowledge = (
             knowledge
             if knowledge is not None
-            else (stack.knowledge if stack is not None else _default_knowledge(registry))
+            else (source_knowledge or _default_knowledge(registry))
         )
 
         if isinstance(optimize, Optimizer):
@@ -167,7 +161,7 @@ class AsyncBroker:
             preset = Registry(preset)
         await self._catalog.sync(preset)
         if isinstance(self._base_knowledge, DisabledMapProtocol):
-            configs = await self._registry.load(user_id=None)
+            configs = await self._registry.load()
             await self._base_knowledge.seed_disabled([c.name for c in configs])
         if self._provisioned:
             await self._catalog.resync()

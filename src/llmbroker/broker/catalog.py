@@ -35,7 +35,7 @@ class Catalog:
     async def provision(self) -> None:
         """Reconcile the pool with the registry. The caller serializes this
         one-time init; it is not re-entrant. Raises if the registry is empty."""
-        configs = await self._registry.load(user_id=None)
+        configs = await self._registry.load()
         if not configs:
             raise RuntimeError(
                 "registry is empty — call sync(preset) to mirror a preset into it before"
@@ -49,7 +49,7 @@ class Catalog:
         Called by the debounced journal rebuild so registry edits and key changes
         from other processes/nodes take effect on a running broker.
         """
-        configs = await self._registry.load(user_id=None)
+        configs = await self._registry.load()
         await self._reconcile(configs)
 
     async def _reconcile(self, configs: list[LLMConfig]) -> None:
@@ -69,7 +69,7 @@ class Catalog:
         """
         registry = self._require_mutable_registry()
         source_configs = await preset.load()
-        existing = {c.name: c for c in await registry.load(user_id=None)}
+        existing = {c.name: c for c in await registry.load()}
         for cfg in source_configs:
             current = existing.get(cfg.name)
             if current is not None and current.model != cfg.model:
@@ -78,18 +78,18 @@ class Catalog:
                     f" (stored {current.model!r} vs preset {cfg.model!r}) — a model bump"
                     " must be a new entry name",
                 )
-        await registry.mirror(source_configs, user_id=None)
+        await registry.mirror(source_configs)
         await self._seed_secrets(source_configs)
 
     async def _resolve_key(self, cfg: LLMConfig) -> str | None:
         """Try the scope-prefixed (own) ref first, falling back to the shared ref."""
         if self._scope is not None:
             try:
-                return await self._secrets.resolve(f"{self._scope}/{cfg.api_key_ref}", None)
+                return await self._secrets.resolve(f"{self._scope}/{cfg.api_key_ref}")
             except KeyError:
                 pass
         try:
-            return await self._secrets.resolve(cfg.api_key_ref, None)
+            return await self._secrets.resolve(cfg.api_key_ref)
         except KeyError:
             logger.info(
                 "LLM %s: api_key_ref %r not resolved — inactive until the env var /"
@@ -106,7 +106,7 @@ class Catalog:
         bootstrap = Secrets()
         for cfg in configs:
             try:
-                await self._secrets.resolve(cfg.api_key_ref, None)
+                await self._secrets.resolve(cfg.api_key_ref)
                 continue  # already resolvable — preserve
             except KeyError:
                 pass
@@ -114,7 +114,7 @@ class Catalog:
                 value = await bootstrap.resolve(cfg.api_key_ref)
             except KeyError:
                 continue
-            await self._secrets.set(cfg.api_key_ref, value, None)
+            await self._secrets.set(cfg.api_key_ref, value)
 
     def _require_mutable_registry(self) -> MutableRegistryProtocol:
         if not isinstance(self._registry, MutableRegistryProtocol):

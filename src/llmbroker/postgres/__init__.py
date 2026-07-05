@@ -1,29 +1,38 @@
 """Postgres backend: registry, knowledge store, and secrets.
 
 Needs the ``asyncpg`` driver (``llmbroker[postgres]``). All tables are
-``llmbroker_``-prefixed and owned by ``ensure_schema``. ``StateStore`` is
-unused by the broker (shared cooldowns derive from the journal) — it stays
-importable as a standalone class.
+``llmbroker_``-prefixed and owned by ``ensure_schema``.
 """
+
+from datetime import timedelta
 
 import asyncpg
 
-from llmbroker.postgres.knowledge import Knowledge
-from llmbroker.postgres.registry import Registry
-from llmbroker.postgres.secrets import Secrets
-from llmbroker.postgres.state_store import StateStore
+from llmbroker.backends.ports import StoreKnowledge, StoreRegistry, StoreSecrets
+from llmbroker.postgres.driver import PostgresDriver
 
-__all__ = ["Knowledge", "Registry", "Secrets", "Stack", "StateStore"]
+__all__ = ["Knowledge", "Registry", "Secrets"]
+
+_DEFAULT_RETENTION = timedelta(days=90)
 
 
-class Stack:
-    """One asyncpg pool backing registry, secrets, and knowledge store.
+class Registry(StoreRegistry):
+    """Postgres-backed mutable registry over ``llmbroker_registry`` — a pure preset mirror."""
 
-    Build the pool yourself first — pool creation is async, ``Broker.__init__``
-    is sync: ``pool = await asyncpg.create_pool(dsn)``.
-    """
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        super().__init__(PostgresDriver(pool))
 
-    def __init__(self, pool: asyncpg.Pool, *, require_user_id: bool = False) -> None:
-        self.registry = Registry(pool)
-        self.secrets = Secrets(pool, require_user_id=require_user_id)
-        self.knowledge = Knowledge(pool)
+
+class Secrets(StoreSecrets):
+    """Postgres-backed mutable secrets store over ``llmbroker_secrets``."""
+
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        super().__init__(PostgresDriver(pool))
+
+
+class Knowledge(StoreKnowledge):
+    """Postgres-backed queryable knowledge store over ``llmbroker_calls`` + the
+    ``llmbroker_disabled`` admin verdict map."""
+
+    def __init__(self, pool: asyncpg.Pool, *, retention: timedelta = _DEFAULT_RETENTION) -> None:
+        super().__init__(PostgresDriver(pool), retention=retention)

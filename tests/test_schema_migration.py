@@ -8,18 +8,20 @@ stamped version.
 import aiosqlite
 import pytest
 
-from llmbroker.postgres import schema as pg_schema
-from llmbroker.sqlite import schema as sqlite_schema
+from llmbroker.backends.spec import SCHEMA_VERSION
+from llmbroker.mongodb.driver import MongoDriver
+from llmbroker.postgres.driver import PostgresDriver
+from llmbroker.sqlite.driver import SqliteDriver
 
 
 async def test_sqlite_ensure_schema_creates_fresh_and_stamps_version(tmp_path):
     db_path = str(tmp_path / "fresh.db")
-    async with aiosqlite.connect(db_path) as db:
-        await sqlite_schema.ensure_schema(db, db_path)
+    await SqliteDriver(db_path).ensure_schema()
 
+    async with aiosqlite.connect(db_path) as db:
         cursor = await db.execute("PRAGMA user_version")
         row = await cursor.fetchone()
-        assert row[0] == sqlite_schema._SCHEMA_VERSION
+        assert row[0] == SCHEMA_VERSION
 
         table_info = await (await db.execute("PRAGMA table_info(llmbroker_registry)")).fetchall()
         col_names = {c[1] for c in table_info}
@@ -39,10 +41,8 @@ async def test_sqlite_ensure_schema_creates_fresh_and_stamps_version(tmp_path):
 
 async def test_sqlite_ensure_schema_is_idempotent(tmp_path):
     db_path = str(tmp_path / "idempotent.db")
-    async with aiosqlite.connect(db_path) as db:
-        await sqlite_schema.ensure_schema(db, db_path)
-    async with aiosqlite.connect(db_path) as db:
-        await sqlite_schema.ensure_schema(db, db_path)  # must not raise
+    await SqliteDriver(db_path).ensure_schema()
+    await SqliteDriver(db_path).ensure_schema()  # must not raise
 
 
 async def test_sqlite_ensure_schema_raises_on_version_mismatch(tmp_path):
@@ -51,23 +51,21 @@ async def test_sqlite_ensure_schema_raises_on_version_mismatch(tmp_path):
         await db.execute("PRAGMA user_version = 1")
         await db.commit()
 
-    async with aiosqlite.connect(db_path) as db:
-        with pytest.raises(RuntimeError, match="schema version 1"):
-            await sqlite_schema.ensure_schema(db, db_path)
+    with pytest.raises(RuntimeError, match="schema version 1"):
+        await SqliteDriver(db_path).ensure_schema()
 
 
 async def test_postgres_ensure_schema_creates_fresh_and_stamps_version(pg_pool):
     async with pg_pool.acquire() as conn:
         await conn.execute("DROP TABLE IF EXISTS llmbroker_schema_version")
-    pg_schema._schema_ready.discard(id(pg_pool))
 
-    await pg_schema.ensure_schema(pg_pool)
+    await PostgresDriver(pg_pool).ensure_schema()
 
     async with pg_pool.acquire() as conn:
         version_row = await conn.fetchrow(
             "SELECT version FROM llmbroker_schema_version WHERE id = 1",
         )
-        assert version_row["version"] == pg_schema._SCHEMA_VERSION
+        assert version_row["version"] == SCHEMA_VERSION
 
         cols = await conn.fetch(
             "SELECT column_name FROM information_schema.columns"
@@ -83,11 +81,10 @@ async def test_postgres_ensure_schema_raises_on_version_mismatch(pg_pool):
             "INSERT INTO llmbroker_schema_version (id, version) VALUES (1, 1)"
             " ON CONFLICT (id) DO UPDATE SET version = 1",
         )
-    pg_schema._schema_ready.discard(id(pg_pool))
 
     try:
         with pytest.raises(RuntimeError, match="schema version 1"):
-            await pg_schema.ensure_schema(pg_pool)
+            await PostgresDriver(pg_pool).ensure_schema()
     finally:
         # Restore a clean, current-version marker so later tests sharing this
         # session-scoped pool don't inherit the deliberately-broken state.
@@ -95,6 +92,33 @@ async def test_postgres_ensure_schema_raises_on_version_mismatch(pg_pool):
             await conn.execute(
                 "INSERT INTO llmbroker_schema_version (id, version) VALUES (1, $1)"
                 " ON CONFLICT (id) DO UPDATE SET version = $1",
-                pg_schema._SCHEMA_VERSION,
+                SCHEMA_VERSION,
             )
-        pg_schema._schema_ready.add(id(pg_pool))
+
+
+async def test_mongodb_ensure_schema_creates_fresh_and_stamps_version(mongo_db):
+    await mongo_db["llmbroker_schema_version"].delete_many({})
+
+    await MongoDriver(mongo_db).ensure_schema()
+
+    version_doc = await mongo_db["llmbroker_schema_version"].find_one({})
+    assert version_doc["version"] == SCHEMA_VERSION
+
+    indexes = await mongo_db["llmbroker_registry"].index_information()
+    assert "llmbroker_registry_unique" in indexes
+
+
+async def test_mongodb_ensure_schema_raises_on_version_mismatch(mongo_db):
+    await mongo_db["llmbroker_schema_version"].replace_one({}, {"version": 1}, upsert=True)
+
+    try:
+        with pytest.raises(RuntimeError, match="schema version 1"):
+            await MongoDriver(mongo_db).ensure_schema()
+    finally:
+        # Restore a clean, current-version marker so later tests sharing this
+        # session-scoped database don't inherit the deliberately-broken state.
+        await mongo_db["llmbroker_schema_version"].replace_one(
+            {},
+            {"version": SCHEMA_VERSION},
+            upsert=True,
+        )

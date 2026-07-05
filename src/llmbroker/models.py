@@ -316,19 +316,3 @@ class AsyncResourceProtocol(Protocol):
     """
 
     async def aclose(self) -> None: ...
-
-
-def check_user_id(user_id: int | str | None) -> None:
-    """Reject an empty-string ``user_id`` (use ``None`` for unscoped).
-
-    Shared by every storage backend so scoping behaves identically across them.
-
-    >>> check_user_id(None)
-    >>> check_user_id(42)
-    >>> check_user_id("")
-    Traceback (most recent call last):
-    ...
-    ValueError: user_id must not be empty string; use None for unscoped
-    """
-    if user_id == "":
-        raise ValueError("user_id must not be empty string; use None for unscoped")

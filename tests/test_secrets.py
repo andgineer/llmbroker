@@ -12,7 +12,6 @@ import llmbroker.sqlite
 import llmbroker.vault
 import pytest
 
-from llmbroker.exceptions import UserScopeError
 from llmbroker.models import LLMConfig
 from llmbroker.protocols.secrets import MutableSecretsProtocol
 from llmbroker.standalone.registry import Registry as FileRegistry
@@ -182,79 +181,6 @@ def test_llm_config_dataclass_has_no_secret_field():
     assert not hasattr(cfg, "api_key")
 
 
-# ── per-user scoping tests ────────────────────────────────────────────────────
-
-
-def test_sqlite_secrets_two_users_isolated(tmp_path):
-    """resolve/set round-trip under two distinct user_ids stays isolated."""
-    db = str(tmp_path / "b.db")
-    secrets = llmbroker.sqlite.Secrets(db)
-
-    async def run():
-        await secrets.set("K", "alice-val", "alice")
-        await secrets.set("K", "bob-val", "bob")
-        assert await secrets.resolve("K", "alice") == "alice-val"
-        assert await secrets.resolve("K", "bob") == "bob-val"
-
-    asyncio.run(run())
-
-
-def test_sqlite_secrets_user_id_none_resolves_unscoped(tmp_path):
-    """user_id=None resolves the NULL-scoped (unscoped) row."""
-    db = str(tmp_path / "b.db")
-    secrets = llmbroker.sqlite.Secrets(db)
-
-    async def run():
-        await secrets.set("K", "global-val")
-        return await secrets.resolve("K")
-
-    assert asyncio.run(run()) == "global-val"
-
-
-def test_sqlite_secrets_missing_per_user_raises_key_error(tmp_path):
-    """A missing per-user row raises KeyError, never falls back to shared row."""
-    db = str(tmp_path / "b.db")
-    secrets = llmbroker.sqlite.Secrets(db)
-
-    async def run():
-        await secrets.set("K", "global-val")  # NULL-scoped
-        await secrets.resolve("K", "alice")  # alice has no row
-
-    with pytest.raises(KeyError):
-        asyncio.run(run())
-
-
-def test_secrets_require_user_id_raises_on_none(monkeypatch):
-    """Secrets(require_user_id=True) raises UserScopeError when user_id is None."""
-    monkeypatch.setenv("K", "val")
-    s = Secrets(require_user_id=True)
-    with pytest.raises(UserScopeError):
-        asyncio.run(s.resolve("K", None))
-
-
-def test_secrets_require_user_id_resolves_with_user(monkeypatch):
-    """Secrets(require_user_id=True) resolves normally when user_id is provided."""
-    monkeypatch.setenv("K", "val")
-    s = Secrets(require_user_id=True)
-    assert asyncio.run(s.resolve("K", "alice")) == "val"
-
-
-def test_sqlite_secrets_require_user_id_raises_on_none(tmp_path, monkeypatch):
-    """sqlite.Secrets(require_user_id=True) raises UserScopeError when user_id is None."""
-    db = str(tmp_path / "b.db")
-    secrets = llmbroker.sqlite.Secrets(db, require_user_id=True)
-    with pytest.raises(UserScopeError):
-        asyncio.run(secrets.resolve("K", None))
-
-
-def test_sqlite_secrets_require_user_id_set_raises_on_none(tmp_path):
-    """sqlite.Secrets(require_user_id=True).set raises UserScopeError when user_id is None."""
-    db = str(tmp_path / "b.db")
-    secrets = llmbroker.sqlite.Secrets(db, require_user_id=True)
-    with pytest.raises(UserScopeError):
-        asyncio.run(secrets.set("K", "val", None))
-
-
 # ── Parametrized backend tests for MutableSecretsProtocol ────────────────────
 
 
@@ -284,33 +210,6 @@ async def mutable_secrets(request, tmp_path_factory, pg_pool, mongo_db):
         _vault_delete_recursive(hvac.Client(url=url, token=token), "llmbroker/")
 
 
-@pytest.fixture(
-    params=["sqlite", "postgres", "mongodb", "aws", "vault"],
-    ids=["sqlite", "postgres", "mongodb", "aws", "vault"],
-)
-async def strict_mutable_secrets(request, tmp_path_factory, pg_pool, mongo_db):
-    """Secrets backends constructed with require_user_id=True."""
-    param = request.param
-    if param == "sqlite":
-        db_path = str(tmp_path_factory.mktemp("ssec_sqlite") / "sec.db")
-        yield llmbroker.sqlite.Secrets(db_path, require_user_id=True)
-    elif param == "postgres":
-        yield llmbroker.postgres.Secrets(pg_pool, require_user_id=True)
-        async with pg_pool.acquire() as conn:
-            await conn.execute("DELETE FROM llmbroker_secrets")
-    elif param == "mongodb":
-        yield llmbroker.mongodb.Secrets(mongo_db, require_user_id=True)
-        await mongo_db["llmbroker_secrets"].delete_many({})
-    elif param == "aws":
-        url = request.getfixturevalue("localstack_url")
-        yield llmbroker.aws.Secrets(region_name="us-east-1", endpoint_url=url, require_user_id=True)
-        await _aws_purge(url)
-    elif param == "vault":
-        url, token = request.getfixturevalue("vault_url_and_token")
-        yield llmbroker.vault.Secrets(url=url, token=token, require_user_id=True)
-        _vault_delete_recursive(hvac.Client(url=url, token=token), "llmbroker/")
-
-
 async def test_mutable_set_and_resolve(mutable_secrets):
     await mutable_secrets.set("K", "secret")
     assert await mutable_secrets.resolve("K") == "secret"
@@ -325,36 +224,3 @@ async def test_mutable_set_upserts(mutable_secrets):
 async def test_mutable_resolve_missing_raises_key_error(mutable_secrets):
     with pytest.raises(KeyError):
         await mutable_secrets.resolve("MISSING")
-
-
-async def test_mutable_two_users_isolated(mutable_secrets):
-    await mutable_secrets.set("K", "alice-val", "alice")
-    await mutable_secrets.set("K", "bob-val", "bob")
-    assert await mutable_secrets.resolve("K", "alice") == "alice-val"
-    assert await mutable_secrets.resolve("K", "bob") == "bob-val"
-
-
-async def test_mutable_user_id_none_resolves_unscoped(mutable_secrets):
-    await mutable_secrets.set("K", "global-val")
-    assert await mutable_secrets.resolve("K") == "global-val"
-
-
-async def test_mutable_missing_per_user_raises_key_error(mutable_secrets):
-    await mutable_secrets.set("K", "global-val")
-    with pytest.raises(KeyError):
-        await mutable_secrets.resolve("K", "alice")
-
-
-async def test_strict_require_user_id_none_raises_on_resolve(strict_mutable_secrets):
-    with pytest.raises(UserScopeError):
-        await strict_mutable_secrets.resolve("K", None)
-
-
-async def test_strict_require_user_id_none_raises_on_set(strict_mutable_secrets):
-    with pytest.raises(UserScopeError):
-        await strict_mutable_secrets.set("K", "v", None)
-
-
-async def test_strict_require_user_id_resolves_with_user(strict_mutable_secrets):
-    await strict_mutable_secrets.set("K", "val", "alice")
-    assert await strict_mutable_secrets.resolve("K", "alice") == "val"

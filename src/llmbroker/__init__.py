@@ -7,7 +7,6 @@ from llmbroker.exceptions import (
     LLMRequestError,
     NoLLMAvailableError,
     SecretsReadOnlyError,
-    UserScopeError,
 )
 from llmbroker.models import LifecyclePhase
 from llmbroker.optimizer import Optimizer
@@ -34,7 +33,6 @@ __all__ = [
     "Result",
     "Secrets",
     "SecretsReadOnlyError",
-    "UserScopeError",
     "arun_tool_loop",
     "run_tool_loop",
 ]

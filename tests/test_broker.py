@@ -8,6 +8,7 @@ import httpx
 import llmbroker.sqlite
 import pytest
 
+from llmbroker.backends.ports import StoreKnowledge
 from llmbroker.broker import AsyncBroker
 from llmbroker.exceptions import AllLLMsFailedError, NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
@@ -506,8 +507,9 @@ def test_default_knowledge_is_file_store_sibling_to_toml_registry(tmp_path):
 
 
 def test_default_knowledge_falls_back_to_cwd_state_for_bare_db_registry(tmp_path, monkeypatch):
-    """A registry with no `.path` (e.g. a bare DB registry, no stack=) falls back to
-    `./state` under the CWD — not an error, just an unopinionated default."""
+    """A registry with no `.path` (e.g. a bare DB registry object, not a source
+    string) falls back to `./state` under the CWD — not an error, just an
+    unopinionated default."""
     monkeypatch.chdir(tmp_path)
     db = str(tmp_path / "b.db")
 
@@ -524,16 +526,16 @@ def test_default_knowledge_falls_back_to_cwd_state_for_bare_db_registry(tmp_path
     assert list((tmp_path / "state" / "calls").glob("*.jsonl"))
 
 
-def test_stack_default_knowledge_is_stack_knowledge(tmp_path):
-    """With stack= and no explicit knowledge=, the stack's own knowledge port is used."""
+def test_sqlite_source_default_knowledge_is_sqlite_knowledge(tmp_path):
+    """A ``.db`` source with no explicit knowledge= wires a sqlite.Knowledge, not
+    the file-registry ``state/`` sibling default."""
 
     async def run():
         db_path = str(tmp_path / "broker.db")
-        stack = llmbroker.sqlite.Stack(db_path)
-        await stack.registry.mirror(
+        await llmbroker.sqlite.Registry(db_path).mirror(
             [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")]
         )
-        async with AsyncBroker(stack=stack) as broker:
-            assert broker._base_knowledge is stack.knowledge
+        async with AsyncBroker(db_path) as broker:
+            assert isinstance(broker._base_knowledge, StoreKnowledge)
 
     asyncio.run(run())
