@@ -7,40 +7,44 @@ exception — never silence.
 
 ---
 
-## The four pluggable backends
+## The three pluggable backends
 
-Every host plugs in up to four backends; only the registry is required:
+Every host plugs in up to three backends; only the registry is required:
 
 | Backend | Contract | Default (zero-dependency) | What it is |
 |---|---|---|---|
-| **config** | `RegistryProtocol` | `Registry(path)` (file: `.toml`/`.json`) | where LLM configurations are stored |
+| **config** | `RegistryProtocol` | `Registry(path)` (file: `.toml`/`.json`) | where LLM configurations are stored — a pure mirror of a preset, see "Provider seeding" |
 | **secrets** | `SecretsProtocol` | `Secrets()` (env vars) | how `api_key_ref` names resolve to real keys |
-| **state store** | `StateStoreProtocol` | absent — single-process only | persists cooldown state between requests, and cluster-shares the optimizer's decayed learned summaries, via server-side atomic folds (any stateless server, not just clusters) |
-| **telemetry** | `TelemetryProtocol` | `Telemetry()` (Python logging) | append-only call journal |
+| **knowledge** | `KnowledgeProtocol` | `FileKnowledge(path)` (`state/` dir) | append-only call journal plus the admin disabled-verdict map; see [`optimizer.md`](optimizer.md) |
 
 **Where each kind lives:**
-- **Contracts** (`RegistryProtocol`, `SecretsProtocol`, …) live in `llmbroker.protocols` —
-  implement one to add a custom backend. They are not part of the top-level surface.
+- **Contracts** (`RegistryProtocol`, `SecretsProtocol`, `KnowledgeProtocol`, …) live in
+  `llmbroker.protocols` — implement one to add a custom backend. They are not part of
+  the top-level surface.
 - **Zero-dependency implementations** that work without any external backend live in
   `llmbroker.standalone` and are re-exported for convenience: construct them directly as
-  `llmbroker.Registry`, `llmbroker.Secrets`, `llmbroker.Telemetry` (plus variants
-  `DictSecrets`, `NoTelemetry`, `JsonlTelemetry`). This is the simplest usage — a config
-  file, env-var secrets, logging telemetry, no integration code.
+  `llmbroker.Registry`, `llmbroker.Secrets`, `llmbroker.FileKnowledge` (plus variants
+  `DictSecrets`, `InMemoryKnowledge`). This is the simplest usage — a config file,
+  env-var secrets, a file-backed knowledge store, no integration code.
 - **Dependency-carrying backends** are submodules imported explicitly
   (`llmbroker.sqlite.Registry`, …), one subpackage per driver (`llmbroker.sqlite`, and
   `llmbroker.postgres`/`redis`/… as they ship). Importing the submodule is the dependency
   declaration: a bare `import llmbroker` never pulls in a driver.
 
-**Backend stack sugar.** When all four ports share one backend (sqlite, postgres,
+**Backend stack sugar.** When all three ports share one backend (sqlite, postgres,
 or mongodb — the three that implement every port), a `stack=` argument bundles
-them from a single shared connection, replacing four separate constructor calls
+them from a single shared connection, replacing three separate constructor calls
 with one. Individual ports can still be overridden: an explicit
-`registry`/`secrets`/`telemetry`/`state_store` argument always wins over the one
-the stack supplies, including passing `state_store=None` to disable the state
-store the stack would otherwise provide. Either `registry` or `stack` must be
-supplied. `redis`/`aws`/`vault` are single-port backends and stay override-only;
-the standalone (file-based) family is already covered by the bare TOML-path
-shortcut, so it gets no stack of its own.
+`registry`/`secrets`/`knowledge` argument always wins over the one the stack
+supplies. Either `registry` or `stack` must be supplied. `redis`/`aws`/`vault` are
+single-port backends and stay override-only; the standalone (file-based) family is
+already covered by the bare TOML-path shortcut, so it gets no stack of its own.
+
+A `StateStoreProtocol` also exists (`llmbroker.sqlite.StateStore`,
+`llmbroker.redis.StateStore`, …) but is not one of the three broker ports —
+shared cooldowns and learned quality now derive from the knowledge journal (see
+[`optimizer.md`](optimizer.md)). It stays importable standalone for hosts that
+want a plain cross-process key-value cache.
 
 ---
 
@@ -56,28 +60,21 @@ shortcut, so it gets no stack of its own.
 - `Broker` — synchronous wrapper over `AsyncBroker` on a dedicated background
   event-loop thread. First-class shipped surface, not an afterthought.
 - `optimize` parameter shape (`bool | Optimizer`) is locked. `optimize=True` (default)
-  activates the `Optimizer` component: provider-trusted cooldown durations, automatic
-  quality-based retirement, and alert emission. See [optimizer.md](optimizer.md) for
-  the behavior spec.
-- `ensure_pool()` — lazy idempotent pool initializer with double-checked locking.
-  Applies the constructor `seed=` source first, then loads the registry into the
-  pool. Called automatically by `chat`, `snapshot`, `get`, `count`, `add`,
-  `update`, `remove`, and `__aenter__`; call explicitly for eager fail-fast startup.
-- **Mutability contract** — `add` is create-only (raises `ValueError` if the name
-  already exists); `update` is modify-only (raises `KeyError` if the name is
-  absent). Plain `KeyError` signals a missing LLM everywhere in the public API;
-  `ValueError` signals a duplicate on `add`. No domain exception subclasses.
-- **State merging** — when a `StateStoreProtocol` backend is configured, `state()`
-  on an `AsyncLLM` handle and `snapshot()` on the broker both prefer the stored
-  state over the in-process state. The store read is batched (one call
-  for `snapshot`, one call per `state()` invocation); `InMemoryState` is the
-  fallback when the store has no entry for that LLM.
-- `SeedPolicy` enum (`SYNC` (default) / `IF_EMPTY` / `ADD` / `MIRROR`) — controls how
-  the constructor `seed=` source reconciles the registry on first `ensure_pool`. See
-  "Provider seeding" below.
-- **Per-user scoping** — a single `user_id` on the broker scopes every backend call to
-  one tenant; all backends scope records exactly to it (`None` = unscoped /
-  single-tenant). See "Per-user scoping" below.
+  activates the `Optimizer` component: provider-trusted cooldown durations and
+  per-operation quality demotion. See [optimizer.md](optimizer.md) for the behavior
+  spec.
+- `ensure_pool()` — lazy idempotent pool initializer with double-checked locking;
+  loads the registry into the pool, raising if it is empty (call `sync(preset)`
+  first). Called automatically by `chat`, `snapshot`, `get`, `count`, and
+  `__aenter__`; call explicitly for eager fail-fast startup.
+- `sync(preset)` — mirrors a preset into the registry: add new entries, update
+  existing ones, delete entries absent from the preset. The only registry write
+  path; there is no `add`/`update`/`remove`. See "Provider seeding" below.
+- Plain `KeyError` signals a missing LLM everywhere in the public API.
+- **Scoping** — an opaque `scope: str | None` string on the broker prefixes secret
+  refs (own key, falling back to the shared ref) and attributes journal rows; the
+  registry and everything the optimizer learns are always global. See "Per-user
+  scoping" below.
 
 ### Batteries
 
@@ -85,22 +82,29 @@ shortcut, so it gets no stack of its own.
 |---|---|
 | Registry | `Registry(path)` (file, `.toml`/`.json`), `llmbroker.sqlite.Registry`, `llmbroker.postgres.Registry`, `llmbroker.mongodb.Registry` |
 | Secrets | `Secrets()` (env), `DictSecrets(mapping)` (test double), `llmbroker.sqlite.Secrets`, `llmbroker.postgres.Secrets`, `llmbroker.mongodb.Secrets`, `llmbroker.aws.Secrets`, `llmbroker.vault.Secrets` |
-| State store | `llmbroker.sqlite.StateStore` (single-machine), `llmbroker.redis.StateStore`, `llmbroker.postgres.StateStore`, `llmbroker.mongodb.StateStore` (cross-process) |
-| Telemetry | `Telemetry()` (log), `NoTelemetry()`, `JsonlTelemetry(path)`, `llmbroker.sqlite.Telemetry`, `llmbroker.postgres.Telemetry`, `llmbroker.mongodb.Telemetry` |
+| Knowledge | `FileKnowledge(path)` (day-split journal + YAML disabled map), `InMemoryKnowledge()`, `llmbroker.sqlite.Knowledge`, `llmbroker.postgres.Knowledge`, `llmbroker.mongodb.Knowledge` |
+| State store (standalone, unused by the broker) | `llmbroker.sqlite.StateStore`, `llmbroker.redis.StateStore`, `llmbroker.postgres.StateStore`, `llmbroker.mongodb.StateStore` |
 
 ### CLI
 
 - `python -m llmbroker env <config>` — emit a `.env` skeleton of `api_key_ref` names,
-  ordered easiest-and-most-valuable-first with effort/value/daily-cap annotations
+  in file (`llms` declaration) order, with each one's `help` text
   (see "Key acquisition help" above). Onboarding is folded into this command rather
   than a separate `setup`/`status` command, to keep the CLI surface small.
 - `python -m llmbroker preset <name>` — print a curated preset TOML to stdout (redirect to save: `preset freetier > freetier.toml`)
+- `python -m llmbroker sync <preset> <db>` — mirror a preset TOML into a sqlite
+  registry; a DB-init CLI touchpoint for the same `sync(preset)` the broker exposes.
 
 ### DB schema
 
 Every DB backend self-manages its schema via `ensure_schema`: idempotent, called on
 first use, version-aware. Every table/collection is `llmbroker_`-prefixed so the
-host's migration tool can ignore them by prefix.
+host's migration tool can ignore them by prefix. Single-known-installation policy:
+`ensure_schema` creates the current shape fresh when no version marker exists, and
+raises an actionable `RuntimeError` on any other version mismatch — there is no
+in-place `ALTER`-based migration path. `llmbroker_state`/`llmbroker_summaries`
+tables/collections still exist (dead weight, kept only so the standalone
+`StateStore` classes stay functional).
 
 - **SQLite** tracks version via `PRAGMA user_version`.
 - **Postgres** tracks version via a single-row `llmbroker_schema_version` table
@@ -111,8 +115,7 @@ host's migration tool can ignore them by prefix.
   document (not as an absent field) so MongoDB null participates correctly in unique
   indexes.
 - **Redis** stores one hash per `(user_id)` scope under `llmbroker_state:*` keys;
-  keys have no TTL in v1 (cooling entries accumulate indefinitely — acceptable for
-  the initial release).
+  keys have no TTL (standalone `StateStore` only — unused by the broker).
 
 #### Columns vs. JSON
 
@@ -125,50 +128,25 @@ their indexes.
 
 Per table:
 
-- **Telemetry** (`llmbroker_calls`) — unchanged: `id`, `llm_name`, `called_at`,
-  `user_id`, `status` are queried/indexed columns; open-ended provider extras
-  already live in the `usage_extra` JSON column.
-- **State** (`llmbroker_state`) — a single JSON document per `(llm_name,
-  user_id)`; never queried by an inner field, ephemeral, rebuilt from traffic.
-  A schema-version bump for this table is a **drop-based** migration (the old
-  rows are disposable) — safe because state is a live cache, not durable data.
+- **Calls** (`llmbroker_calls`) — the knowledge journal: `id`, `llm_name`,
+  `called_at`, `kind` (`call`/`quality`), `scope`, `status` are queried/indexed
+  columns; open-ended provider extras live in the `usage_extra` JSON column;
+  `cooldown_until`/`key_hash` ride on failed rows for the shared-cooldown rebuild
+  (see [`optimizer.md`](optimizer.md)).
 - **Registry** (`llmbroker_registry`) — hybrid: `name`, `base_url`, `model`,
   `api_key_ref`, `user_id` stay columns (identity, plus stable human-meaningful
-  config); nested/open-ended per-LLM config (e.g. `rate_limit`), plus the curated
-  `origin`/`deprecated` markers, live in the `metadata` JSON column. The learned
-  profile (per-operation decayed quality/transport/latency summaries, plus the manual
-  bench latch — see [`optimizer.md`](optimizer.md#the-learned-profile-durable-cluster-shared-per-operation))
-  is a second, sibling JSON column, `profile`, on the same row — field-separated from
-  `metadata` so the seed path (which writes only static fields) can never clobber
-  learned data. Because registry rows are durable, a schema-version bump for this
-  table is an **additive** migration (`ALTER TABLE ... ADD COLUMN`) that preserves
-  existing rows rather than dropping them — `metadata` and `profile` migrated the
-  same way.
-- **Summaries** (`llmbroker_summaries`, state-store side) — the cluster-shared,
-  disposable counterpart of the registry `profile` column: one row/document per
-  `(name, operation, kind, user_id)` holding the same four decayed numbers, updated by
-  a server-side atomic fold (never client read-modify-write). Ephemeral like
-  `llmbroker_state`: a schema-version bump drops and recreates it rather than
-  migrating it — the registry `profile` snapshot is what survives.
-- **Secrets** (`llmbroker_secrets`) — unchanged: `value` is a single opaque
-  scalar with no sub-structure, so JSON buys nothing.
+  config); nested/open-ended per-LLM config (e.g. `parallel`) lives in the
+  `metadata` JSON column. The registry is a pure mirror of a preset (see
+  "Provider seeding") — nothing but `sync` writes it, and it holds no learned data.
+- **Disabled** (`llmbroker_disabled`) — the admin disabled-verdict map: a flat
+  `name -> disabled` mapping, one row per model name. Written only by
+  `set_disabled` or seeded (missing names only, `disabled: false`) by `sync`/
+  provisioning.
+- **Secrets** (`llmbroker_secrets`) — `value` is a single opaque scalar with no
+  sub-structure, so JSON buys nothing.
 
-`ensure_schema`, when it finds the stored version marker stale, applies both
-kinds of migration in one pass in a fixed order — drop-based (state) before
-table creation, additive (registry) after — so a database upgrading from any
-older version reaches the current shape in a single call. On sqlite this whole
-read-marker → migrate → bump-marker sequence runs inside one `BEGIN IMMEDIATE`
-transaction, since multiple OS processes can share one sqlite file and an
-in-process lock alone cannot serialize them; postgres gets the same guarantee
-for free from `CREATE`/`ALTER TABLE`'s table-level lock.
-
-`LLMState`, `LLMConfig`, and `LLMProfile` (`src/llmbroker/models.py`) are the typed
-dataclass boundary for the JSON payloads — each has a `to_dict()`/`from_dict()`
-round-trip (with a generic `extra` field for forward-compatible keys).
-`LLMConfig.rate_limit` (an optional `RateLimit` of rpm/rpd/tpm/tpd) plus the curated
-`origin`/`deprecated` markers persist through the registry's `metadata` column;
-`LLMProfile` (the learned profile — see [`optimizer.md`](optimizer.md)) persists
-through the sibling `profile` column.
+`LLMState` and `LLMConfig` (`src/llmbroker/models.py`) are the typed dataclass
+boundary for the JSON payloads.
 
 ### Host migration coexistence
 
@@ -203,166 +181,114 @@ one genuinely useful model per provider rather than several ranked ones.
 When curation replaces a model with a strictly better sibling from the same
 provider, the old entry is removed rather than left alongside the new one:
 the two usually share one provider quota, and a still-endorsed old entry
-would keep spending that shared quota on worse answers. Because entry
-identity is immutable (see [`optimizer.md`](optimizer.md#the-learned-profile-durable-cluster-shared-per-operation)),
-this removal is safe — `SeedPolicy.SYNC` turns it into a reversible
-deprecation, never a deletion, at any deployment already running the old
-entry. See [`freetier-providers.md`](freetier-providers.md) for how the
-curated free-tier preset specifically is kept current.
+would keep spending that shared quota on worse answers. The next `sync(preset)`
+at any deployment already running the old entry deletes it — its ratings and
+verdicts are gone with it, since nothing survives outside the journal/disabled
+map that `sync` never touches (see "Provider seeding" below). See
+[`freetier-providers.md`](freetier-providers.md) for how the curated free-tier
+preset specifically is kept current.
 
 ---
 
 ## Key acquisition help
 
-A config source may carry, per `api_key_ref`, structured onboarding metadata: how
-hard the key is to obtain (`effort`), how good the model it unlocks is (`value`),
-and a short markdown `help` string (a link plus a step or two). It is keyed by the
-env-var name, not by LLM, because one key is typically shared by several LLMs. See
-[`freetier-providers.md`](freetier-providers.md) for the `effort`/`value`
-taxonomies.
+A config source may carry, per `api_key_ref`, a short markdown `help` string (a
+link plus a step or two) plus a free-form `extra: dict[str, str]` passthrough of
+whatever else the TOML `[keys.REF]` section holds — llmbroker has no taxonomy
+opinion on it, it just relays whatever the preset author put there. It is keyed
+by the env-var name, not by LLM, because one key is typically shared by several
+LLMs.
 
 The same data feeds two consumers:
 
-- the `env` CLI orders keys by effort and value (easiest and most valuable first)
-  and prints each one's help plus an annotation line above its variable;
-- a host can pull the structured fields to render its own setup UI (e.g. "you have
-  N active models; this easy key unlocks M more").
+- the `env` CLI prints keys in file (`llms` declaration) order, each with its
+  `help` line above its variable;
+- a host can pull `extra` to render its own setup UI (e.g. its own effort/value
+  taxonomy, a daily-cap note).
 
 Surfacing it is an **optional registry capability** (`key_info() -> dict[str,
 KeyInfo]`), independent of the broker. A registry that has the metadata exposes
 it; one that does not simply omits the capability. Hosts query whichever registry
-they hold — there is no requirement that the broker was constructed with a seed,
-and no coupling between obtaining the help and routing.
+they hold — no coupling between obtaining the help and routing.
 
 An unresolved `api_key_ref` is normal, not an error: the pool routes over whatever
 keys are present, and a config without a resolvable key simply stays inactive
 (logged at `info`, not `warning`) rather than enqueued for routing. The only
-genuine alarm is **zero** keyed configs at all — see the reliability model in
-[`optimizer.md`](optimizer.md) for how that's detected and raised.
+genuine alarm is **zero** keyed configs at all — see [`optimizer.md`](optimizer.md)
+for how that's detected and raised.
 
 There is no background key re-resolve loop: a key added to the environment
 after startup takes effect at the next `ensure_pool()` call (fresh process, or
-an explicit re-provision) or immediately if the host calls `update()` for that
-config — never via a polling task.
+an explicit re-provision) or immediately if the host calls `sync(preset)` again
+(it re-bootstraps any newly resolvable secrets) — never via a polling task.
 
 ---
 
 ## Provider seeding
 
-The broker seeds on first use via the constructor `seed` parameter. Pass any
-`RegistryProtocol` source (e.g. a TOML file) and a `SeedPolicy`:
+The preset file is the only source of model definitions; the registry is its
+pure mirror. Seeding is an explicit call, never implicit at construction —
+implicit seed-on-start is unsound in a cluster, since every node would reconcile
+the registry against its own local copy and diverging copies would flip-flop it.
 
 ```python
 llms = llmbroker.AsyncBroker(
     registry=llmbroker.sqlite.Registry("broker.db"),
     secrets=llmbroker.sqlite.Secrets("broker.db"),
-    seed=llmbroker.Registry(".deploy/llms.toml"),
-    seed_policy=llmbroker.SeedPolicy.ADD,
 )
+await llms.sync(llmbroker.Registry(".deploy/llms.toml"))  # once, e.g. at deploy
 await llms.ensure_pool()   # eager init at startup
 ```
 
-`SeedPolicy` controls reconciliation:
+`sync(preset)` is a total mirror: add new entries, update existing ones, delete
+entries absent from the preset — nothing is lost by a delete, since keys live in
+the secrets store, learned state derives from the journal, and admin verdicts
+live in the knowledge disabled map (a model returning to the preset is simply
+re-added, and its old ratings and verdict resurface). Refusing a `model`-identity
+change under an existing entry name is a synchronous error — entry identity is
+immutable, a model bump must be a new entry name; this protects the binding
+between a model's learned quality stats and its name. There is no other model
+CRUD — no `add`/`update`/`remove` — `sync(preset)` is the only registry write
+path. Provisioning against an empty registry fails fast, telling the caller to
+call `sync(preset)` first.
 
-| Policy | Behavior |
-|---|---|
-| `SYNC` (default) | Adds new preset entries (`origin: preset`); updates operational static fields (`base_url`, `api_key_ref`, `metadata`) of existing preset-origin entries; refuses (and alerts on) a changed `model` under an existing name — entry identity is immutable, a model bump is a new entry name; deprecates preset-origin entries absent from the preset instead of deleting them, lifting the deprecation if the entry reappears; never touches `origin: user` entries; never deletes; never writes the learned `profile` |
-| `IF_EMPTY` | Seeds only when the registry is empty; no-op on restart if providers are present |
-| `ADD` | Adds providers absent by name; never removes or updates existing entries |
-| `MIRROR` | Keeps the registry identical to the seed source: adds new, updates changed, hard-removes (including the learned profile) absent entries — the one policy without a "never delete" guarantee, for callers who explicitly want pruning |
-
-`broker.add(cfg)` marks the new entry `origin: user`, which is what protects it from
-every `SYNC` update/deprecation pass thereafter. See
-[`optimizer.md`](optimizer.md#the-learned-profile-durable-cluster-shared-per-operation)
-for the full two-halves catalog model and the `deprecated` marker's routing effect
-(a soft demotion to tier 1 — the entry keeps its slot and its learned profile).
-
-When seeding, the broker also bootstraps secrets: for each provider config whose
-`api_key_ref` cannot be resolved by the configured `secrets=` backend, the broker
-tries `llmbroker.Secrets()` (env vars) and, if found, persists the value via
-`secrets.set()`. Existing secrets are never overwritten — admin-edited values win.
-Once the secrets store is populated, env vars are not consulted again at runtime.
-
-`IF_EMPTY` with a non-empty registry exits early without re-seeding secrets — by
-design: a non-empty registry means secrets were already bootstrapped during the
-initial seed. `SYNC`, `ADD`, and `MIRROR` always attempt to fill missing secrets on
-every startup.
+`sync` also bootstraps secrets: for each provider config whose `api_key_ref`
+cannot be resolved by the configured `secrets=` backend, it tries
+`llmbroker.Secrets()` (env vars) and, if found, persists the value via
+`secrets.set()`. Existing secrets are never overwritten — admin-edited values
+win. It also seeds the knowledge disabled map with any missing model names
+(`disabled: false`), never touching existing verdict values.
 
 ---
 
-## Per-user scoping (multi-tenancy)
+## Per-user scoping
 
-A multi-user host can give each end user its own LLM API keys (and optionally its
-own set of LLMs) over one shared infrastructure (one DB, one Redis, one Vault). The
-driving constraint is correctness of cooldown state: a cooldown is the health of an
-*API key*, and keys are per-user — so key-scope and state-scope must move together,
-or one user's 429 would cool an LLM for everyone.
+A multi-user host can give each end user its own LLM API key over one shared
+registry and knowledge store. `scope: str | None` on the broker (`""` is
+rejected — use `None` for unscoped) is the one knob:
 
-- **One knob.** Tenancy is selected by a single `user_id` supplied to the broker;
-  the broker threads it into every backend call. There is no per-backend tenancy wiring
-  to keep in sync, so key-scope and state-scope cannot drift apart.
-- **`user_id` is request-scoped, not infrastructure.** Backends (registry, secrets,
-  state store, telemetry) are constructed once as app-lifetime infrastructure and
-  shared; in a stateless server the broker is cheap and constructed *per request*
-  with that request's `user_id`.
-- **A broker instance is one tenant's view.** The broker never multiplexes users
-  internally — resolved keys and the per-LLM slot table are single-user. `user_id`
-  absent (the default) is exactly the single-tenant behavior, untouched.
-- **`None` means unscoped / single-tenant** and is a legitimate value. The broker
-  passes whatever it has — `None` or an id — and the batteries decide what to do
-  with it.
-- **Uniform, exact scoping across all batteries.** Registry, secrets, state store,
-  and telemetry all scope records to exactly the `user_id` passed: a scoped load
-  returns only that tenant's rows, an unscoped load only unscoped rows. There is no
-  "shared ∪ the user's own" merging — mixing unscoped and named tenants in one query
-  produces subtle seeding bugs that cannot be made correct.
-- **Exception — retention purge is cross-tenant.** Purging old call records is an
-  **administrative** maintenance action over the whole journal, not a per-tenant read,
-  so it deliberately ignores `user_id` and drops every user's rows older than the
-  cutoff. It is the one telemetry operation not scoped to one tenant.
-- **Per-user is a parameter, not a subclass.** The same battery classes gain a
-  nullable user scope; there is no `PerUser*` variant and the battery matrix gains no
-  "× tenancy" axis. Pure batteries with no notion of users (file registry, env
-  secrets, log/none telemetry) accept the scope and ignore it.
-- **Seeding stays shared.** The constructor `seed=` catalog is read unscoped (shared
-  defaults) but written into the registry under the tenant's `user_id`, so every
-  tenant bootstraps from the same curated source into its own scoped rows.
-- **Uniqueness is per tenant.** The same LLM name (or secret ref) is allowed across
-  different users but remains unique within one user — and within the unscoped
-  single-tenant bucket.
-- **Optional paranoia guard.** A secrets battery may be constructed to *require* a
-  user scope, raising `UserScopeError` if it is ever asked to resolve or set with no
-  user (e.g. auth silently yielded none). It is opt-in; normal use relies on always
-  passing a real id.
-
----
-
-## Shared cooldown across processes
-
-When a `StateStoreProtocol` backend is configured, a cooldown set by one process
-must be honored by every other process backed by the same store: when process A
-cools an LLM after a 429/503, process B skips that LLM at its next selection
-point instead of earning a redundant rate-limit error.
-
-The shared state is consulted lazily, just before an acquired LLM is used — there
-is no background timer or polling, and an idle broker performs zero store reads.
-To stay cheap under load, each process caches the shared state for a short
-bounded window, so at most one read happens per window regardless of request
-volume. The read is scoped to the broker's `user_id` like all other state.
-
-When a shared cooldown is detected, the process mirrors it into its own state and
-defers the LLM for the remaining window, so it does not re-probe until the
-cooldown expires. Any quality-fail history the local process has accumulated is
-preserved, never lowered by the shared count.
-
-Two consequences are accepted by design:
-
-- **Bounded staleness.** Within the cache window a process may not yet see a
-  cooldown another process just wrote, so it can still earn one redundant 429
-  before converging. The cost is a single wasted call, not a correctness failure.
-- **Fail-open on store errors.** If the shared-state read fails, the process
-  proceeds as if no shared cooldown applied rather than blocking the request — at
-  worst it earns a 429 it could have avoided.
+- **The registry and everything the optimizer learns are always global** — one
+  model list, one set of quality windows and cooldowns, shared by every scope.
+  There is no per-tenant registry partition.
+- **Secrets are the one thing that is actually per-scope.** Key resolution
+  tries `resolve(f"{scope}/{api_key_ref}")` first, falling back to
+  `resolve(api_key_ref)` on `KeyError` — an own key if one is set, the shared
+  key otherwise. The fallback policy lives entirely in the broker; secrets
+  backends stay plain exact-lookup key-value stores and never see the scope
+  string itself, only the already-prefixed ref.
+- **The journal carries `scope` as a plain attribution field** (`Call.scope`),
+  filterable via `calls(scope=...)`, but it does not partition learning — the
+  rebuild's tail read is unscoped by design (a 429 on the shared key should cool
+  every scope holding that key; a dead *own* key should drop the model only for
+  its scope, which the key-hash match in [`optimizer.md`](optimizer.md) already
+  handles without any registry-level partition).
+- **A broker instance is one scope's view.** The broker never multiplexes
+  scopes internally — resolved keys and the per-LLM slot table are per-instance.
+  `scope=None` (the default) is exactly the single-tenant behavior.
+- **Optional paranoia guard.** A secrets battery may be constructed to *require*
+  a user id on its own calls (`require_user_id`), raising `UserScopeError` if
+  ever asked to resolve/set with none — orthogonal to the broker's `scope`
+  fallback logic above, which always passes an explicit value.
 
 ---
 
