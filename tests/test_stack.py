@@ -3,16 +3,17 @@
 import asyncio
 import sys
 
-import llmbroker.sqlite
 import pytest
 
 from llmbroker.backends.ports import StoreKnowledge, StoreRegistry, StoreSecrets
-from llmbroker.broker import AsyncBroker
+from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.source import resolve_source
 from llmbroker.models import LLMConfig
 from llmbroker.mongodb.driver import MongoDriver
 from llmbroker.postgres.driver import PostgresDriver
 from llmbroker.sqlite.driver import SqliteDriver
+from llmbroker.sqlite.registry import Registry as SqliteRegistry
+from llmbroker.sqlite.secrets import Secrets as SqliteSecrets
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.sync import Broker
 
@@ -71,8 +72,8 @@ def test_sync_broker_no_registry_raises():
 
 async def test_explicit_secrets_override_wins_over_sqlite_source(tmp_path):
     db_path = str(tmp_path / "broker.db")
-    await llmbroker.sqlite.Registry(db_path).mirror([_cfg()])
-    await llmbroker.sqlite.Secrets(db_path).set("KEY", "from-sqlite")
+    await SqliteRegistry(db_path).mirror([_cfg()])
+    await SqliteSecrets(db_path).set("KEY", "from-sqlite")
     override_secrets = DictSecrets({"KEY": "from-override"})
 
     async with AsyncBroker(db_path, secrets=override_secrets) as broker:
@@ -117,8 +118,8 @@ def test_sync_broker_sqlite_source_wires_three_ports(tmp_path):
     db_path = str(tmp_path / "broker.db")
 
     async def _seed():
-        await llmbroker.sqlite.Registry(db_path).mirror([_cfg()])
-        await llmbroker.sqlite.Secrets(db_path).set("KEY", "secret-value")
+        await SqliteRegistry(db_path).mirror([_cfg()])
+        await SqliteSecrets(db_path).set("KEY", "secret-value")
 
     asyncio.run(_seed())
 

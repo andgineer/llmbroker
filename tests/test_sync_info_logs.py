@@ -9,7 +9,9 @@ import asyncio
 import logging
 
 import llmbroker
-import llmbroker.sqlite
+
+from llmbroker.sqlite.registry import Registry as SqliteRegistry
+from llmbroker.sqlite.secrets import Secrets as SqliteSecrets
 
 _KEY_REF = "TEST_LLM_SYNC_API_KEY"
 _TOML = f'[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="{_KEY_REF}"\n'
@@ -23,8 +25,8 @@ def _src_registry(tmp_path):
 
 def _broker(db: str) -> llmbroker.AsyncBroker:
     return llmbroker.AsyncBroker(
-        registry=llmbroker.sqlite.Registry(db),
-        secrets=llmbroker.sqlite.Secrets(db),
+        registry=SqliteRegistry(db),
+        secrets=SqliteSecrets(db),
     )
 
 
@@ -78,7 +80,7 @@ def test_restart_secret_persisted_zero_info_logs(tmp_path, monkeypatch, caplog):
 
     async def seed():
         await _seed_db(db, tmp_path)
-        secrets = llmbroker.sqlite.Secrets(db)
+        secrets = SqliteSecrets(db)
         await secrets.set(_KEY_REF, "persisted")
         async with _broker(db):
             pass

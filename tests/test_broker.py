@@ -5,13 +5,14 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-import llmbroker.sqlite
 import pytest
 
 from llmbroker.backends.ports import StoreKnowledge
-from llmbroker.broker import AsyncBroker
+from llmbroker.broker.broker import AsyncBroker
 from llmbroker.exceptions import AllLLMsFailedError, NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
+from llmbroker.sqlite.registry import Registry as SqliteRegistry
+from llmbroker.sqlite.secrets import Secrets as SqliteSecrets
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.knowledge import InMemoryKnowledge
@@ -322,7 +323,7 @@ def test_sync_populates_a_fresh_db_registry(tmp_path):
     async def run():
         db = str(tmp_path / "b.db")
         broker = AsyncBroker(
-            registry=llmbroker.sqlite.Registry(db),
+            registry=SqliteRegistry(db),
             knowledge=InMemoryKnowledge(),
         )
         await broker.sync(_toml_registry(tmp_path))
@@ -338,7 +339,7 @@ def test_sync_is_idempotent_no_extra_warnings(tmp_path, caplog):
     async def run():
         db = str(tmp_path / "b.db")
         broker = AsyncBroker(
-            registry=llmbroker.sqlite.Registry(db),
+            registry=SqliteRegistry(db),
             knowledge=InMemoryKnowledge(),
         )
         await broker.sync(_toml_registry(tmp_path))
@@ -355,7 +356,7 @@ def test_sync_reconciles_registry_to_preset(tmp_path):
 
     async def run():
         db = str(tmp_path / "b.db")
-        sqlite_reg = llmbroker.sqlite.Registry(db)
+        sqlite_reg = SqliteRegistry(db)
         extra = LLMConfig(name="extra", base_url="https://e/v1", model="m", api_key_ref="K")
         await sqlite_reg.mirror([extra])
 
@@ -372,7 +373,7 @@ def test_sync_reconciles_registry_to_preset(tmp_path):
 def test_sync_refuses_model_identity_change(tmp_path):
     async def run():
         db = str(tmp_path / "b.db")
-        sqlite_reg = llmbroker.sqlite.Registry(db)
+        sqlite_reg = SqliteRegistry(db)
         await sqlite_reg.mirror(
             [LLMConfig(name="p1", base_url="https://x/v1", model="model-a", api_key_ref="K")],
         )
@@ -396,16 +397,16 @@ def test_registry_is_global_regardless_of_scope(tmp_path):
 
     async def run():
         db = str(tmp_path / "b.db")
-        reg = llmbroker.sqlite.Registry(db)
+        reg = SqliteRegistry(db)
         await reg.mirror(
             [LLMConfig(name="llm", base_url="https://a/v1", model="m", api_key_ref="K")]
         )
 
         broker_a = AsyncBroker(
-            registry=llmbroker.sqlite.Registry(db), scope="alice", knowledge=InMemoryKnowledge()
+            registry=SqliteRegistry(db), scope="alice", knowledge=InMemoryKnowledge()
         )
         broker_b = AsyncBroker(
-            registry=llmbroker.sqlite.Registry(db), scope="bob", knowledge=InMemoryKnowledge()
+            registry=SqliteRegistry(db), scope="bob", knowledge=InMemoryKnowledge()
         )
         async with broker_a, broker_b:
             assert (await broker_a.get("llm")).config.base_url == "https://a/v1"
@@ -419,13 +420,13 @@ def test_scope_none_reproduces_single_tenant_behavior(tmp_path):
 
     async def run():
         db = str(tmp_path / "b.db")
-        reg = llmbroker.sqlite.Registry(db)
+        reg = SqliteRegistry(db)
         await reg.mirror(
             [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")]
         )
 
         async with AsyncBroker(
-            registry=llmbroker.sqlite.Registry(db), knowledge=InMemoryKnowledge()
+            registry=SqliteRegistry(db), knowledge=InMemoryKnowledge()
         ) as broker:
             assert (await broker.get("p1")).config.name == "p1"
 
@@ -438,23 +439,23 @@ def test_two_scopes_have_isolated_secrets(tmp_path):
 
     async def run():
         db = str(tmp_path / "b.db")
-        secrets = llmbroker.sqlite.Secrets(db)
+        secrets = SqliteSecrets(db)
         await secrets.set("alice/KEY", "alice-secret")
         await secrets.set("bob/KEY", "bob-secret")
 
-        reg = llmbroker.sqlite.Registry(db)
+        reg = SqliteRegistry(db)
         await reg.mirror(
             [LLMConfig(name="llm", base_url="https://x/v1", model="m", api_key_ref="KEY")]
         )
 
         broker_a = AsyncBroker(
-            registry=llmbroker.sqlite.Registry(db),
+            registry=SqliteRegistry(db),
             secrets=secrets,
             scope="alice",
             knowledge=InMemoryKnowledge(),
         )
         broker_b = AsyncBroker(
-            registry=llmbroker.sqlite.Registry(db),
+            registry=SqliteRegistry(db),
             secrets=secrets,
             scope="bob",
             knowledge=InMemoryKnowledge(),
@@ -471,16 +472,16 @@ def test_scope_without_own_key_falls_back_to_shared_ref(tmp_path):
 
     async def run():
         db = str(tmp_path / "b.db")
-        secrets = llmbroker.sqlite.Secrets(db)
+        secrets = SqliteSecrets(db)
         await secrets.set("KEY", "shared-secret")
 
-        reg = llmbroker.sqlite.Registry(db)
+        reg = SqliteRegistry(db)
         await reg.mirror(
             [LLMConfig(name="llm", base_url="https://x/v1", model="m", api_key_ref="KEY")]
         )
 
         async with AsyncBroker(
-            registry=llmbroker.sqlite.Registry(db),
+            registry=SqliteRegistry(db),
             secrets=secrets,
             scope="alice",
             knowledge=InMemoryKnowledge(),
@@ -514,11 +515,11 @@ def test_default_knowledge_falls_back_to_cwd_state_for_bare_db_registry(tmp_path
     db = str(tmp_path / "b.db")
 
     async def run():
-        reg = llmbroker.sqlite.Registry(db)
+        reg = SqliteRegistry(db)
         await reg.mirror(
             [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")]
         )
-        async with AsyncBroker(registry=llmbroker.sqlite.Registry(db)) as broker:
+        async with AsyncBroker(registry=SqliteRegistry(db)) as broker:
             await broker._knowledge.record_quality("p1", None, 1.0)
 
     asyncio.run(run())
@@ -532,7 +533,7 @@ def test_sqlite_source_default_knowledge_is_sqlite_knowledge(tmp_path):
 
     async def run():
         db_path = str(tmp_path / "broker.db")
-        await llmbroker.sqlite.Registry(db_path).mirror(
+        await SqliteRegistry(db_path).mirror(
             [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")]
         )
         async with AsyncBroker(db_path) as broker:

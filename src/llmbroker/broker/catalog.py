@@ -120,6 +120,6 @@ class Catalog:
         if not isinstance(self._registry, MutableRegistryProtocol):
             raise TypeError(
                 f"{type(self._registry).__name__} does not support mutations"
-                " (sync requires a mutable registry such as llmbroker.sqlite.Registry)",
+                " (sync requires a mutable registry such as llmbroker.sqlite.registry.Registry)",
             )
         return self._registry

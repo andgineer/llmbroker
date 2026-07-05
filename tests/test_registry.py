@@ -4,12 +4,12 @@ import asyncio
 import json
 
 import aiosqlite
-import llmbroker.mongodb
-import llmbroker.postgres
-import llmbroker.sqlite
 import pytest
 
 from llmbroker.models import LLMConfig
+from llmbroker.mongodb.registry import Registry as MongoRegistry
+from llmbroker.postgres.registry import Registry as PostgresRegistry
+from llmbroker.sqlite.registry import Registry as SqliteRegistry
 from llmbroker.standalone.registry import Registry
 
 
@@ -87,7 +87,7 @@ def _cfg(name: str, url: str = "https://x/v1") -> LLMConfig:
 
 def test_sqlite_registry_mirror_updates_existing(tmp_path):
     db = str(tmp_path / "b.db")
-    reg = llmbroker.sqlite.Registry(db)
+    reg = SqliteRegistry(db)
 
     async def run():
         await reg.mirror([_cfg("p1", "https://old/v1")])
@@ -100,7 +100,7 @@ def test_sqlite_registry_mirror_updates_existing(tmp_path):
 
 def test_sqlite_registry_mirror_deletes_absent(tmp_path):
     db = str(tmp_path / "b.db")
-    reg = llmbroker.sqlite.Registry(db)
+    reg = SqliteRegistry(db)
 
     async def run():
         await reg.mirror([_cfg("p1"), _cfg("p2")])
@@ -122,13 +122,13 @@ async def mutable_registry(request, tmp_path_factory, pg_pool, mongo_db):
     param = request.param
     if param == "sqlite":
         db_path = str(tmp_path_factory.mktemp("mreg_sqlite") / "reg.db")
-        yield llmbroker.sqlite.Registry(db_path)
+        yield SqliteRegistry(db_path)
     elif param == "postgres":
-        yield llmbroker.postgres.Registry(pg_pool)
+        yield PostgresRegistry(pg_pool)
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM llmbroker_registry")
     elif param == "mongodb":
-        yield llmbroker.mongodb.Registry(mongo_db)
+        yield MongoRegistry(mongo_db)
         await mongo_db["llmbroker_registry"].delete_many({})
 
 
@@ -234,7 +234,7 @@ async def test_mutable_registry_update_preserves_changed_parallel(mutable_regist
 
 def test_sqlite_registry_legacy_null_metadata_loads_parallel_none(tmp_path):
     db = str(tmp_path / "b.db")
-    reg = llmbroker.sqlite.Registry(db)
+    reg = SqliteRegistry(db)
 
     async def run():
         await reg.mirror([_cfg("p1")])
@@ -248,7 +248,7 @@ def test_sqlite_registry_legacy_null_metadata_loads_parallel_none(tmp_path):
 
 
 async def test_postgres_registry_legacy_null_metadata_loads_parallel_none(pg_pool):
-    reg = llmbroker.postgres.Registry(pg_pool)
+    reg = PostgresRegistry(pg_pool)
     try:
         await reg.mirror([_cfg("legacy-null-meta")])
         async with pg_pool.acquire() as conn:
@@ -263,7 +263,7 @@ async def test_postgres_registry_legacy_null_metadata_loads_parallel_none(pg_poo
 
 
 async def test_mongodb_registry_legacy_doc_without_metadata_loads_parallel_none(mongo_db):
-    reg = llmbroker.mongodb.Registry(mongo_db)
+    reg = MongoRegistry(mongo_db)
     try:
         await mongo_db["llmbroker_registry"].insert_one(
             {

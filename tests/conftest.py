@@ -14,18 +14,24 @@ from testcontainers.mongodb import MongoDbContainer
 from testcontainers.postgres import PostgresContainer
 from testcontainers.vault import VaultContainer
 
-import llmbroker.aws
-import llmbroker.mongodb
-import llmbroker.postgres
-import llmbroker.sqlite
-import llmbroker.vault
-from llmbroker.broker import AsyncBroker
+from llmbroker.aws.secrets import Secrets as AwsSecrets
+from llmbroker.broker.broker import AsyncBroker
+from llmbroker.mongodb.knowledge import Knowledge as MongoKnowledge
+from llmbroker.mongodb.registry import Registry as MongoRegistry
+from llmbroker.mongodb.secrets import Secrets as MongoSecrets
+from llmbroker.postgres.knowledge import Knowledge as PostgresKnowledge
+from llmbroker.postgres.registry import Registry as PostgresRegistry
+from llmbroker.postgres.secrets import Secrets as PostgresSecrets
 from llmbroker.protocols.registry import MutableRegistryProtocol, RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
 from llmbroker.protocols.knowledge import KnowledgeProtocol
+from llmbroker.sqlite.knowledge import Knowledge as SqliteKnowledge
+from llmbroker.sqlite.registry import Registry as SqliteRegistry
+from llmbroker.sqlite.secrets import Secrets as SqliteSecrets
 from llmbroker.standalone.registry import Registry as TomlRegistry
 from llmbroker.standalone.secrets import DictSecrets, Secrets
 from llmbroker.standalone.knowledge import InMemoryKnowledge
+from llmbroker.vault.secrets import Secrets as VaultSecrets
 
 # On macOS the Ryuk sidecar container (testcontainers' cleanup daemon) occasionally
 # fails to expose its port in time, causing a flaky ConnectionError on the first run.
@@ -129,15 +135,15 @@ async def any_knowledge(request, tmp_path_factory, pg_pool, mongo_db):
 
     elif param == "sqlite":
         db_path = str(tmp_path_factory.mktemp("any_tel_sqlite") / "tel.db")
-        yield llmbroker.sqlite.Knowledge(db_path)
+        yield SqliteKnowledge(db_path)
 
     elif param == "postgres":
-        yield llmbroker.postgres.Knowledge(pg_pool)
+        yield PostgresKnowledge(pg_pool)
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM llmbroker_calls")
 
     elif param == "mongodb":
-        yield llmbroker.mongodb.Knowledge(mongo_db)
+        yield MongoKnowledge(mongo_db)
         await mongo_db["llmbroker_calls"].delete_many({})
 
 
@@ -151,15 +157,15 @@ async def queryable_knowledge(request, tmp_path_factory, pg_pool, mongo_db):
 
     if param == "sqlite":
         db_path = str(tmp_path_factory.mktemp("q_tel_sqlite") / "tel.db")
-        yield llmbroker.sqlite.Knowledge(db_path)
+        yield SqliteKnowledge(db_path)
 
     elif param == "postgres":
-        yield llmbroker.postgres.Knowledge(pg_pool)
+        yield PostgresKnowledge(pg_pool)
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM llmbroker_calls")
 
     elif param == "mongodb":
-        yield llmbroker.mongodb.Knowledge(mongo_db)
+        yield MongoKnowledge(mongo_db)
         await mongo_db["llmbroker_calls"].delete_many({})
 
 
@@ -208,13 +214,13 @@ async def any_registry(
         yield TomlRegistry(p)
     elif param == "sqlite":
         db_path = str(tmp_path_factory.mktemp("any_reg_sqlite") / "reg.db")
-        yield llmbroker.sqlite.Registry(db_path)
+        yield SqliteRegistry(db_path)
     elif param == "postgres":
-        yield llmbroker.postgres.Registry(pg_pool)
+        yield PostgresRegistry(pg_pool)
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM llmbroker_registry")
     elif param == "mongodb":
-        yield llmbroker.mongodb.Registry(mongo_db)
+        yield MongoRegistry(mongo_db)
         await mongo_db["llmbroker_registry"].delete_many({})
 
 
@@ -229,13 +235,13 @@ async def any_secrets(request, tmp_path_factory, pg_pool, mongo_db) -> SecretsPr
         yield Secrets()
     elif param == "sqlite":
         db_path = str(tmp_path_factory.mktemp("any_sec_sqlite") / "sec.db")
-        yield llmbroker.sqlite.Secrets(db_path)
+        yield SqliteSecrets(db_path)
     elif param == "postgres":
-        yield llmbroker.postgres.Secrets(pg_pool)
+        yield PostgresSecrets(pg_pool)
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM llmbroker_secrets")
     elif param == "mongodb":
-        yield llmbroker.mongodb.Secrets(mongo_db)
+        yield MongoSecrets(mongo_db)
         await mongo_db["llmbroker_secrets"].delete_many({})
 
 
@@ -274,9 +280,9 @@ async def _stack_ctx(
         base = str(tmp_path_factory.mktemp("stack_sqlite"))
         yield Stack(
             name="all_sqlite",
-            registry=llmbroker.sqlite.Registry(f"{base}/llms.db"),
-            secrets=llmbroker.sqlite.Secrets(f"{base}/llms.db"),
-            knowledge=llmbroker.sqlite.Knowledge(f"{base}/llms.db"),
+            registry=SqliteRegistry(f"{base}/llms.db"),
+            secrets=SqliteSecrets(f"{base}/llms.db"),
+            knowledge=SqliteKnowledge(f"{base}/llms.db"),
             queryable=True,
             persistent=True,
         )
@@ -284,9 +290,9 @@ async def _stack_ctx(
     elif name == "all_postgres":
         s = Stack(
             name="all_postgres",
-            registry=llmbroker.postgres.Registry(pg_pool),
-            secrets=llmbroker.postgres.Secrets(pg_pool),
-            knowledge=llmbroker.postgres.Knowledge(pg_pool),
+            registry=PostgresRegistry(pg_pool),
+            secrets=PostgresSecrets(pg_pool),
+            knowledge=PostgresKnowledge(pg_pool),
             queryable=True,
             persistent=True,
         )
@@ -300,9 +306,9 @@ async def _stack_ctx(
     elif name == "all_mongodb":
         s = Stack(
             name="all_mongodb",
-            registry=llmbroker.mongodb.Registry(mongo_db),
-            secrets=llmbroker.mongodb.Secrets(mongo_db),
-            knowledge=llmbroker.mongodb.Knowledge(mongo_db),
+            registry=MongoRegistry(mongo_db),
+            secrets=MongoSecrets(mongo_db),
+            knowledge=MongoKnowledge(mongo_db),
             queryable=True,
             persistent=True,
         )
@@ -315,9 +321,9 @@ async def _stack_ctx(
     elif name == "scaled":
         s = Stack(
             name="scaled",
-            registry=llmbroker.postgres.Registry(pg_pool),
+            registry=PostgresRegistry(pg_pool),
             secrets=DictSecrets({}),
-            knowledge=llmbroker.postgres.Knowledge(pg_pool),
+            knowledge=PostgresKnowledge(pg_pool),
             queryable=True,
             persistent=True,
         )
@@ -343,9 +349,9 @@ async def _stack_ctx(
     elif name == "scaled_aws_secrets":
         s = Stack(
             name="scaled_aws_secrets",
-            registry=llmbroker.postgres.Registry(pg_pool),
-            secrets=llmbroker.aws.Secrets(region_name="us-east-1", endpoint_url=localstack_url),
-            knowledge=llmbroker.postgres.Knowledge(pg_pool),
+            registry=PostgresRegistry(pg_pool),
+            secrets=AwsSecrets(region_name="us-east-1", endpoint_url=localstack_url),
+            knowledge=PostgresKnowledge(pg_pool),
             queryable=True,
             persistent=True,
         )
@@ -361,9 +367,9 @@ async def _stack_ctx(
         url, token = vault_params
         s = Stack(
             name="scaled_vault_secrets",
-            registry=llmbroker.postgres.Registry(pg_pool),
-            secrets=llmbroker.vault.Secrets(url=url, token=token),
-            knowledge=llmbroker.postgres.Knowledge(pg_pool),
+            registry=PostgresRegistry(pg_pool),
+            secrets=VaultSecrets(url=url, token=token),
+            knowledge=PostgresKnowledge(pg_pool),
             queryable=True,
             persistent=True,
         )

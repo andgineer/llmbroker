@@ -1,6 +1,7 @@
 """llmbroker — a standalone, host-agnostic LLM-provider broker."""
 
-from llmbroker.broker import AsyncBroker, AsyncLLM, AsyncResult
+from llmbroker.broker.broker import AsyncBroker
+from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.chat import arun_tool_loop, run_tool_loop
 from llmbroker.exceptions import (
     AllLLMsFailedError,

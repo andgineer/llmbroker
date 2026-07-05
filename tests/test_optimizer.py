@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from llmbroker.broker import AsyncBroker
+from llmbroker.broker.broker import AsyncBroker
 from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import LLMConfig
 from llmbroker.optimizer import Optimizer, wilson_upper

@@ -5,17 +5,18 @@ import asyncio
 import aioboto3
 import hvac
 import llmbroker
-import llmbroker.aws
-import llmbroker.mongodb
-import llmbroker.postgres
-import llmbroker.sqlite
-import llmbroker.vault
 import pytest
 
+from llmbroker.aws.secrets import Secrets as AwsSecrets
 from llmbroker.models import LLMConfig
+from llmbroker.mongodb.secrets import Secrets as MongoSecrets
+from llmbroker.postgres.secrets import Secrets as PostgresSecrets
 from llmbroker.protocols.secrets import MutableSecretsProtocol
+from llmbroker.sqlite.registry import Registry as SqliteRegistry
+from llmbroker.sqlite.secrets import Secrets as SqliteSecrets
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets, Secrets, as_secrets
+from llmbroker.vault.secrets import Secrets as VaultSecrets
 
 
 def _vault_delete_recursive(client: hvac.Client, path: str, mount_point: str = "secret") -> None:
@@ -76,7 +77,7 @@ def test_read_only_batteries_are_not_mutable():
 
 def test_sqlite_secrets_round_trip(tmp_path):
     db = str(tmp_path / "b.db")
-    secrets = llmbroker.sqlite.Secrets(db)
+    secrets = SqliteSecrets(db)
 
     async def run():
         await secrets.set("K", "v")
@@ -87,7 +88,7 @@ def test_sqlite_secrets_round_trip(tmp_path):
 
 
 def test_sqlite_secrets_missing_raises(tmp_path):
-    secrets = llmbroker.sqlite.Secrets(str(tmp_path / "b.db"))
+    secrets = SqliteSecrets(str(tmp_path / "b.db"))
     with pytest.raises(KeyError):
         asyncio.run(secrets.resolve("MISSING"))
 
@@ -122,9 +123,9 @@ def test_seed_seeds_secret_from_env(tmp_path, monkeypatch):
     )
 
     async def run():
-        secrets = llmbroker.sqlite.Secrets(db)
+        secrets = SqliteSecrets(db)
         broker = llmbroker.AsyncBroker(
-            registry=llmbroker.sqlite.Registry(db),
+            registry=SqliteRegistry(db),
             secrets=secrets,
         )
         await broker.sync(FileRegistry(src))
@@ -144,10 +145,10 @@ def test_seed_preserves_existing_secret(tmp_path, monkeypatch):
     )
 
     async def run():
-        secrets = llmbroker.sqlite.Secrets(db)
+        secrets = SqliteSecrets(db)
         await secrets.set("SEED_KEY", "admin-edited")
         broker = llmbroker.AsyncBroker(
-            registry=llmbroker.sqlite.Registry(db),
+            registry=SqliteRegistry(db),
             secrets=secrets,
         )
         await broker.sync(FileRegistry(src))
@@ -167,7 +168,7 @@ def test_missing_ref_with_readonly_secrets_does_not_block(tmp_path, monkeypatch)
     )
 
     async def run():
-        broker = llmbroker.AsyncBroker(registry=llmbroker.sqlite.Registry(db))
+        broker = llmbroker.AsyncBroker(registry=SqliteRegistry(db))
         await broker.sync(FileRegistry(src))
         async with broker:
             await broker.get("p1")
@@ -192,21 +193,21 @@ async def mutable_secrets(request, tmp_path_factory, pg_pool, mongo_db):
     param = request.param
     if param == "sqlite":
         db_path = str(tmp_path_factory.mktemp("msec_sqlite") / "sec.db")
-        yield llmbroker.sqlite.Secrets(db_path)
+        yield SqliteSecrets(db_path)
     elif param == "postgres":
-        yield llmbroker.postgres.Secrets(pg_pool)
+        yield PostgresSecrets(pg_pool)
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM llmbroker_secrets")
     elif param == "mongodb":
-        yield llmbroker.mongodb.Secrets(mongo_db)
+        yield MongoSecrets(mongo_db)
         await mongo_db["llmbroker_secrets"].delete_many({})
     elif param == "aws":
         url = request.getfixturevalue("localstack_url")
-        yield llmbroker.aws.Secrets(region_name="us-east-1", endpoint_url=url)
+        yield AwsSecrets(region_name="us-east-1", endpoint_url=url)
         await _aws_purge(url)
     elif param == "vault":
         url, token = request.getfixturevalue("vault_url_and_token")
-        yield llmbroker.vault.Secrets(url=url, token=token)
+        yield VaultSecrets(url=url, token=token)
         _vault_delete_recursive(hvac.Client(url=url, token=token), "llmbroker/")
 
 

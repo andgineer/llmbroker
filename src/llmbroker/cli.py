@@ -15,13 +15,13 @@ import urllib.request
 from http import HTTPStatus
 from pathlib import Path
 
-from llmbroker.broker import AsyncBroker
+from llmbroker.broker.broker import AsyncBroker
 from llmbroker.standalone.registry import Registry, key_info_from_entry
 
 try:
-    import llmbroker.sqlite as _sqlite_backend
+    from llmbroker.sqlite.registry import Registry as SqliteRegistry
 except ImportError:
-    _sqlite_backend = None
+    SqliteRegistry = None
 
 _PRESET_URL = "https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/{name}.toml"
 _PRESET_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -107,7 +107,7 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     if not preset_path.exists():
         print(f"error: no such file: {preset_path}", file=sys.stderr)
         return 1
-    if _sqlite_backend is None:
+    if SqliteRegistry is None:
         print(
             "error: the sqlite extra is required for `sync` — pip install llmbroker[sqlite]",
             file=sys.stderr,
@@ -115,7 +115,7 @@ def _cmd_sync(args: argparse.Namespace) -> int:
         return 1
 
     async def run() -> None:
-        broker = AsyncBroker(registry=_sqlite_backend.Registry(args.db))
+        broker = AsyncBroker(registry=SqliteRegistry(args.db))
         try:
             await broker.sync(Registry(preset_path))
         finally:

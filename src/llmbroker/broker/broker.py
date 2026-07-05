@@ -291,6 +291,6 @@ class AsyncBroker:
         if not isinstance(self._base_knowledge, QueryableKnowledgeProtocol):
             raise TypeError(
                 "this knowledge backend is not queryable — use a queryable backend"
-                " (e.g. llmbroker.sqlite.Knowledge) for calls()",
+                " (e.g. llmbroker.sqlite.knowledge.Knowledge) for calls()",
             )
         return cast(QueryableKnowledgeProtocol, self._knowledge)

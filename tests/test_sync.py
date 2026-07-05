@@ -5,11 +5,12 @@ import gc
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-import llmbroker.sqlite
 import pytest
 
 from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
+from llmbroker.sqlite.knowledge import Knowledge as SqliteKnowledge
+from llmbroker.sqlite.registry import Registry as SqliteRegistry
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.sync import Broker
@@ -141,11 +142,11 @@ def test_broker_gc_stops_thread_without_close(tmp_path):
 def test_broker_disable_llm_benches_and_excludes_from_pool(tmp_path):
     db = str(tmp_path / "b.db")
     asyncio.run(
-        llmbroker.sqlite.Registry(db).mirror(
+        SqliteRegistry(db).mirror(
             [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")],
         )
     )
-    with Broker(registry=llmbroker.sqlite.Registry(db), knowledge=InMemoryKnowledge()) as broker:
+    with Broker(registry=SqliteRegistry(db), knowledge=InMemoryKnowledge()) as broker:
         broker.disable_llm("p1")
         assert broker._async._pool.is_disabled("p1")
 
@@ -153,11 +154,11 @@ def test_broker_disable_llm_benches_and_excludes_from_pool(tmp_path):
 def test_broker_enable_llm_readmits_after_disable(tmp_path):
     db = str(tmp_path / "b.db")
     asyncio.run(
-        llmbroker.sqlite.Registry(db).mirror(
+        SqliteRegistry(db).mirror(
             [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")],
         )
     )
-    with Broker(registry=llmbroker.sqlite.Registry(db), knowledge=InMemoryKnowledge()) as broker:
+    with Broker(registry=SqliteRegistry(db), knowledge=InMemoryKnowledge()) as broker:
         broker.disable_llm("p1")
         broker.enable_llm("p1")
         assert not broker._async._pool.is_disabled("p1")
@@ -166,18 +167,18 @@ def test_broker_enable_llm_readmits_after_disable(tmp_path):
 def test_broker_disable_llm_persists_to_knowledge_disabled_map(tmp_path):
     db = str(tmp_path / "b.db")
     asyncio.run(
-        llmbroker.sqlite.Registry(db).mirror(
+        SqliteRegistry(db).mirror(
             [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")],
         )
     )
     with Broker(
-        registry=llmbroker.sqlite.Registry(db),
-        knowledge=llmbroker.sqlite.Knowledge(db),
+        registry=SqliteRegistry(db),
+        knowledge=SqliteKnowledge(db),
     ) as broker:
         broker.disable_llm("p1")
 
     async def read_back():
-        return await llmbroker.sqlite.Knowledge(db).get_disabled("p1")
+        return await SqliteKnowledge(db).get_disabled("p1")
 
     assert asyncio.run(read_back()) is True
 
@@ -193,7 +194,7 @@ def _seed_registry(tmp_path, name="p1"):
 
 def test_broker_sync_populates_a_fresh_db(tmp_path):
     db = str(tmp_path / "b.db")
-    broker = Broker(registry=llmbroker.sqlite.Registry(db), knowledge=InMemoryKnowledge())
+    broker = Broker(registry=SqliteRegistry(db), knowledge=InMemoryKnowledge())
     broker.sync(_seed_registry(tmp_path))
     with broker:
         assert broker.count() == 1
@@ -204,9 +205,9 @@ def test_broker_sync_reconciles_registry_to_preset(tmp_path):
     """sync() mirrors: adds new, updates existing, deletes entries absent from the preset."""
     db = str(tmp_path / "b.db")
     extra = LLMConfig(name="extra", base_url="https://e/v1", model="m", api_key_ref="K")
-    asyncio.run(llmbroker.sqlite.Registry(db).mirror([extra]))
+    asyncio.run(SqliteRegistry(db).mirror([extra]))
 
-    broker = Broker(registry=llmbroker.sqlite.Registry(db), knowledge=InMemoryKnowledge())
+    broker = Broker(registry=SqliteRegistry(db), knowledge=InMemoryKnowledge())
     broker.sync(_seed_registry(tmp_path))
     with broker:
         assert broker.get("p1").config.name == "p1"
@@ -224,7 +225,7 @@ def test_broker_scope_forwarded_to_async_broker(tmp_path):
     """Broker(scope=...) forwards scope to the underlying AsyncBroker."""
     db = str(tmp_path / "b.db")
     broker = Broker(
-        registry=llmbroker.sqlite.Registry(db),
+        registry=SqliteRegistry(db),
         scope="alice",
         knowledge=InMemoryKnowledge(),
     )

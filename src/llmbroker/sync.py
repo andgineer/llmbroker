@@ -12,7 +12,8 @@ from collections.abc import Callable, Coroutine, Mapping
 from pathlib import Path
 from typing import Any
 
-from llmbroker.broker import AsyncBroker, AsyncResult
+from llmbroker.broker.broker import AsyncBroker
+from llmbroker.broker.result import AsyncResult
 from llmbroker.models import Call, LLMConfig, LLMMetrics, LLMSnapshot, LLMState
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.knowledge import KnowledgeProtocol

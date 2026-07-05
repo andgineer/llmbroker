@@ -3,12 +3,12 @@
 import asyncio
 import logging
 
-import llmbroker.sqlite
-
-from llmbroker.broker import AsyncBroker
+from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.catalog import Catalog
 from llmbroker.broker.pool import LLMPool
 from llmbroker.models import LLMConfig
+from llmbroker.sqlite.knowledge import Knowledge as SqliteKnowledge
+from llmbroker.sqlite.registry import Registry as SqliteRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.knowledge import InMemoryKnowledge
 
@@ -211,21 +211,21 @@ async def test_broker_sync_mirrors_preset_into_sqlite_registry(tmp_path):
     )
 
     broker = AsyncBroker(
-        registry=llmbroker.sqlite.Registry(db),
+        registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
         knowledge=InMemoryKnowledge(),
     )
     await broker.sync(seed_path)
     await broker.aclose()
 
-    reg = llmbroker.sqlite.Registry(db)
+    reg = SqliteRegistry(db)
     assert {c.name for c in await reg.load()} == {"p1"}
 
 
 async def test_broker_provision_without_sync_raises(tmp_path):
     db = str(tmp_path / "b.db")
     broker = AsyncBroker(
-        registry=llmbroker.sqlite.Registry(db),
+        registry=SqliteRegistry(db),
         knowledge=InMemoryKnowledge(),
     )
     try:
@@ -244,7 +244,7 @@ async def test_broker_sync_then_provision_succeeds(tmp_path):
     )
 
     broker = AsyncBroker(
-        registry=llmbroker.sqlite.Registry(db),
+        registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
         knowledge=InMemoryKnowledge(),
     )
@@ -262,23 +262,23 @@ async def test_broker_sync_seeds_disabled_map(tmp_path):
     )
 
     broker = AsyncBroker(
-        registry=llmbroker.sqlite.Registry(db),
+        registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
-        knowledge=llmbroker.sqlite.Knowledge(db),
+        knowledge=SqliteKnowledge(db),
     )
     await broker.sync(seed_path)
     await broker.aclose()
 
-    assert await llmbroker.sqlite.Knowledge(db).get_disabled("p1") is False
+    assert await SqliteKnowledge(db).get_disabled("p1") is False
 
 
 async def test_manual_latch_survives_sync_reseed(tmp_path):
     """The disabled verdict lives in the knowledge disabled-map, not the registry —
     a sync that re-mirrors the preset never touches it."""
     db = str(tmp_path / "b.db")
-    reg = llmbroker.sqlite.Registry(db)
+    reg = SqliteRegistry(db)
     await reg.mirror([_cfg("p1")])
-    await llmbroker.sqlite.Knowledge(db).set_disabled("p1", True)
+    await SqliteKnowledge(db).set_disabled("p1", True)
 
     seed_path = tmp_path / "preset.toml"
     seed_path.write_text(
@@ -286,11 +286,11 @@ async def test_manual_latch_survives_sync_reseed(tmp_path):
     )
 
     broker = AsyncBroker(
-        registry=llmbroker.sqlite.Registry(db),
+        registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
-        knowledge=llmbroker.sqlite.Knowledge(db),
+        knowledge=SqliteKnowledge(db),
     )
     await broker.sync(seed_path)
     async with broker:
         assert broker._pool.is_disabled("p1")
-        assert await llmbroker.sqlite.Knowledge(db).get_disabled("p1") is True
+        assert await SqliteKnowledge(db).get_disabled("p1") is True

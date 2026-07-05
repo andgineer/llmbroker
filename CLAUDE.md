@@ -51,9 +51,20 @@ Run `invoke pre` after each discrete batch of changes, not only at the end.
 - All comments, docstrings, plan files, and in-repo docs: **English only**.
 
 ### Imports
-- **No local (in-function) imports.** All imports at module top level, always.
+- **No local (in-function) imports.** All imports at module top level, always. Narrow exception: a
+  dispatch function that must select an optional backend package (e.g. sqlite/postgres/mongodb)
+  at runtime from a string may import it locally with `# noqa: PLC0415`, so a bare `import llmbroker`
+  never pulls in an optional driver.
 - **No `from __future__ import annotations`** — use `X | Y` union syntax directly (Python 3.11+).
 - **No re-export patterns** — when a symbol moves, update importers to point at the new module instead of leaving a shim re-export.
+- **`__init__.py` files carry no code.** The top-level package `src/llmbroker/__init__.py` is the
+  only exception: it may import and re-export the public API surface (plus `__all__`), nothing else
+  — no class/function definitions, no internal-only names. Every other `__init__.py` (every
+  subpackage: `sqlite/`, `postgres/`, `mongodb/`, `aws/`, `vault/`, `broker/`, `standalone/`, …) has
+  **zero imports and zero code** — a docstring at most. A class or function belongs in a named
+  module (e.g. `sqlite/registry.py`), and every caller — internal or external — imports it from
+  that exact module (`from llmbroker.sqlite.registry import Registry`), never via a subpackage
+  shortcut like `llmbroker.sqlite.Registry`.
 
 ### Plan and spec files
 - Never reference plan file paths or step numbers inside code comments or docstrings.
