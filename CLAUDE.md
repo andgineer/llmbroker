@@ -74,6 +74,8 @@ Run `invoke pre` after each discrete batch of changes, not only at the end.
 ### Plan and spec files
 - Never reference plan file paths or step numbers inside code comments or docstrings.
 - Specs in `specs/` capture architectural decisions and business requirements only — not implementation details (no function signatures, field names, or internal class structure).
+- Specs describe current state only, including in `decisions.md`-style rationale docs: never narrate what a removed class/parameter/field used to be called (e.g. "the `Stack` classes, `stack=`, go away") — state the current shape and, if useful, *why* it's shaped that way. Old names belong to git history, not to a living spec.
+- Module docstrings and code comments never document architecture in blocks (a design-essay docstring, a multi-paragraph "how this subsystem works" comment). Keep docstrings to 1-3 lines; if content explains *why* the system is shaped a certain way rather than a non-obvious local WHY, it belongs in `specs/reference/`, not in the code.
 
 ## Dependencies and optional extras
 

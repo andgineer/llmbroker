@@ -1,22 +1,4 @@
-"""The live in-memory routing substrate behind ``AsyncBroker``.
-
-Each LLM has one ``_Slot`` carrying its config, resolved key, and live
-cooldown/quality/in-flight state. ``acquire()`` picks an available slot under
-an ``asyncio.Condition`` and blocks (optionally with a deadline) until one
-frees up or a cooldown expires. Parallel calls to one LLM are allowed by
-default; ``LLMConfig.parallel`` caps simultaneous in-flight requests per slot
-(1 = serialize).
-
-Selection is one sort key: a slot quality-demoted for the requested operation
-(see ``Optimizer.is_demoted``) sorts after every non-demoted slot; among slots
-with the same demotion verdict, curated priority wins (``_Slot.order``, the
-model's position in the registry/preset — lower is better). Demotion is soft
-(consulted at acquire time, never withdraws a slot) — only ``disabled`` and a
-missing key make a slot unavailable.
-
-Pool state is not itself persisted: cooldowns are local until a peer's failure
-surfaces through the journal rebuild, which calls ``apply_peer_cooldowns``.
-"""
+"""LLMPool: live per-LLM slot state (config, key, cooldown, quality) backing routing."""
 
 import asyncio
 import logging

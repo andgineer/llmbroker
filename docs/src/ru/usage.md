@@ -324,13 +324,7 @@ async with llmbroker.AsyncBroker(
 БД-реестр стартует пустым; синхронизируйте его с пресетом явно, один раз:
 
 ```python
-from llmbroker.sqlite import Registry as SqliteRegistry
-from llmbroker.sqlite import Secrets as SqliteSecrets
-
-llms = llmbroker.AsyncBroker(
-    registry=SqliteRegistry("broker.db"),
-    secrets=SqliteSecrets("broker.db"),
-)
+llms = llmbroker.AsyncBroker("broker.db")
 await llms.sync(llmbroker.Registry(".deploy/llms.toml"))  # один раз, например при деплое
 await llms.ensure_pool()   # немедленная инициализация при старте
 ```

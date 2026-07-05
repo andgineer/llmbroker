@@ -317,13 +317,7 @@ async with llmbroker.AsyncBroker(
 A DB-backed registry starts empty; mirror a preset into it explicitly, once:
 
 ```python
-from llmbroker.sqlite import Registry as SqliteRegistry
-from llmbroker.sqlite import Secrets as SqliteSecrets
-
-llms = llmbroker.AsyncBroker(
-    registry=SqliteRegistry("broker.db"),
-    secrets=SqliteSecrets("broker.db"),
-)
+llms = llmbroker.AsyncBroker("broker.db")
 await llms.sync(llmbroker.Registry(".deploy/llms.toml"))  # once, e.g. at deploy
 await llms.ensure_pool()   # eager init at startup
 ```
