@@ -6,29 +6,29 @@ from llmbroker.broker.learning import _LearningHook
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.result import AsyncLLM
 from llmbroker.models import LLMMetrics, LLMSnapshot
-from llmbroker.protocols.telemetry import QueryableTelemetryProtocol, TelemetryProtocol
+from llmbroker.protocols.knowledge import KnowledgeProtocol, QueryableKnowledgeProtocol
 
 
 class PoolView:
     """Live views over the pool: a single LLM handle, the count, a full snapshot."""
 
-    def __init__(self, pool: LLMPool, telemetry: TelemetryProtocol) -> None:
+    def __init__(self, pool: LLMPool, knowledge: KnowledgeProtocol) -> None:
         self._pool = pool
-        self._telemetry = telemetry
+        self._knowledge = knowledge
 
     def get(self, name: str) -> AsyncLLM:
         if name not in self._pool:
             raise KeyError(name)
-        return AsyncLLM(name, self._pool.config(name), self._pool, self._telemetry)
+        return AsyncLLM(name, self._pool.config(name), self._pool, self._knowledge)
 
     def count(self) -> int:
         return len(self._pool)
 
     async def _metrics_map(self) -> dict[str, LLMMetrics]:
-        if isinstance(self._telemetry, _LearningHook):
-            return self._telemetry.metrics_cache
-        if isinstance(self._telemetry, QueryableTelemetryProtocol):
-            return await self._telemetry.metrics()
+        if isinstance(self._knowledge, _LearningHook):
+            return self._knowledge.metrics_cache
+        if isinstance(self._knowledge, QueryableKnowledgeProtocol):
+            return await self._knowledge.metrics()
         return {}
 
     async def snapshot(self) -> Mapping[str, LLMSnapshot]:

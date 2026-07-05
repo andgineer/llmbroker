@@ -61,6 +61,10 @@ class Registry:
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
 
+    @property
+    def path(self) -> Path:
+        return self._path
+
     async def load(self, user_id: int | str | None = None) -> list[LLMConfig]:  # noqa: ARG002
         data = _read_data(self._path)
         result: list[LLMConfig] = []

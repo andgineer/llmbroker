@@ -1,6 +1,6 @@
 """Tests for the manual disable latch: warm start, live round trip, remove/readd.
 
-Uses sqlite (registry + telemetry disabled-map) for determinism/speed.
+Uses sqlite (registry + knowledge disabled-map) for determinism/speed.
 """
 
 import llmbroker.sqlite
@@ -37,12 +37,12 @@ async def test_persisted_manual_latch_applied_at_provision(tmp_path):
     db = str(tmp_path / "b.db")
     reg = llmbroker.sqlite.Registry(db)
     await reg.mirror([_cfg()])
-    await llmbroker.sqlite.Telemetry(db).set_disabled("p1", True)
+    await llmbroker.sqlite.Knowledge(db).set_disabled("p1", True)
 
     async with AsyncBroker(
         registry=llmbroker.sqlite.Registry(db),
         secrets=DictSecrets({"K": "key"}),
-        telemetry=llmbroker.sqlite.Telemetry(db),
+        knowledge=llmbroker.sqlite.Knowledge(db),
     ) as broker:
         assert broker._pool.is_disabled("p1")
 
@@ -57,23 +57,23 @@ async def test_disable_enable_llm_round_trip_preserves_quality_window(tmp_path):
     async with AsyncBroker(
         registry=llmbroker.sqlite.Registry(db),
         secrets=DictSecrets({"K": "key"}),
-        telemetry=llmbroker.sqlite.Telemetry(db),
+        knowledge=llmbroker.sqlite.Knowledge(db),
         optimize=opt,
     ) as broker:
         for i in range(5):
             call = _call(f"c{i}", operation="summarize")
-            await broker._telemetry.record(call)
-            await broker._telemetry.record_quality("p1", "summarize", 0.0)
+            await broker._knowledge.record(call)
+            await broker._knowledge.record_quality("p1", "summarize", 0.0)
         assert len(opt._scores[("p1", "summarize")]) == 5
 
         await broker.disable_llm("p1")
         assert broker._pool.is_disabled("p1")
-        assert await llmbroker.sqlite.Telemetry(db).get_disabled("p1") is True
+        assert await llmbroker.sqlite.Knowledge(db).get_disabled("p1") is True
 
         await broker.enable_llm("p1")
         assert not broker._pool.is_disabled("p1")
         assert len(opt._scores[("p1", "summarize")]) == 5
-        assert await llmbroker.sqlite.Telemetry(db).get_disabled("p1") is False
+        assert await llmbroker.sqlite.Knowledge(db).get_disabled("p1") is False
 
 
 async def test_disable_enable_llm_without_optimizer_still_persists(tmp_path):
@@ -86,18 +86,18 @@ async def test_disable_enable_llm_without_optimizer_still_persists(tmp_path):
     async with AsyncBroker(
         registry=llmbroker.sqlite.Registry(db),
         secrets=DictSecrets({"K": "key"}),
-        telemetry=llmbroker.sqlite.Telemetry(db),
+        knowledge=llmbroker.sqlite.Knowledge(db),
         optimize=False,
     ) as broker:
         assert broker._optimizer is None
 
         await broker.disable_llm("p1")
         assert broker._pool.is_disabled("p1")
-        assert await llmbroker.sqlite.Telemetry(db).get_disabled("p1") is True
+        assert await llmbroker.sqlite.Knowledge(db).get_disabled("p1") is True
 
         await broker.enable_llm("p1")
         assert not broker._pool.is_disabled("p1")
-        assert await llmbroker.sqlite.Telemetry(db).get_disabled("p1") is False
+        assert await llmbroker.sqlite.Knowledge(db).get_disabled("p1") is False
 
 
 async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path):
@@ -111,7 +111,7 @@ async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path):
     async with AsyncBroker(
         registry=llmbroker.sqlite.Registry(db),
         secrets=DictSecrets({"K": "key"}),
-        telemetry=llmbroker.sqlite.Telemetry(db),
+        knowledge=llmbroker.sqlite.Knowledge(db),
     ) as broker:
         await broker.disable_llm("p1")
         assert broker._pool.is_disabled("p1")

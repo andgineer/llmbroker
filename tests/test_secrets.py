@@ -115,6 +115,7 @@ def test_broker_resolves_key_not_on_config(tmp_path, monkeypatch):
 
 def test_seed_seeds_secret_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("SEED_KEY", "from-env")
+    monkeypatch.chdir(tmp_path)
     db = str(tmp_path / "b.db")
     src = tmp_path / "llms.toml"
     src.write_text(
@@ -136,6 +137,7 @@ def test_seed_seeds_secret_from_env(tmp_path, monkeypatch):
 
 def test_seed_preserves_existing_secret(tmp_path, monkeypatch):
     monkeypatch.setenv("SEED_KEY", "from-env")
+    monkeypatch.chdir(tmp_path)
     db = str(tmp_path / "b.db")
     src = tmp_path / "llms.toml"
     src.write_text(
@@ -158,6 +160,7 @@ def test_seed_preserves_existing_secret(tmp_path, monkeypatch):
 
 def test_missing_ref_with_readonly_secrets_does_not_block(tmp_path, monkeypatch):
     monkeypatch.delenv("ABSENT_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
     db = str(tmp_path / "b.db")
     src = tmp_path / "llms.toml"
     src.write_text(

@@ -13,7 +13,7 @@ from llmbroker.models import LifecyclePhase, LLMConfig
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.sync import Broker
-from llmbroker.standalone.telemetry import NoTelemetry
+from llmbroker.standalone.knowledge import InMemoryKnowledge
 
 
 def _registry(tmp_path, name="p1"):
@@ -50,23 +50,23 @@ def _http_error(status):
 
 
 def test_broker_count(tmp_path):
-    with Broker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+    with Broker(registry=_registry(tmp_path), knowledge=InMemoryKnowledge()) as broker:
         assert broker.count() == 1
 
 
 def test_broker_snapshot_names(tmp_path):
-    with Broker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+    with Broker(registry=_registry(tmp_path), knowledge=InMemoryKnowledge()) as broker:
         assert list(broker.snapshot().keys()) == ["p1"]
 
 
 def test_broker_get_returns_llm(tmp_path):
-    with Broker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+    with Broker(registry=_registry(tmp_path), knowledge=InMemoryKnowledge()) as broker:
         llm = broker.get("p1")
         assert llm.config.name == "p1"
 
 
 def test_broker_get_missing_raises(tmp_path):
-    with Broker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+    with Broker(registry=_registry(tmp_path), knowledge=InMemoryKnowledge()) as broker:
         with pytest.raises(KeyError):
             broker.get("nope")
 
@@ -77,7 +77,7 @@ def _secrets() -> DictSecrets:
 
 def test_broker_chat_happy_path(tmp_path):
     with Broker(
-        registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+        registry=_registry(tmp_path), secrets=_secrets(), knowledge=InMemoryKnowledge()
     ) as broker:
         with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("sync-hello")):
             result = broker.chat([{"role": "user", "content": "hi"}])
@@ -86,7 +86,7 @@ def test_broker_chat_happy_path(tmp_path):
 
 def test_broker_ask_happy_path(tmp_path):
     with Broker(
-        registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+        registry=_registry(tmp_path), secrets=_secrets(), knowledge=InMemoryKnowledge()
     ) as broker:
         with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("yes")):
             result = broker.ask("question")
@@ -97,7 +97,7 @@ def test_broker_chat_500_wait0_raises_no_llm_available(tmp_path):
     """A generic HTTP error cools the slot and fails over rather than raising AllLLMsFailedError;
     with wait=0 and no other LLM to fail over to, that surfaces as NoLLMAvailableError."""
     with Broker(
-        registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+        registry=_registry(tmp_path), secrets=_secrets(), knowledge=InMemoryKnowledge()
     ) as broker:
         with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(500)):
             with pytest.raises(NoLLMAvailableError):
@@ -106,7 +106,7 @@ def test_broker_chat_500_wait0_raises_no_llm_available(tmp_path):
 
 def test_result_record_quality_does_not_raise(tmp_path):
     with Broker(
-        registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+        registry=_registry(tmp_path), secrets=_secrets(), knowledge=InMemoryKnowledge()
     ) as broker:
         with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
             result = broker.chat([{"role": "user", "content": "x"}])
@@ -114,13 +114,13 @@ def test_result_record_quality_does_not_raise(tmp_path):
 
 
 def test_llm_state_is_available(tmp_path):
-    with Broker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+    with Broker(registry=_registry(tmp_path), knowledge=InMemoryKnowledge()) as broker:
         llm = broker.get("p1")
         assert llm.state().phase is LifecyclePhase.AVAILABLE
 
 
 def test_broker_context_manager_closes_cleanly(tmp_path):
-    broker = Broker(registry=_registry(tmp_path), telemetry=NoTelemetry())
+    broker = Broker(registry=_registry(tmp_path), knowledge=InMemoryKnowledge())
     with broker:
         _ = broker.count()
     assert not broker._finalizer.alive
@@ -129,7 +129,7 @@ def test_broker_context_manager_closes_cleanly(tmp_path):
 
 def test_broker_gc_stops_thread_without_close(tmp_path):
     """An abandoned Broker reclaims its loop thread when garbage-collected."""
-    broker = Broker(registry=_registry(tmp_path), telemetry=NoTelemetry())
+    broker = Broker(registry=_registry(tmp_path), knowledge=InMemoryKnowledge())
     thread = broker._thread
     assert thread.is_alive()
     del broker
@@ -145,7 +145,7 @@ def test_broker_disable_llm_benches_and_excludes_from_pool(tmp_path):
             [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")],
         )
     )
-    with Broker(registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()) as broker:
+    with Broker(registry=llmbroker.sqlite.Registry(db), knowledge=InMemoryKnowledge()) as broker:
         broker.disable_llm("p1")
         assert broker._async._pool.is_disabled("p1")
 
@@ -157,13 +157,13 @@ def test_broker_enable_llm_readmits_after_disable(tmp_path):
             [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")],
         )
     )
-    with Broker(registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()) as broker:
+    with Broker(registry=llmbroker.sqlite.Registry(db), knowledge=InMemoryKnowledge()) as broker:
         broker.disable_llm("p1")
         broker.enable_llm("p1")
         assert not broker._async._pool.is_disabled("p1")
 
 
-def test_broker_disable_llm_persists_to_telemetry_disabled_map(tmp_path):
+def test_broker_disable_llm_persists_to_knowledge_disabled_map(tmp_path):
     db = str(tmp_path / "b.db")
     asyncio.run(
         llmbroker.sqlite.Registry(db).mirror(
@@ -172,12 +172,12 @@ def test_broker_disable_llm_persists_to_telemetry_disabled_map(tmp_path):
     )
     with Broker(
         registry=llmbroker.sqlite.Registry(db),
-        telemetry=llmbroker.sqlite.Telemetry(db),
+        knowledge=llmbroker.sqlite.Knowledge(db),
     ) as broker:
         broker.disable_llm("p1")
 
     async def read_back():
-        return await llmbroker.sqlite.Telemetry(db).get_disabled("p1")
+        return await llmbroker.sqlite.Knowledge(db).get_disabled("p1")
 
     assert asyncio.run(read_back()) is True
 
@@ -193,7 +193,7 @@ def _seed_registry(tmp_path, name="p1"):
 
 def test_broker_sync_populates_a_fresh_db(tmp_path):
     db = str(tmp_path / "b.db")
-    broker = Broker(registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry())
+    broker = Broker(registry=llmbroker.sqlite.Registry(db), knowledge=InMemoryKnowledge())
     broker.sync(_seed_registry(tmp_path))
     with broker:
         assert broker.count() == 1
@@ -206,7 +206,7 @@ def test_broker_sync_reconciles_registry_to_preset(tmp_path):
     extra = LLMConfig(name="extra", base_url="https://e/v1", model="m", api_key_ref="K")
     asyncio.run(llmbroker.sqlite.Registry(db).mirror([extra]))
 
-    broker = Broker(registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry())
+    broker = Broker(registry=llmbroker.sqlite.Registry(db), knowledge=InMemoryKnowledge())
     broker.sync(_seed_registry(tmp_path))
     with broker:
         assert broker.get("p1").config.name == "p1"
@@ -215,7 +215,7 @@ def test_broker_sync_reconciles_registry_to_preset(tmp_path):
 
 
 def test_broker_sync_with_readonly_source_registry_raises(tmp_path):
-    broker = Broker(registry=_registry(tmp_path), telemetry=NoTelemetry())
+    broker = Broker(registry=_registry(tmp_path), knowledge=InMemoryKnowledge())
     with pytest.raises(TypeError, match="does not support mutations"):
         broker.sync(_seed_registry(tmp_path))
 
@@ -226,7 +226,7 @@ def test_broker_scope_forwarded_to_async_broker(tmp_path):
     broker = Broker(
         registry=llmbroker.sqlite.Registry(db),
         scope="alice",
-        telemetry=NoTelemetry(),
+        knowledge=InMemoryKnowledge(),
     )
     try:
         assert broker._async._scope == "alice"

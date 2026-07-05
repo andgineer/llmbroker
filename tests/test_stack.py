@@ -64,7 +64,7 @@ async def test_postgres_stack_wires_three_ports(pg_pool):
         async with AsyncBroker(stack=stack) as broker:
             assert await broker.count() == 1
             assert broker._pool.resolved_key("llm1") == "secret-value"
-            await broker._telemetry.record(
+            await broker._knowledge.record(
                 Call(
                     id="c1",
                     llm_name="llm1",
@@ -75,7 +75,7 @@ async def test_postgres_stack_wires_three_ports(pg_pool):
                     latency_ms=10,
                 ),
             )
-        calls = await stack.telemetry.calls(limit=10)
+        calls = await stack.knowledge.calls(limit=10)
         assert len(calls) == 1
     finally:
         async with pg_pool.acquire() as conn:

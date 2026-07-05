@@ -42,6 +42,7 @@ def _info_count(caplog) -> int:
 
 def test_fresh_db_env_set_zero_info_logs(tmp_path, monkeypatch, caplog):
     monkeypatch.setenv(_KEY_REF, "secret")
+    monkeypatch.chdir(tmp_path)
     db = str(tmp_path / "b.db")
 
     async def run():
@@ -56,6 +57,7 @@ def test_fresh_db_env_set_zero_info_logs(tmp_path, monkeypatch, caplog):
 
 def test_fresh_db_env_absent_one_info_log(tmp_path, monkeypatch, caplog):
     monkeypatch.delenv(_KEY_REF, raising=False)
+    monkeypatch.chdir(tmp_path)
     db = str(tmp_path / "b.db")
 
     async def run():
@@ -71,6 +73,7 @@ def test_fresh_db_env_absent_one_info_log(tmp_path, monkeypatch, caplog):
 
 def test_restart_secret_persisted_zero_info_logs(tmp_path, monkeypatch, caplog):
     monkeypatch.delenv(_KEY_REF, raising=False)
+    monkeypatch.chdir(tmp_path)
     db = str(tmp_path / "b.db")
 
     async def seed():
@@ -95,6 +98,7 @@ def test_restart_secret_persisted_zero_info_logs(tmp_path, monkeypatch, caplog):
 def test_restart_secret_absent_everywhere_exactly_one_info_log(tmp_path, monkeypatch, caplog):
     """Regression: before the pool-init refactor, two log lines were emitted on restart with missing secret."""
     monkeypatch.delenv(_KEY_REF, raising=False)
+    monkeypatch.chdir(tmp_path)
     db = str(tmp_path / "b.db")
 
     async def first():
@@ -118,6 +122,7 @@ def test_restart_env_set_sqlite_missing_zero_info_logs(tmp_path, monkeypatch, ca
     """A newly available env var is picked up on the next explicit sync() — a plain
     restart with no sync() call does not re-bootstrap secrets (sync is explicit now)."""
     monkeypatch.delenv(_KEY_REF, raising=False)
+    monkeypatch.chdir(tmp_path)
     db = str(tmp_path / "b.db")
 
     async def first():

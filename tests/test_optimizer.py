@@ -15,7 +15,7 @@ from llmbroker.models import LLMConfig
 from llmbroker.optimizer import Optimizer, wilson_upper
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets
-from llmbroker.standalone.telemetry import NoTelemetry
+from llmbroker.standalone.knowledge import InMemoryKnowledge
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@ def test_broker_no_optimizer_when_optimize_false(tmp_path):
     async def run():
         async with AsyncBroker(
             registry=_registry(tmp_path),
-            telemetry=NoTelemetry(),
+            knowledge=InMemoryKnowledge(),
             optimize=False,
         ) as broker:
             assert broker._optimizer is None
@@ -161,7 +161,7 @@ def test_broker_demoted_model_still_serves_as_last_resort(tmp_path):
         async with AsyncBroker(
             registry=_registry(tmp_path),
             secrets=DictSecrets({"K": "test"}),
-            telemetry=NoTelemetry(),
+            knowledge=InMemoryKnowledge(),
             optimize=opt,
         ) as broker:
             picked = await broker._pool.acquire(0, operation=None)
@@ -189,7 +189,7 @@ def test_underprovisioned_alert_when_all_cooling(tmp_path, caplog):
         async with AsyncBroker(
             registry=_registry(tmp_path),
             secrets=DictSecrets({"K": "test"}),
-            telemetry=NoTelemetry(),
+            knowledge=InMemoryKnowledge(),
             optimize=True,
         ) as broker:
             _make_unavailable(broker, "p1")
@@ -213,7 +213,7 @@ def test_underprov_alert_fires_despite_keyless_config_present(tmp_path, caplog):
         async with AsyncBroker(
             registry=Registry(f),
             secrets=DictSecrets({"K": "test"}),  # p2's ref is left unresolved — stays keyless
-            telemetry=NoTelemetry(),
+            knowledge=InMemoryKnowledge(),
             optimize=True,
         ) as broker:
             assert not broker._pool.has_key("p2")
@@ -232,7 +232,7 @@ def test_no_underprov_alert_when_some_available(tmp_path, caplog):
         async with AsyncBroker(
             registry=_registry(tmp_path, name="p1"),
             secrets=DictSecrets({"K": "test"}),
-            telemetry=NoTelemetry(),
+            knowledge=InMemoryKnowledge(),
             optimize=True,
         ) as broker:
             # p1 stays AVAILABLE (default)
@@ -249,7 +249,7 @@ def test_no_underprov_alert_when_optimize_false(tmp_path, caplog):
     async def run():
         async with AsyncBroker(
             registry=_registry(tmp_path),
-            telemetry=NoTelemetry(),
+            knowledge=InMemoryKnowledge(),
             optimize=False,
         ) as broker:
             _make_unavailable(broker, "p1")
@@ -267,7 +267,7 @@ def test_underprov_alert_debounced(tmp_path, caplog):
         async with AsyncBroker(
             registry=_registry(tmp_path),
             secrets=DictSecrets({"K": "test"}),
-            telemetry=NoTelemetry(),
+            knowledge=InMemoryKnowledge(),
             optimize=True,
         ) as broker:
             _make_unavailable(broker, "p1")
@@ -287,7 +287,7 @@ def test_underprov_alert_via_ask_wiring(tmp_path, caplog):
         async with AsyncBroker(
             registry=_registry(tmp_path),
             secrets=DictSecrets({"K": "test"}),
-            telemetry=NoTelemetry(),
+            knowledge=InMemoryKnowledge(),
             optimize=True,
         ) as broker:
             # Occupy the only slot so the next acquire raises TimeoutError → NoLLMAvailableError.

@@ -11,9 +11,9 @@ from llmbroker.exceptions import (
 )
 from llmbroker.models import LifecyclePhase
 from llmbroker.optimizer import Optimizer
+from llmbroker.standalone.knowledge import FileKnowledge, InMemoryKnowledge
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets, Secrets
-from llmbroker.standalone.telemetry import JsonlTelemetry, NoTelemetry, Telemetry
 from llmbroker.sync import LLM, Broker, Result
 
 __all__ = [
@@ -23,18 +23,17 @@ __all__ = [
     "AsyncResult",
     "Broker",
     "DictSecrets",
-    "JsonlTelemetry",
+    "FileKnowledge",
+    "InMemoryKnowledge",
     "LLM",
     "LifecyclePhase",
     "LLMRequestError",
     "NoLLMAvailableError",
-    "NoTelemetry",
     "Optimizer",
     "Registry",
     "Result",
     "Secrets",
     "SecretsReadOnlyError",
-    "Telemetry",
     "UserScopeError",
     "arun_tool_loop",
     "run_tool_loop",

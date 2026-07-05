@@ -12,6 +12,7 @@ readme = "README.md"
 requires-python = ">=3.11"  # tomllib (stdlib) and `from datetime import UTC` require 3.11+
 dependencies = [
     "httpx>=0.28.1",
+    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]

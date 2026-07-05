@@ -9,7 +9,6 @@ import asyncio
 import threading
 import weakref
 from collections.abc import Callable, Coroutine, Mapping
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,9 +16,9 @@ from llmbroker.broker import AsyncBroker, AsyncResult
 from llmbroker.models import Call, LLMConfig, LLMMetrics, LLMSnapshot, LLMState
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.backend_stack import BackendStack
+from llmbroker.protocols.knowledge import KnowledgeProtocol
 from llmbroker.protocols.registry import RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
-from llmbroker.protocols.telemetry import TelemetryProtocol
 from llmbroker.standalone.registry import Registry
 
 
@@ -83,7 +82,7 @@ class Broker:
         *,
         stack: BackendStack | None = None,
         secrets: SecretsProtocol | None = None,
-        telemetry: TelemetryProtocol | None = None,
+        knowledge: KnowledgeProtocol | None = None,
         optimize: bool | Optimizer = True,
         scope: str | None = None,
     ) -> None:
@@ -93,7 +92,7 @@ class Broker:
             registry,
             stack=stack,
             secrets=secrets,
-            telemetry=telemetry,
+            knowledge=knowledge,
             optimize=optimize,
             scope=scope,
         )
@@ -186,9 +185,6 @@ class Broker:
 
     def calls(self, *, limit: int) -> list[Call]:
         return self._run(self._async.calls(limit=limit))
-
-    def purge_calls(self, *, before: datetime) -> int:
-        return self._run(self._async.purge_calls(before=before))
 
     # ── lifecycle ──
     def close(self) -> None:

@@ -879,6 +879,7 @@ name = "llmbroker"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
+    { name = "pyyaml" },
 ]
 
 [package.optional-dependencies]
@@ -927,6 +928,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "hvac", marker = "extra == 'vault'", specifier = ">=2.0" },
     { name = "motor", marker = "extra == 'mongodb'", specifier = ">=3.6.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "redis", marker = "extra == 'redis'", specifier = ">=5.0" },
 ]
 provides-extras = ["aws", "mongodb", "postgres", "redis", "sqlite", "vault"]

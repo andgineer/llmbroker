@@ -1,14 +1,18 @@
-"""Postgres-backed queryable telemetry over ``llmbroker_calls`` + the
+"""Postgres-backed queryable knowledge store over ``llmbroker_calls`` + the
 ``llmbroker_disabled`` admin verdict map."""
 
 import json
+import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import asyncpg
 
 from llmbroker.models import Call, CallStatus, LLMMetrics, Usage
 from llmbroker.postgres.schema import ensure_schema
+
+_DEFAULT_RETENTION = timedelta(days=90)
+_PURGE_INTERVAL_SECONDS = 3600.0
 
 
 def _usage_columns(usage: Usage | None) -> tuple:
@@ -52,11 +56,15 @@ def _call_from_row(row: asyncpg.Record) -> Call:
     )
 
 
-class Telemetry:
-    """Postgres-backed queryable telemetry over ``llmbroker_calls`` + admin verdicts."""
+class Knowledge:
+    """Postgres-backed queryable knowledge store over ``llmbroker_calls`` + admin
+    verdicts. Self-purges call rows older than ``retention``, checked at most
+    once per hour on write activity."""
 
-    def __init__(self, pool: asyncpg.Pool) -> None:
+    def __init__(self, pool: asyncpg.Pool, *, retention: timedelta = _DEFAULT_RETENTION) -> None:
         self._pool = pool
+        self._retention = retention
+        self._last_purge = float("-inf")
 
     async def record(self, call: Call) -> None:
         pt, ct, tt, extra = _usage_columns(call.usage)
@@ -88,6 +96,7 @@ class Telemetry:
                 call.cooldown_until,
                 call.key_hash,
             )
+        await self._maybe_purge()
 
     async def record_quality(
         self,
@@ -170,15 +179,21 @@ class Telemetry:
                 )
         return [_call_from_row(r) for r in rows]
 
-    async def purge_calls(self, *, before: datetime) -> int:
-        """Delete all calls older than *before*, across all scopes. Admin operation."""
+    async def _purge_old_calls(self) -> None:
+        cutoff = datetime.now(UTC) - self._retention
         await ensure_schema(self._pool)
         async with self._pool.acquire() as conn:
-            status = await conn.execute(
+            await conn.execute(
                 "DELETE FROM llmbroker_calls WHERE called_at < $1",
-                before,
+                cutoff,
             )
-        return int(status.split()[-1])
+
+    async def _maybe_purge(self) -> None:
+        now = time.monotonic()
+        if now - self._last_purge < _PURGE_INTERVAL_SECONDS:
+            return
+        self._last_purge = now
+        await self._purge_old_calls()
 
     # ------------------------------------------------------------------
     # Admin disabled-verdict map

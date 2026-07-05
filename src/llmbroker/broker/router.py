@@ -17,7 +17,7 @@ from llmbroker.chat import call_provider, is_rate_limit, retry_after_seconds
 from llmbroker.exceptions import AllLLMsFailedError, NoLLMAvailableError
 from llmbroker.models import Call, CallStatus, LLMConfig, Usage, key_hash
 from llmbroker.optimizer import Optimizer
-from llmbroker.protocols.telemetry import TelemetryProtocol
+from llmbroker.protocols.knowledge import KnowledgeProtocol
 
 HTTP_429 = 429
 _DEFAULT_RATE_LIMIT_SEC = 60
@@ -31,13 +31,13 @@ class Router:
     def __init__(
         self,
         pool: LLMPool,
-        telemetry: TelemetryProtocol,
+        knowledge: KnowledgeProtocol,
         *,
         scope: str | None,
         optimizer: Optimizer | None = None,
     ) -> None:
         self._pool = pool
-        self._telemetry = telemetry
+        self._knowledge = knowledge
         self._scope = scope
         self._optimizer = optimizer
 
@@ -194,12 +194,12 @@ class Router:
             call_id=call_id,
             llm_name=config.name,
             operation=operation,
-            telemetry=self._telemetry,
+            knowledge=self._knowledge,
             pool=self._pool,
         )
 
     async def _log_call(self, call: Call) -> None:
         try:
-            await self._telemetry.record(call)
+            await self._knowledge.record(call)
         except Exception:  # noqa: BLE001
-            logger.exception("llmbroker: telemetry.record failed")
+            logger.exception("llmbroker: knowledge.record failed")

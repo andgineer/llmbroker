@@ -12,10 +12,10 @@ from llmbroker.broker.router import Router
 from llmbroker.exceptions import AllLLMsFailedError, NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
-from llmbroker.standalone.telemetry import NoTelemetry
+from llmbroker.standalone.knowledge import InMemoryKnowledge
 
 
-class _NoTelemetry:
+class _NoKnowledge:
     async def record(self, call):
         pass
 
@@ -35,7 +35,7 @@ async def _pool(*cfgs, key="secret") -> LLMPool:
 
 
 def _router(pool: LLMPool) -> Router:
-    return Router(pool, _NoTelemetry(), scope=None)
+    return Router(pool, _NoKnowledge(), scope=None)
 
 
 async def _noop_resync() -> None:
@@ -44,8 +44,8 @@ async def _noop_resync() -> None:
 
 def _router_with_optimizer(pool: LLMPool, opt: Optimizer) -> Router:
     """Wire _LearningHook like AsyncBroker does, so rl_fail_count/dead-key drop drive for real."""
-    telemetry = _LearningHook(opt, NoTelemetry(), pool, _noop_resync)
-    return Router(pool, telemetry, scope=None, optimizer=opt)
+    knowledge = _LearningHook(opt, InMemoryKnowledge(), pool, _noop_resync)
+    return Router(pool, knowledge, scope=None, optimizer=opt)
 
 
 def _spy_cool_down(pool: LLMPool) -> list[float]:

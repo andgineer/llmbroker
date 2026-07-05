@@ -1,24 +1,36 @@
-"""Logging and JSON-lines telemetry — no external backend.
+"""File-backed and in-memory knowledge stores — no external backend.
 
-``Telemetry()`` (log, default) and ``NoTelemetry()`` implement only the minimal
-contract; their disabled-verdict map is in-memory only (session-scoped).
-``JsonlTelemetry(path)`` appends JSON lines — a quality record is its own
-line, never an update to an existing one — and persists the disabled map to a
-sibling JSON file. It is queryable, so the journal rebuild can warm-start and
-stay live from a plain file, same as a DB backend.
+``InMemoryKnowledge()`` implements only the minimal contract and keeps its
+disabled-verdict map in process memory (session-scoped learning). It is
+llmbroker's internal subsystem, not application logging — a host that wants
+logs uses ``logging`` itself.
+
+``FileKnowledge(directory)`` is the default persistent store: a day-split
+JSON-lines call journal (``<directory>/calls/YYYY-MM-DD.jsonl``, chosen by
+each record's UTC date — pure storage layout, not aggregation, since rebuild
+needs raw per-record scores and a quality record can rate a call from an
+earlier day) plus a YAML admin disabled-verdict map
+(``<directory>/disabled.yml``, meant for hand-editing). It self-purges call
+records older than ``retention`` by unlinking whole expired day files — no
+rewrite, no race with concurrent appends — checked at most once per hour on
+write activity. The disabled map is never purged.
 """
 
 import asyncio
 import json
-import logging
+import time
 import uuid
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+
+import yaml
 
 from llmbroker.models import Call, CallStatus, Usage
 
-logger = logging.getLogger("llmbroker.telemetry")
+_DEFAULT_RETENTION = timedelta(days=90)
+_PURGE_INTERVAL_SECONDS = 3600.0
+_DISABLED_HEADER = "# llmbroker: admin verdicts; values are yours, names are seeded automatically\n"
 
 
 def _new_quality_call(
@@ -40,50 +52,9 @@ def _new_quality_call(
     )
 
 
-class Telemetry:
-    """Default telemetry — emits each call to Python logging; disabled verdicts
-    live only in process memory."""
-
-    def __init__(self) -> None:
-        self._disabled: dict[str, bool] = {}
-
-    async def record(self, call: Call) -> None:
-        logger.info(
-            "llm call id=%s llm=%s operation=%s status=%s http=%s latency=%sms",
-            call.id,
-            call.llm_name,
-            call.operation,
-            call.status.value if call.status is not None else None,
-            call.http_status,
-            call.latency_ms,
-        )
-
-    async def record_quality(
-        self,
-        llm_name: str,
-        operation: str | None,
-        score: float,
-        *,
-        call_id: str | None = None,  # noqa: ARG002
-    ) -> None:
-        logger.info("quality llm=%s operation=%s score=%s", llm_name, operation, score)
-
-    async def get_disabled(self, name: str) -> bool:
-        return self._disabled.get(name, False)
-
-    async def set_disabled(self, name: str, flag: bool) -> None:  # noqa: FBT001
-        self._disabled[name] = flag
-
-    async def seed_disabled(self, names: list[str]) -> None:
-        for name in names:
-            self._disabled.setdefault(name, False)
-
-    async def disabled_map(self) -> dict[str, bool]:
-        return dict(self._disabled)
-
-
-class NoTelemetry:
-    """Explicit no-op telemetry opt-out; disabled verdicts live only in process memory."""
+class InMemoryKnowledge:
+    """Explicit in-memory opt-out — no persistence, session-scoped learning;
+    disabled verdicts live only in process memory."""
 
     def __init__(self) -> None:
         self._disabled: dict[str, bool] = {}
@@ -149,25 +120,30 @@ def _call_from_jsonable(d: dict) -> Call:
     )
 
 
-class JsonlTelemetry:
-    """Append-only JSON-lines call journal, plus a JSON-file disabled-verdict map."""
+class FileKnowledge:
+    """Day-split JSONL call journal plus a YAML disabled-verdict map, under one directory."""
 
-    def __init__(self, path: str | Path, *, disabled_path: str | Path | None = None) -> None:
-        self._path = Path(path)
-        self._disabled_path = (
-            Path(disabled_path)
-            if disabled_path is not None
-            else self._path.parent / f"{self._path.stem}.disabled.json"
-        )
+    def __init__(self, directory: str | Path, *, retention: timedelta = _DEFAULT_RETENTION) -> None:
+        self._dir = Path(directory)
+        self._calls_dir = self._dir / "calls"
+        self._disabled_path = self._dir / "disabled.yml"
+        self._retention = retention
+        self._last_purge = float("-inf")
 
-    def _append(self, line: str) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a", encoding="utf-8") as fh:
+    def _day_path(self, ts: datetime) -> Path:
+        return self._calls_dir / f"{ts.date().isoformat()}.jsonl"
+
+    def _append(self, call: Call) -> None:
+        ts = call.ts or datetime.now(UTC)
+        path = self._day_path(ts)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(_call_to_jsonable(call))
+        with path.open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
 
     async def record(self, call: Call) -> None:
-        line = json.dumps(_call_to_jsonable(call))
-        await asyncio.to_thread(self._append, line)
+        await asyncio.to_thread(self._append, call)
+        await self._maybe_purge()
 
     async def record_quality(
         self,
@@ -179,47 +155,59 @@ class JsonlTelemetry:
     ) -> None:
         await self.record(_new_quality_call(llm_name, operation, score, call_id))
 
-    def _read_all(self) -> list[Call]:
-        if not self._path.exists():
+    def _day_files_newest_first(self) -> list[Path]:
+        if not self._calls_dir.exists():
             return []
-        calls: list[Call] = []
-        with self._path.open(encoding="utf-8") as fh:
-            for raw_line in fh:
+        return sorted(self._calls_dir.glob("*.jsonl"), reverse=True)
+
+    def _read_tail(self, limit: int, scope: str | None) -> list[Call]:
+        result: list[Call] = []
+        for path in self._day_files_newest_first():
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for raw_line in reversed(lines):
                 stripped = raw_line.strip()
-                if stripped:
-                    calls.append(_call_from_jsonable(json.loads(stripped)))
-        return calls
+                if not stripped:
+                    continue
+                call = _call_from_jsonable(json.loads(stripped))
+                if scope is not None and call.scope != scope:
+                    continue
+                result.append(call)
+                if len(result) >= limit:
+                    return result
+        return result
 
     async def calls(self, *, limit: int, scope: str | None = None) -> list[Call]:
         """Newest-first tail of the journal, both kinds interleaved — unfiltered by scope
         (learning is global); ``scope`` is accepted for the host-facing filter only."""
-        rows = await asyncio.to_thread(self._read_all)
-        if scope is not None:
-            rows = [r for r in rows if r.scope == scope]
-        rows.reverse()
-        return rows[:limit]
+        return await asyncio.to_thread(self._read_tail, limit, scope)
 
-    async def purge_calls(self, *, before: datetime) -> int:
-        rows = await asyncio.to_thread(self._read_all)
-        kept = [r for r in rows if r.ts is None or r.ts >= before]
-        removed = len(rows) - len(kept)
-        if removed:
-            lines = [json.dumps(_call_to_jsonable(r)) for r in kept]
-            await asyncio.to_thread(
-                self._path.write_text,
-                "".join(line + "\n" for line in lines),
-                "utf-8",
-            )
-        return removed
+    def _purge_old_day_files(self) -> None:
+        cutoff = (datetime.now(UTC) - self._retention).date()
+        for path in self._day_files_newest_first():
+            try:
+                file_date = date.fromisoformat(path.stem)
+            except ValueError:
+                continue
+            if file_date < cutoff:
+                path.unlink(missing_ok=True)
+
+    async def _maybe_purge(self) -> None:
+        now = time.monotonic()
+        if now - self._last_purge < _PURGE_INTERVAL_SECONDS:
+            return
+        self._last_purge = now
+        await asyncio.to_thread(self._purge_old_day_files)
 
     def _read_disabled(self) -> dict[str, bool]:
         if not self._disabled_path.exists():
             return {}
-        return json.loads(self._disabled_path.read_text(encoding="utf-8"))
+        data = yaml.safe_load(self._disabled_path.read_text(encoding="utf-8"))
+        return dict(data) if data else {}
 
     def _write_disabled(self, data: dict[str, bool]) -> None:
         self._disabled_path.parent.mkdir(parents=True, exist_ok=True)
-        self._disabled_path.write_text(json.dumps(data), encoding="utf-8")
+        body = yaml.safe_dump(data, sort_keys=True)
+        self._disabled_path.write_text(_DISABLED_HEADER + body, encoding="utf-8")
 
     async def get_disabled(self, name: str) -> bool:
         data = await asyncio.to_thread(self._read_disabled)

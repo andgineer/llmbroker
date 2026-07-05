@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -14,7 +13,7 @@ from llmbroker.exceptions import AllLLMsFailedError, NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
-from llmbroker.standalone.telemetry import NoTelemetry
+from llmbroker.standalone.knowledge import InMemoryKnowledge
 
 
 def _registry(tmp_path, entries=None):
@@ -63,7 +62,9 @@ def _http_error(status):
 
 def test_ensure_pool_populates_configs(tmp_path):
     async def run():
-        async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+        async with AsyncBroker(
+            registry=_registry(tmp_path), knowledge=InMemoryKnowledge()
+        ) as broker:
             assert await broker.count() == 1
             assert (await broker.get("p1")).config.name == "p1"
 
@@ -72,7 +73,9 @@ def test_ensure_pool_populates_configs(tmp_path):
 
 def test_ensure_pool_idempotent(tmp_path):
     async def run():
-        async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+        async with AsyncBroker(
+            registry=_registry(tmp_path), knowledge=InMemoryKnowledge()
+        ) as broker:
             await broker.ensure_pool()  # second call after __aenter__ — must be no-op
             assert await broker.count() == 1
 
@@ -83,7 +86,7 @@ def test_snapshot_names(tmp_path):
     async def run():
         entries = [("a", "https://a/v1", "m", "K"), ("b", "https://b/v1", "m", "K")]
         async with AsyncBroker(
-            registry=_registry(tmp_path, entries), telemetry=NoTelemetry()
+            registry=_registry(tmp_path, entries), knowledge=InMemoryKnowledge()
         ) as broker:
             assert set((await broker.snapshot()).keys()) == {"a", "b"}
 
@@ -92,7 +95,9 @@ def test_snapshot_names(tmp_path):
 
 def test_get_returns_async_llm_with_correct_config(tmp_path):
     async def run():
-        async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+        async with AsyncBroker(
+            registry=_registry(tmp_path), knowledge=InMemoryKnowledge()
+        ) as broker:
             llm = await broker.get("p1")
             assert llm.config.name == "p1"
             assert llm.config.base_url == "https://x/v1"
@@ -102,7 +107,9 @@ def test_get_returns_async_llm_with_correct_config(tmp_path):
 
 def test_get_missing_raises_key_error(tmp_path):
     async def run():
-        async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+        async with AsyncBroker(
+            registry=_registry(tmp_path), knowledge=InMemoryKnowledge()
+        ) as broker:
             with pytest.raises(KeyError):
                 await broker.get("nope")
 
@@ -111,16 +118,20 @@ def test_get_missing_raises_key_error(tmp_path):
 
 def test_async_llm_state_available(tmp_path):
     async def run():
-        async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+        async with AsyncBroker(
+            registry=_registry(tmp_path), knowledge=InMemoryKnowledge()
+        ) as broker:
             state = await (await broker.get("p1")).state()
             assert state.phase is LifecyclePhase.AVAILABLE
 
     asyncio.run(run())
 
 
-def test_async_llm_metrics_no_queryable_telemetry(tmp_path):
+def test_async_llm_metrics_no_queryable_knowledge(tmp_path):
     async def run():
-        async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+        async with AsyncBroker(
+            registry=_registry(tmp_path), knowledge=InMemoryKnowledge()
+        ) as broker:
             metrics = await (await broker.get("p1")).metrics()
             assert metrics.call_count == 0
 
@@ -134,7 +145,7 @@ def _secrets() -> DictSecrets:
 def test_chat_happy_path(tmp_path):
     async def run():
         async with AsyncBroker(
-            registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+            registry=_registry(tmp_path), secrets=_secrets(), knowledge=InMemoryKnowledge()
         ) as broker:
             with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("world")):
                 result = await broker.chat([{"role": "user", "content": "hi"}])
@@ -146,7 +157,7 @@ def test_chat_happy_path(tmp_path):
 def test_ask_delegates_to_chat(tmp_path):
     async def run():
         async with AsyncBroker(
-            registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+            registry=_registry(tmp_path), secrets=_secrets(), knowledge=InMemoryKnowledge()
         ) as broker:
             with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("yes")):
                 result = await broker.ask("prompt")
@@ -157,7 +168,9 @@ def test_ask_delegates_to_chat(tmp_path):
 
 def test_chat_missing_key_raises_all_llms_failed(tmp_path):
     async def run():
-        async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+        async with AsyncBroker(
+            registry=_registry(tmp_path), knowledge=InMemoryKnowledge()
+        ) as broker:
             with pytest.raises(AllLLMsFailedError, match="api_key_ref"):
                 await broker.chat([{"role": "user", "content": "hi"}])
 
@@ -167,7 +180,7 @@ def test_chat_missing_key_raises_all_llms_failed(tmp_path):
 def test_chat_429_wait0_raises_no_llm_available(tmp_path):
     async def run():
         async with AsyncBroker(
-            registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+            registry=_registry(tmp_path), secrets=_secrets(), knowledge=InMemoryKnowledge()
         ) as broker:
             with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(429)):
                 with pytest.raises(NoLLMAvailableError):
@@ -179,7 +192,7 @@ def test_chat_429_wait0_raises_no_llm_available(tmp_path):
 def test_chat_429_increments_fail_count(tmp_path):
     async def run():
         async with AsyncBroker(
-            registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+            registry=_registry(tmp_path), secrets=_secrets(), knowledge=InMemoryKnowledge()
         ) as broker:
             with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(429)):
                 with pytest.raises(NoLLMAvailableError):
@@ -197,7 +210,7 @@ def test_chat_500_wait0_raises_no_llm_available(tmp_path):
 
     async def run():
         async with AsyncBroker(
-            registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+            registry=_registry(tmp_path), secrets=_secrets(), knowledge=InMemoryKnowledge()
         ) as broker:
             with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(500)):
                 with pytest.raises(NoLLMAvailableError):
@@ -212,7 +225,7 @@ def test_chat_empty_pool_wait0_raises_no_llm_available(tmp_path):
     async def run():
         f = tmp_path / "empty.toml"
         f.write_text("")
-        async with AsyncBroker(registry=FileRegistry(f), telemetry=NoTelemetry()) as broker:
+        async with AsyncBroker(registry=FileRegistry(f), knowledge=InMemoryKnowledge()) as broker:
             with pytest.raises(NoLLMAvailableError):
                 await broker.chat([{"role": "user", "content": "hi"}], wait=0)
 
@@ -223,7 +236,7 @@ def test_chat_empty_pool_wait0_raises_no_llm_available(tmp_path):
 def test_result_record_quality_does_not_raise(tmp_path):
     async def run():
         async with AsyncBroker(
-            registry=_registry(tmp_path), secrets=_secrets(), telemetry=NoTelemetry()
+            registry=_registry(tmp_path), secrets=_secrets(), knowledge=InMemoryKnowledge()
         ) as broker:
             with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
                 result = await broker.chat([{"role": "user", "content": "x"}])
@@ -240,27 +253,20 @@ def test_sync_with_readonly_source_registry_raises(tmp_path):
         other.write_text(
             '[[llms]]\nname="p2"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
         )
-        broker = AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry())
+        broker = AsyncBroker(registry=_registry(tmp_path), knowledge=InMemoryKnowledge())
         with pytest.raises(TypeError, match="does not support mutations"):
             await broker.sync(FileRegistry(other))
 
     asyncio.run(run())
 
 
-def test_calls_without_queryable_telemetry_raises(tmp_path):
+def test_calls_without_queryable_knowledge_raises(tmp_path):
     async def run():
-        async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
+        async with AsyncBroker(
+            registry=_registry(tmp_path), knowledge=InMemoryKnowledge()
+        ) as broker:
             with pytest.raises(TypeError, match="queryable"):
                 await broker.calls(limit=10)
-
-    asyncio.run(run())
-
-
-def test_purge_calls_without_queryable_telemetry_raises(tmp_path):
-    async def run():
-        async with AsyncBroker(registry=_registry(tmp_path), telemetry=NoTelemetry()) as broker:
-            with pytest.raises(TypeError, match="queryable"):
-                await broker.purge_calls(before=datetime.now(UTC))
 
     asyncio.run(run())
 
@@ -269,7 +275,7 @@ def test_snapshot_returns_entry_per_llm(tmp_path):
     async def run():
         entries = [("a", "https://a/v1", "m", "K"), ("b", "https://b/v1", "m", "K")]
         async with AsyncBroker(
-            registry=_registry(tmp_path, entries), telemetry=NoTelemetry()
+            registry=_registry(tmp_path, entries), knowledge=InMemoryKnowledge()
         ) as broker:
             snap = await broker.snapshot()
             assert set(snap) == {"a", "b"}
@@ -286,7 +292,7 @@ def test_snapshot_carries_raw_facts_no_status_enum(tmp_path):
         async with AsyncBroker(
             registry=_registry(tmp_path),
             secrets=_secrets(),
-            telemetry=NoTelemetry(),
+            knowledge=InMemoryKnowledge(),
         ) as broker:
             snap = await broker.snapshot()
             entry = snap["p1"]
@@ -316,7 +322,7 @@ def test_sync_populates_a_fresh_db_registry(tmp_path):
         db = str(tmp_path / "b.db")
         broker = AsyncBroker(
             registry=llmbroker.sqlite.Registry(db),
-            telemetry=NoTelemetry(),
+            knowledge=InMemoryKnowledge(),
         )
         await broker.sync(_toml_registry(tmp_path))
         async with broker:
@@ -332,7 +338,7 @@ def test_sync_is_idempotent_no_extra_warnings(tmp_path, caplog):
         db = str(tmp_path / "b.db")
         broker = AsyncBroker(
             registry=llmbroker.sqlite.Registry(db),
-            telemetry=NoTelemetry(),
+            knowledge=InMemoryKnowledge(),
         )
         await broker.sync(_toml_registry(tmp_path))
         caplog.clear()
@@ -352,7 +358,7 @@ def test_sync_reconciles_registry_to_preset(tmp_path):
         extra = LLMConfig(name="extra", base_url="https://e/v1", model="m", api_key_ref="K")
         await sqlite_reg.mirror([extra])
 
-        broker = AsyncBroker(registry=sqlite_reg, telemetry=NoTelemetry())
+        broker = AsyncBroker(registry=sqlite_reg, knowledge=InMemoryKnowledge())
         await broker.sync(_toml_registry(tmp_path))
         async with broker:
             assert (await broker.get("p1")).config.name == "p1"
@@ -369,7 +375,7 @@ def test_sync_refuses_model_identity_change(tmp_path):
         await sqlite_reg.mirror(
             [LLMConfig(name="p1", base_url="https://x/v1", model="model-a", api_key_ref="K")],
         )
-        broker = AsyncBroker(registry=sqlite_reg, telemetry=NoTelemetry())
+        broker = AsyncBroker(registry=sqlite_reg, knowledge=InMemoryKnowledge())
         preset = tmp_path / "preset.toml"
         preset.write_text(
             '[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="model-b"\napi_key_ref="K"\n',
@@ -395,10 +401,10 @@ def test_registry_is_global_regardless_of_scope(tmp_path):
         )
 
         broker_a = AsyncBroker(
-            registry=llmbroker.sqlite.Registry(db), scope="alice", telemetry=NoTelemetry()
+            registry=llmbroker.sqlite.Registry(db), scope="alice", knowledge=InMemoryKnowledge()
         )
         broker_b = AsyncBroker(
-            registry=llmbroker.sqlite.Registry(db), scope="bob", telemetry=NoTelemetry()
+            registry=llmbroker.sqlite.Registry(db), scope="bob", knowledge=InMemoryKnowledge()
         )
         async with broker_a, broker_b:
             assert (await broker_a.get("llm")).config.base_url == "https://a/v1"
@@ -418,7 +424,7 @@ def test_scope_none_reproduces_single_tenant_behavior(tmp_path):
         )
 
         async with AsyncBroker(
-            registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()
+            registry=llmbroker.sqlite.Registry(db), knowledge=InMemoryKnowledge()
         ) as broker:
             assert (await broker.get("p1")).config.name == "p1"
 
@@ -444,13 +450,13 @@ def test_two_scopes_have_isolated_secrets(tmp_path):
             registry=llmbroker.sqlite.Registry(db),
             secrets=secrets,
             scope="alice",
-            telemetry=NoTelemetry(),
+            knowledge=InMemoryKnowledge(),
         )
         broker_b = AsyncBroker(
             registry=llmbroker.sqlite.Registry(db),
             secrets=secrets,
             scope="bob",
-            telemetry=NoTelemetry(),
+            knowledge=InMemoryKnowledge(),
         )
         async with broker_a, broker_b:
             assert broker_a._pool.resolved_key("llm") == "alice-secret"
@@ -476,8 +482,58 @@ def test_scope_without_own_key_falls_back_to_shared_ref(tmp_path):
             registry=llmbroker.sqlite.Registry(db),
             secrets=secrets,
             scope="alice",
-            telemetry=NoTelemetry(),
+            knowledge=InMemoryKnowledge(),
         ) as broker:
             assert broker._pool.resolved_key("llm") == "shared-secret"
+
+    asyncio.run(run())
+
+
+# ── default knowledge wiring (no explicit knowledge=) ────────────────────────
+
+
+def test_default_knowledge_is_file_store_sibling_to_toml_registry(tmp_path):
+    """A file/TOML registry with no explicit knowledge= gets a FileKnowledge in a
+    `state/` dir sibling to the config file."""
+
+    async def run():
+        async with AsyncBroker(registry=_registry(tmp_path)) as broker:
+            await broker._knowledge.record_quality("p1", None, 1.0)
+
+    asyncio.run(run())
+    assert (tmp_path / "state").is_dir()
+    assert list((tmp_path / "state" / "calls").glob("*.jsonl"))
+
+
+def test_default_knowledge_falls_back_to_cwd_state_for_bare_db_registry(tmp_path, monkeypatch):
+    """A registry with no `.path` (e.g. a bare DB registry, no stack=) falls back to
+    `./state` under the CWD — not an error, just an unopinionated default."""
+    monkeypatch.chdir(tmp_path)
+    db = str(tmp_path / "b.db")
+
+    async def run():
+        reg = llmbroker.sqlite.Registry(db)
+        await reg.mirror(
+            [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")]
+        )
+        async with AsyncBroker(registry=llmbroker.sqlite.Registry(db)) as broker:
+            await broker._knowledge.record_quality("p1", None, 1.0)
+
+    asyncio.run(run())
+    assert (tmp_path / "state").is_dir()
+    assert list((tmp_path / "state" / "calls").glob("*.jsonl"))
+
+
+def test_stack_default_knowledge_is_stack_knowledge(tmp_path):
+    """With stack= and no explicit knowledge=, the stack's own knowledge port is used."""
+
+    async def run():
+        db_path = str(tmp_path / "broker.db")
+        stack = llmbroker.sqlite.Stack(db_path)
+        await stack.registry.mirror(
+            [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")]
+        )
+        async with AsyncBroker(stack=stack) as broker:
+            assert broker._base_knowledge is stack.knowledge
 
     asyncio.run(run())

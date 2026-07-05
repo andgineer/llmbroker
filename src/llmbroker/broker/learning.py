@@ -1,4 +1,4 @@
-"""``_LearningHook``: the knowledge wrapper around a telemetry backend.
+"""``_LearningHook``: the wrapper around a knowledge backend.
 
 Drives ``Optimizer`` bookkeeping (backoff counters, quality windows) from the
 live event stream, and periodically rebuilds derived state — quality-window
@@ -16,10 +16,10 @@ from datetime import datetime
 from llmbroker.broker.pool import LLMPool
 from llmbroker.models import Call, CallStatus, LLMMetrics, key_hash
 from llmbroker.optimizer import Optimizer
-from llmbroker.protocols.telemetry import (
+from llmbroker.protocols.knowledge import (
     DisabledMapProtocol,
-    QueryableTelemetryProtocol,
-    TelemetryProtocol,
+    KnowledgeProtocol,
+    QueryableKnowledgeProtocol,
 )
 
 logger = logging.getLogger("llmbroker.broker")
@@ -37,7 +37,7 @@ class _LearningHook:
     def __init__(
         self,
         optimizer: Optimizer,
-        inner: TelemetryProtocol,
+        inner: KnowledgeProtocol,
         pool: LLMPool,
         resync_registry: Callable[[], Awaitable[None]],
         *,
@@ -69,14 +69,9 @@ class _LearningHook:
         self._opt.record_quality(llm_name, operation, score)
 
     async def calls(self, *, limit: int, scope: str | None = None) -> list[Call]:
-        if isinstance(self._inner, QueryableTelemetryProtocol):
+        if isinstance(self._inner, QueryableKnowledgeProtocol):
             return await self._inner.calls(limit=limit, scope=scope)
         return []
-
-    async def purge_calls(self, *, before: datetime) -> int:
-        if isinstance(self._inner, QueryableTelemetryProtocol):
-            return await self._inner.purge_calls(before=before)
-        return 0
 
     def __getattr__(self, name: str) -> object:
         return getattr(self._inner, name)
@@ -115,7 +110,7 @@ class _LearningHook:
         if not force and now < self._next_rebuild:
             return
         self._next_rebuild = now + _REBUILD_TTL
-        if isinstance(self._inner, QueryableTelemetryProtocol):
+        if isinstance(self._inner, QueryableKnowledgeProtocol):
             rows = await self._inner.calls(limit=self._quality_rebuild_limit)
             self._apply_scores_and_metrics(rows)
             await self._apply_peer_effects(rows)

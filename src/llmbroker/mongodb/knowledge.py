@@ -1,13 +1,17 @@
-"""MongoDB-backed queryable telemetry over ``llmbroker_calls`` + the
+"""MongoDB-backed queryable knowledge store over ``llmbroker_calls`` + the
 ``llmbroker_disabled`` admin verdict map."""
 
+import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from llmbroker.models import Call, CallStatus, LLMMetrics, Usage
 from llmbroker.mongodb.schema import ensure_schema, ensure_utc
+
+_DEFAULT_RETENTION = timedelta(days=90)
+_PURGE_INTERVAL_SECONDS = 3600.0
 
 
 def _call_from_doc(doc: dict) -> Call:
@@ -44,11 +48,20 @@ def _call_from_doc(doc: dict) -> Call:
     )
 
 
-class Telemetry:
-    """MongoDB-backed queryable telemetry over ``llmbroker_calls`` + admin verdicts."""
+class Knowledge:
+    """MongoDB-backed queryable knowledge store over ``llmbroker_calls`` + admin
+    verdicts. Self-purges call docs older than ``retention``, checked at most
+    once per hour on write activity."""
 
-    def __init__(self, db: AsyncIOMotorDatabase) -> None:
+    def __init__(
+        self,
+        db: AsyncIOMotorDatabase,
+        *,
+        retention: timedelta = _DEFAULT_RETENTION,
+    ) -> None:
         self._db = db
+        self._retention = retention
+        self._last_purge = float("-inf")
 
     async def record(self, call: Call) -> None:
         await ensure_schema(self._db)
@@ -81,6 +94,7 @@ class Telemetry:
             "key_hash": call.key_hash,
         }
         await self._db["llmbroker_calls"].insert_one(doc)
+        await self._maybe_purge()
 
     async def record_quality(
         self,
@@ -148,13 +162,17 @@ class Telemetry:
         docs = await cursor.to_list(length=None)
         return [_call_from_doc(d) for d in docs]
 
-    async def purge_calls(self, *, before: datetime) -> int:
-        """Delete all calls older than *before*, across all scopes. Admin operation."""
+    async def _purge_old_calls(self) -> None:
+        cutoff = datetime.now(UTC) - self._retention
         await ensure_schema(self._db)
-        result = await self._db["llmbroker_calls"].delete_many(
-            {"called_at": {"$lt": before}},
-        )
-        return result.deleted_count
+        await self._db["llmbroker_calls"].delete_many({"called_at": {"$lt": cutoff}})
+
+    async def _maybe_purge(self) -> None:
+        now = time.monotonic()
+        if now - self._last_purge < _PURGE_INTERVAL_SECONDS:
+            return
+        self._last_purge = now
+        await self._purge_old_calls()
 
     # ------------------------------------------------------------------
     # Admin disabled-verdict map

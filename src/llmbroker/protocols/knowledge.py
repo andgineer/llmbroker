@@ -1,4 +1,4 @@
-"""Telemetry contract: record calls; queryable backends also read the journal.
+"""Knowledge contract: record calls; queryable backends also read the journal.
 
 ``DisabledMapProtocol`` is the optional admin-verdict half: a tiny mutable
 ``name -> disabled`` document a backend may additionally implement.
@@ -10,7 +10,7 @@ from typing import Protocol, runtime_checkable
 from llmbroker.models import Call, LLMMetrics
 
 
-class TelemetryProtocol(Protocol):
+class KnowledgeProtocol(Protocol):
     async def record(self, call: Call) -> None: ...
     async def record_quality(
         self,
@@ -23,9 +23,8 @@ class TelemetryProtocol(Protocol):
 
 
 @runtime_checkable
-class QueryableTelemetryProtocol(TelemetryProtocol, Protocol):
+class QueryableKnowledgeProtocol(KnowledgeProtocol, Protocol):
     async def calls(self, *, limit: int, scope: str | None = None) -> list[Call]: ...
-    async def purge_calls(self, *, before: datetime) -> int: ...
 
     async def metrics(
         self,

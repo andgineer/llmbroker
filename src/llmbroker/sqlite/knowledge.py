@@ -1,14 +1,18 @@
-"""SQLite-backed queryable telemetry + admin disabled-map over one DB file."""
+"""SQLite-backed queryable knowledge store + admin disabled-map over one DB file."""
 
 import json
+import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import aiosqlite
 
 from llmbroker.models import Call, CallStatus, LLMMetrics, Usage
 from llmbroker.sqlite.schema import ensure_schema
+
+_DEFAULT_RETENTION = timedelta(days=90)
+_PURGE_INTERVAL_SECONDS = 3600.0
 
 
 def _usage_columns(usage: Usage | None) -> tuple:
@@ -76,12 +80,15 @@ _SELECT_COLUMNS = (
 )
 
 
-class Telemetry:
-    """SQLite-backed queryable telemetry over ``llmbroker_calls`` + the
-    ``llmbroker_disabled`` admin verdict map."""
+class Knowledge:
+    """SQLite-backed queryable knowledge store over ``llmbroker_calls`` + the
+    ``llmbroker_disabled`` admin verdict map. Self-purges call rows older than
+    ``retention``, checked at most once per hour on write activity."""
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, retention: timedelta = _DEFAULT_RETENTION) -> None:
         self._db_path = str(db_path)
+        self._retention = retention
+        self._last_purge = float("-inf")
 
     async def record(self, call: Call) -> None:
         pt, ct, tt, extra = _usage_columns(call.usage)
@@ -116,6 +123,7 @@ class Telemetry:
                 ],
             )
             await db.commit()
+        await self._maybe_purge()
 
     async def record_quality(
         self,
@@ -163,16 +171,22 @@ class Telemetry:
                 ).fetchall()
         return [_call_from_row(r) for r in rows]
 
-    async def purge_calls(self, *, before: datetime) -> int:
-        """Delete all calls older than *before*, across all scopes. Admin operation."""
+    async def _purge_old_calls(self) -> None:
+        cutoff = datetime.now(UTC) - self._retention
         async with aiosqlite.connect(self._db_path) as db:
             await ensure_schema(db, self._db_path)
-            cursor = await db.execute(
+            await db.execute(
                 "DELETE FROM llmbroker_calls WHERE called_at < ?",
-                [before.isoformat()],
+                [cutoff.isoformat()],
             )
             await db.commit()
-            return cursor.rowcount
+
+    async def _maybe_purge(self) -> None:
+        now = time.monotonic()
+        if now - self._last_purge < _PURGE_INTERVAL_SECONDS:
+            return
+        self._last_purge = now
+        await self._purge_old_calls()
 
     async def metrics(
         self,

@@ -24,10 +24,10 @@ import llmbroker.vault
 from llmbroker.broker import AsyncBroker
 from llmbroker.protocols.registry import MutableRegistryProtocol, RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
-from llmbroker.protocols.telemetry import TelemetryProtocol
+from llmbroker.protocols.knowledge import KnowledgeProtocol
 from llmbroker.standalone.registry import Registry as TomlRegistry
 from llmbroker.standalone.secrets import DictSecrets, Secrets
-from llmbroker.standalone.telemetry import NoTelemetry
+from llmbroker.standalone.knowledge import InMemoryKnowledge
 
 # On macOS the Ryuk sidecar container (testcontainers' cleanup daemon) occasionally
 # fails to expose its port in time, causing a flaky ConnectionError on the first run.
@@ -117,8 +117,8 @@ def _vault_delete_recursive(client: hvac.Client, path: str, mount_point: str = "
     params=["toml", "sqlite", "postgres", "mongodb"],
     ids=["toml", "sqlite", "postgres", "mongodb"],
 )
-async def any_telemetry(request, tmp_path_factory, pg_pool, mongo_db):
-    """Telemetry backend parametrized over every implemented storage layer.
+async def any_knowledge(request, tmp_path_factory, pg_pool, mongo_db):
+    """Knowledge backend parametrized over every implemented storage layer.
 
     postgres and mongodb variants are marked docker automatically (pg_pool/mongo_db
     appear in fixturenames → pytest_collection_modifyitems picks them up).
@@ -127,19 +127,19 @@ async def any_telemetry(request, tmp_path_factory, pg_pool, mongo_db):
     param = request.param
 
     if param == "toml":
-        yield NoTelemetry()
+        yield InMemoryKnowledge()
 
     elif param == "sqlite":
         db_path = str(tmp_path_factory.mktemp("any_tel_sqlite") / "tel.db")
-        yield llmbroker.sqlite.Telemetry(db_path)
+        yield llmbroker.sqlite.Knowledge(db_path)
 
     elif param == "postgres":
-        yield llmbroker.postgres.Telemetry(pg_pool)
+        yield llmbroker.postgres.Knowledge(pg_pool)
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM llmbroker_calls")
 
     elif param == "mongodb":
-        yield llmbroker.mongodb.Telemetry(mongo_db)
+        yield llmbroker.mongodb.Knowledge(mongo_db)
         await mongo_db["llmbroker_calls"].delete_many({})
 
 
@@ -147,21 +147,21 @@ async def any_telemetry(request, tmp_path_factory, pg_pool, mongo_db):
     params=["sqlite", "postgres", "mongodb"],
     ids=["sqlite", "postgres", "mongodb"],
 )
-async def queryable_telemetry(request, tmp_path_factory, pg_pool, mongo_db):
-    """Queryable telemetry backends only — those that implement metrics() for warm-start seeding."""
+async def queryable_knowledge(request, tmp_path_factory, pg_pool, mongo_db):
+    """Queryable knowledge backends only — those that implement metrics() for warm-start seeding."""
     param = request.param
 
     if param == "sqlite":
         db_path = str(tmp_path_factory.mktemp("q_tel_sqlite") / "tel.db")
-        yield llmbroker.sqlite.Telemetry(db_path)
+        yield llmbroker.sqlite.Knowledge(db_path)
 
     elif param == "postgres":
-        yield llmbroker.postgres.Telemetry(pg_pool)
+        yield llmbroker.postgres.Knowledge(pg_pool)
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM llmbroker_calls")
 
     elif param == "mongodb":
-        yield llmbroker.mongodb.Telemetry(mongo_db)
+        yield llmbroker.mongodb.Knowledge(mongo_db)
         await mongo_db["llmbroker_calls"].delete_many({})
 
 
@@ -177,7 +177,7 @@ class Stack:
     name: str
     registry: RegistryProtocol
     secrets: SecretsProtocol
-    telemetry: TelemetryProtocol
+    knowledge: KnowledgeProtocol
     queryable: bool
     persistent: bool
 
@@ -185,7 +185,7 @@ class Stack:
         return AsyncBroker(
             self.registry,
             secrets=self.secrets,
-            telemetry=self.telemetry,
+            knowledge=self.knowledge,
             **kw,
         )
 
@@ -310,7 +310,7 @@ async def _stack_ctx(
             name="all_sqlite",
             registry=llmbroker.sqlite.Registry(f"{base}/llms.db"),
             secrets=llmbroker.sqlite.Secrets(f"{base}/llms.db"),
-            telemetry=llmbroker.sqlite.Telemetry(f"{base}/llms.db"),
+            knowledge=llmbroker.sqlite.Knowledge(f"{base}/llms.db"),
             queryable=True,
             persistent=True,
         )
@@ -320,7 +320,7 @@ async def _stack_ctx(
             name="all_postgres",
             registry=llmbroker.postgres.Registry(pg_pool),
             secrets=llmbroker.postgres.Secrets(pg_pool),
-            telemetry=llmbroker.postgres.Telemetry(pg_pool),
+            knowledge=llmbroker.postgres.Knowledge(pg_pool),
             queryable=True,
             persistent=True,
         )
@@ -336,7 +336,7 @@ async def _stack_ctx(
             name="all_mongodb",
             registry=llmbroker.mongodb.Registry(mongo_db),
             secrets=llmbroker.mongodb.Secrets(mongo_db),
-            telemetry=llmbroker.mongodb.Telemetry(mongo_db),
+            knowledge=llmbroker.mongodb.Knowledge(mongo_db),
             queryable=True,
             persistent=True,
         )
@@ -351,7 +351,7 @@ async def _stack_ctx(
             name="scaled",
             registry=llmbroker.postgres.Registry(pg_pool),
             secrets=DictSecrets({}),
-            telemetry=llmbroker.postgres.Telemetry(pg_pool),
+            knowledge=llmbroker.postgres.Knowledge(pg_pool),
             queryable=True,
             persistent=True,
         )
@@ -369,7 +369,7 @@ async def _stack_ctx(
             name="minimal",
             registry=TomlRegistry(toml_path),
             secrets=Secrets(),
-            telemetry=NoTelemetry(),
+            knowledge=InMemoryKnowledge(),
             queryable=False,
             persistent=False,
         )
@@ -379,7 +379,7 @@ async def _stack_ctx(
             name="scaled_aws_secrets",
             registry=llmbroker.postgres.Registry(pg_pool),
             secrets=llmbroker.aws.Secrets(region_name="us-east-1", endpoint_url=localstack_url),
-            telemetry=llmbroker.postgres.Telemetry(pg_pool),
+            knowledge=llmbroker.postgres.Knowledge(pg_pool),
             queryable=True,
             persistent=True,
         )
@@ -397,7 +397,7 @@ async def _stack_ctx(
             name="scaled_vault_secrets",
             registry=llmbroker.postgres.Registry(pg_pool),
             secrets=llmbroker.vault.Secrets(url=url, token=token),
-            telemetry=llmbroker.postgres.Telemetry(pg_pool),
+            knowledge=llmbroker.postgres.Knowledge(pg_pool),
             queryable=True,
             persistent=True,
         )

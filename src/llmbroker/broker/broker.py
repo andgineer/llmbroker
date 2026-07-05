@@ -1,6 +1,6 @@
 """The ``AsyncBroker`` façade over the LLM pool and its collaborators.
 
-``AsyncBroker`` owns the external ports (registry, secrets, telemetry),
+``AsyncBroker`` owns the external ports (registry, secrets, knowledge store),
 lazily provisions the live ``LLMPool`` once, and delegates each operation to
 the collaborator that owns it:
 
@@ -12,17 +12,17 @@ the collaborator that owns it:
   journal rebuild feeding shared cooldowns, snapshot metrics, and the admin
   disabled-verdict map (only wired when ``optimize`` is truthy)
 
-The call journal (``calls``/``purge_calls``) is a thin pass-through to a queryable
-telemetry backend. There is no alerts API: the few human-actionable events
-(dead key, demotion flip, under-provisioned pool) are log lines; hosts poll
-``snapshot()`` for current raw state or hook the ``llmbroker`` logger.
+The call journal (``calls``) is a thin pass-through to a queryable knowledge
+backend; each backend self-purges records past its retention horizon. There is
+no alerts API: the few human-actionable events (dead key, demotion flip,
+under-provisioned pool) are log lines; hosts poll ``snapshot()`` for current
+raw state or hook the ``llmbroker`` logger.
 """
 
 import asyncio
 import logging
 import time
 from collections.abc import Mapping
-from datetime import datetime
 from pathlib import Path
 from typing import cast
 
@@ -41,18 +41,27 @@ from llmbroker.models import (
 )
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.backend_stack import BackendStack
+from llmbroker.protocols.knowledge import (
+    DisabledMapProtocol,
+    KnowledgeProtocol,
+    QueryableKnowledgeProtocol,
+)
 from llmbroker.protocols.registry import RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
-from llmbroker.protocols.telemetry import (
-    DisabledMapProtocol,
-    QueryableTelemetryProtocol,
-    TelemetryProtocol,
-)
+from llmbroker.standalone.knowledge import FileKnowledge
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import Secrets, as_secrets
-from llmbroker.standalone.telemetry import Telemetry
 
 logger = logging.getLogger("llmbroker.broker")
+
+
+def _default_knowledge(registry: RegistryProtocol) -> KnowledgeProtocol:
+    """A file/TOML registry gets a ``state/`` dir sibling to its config file;
+    any other registry (a bare DB registry, a custom object) falls back to
+    ``./state`` under the CWD — not an error, just an unopinionated default."""
+    if isinstance(registry, Registry):
+        return FileKnowledge(registry.path.parent / "state")
+    return FileKnowledge(Path("state"))
 
 
 class AsyncBroker:
@@ -64,7 +73,7 @@ class AsyncBroker:
         *,
         stack: BackendStack | None = None,
         secrets: SecretsProtocol | None = None,
-        telemetry: TelemetryProtocol | None = None,
+        knowledge: KnowledgeProtocol | None = None,
         optimize: bool | Optimizer = True,
         scope: str | None = None,
     ) -> None:
@@ -84,10 +93,10 @@ class AsyncBroker:
             if secrets is not None
             else (stack.secrets if stack is not None else Secrets())
         )
-        telemetry = (
-            telemetry
-            if telemetry is not None
-            else (stack.telemetry if stack is not None else Telemetry())
+        knowledge = (
+            knowledge
+            if knowledge is not None
+            else (stack.knowledge if stack is not None else _default_knowledge(registry))
         )
 
         if isinstance(optimize, Optimizer):
@@ -99,7 +108,7 @@ class AsyncBroker:
 
         self._registry = registry
         self._secrets = secrets
-        self._base_telemetry = telemetry
+        self._base_knowledge = knowledge
         self._scope = scope
 
         pool = LLMPool(optimizer=self._optimizer)
@@ -107,21 +116,21 @@ class AsyncBroker:
         self._catalog = Catalog(registry, secrets, pool, scope=scope)
 
         self._learning_hook: _LearningHook | None = None
-        effective_telemetry: TelemetryProtocol
+        effective_knowledge: KnowledgeProtocol
         if self._optimizer is not None:
             self._learning_hook = _LearningHook(
                 self._optimizer,
-                telemetry,
+                knowledge,
                 pool,
                 self._catalog.resync,
             )
-            effective_telemetry = self._learning_hook
+            effective_knowledge = self._learning_hook
         else:
-            effective_telemetry = telemetry
+            effective_knowledge = knowledge
 
-        self._telemetry = effective_telemetry
-        self._router = Router(pool, effective_telemetry, scope=scope, optimizer=self._optimizer)
-        self._pool_view = PoolView(pool, effective_telemetry)
+        self._knowledge = effective_knowledge
+        self._router = Router(pool, effective_knowledge, scope=scope, optimizer=self._optimizer)
+        self._pool_view = PoolView(pool, effective_knowledge)
 
         self._provisioned = False
         self._provision_lock = asyncio.Lock()
@@ -157,14 +166,14 @@ class AsyncBroker:
         if isinstance(preset, (str, Path)):
             preset = Registry(preset)
         await self._catalog.sync(preset)
-        if isinstance(self._base_telemetry, DisabledMapProtocol):
+        if isinstance(self._base_knowledge, DisabledMapProtocol):
             configs = await self._registry.load(user_id=None)
-            await self._base_telemetry.seed_disabled([c.name for c in configs])
+            await self._base_knowledge.seed_disabled([c.name for c in configs])
         if self._provisioned:
             await self._catalog.resync()
 
     async def aclose(self) -> None:
-        for port in (self._registry, self._secrets, self._telemetry):
+        for port in (self._registry, self._secrets, self._knowledge):
             if isinstance(port, AsyncResourceProtocol):
                 await port.aclose()
 
@@ -241,26 +250,23 @@ class AsyncBroker:
         every operation including future ones. Only ``enable_llm`` clears it."""
         await self.ensure_pool()
         self._pool.set_disabled(name)
-        if isinstance(self._base_telemetry, DisabledMapProtocol):
-            await self._base_telemetry.set_disabled(name, True)
+        if isinstance(self._base_knowledge, DisabledMapProtocol):
+            await self._base_knowledge.set_disabled(name, True)
 
     async def enable_llm(self, name: str) -> None:
         """Clear the manual latch — a re-enabled model rehabilitates through new
         ratings, no quality reset exists."""
         await self.ensure_pool()
         await self._pool.clear_disabled(name)
-        if isinstance(self._base_telemetry, DisabledMapProtocol):
-            await self._base_telemetry.set_disabled(name, False)
+        if isinstance(self._base_knowledge, DisabledMapProtocol):
+            await self._base_knowledge.set_disabled(name, False)
 
     # ------------------------------------------------------------------
-    # Call journal / retention
+    # Call journal
     # ------------------------------------------------------------------
 
     async def calls(self, *, limit: int) -> list[Call]:
         return await self._require_queryable().calls(limit=limit, scope=self._scope)
-
-    async def purge_calls(self, *, before: datetime) -> int:
-        return await self._require_queryable().purge_calls(before=before)
 
     def _maybe_alert_underprov(self) -> None:
         """Fire when zero keyed configs are routable — the genuine "no usable models" alarm.
@@ -287,10 +293,10 @@ class AsyncBroker:
                 "pool under-provisioned: all LLMs are COOLING — add more LLMs to the registry",
             )
 
-    def _require_queryable(self) -> QueryableTelemetryProtocol:
-        if not isinstance(self._base_telemetry, QueryableTelemetryProtocol):
+    def _require_queryable(self) -> QueryableKnowledgeProtocol:
+        if not isinstance(self._base_knowledge, QueryableKnowledgeProtocol):
             raise TypeError(
-                "this telemetry backend is not queryable — use a queryable backend"
-                " (e.g. llmbroker.sqlite.Telemetry) for calls()/purge_calls()",
+                "this knowledge backend is not queryable — use a queryable backend"
+                " (e.g. llmbroker.sqlite.Knowledge) for calls()",
             )
-        return cast(QueryableTelemetryProtocol, self._telemetry)
+        return cast(QueryableKnowledgeProtocol, self._knowledge)

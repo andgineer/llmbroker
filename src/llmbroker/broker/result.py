@@ -5,7 +5,7 @@ import logging
 from llmbroker.broker.learning import _LearningHook
 from llmbroker.broker.pool import LLMPool
 from llmbroker.models import LLMConfig, LLMMetrics, LLMState, Usage
-from llmbroker.protocols.telemetry import QueryableTelemetryProtocol, TelemetryProtocol
+from llmbroker.protocols.knowledge import KnowledgeProtocol, QueryableKnowledgeProtocol
 
 logger = logging.getLogger("llmbroker.broker")
 
@@ -22,7 +22,7 @@ class AsyncResult:
         call_id: str,
         llm_name: str,
         operation: str | None = None,
-        telemetry: TelemetryProtocol,
+        knowledge: KnowledgeProtocol,
         pool: LLMPool,
     ) -> None:
         self.text = text
@@ -31,13 +31,13 @@ class AsyncResult:
         self._call_id = call_id
         self._llm_name = llm_name
         self._operation = operation
-        self._telemetry = telemetry
+        self._knowledge = knowledge
         self._pool = pool
 
     async def record_quality(self, score: float) -> None:
         if score == 0.0:
             self._pool.mark_quality_fail(self._llm_name)
-        await self._telemetry.record_quality(
+        await self._knowledge.record_quality(
             self._llm_name,
             self._operation,
             score,
@@ -53,12 +53,12 @@ class AsyncLLM:
         name: str,
         config: LLMConfig,
         pool: LLMPool,
-        telemetry: TelemetryProtocol,
+        knowledge: KnowledgeProtocol,
     ) -> None:
         self._name = name
         self._config = config
         self._pool = pool
-        self._telemetry = telemetry
+        self._knowledge = knowledge
 
     @property
     def config(self) -> LLMConfig:
@@ -68,9 +68,9 @@ class AsyncLLM:
         return self._pool.state(self._name)
 
     async def metrics(self) -> LLMMetrics:
-        if isinstance(self._telemetry, _LearningHook):
-            return self._telemetry.metrics_cache.get(self._name, LLMMetrics(0, None, None))
-        if isinstance(self._telemetry, QueryableTelemetryProtocol):
-            all_metrics = await self._telemetry.metrics()
+        if isinstance(self._knowledge, _LearningHook):
+            return self._knowledge.metrics_cache.get(self._name, LLMMetrics(0, None, None))
+        if isinstance(self._knowledge, QueryableKnowledgeProtocol):
+            all_metrics = await self._knowledge.metrics()
             return all_metrics.get(self._name, LLMMetrics(0, None, None))
         return LLMMetrics(0, None, None)

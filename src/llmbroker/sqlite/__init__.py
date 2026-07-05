@@ -1,4 +1,4 @@
-"""SQLite backend: registry, telemetry, and secrets over one DB file.
+"""SQLite backend: registry, knowledge store, and secrets over one DB file.
 
 Needs the ``aiosqlite`` driver (``llmbroker[sqlite]``); importing this package is
 how a host declares that dependency, so a bare ``import llmbroker`` stays
@@ -9,18 +9,18 @@ journal) — it stays importable as a standalone class.
 
 from pathlib import Path
 
+from llmbroker.sqlite.knowledge import Knowledge
 from llmbroker.sqlite.registry import Registry
 from llmbroker.sqlite.secrets import Secrets
 from llmbroker.sqlite.state_store import StateStore
-from llmbroker.sqlite.telemetry import Telemetry
 
-__all__ = ["Registry", "Secrets", "Stack", "StateStore", "Telemetry"]
+__all__ = ["Knowledge", "Registry", "Secrets", "Stack", "StateStore"]
 
 
 class Stack:
-    """One SQLite file backing registry, secrets, and telemetry."""
+    """One SQLite file backing registry, secrets, and knowledge store."""
 
     def __init__(self, db_path: str | Path, *, require_user_id: bool = False) -> None:
         self.registry = Registry(db_path)
         self.secrets = Secrets(db_path, require_user_id=require_user_id)
-        self.telemetry = Telemetry(db_path)
+        self.knowledge = Knowledge(db_path)
