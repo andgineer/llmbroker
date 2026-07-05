@@ -1,4 +1,4 @@
-"""Info-log-count invariants for ensure_pool with constructor seed, sqlite registry + secrets.
+"""Info-log-count invariants for ensure_pool with sqlite registry + secrets.
 
 An unresolved api_key_ref is normal (partial-key framing), so it logs at INFO, not
 WARNING — these tests guard against a regression where the same missing-key event
@@ -21,13 +21,19 @@ def _src_registry(tmp_path):
     return llmbroker.Registry(f)
 
 
-def _broker(db: str, tmp_path) -> llmbroker.AsyncBroker:
+def _broker(db: str) -> llmbroker.AsyncBroker:
     return llmbroker.AsyncBroker(
         registry=llmbroker.sqlite.Registry(db),
         secrets=llmbroker.sqlite.Secrets(db),
-        seed=_src_registry(tmp_path),
-        seed_policy=llmbroker.SeedPolicy.ADD,
     )
+
+
+async def _seed_db(db: str, tmp_path) -> None:
+    """Populate a fresh db's registry once, via an explicit sync() — mirrors the
+    one-time DB-init workflow, separate from any later restart/reopen."""
+    broker = _broker(db)
+    await broker.sync(_src_registry(tmp_path))
+    await broker.aclose()
 
 
 def _info_count(caplog) -> int:
@@ -39,7 +45,8 @@ def test_fresh_db_env_set_zero_info_logs(tmp_path, monkeypatch, caplog):
     db = str(tmp_path / "b.db")
 
     async def run():
-        async with _broker(db, tmp_path):
+        await _seed_db(db, tmp_path)
+        async with _broker(db):
             pass
 
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
@@ -52,7 +59,8 @@ def test_fresh_db_env_absent_one_info_log(tmp_path, monkeypatch, caplog):
     db = str(tmp_path / "b.db")
 
     async def run():
-        async with _broker(db, tmp_path):
+        await _seed_db(db, tmp_path)
+        async with _broker(db):
             pass
 
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
@@ -66,15 +74,16 @@ def test_restart_secret_persisted_zero_info_logs(tmp_path, monkeypatch, caplog):
     db = str(tmp_path / "b.db")
 
     async def seed():
+        await _seed_db(db, tmp_path)
         secrets = llmbroker.sqlite.Secrets(db)
         await secrets.set(_KEY_REF, "persisted")
-        async with _broker(db, tmp_path):
+        async with _broker(db):
             pass
 
     asyncio.run(seed())
 
     async def restart():
-        async with _broker(db, tmp_path):
+        async with _broker(db):
             pass
 
     caplog.clear()
@@ -89,13 +98,14 @@ def test_restart_secret_absent_everywhere_exactly_one_info_log(tmp_path, monkeyp
     db = str(tmp_path / "b.db")
 
     async def first():
-        async with _broker(db, tmp_path):
+        await _seed_db(db, tmp_path)
+        async with _broker(db):
             pass
 
     asyncio.run(first())
 
     async def restart():
-        async with _broker(db, tmp_path):
+        async with _broker(db):
             pass
 
     caplog.clear()
@@ -105,11 +115,14 @@ def test_restart_secret_absent_everywhere_exactly_one_info_log(tmp_path, monkeyp
 
 
 def test_restart_env_set_sqlite_missing_zero_info_logs(tmp_path, monkeypatch, caplog):
+    """A newly available env var is picked up on the next explicit sync() — a plain
+    restart with no sync() call does not re-bootstrap secrets (sync is explicit now)."""
     monkeypatch.delenv(_KEY_REF, raising=False)
     db = str(tmp_path / "b.db")
 
     async def first():
-        async with _broker(db, tmp_path):
+        await _seed_db(db, tmp_path)
+        async with _broker(db):
             pass
 
     asyncio.run(first())
@@ -117,7 +130,9 @@ def test_restart_env_set_sqlite_missing_zero_info_logs(tmp_path, monkeypatch, ca
     monkeypatch.setenv(_KEY_REF, "from-env")
 
     async def restart():
-        async with _broker(db, tmp_path):
+        broker = _broker(db)
+        await broker.sync(_src_registry(tmp_path))
+        async with broker:
             pass
 
     caplog.clear()

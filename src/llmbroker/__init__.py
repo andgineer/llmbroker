@@ -9,7 +9,7 @@ from llmbroker.exceptions import (
     SecretsReadOnlyError,
     UserScopeError,
 )
-from llmbroker.models import LifecyclePhase, SeedPolicy
+from llmbroker.models import LifecyclePhase
 from llmbroker.optimizer import Optimizer
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets, Secrets
@@ -32,7 +32,6 @@ __all__ = [
     "Optimizer",
     "Registry",
     "Result",
-    "SeedPolicy",
     "Secrets",
     "SecretsReadOnlyError",
     "Telemetry",

@@ -4,7 +4,8 @@
 lazily provisions the live ``LLMPool`` once, and delegates each operation to
 the collaborator that owns it:
 
-* ``Catalog``       — pool membership in sync with the registry (seed/load + edits)
+* ``Catalog``       — pool membership in sync with the registry; ``sync(preset)``
+  mirrors a preset into it (the only registry write path)
 * ``Router``        — routing a completion over the pool with failover
 * ``PoolView``       — read-only views of current pool state
 * ``_LearningHook`` — quality windows, dead-key drops, and the debounced
@@ -36,9 +37,7 @@ from llmbroker.models import (
     AsyncResourceProtocol,
     Call,
     LifecyclePhase,
-    LLMConfig,
     LLMSnapshot,
-    SeedPolicy,
 )
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.backend_stack import BackendStack
@@ -67,8 +66,6 @@ class AsyncBroker:
         secrets: SecretsProtocol | None = None,
         telemetry: TelemetryProtocol | None = None,
         optimize: bool | Optimizer = True,
-        seed: RegistryProtocol | str | Path | None = None,
-        seed_policy: SeedPolicy = SeedPolicy.SYNC,
         scope: str | None = None,
     ) -> None:
         if scope == "":
@@ -92,7 +89,6 @@ class AsyncBroker:
             if telemetry is not None
             else (stack.telemetry if stack is not None else Telemetry())
         )
-        seed = Registry(seed) if isinstance(seed, (str, Path)) else seed
 
         if isinstance(optimize, Optimizer):
             self._optimizer: Optimizer | None = optimize
@@ -108,14 +104,7 @@ class AsyncBroker:
 
         pool = LLMPool(optimizer=self._optimizer)
         self._pool = pool
-        self._catalog = Catalog(
-            registry,
-            secrets,
-            pool,
-            seed=seed,
-            seed_policy=seed_policy,
-            scope=scope,
-        )
+        self._catalog = Catalog(registry, secrets, pool, scope=scope)
 
         self._learning_hook: _LearningHook | None = None
         effective_telemetry: TelemetryProtocol
@@ -144,19 +133,35 @@ class AsyncBroker:
     # ------------------------------------------------------------------
 
     async def ensure_pool(self) -> None:
-        """Lazy idempotent initializer — provisions the pool exactly once."""
+        """Lazy idempotent initializer — provisions the pool exactly once.
+
+        Raises if the registry is empty — call ``sync(preset)`` first.
+        """
         if self._provisioned:
             return
         async with self._provision_lock:
             if self._provisioned:
                 return
-            seed_alerts = await self._catalog.provision()
-            for msg in seed_alerts:
-                logger.warning(msg)
+            await self._catalog.provision()
             if self._learning_hook is not None:
                 # warm start — provision() above already resynced the registry
                 await self._learning_hook.maybe_rebuild(force=True, resync_registry=False)
             self._provisioned = True
+
+    async def sync(self, preset: RegistryProtocol | str | Path) -> None:
+        """Mirror ``preset`` into the registry: add new entries, update existing
+        ones, delete entries absent from the preset. Explicit and idempotent —
+        call it once to initialize a fresh DB, or again whenever the preset changes.
+        If the pool is already provisioned, the change takes effect immediately.
+        """
+        if isinstance(preset, (str, Path)):
+            preset = Registry(preset)
+        await self._catalog.sync(preset)
+        if isinstance(self._base_telemetry, DisabledMapProtocol):
+            configs = await self._registry.load(user_id=None)
+            await self._base_telemetry.seed_disabled([c.name for c in configs])
+        if self._provisioned:
+            await self._catalog.resync()
 
     async def aclose(self) -> None:
         for port in (self._registry, self._secrets, self._telemetry):
@@ -226,22 +231,6 @@ class AsyncBroker:
     async def snapshot(self) -> Mapping[str, LLMSnapshot]:
         await self.ensure_pool()
         return await self._pool_view.snapshot()
-
-    # ------------------------------------------------------------------
-    # Mutation
-    # ------------------------------------------------------------------
-
-    async def add(self, cfg: LLMConfig) -> None:
-        await self.ensure_pool()
-        await self._catalog.add(cfg)
-
-    async def update(self, cfg: LLMConfig) -> None:
-        await self.ensure_pool()
-        await self._catalog.update(cfg)
-
-    async def remove(self, name: str) -> None:
-        await self.ensure_pool()
-        await self._catalog.remove(name)
 
     # ------------------------------------------------------------------
     # Manual disable — the one verdict that actually excludes

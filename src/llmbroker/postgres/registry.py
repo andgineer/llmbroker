@@ -1,4 +1,4 @@
-"""Postgres-backed mutable registry over ``llmbroker_registry``."""
+"""Postgres-backed mutable registry over ``llmbroker_registry`` — a pure preset mirror."""
 
 import json
 
@@ -20,7 +20,7 @@ def _config_from_row(row: asyncpg.Record) -> LLMConfig:
 
 
 class Registry:
-    """Postgres-backed mutable registry over ``llmbroker_registry``."""
+    """Postgres-backed mutable registry over ``llmbroker_registry`` — a pure preset mirror."""
 
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
@@ -37,72 +37,53 @@ class Registry:
             )
         return [_config_from_row(r) for r in rows]
 
-    async def get(self, name: str, user_id: int | str | None = None) -> LLMConfig | None:
+    async def mirror(self, configs: list[LLMConfig], user_id: int | str | None = None) -> None:
+        """Total mirror: add new, update existing, delete stored entries absent
+        from ``configs`` — the only registry write path."""
         check_user_id(user_id)
         uid = to_uid(user_id)
+        source_names = {c.name for c in configs}
         await ensure_schema(self._pool)
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT name, base_url, model, api_key_ref, metadata FROM llmbroker_registry"
-                " WHERE name = $1 AND user_id IS NOT DISTINCT FROM $2",
-                name,
+        async with self._pool.acquire() as conn, conn.transaction():
+            existing_rows = await conn.fetch(
+                "SELECT name FROM llmbroker_registry WHERE user_id IS NOT DISTINCT FROM $1",
                 uid,
             )
-        if row is None:
-            return None
-        return _config_from_row(row)
+            existing_names = {r["name"] for r in existing_rows}
 
-    async def add(self, cfg: LLMConfig, user_id: int | str | None = None) -> None:
-        check_user_id(user_id)
-        uid = to_uid(user_id)
-        await ensure_schema(self._pool)
-        async with self._pool.acquire() as conn:
-            try:
+            for name in existing_names - source_names:
                 await conn.execute(
-                    "INSERT INTO llmbroker_registry"
-                    " (name, base_url, model, api_key_ref, metadata, user_id)"
-                    " VALUES ($1, $2, $3, $4, $5::jsonb, $6)",
-                    cfg.name,
-                    cfg.base_url,
-                    cfg.model,
-                    cfg.api_key_ref,
-                    json.dumps(cfg.to_metadata()),
+                    "DELETE FROM llmbroker_registry"
+                    " WHERE name=$1 AND user_id IS NOT DISTINCT FROM $2",
+                    name,
                     uid,
                 )
-            except asyncpg.UniqueViolationError:
-                raise ValueError(f"LLM {cfg.name!r} already exists") from None
-
-    async def update(self, cfg: LLMConfig, user_id: int | str | None = None) -> None:
-        check_user_id(user_id)
-        uid = to_uid(user_id)
-        await ensure_schema(self._pool)
-        async with self._pool.acquire() as conn:
-            status = await conn.execute(
-                "UPDATE llmbroker_registry"
-                " SET base_url=$1, model=$2, api_key_ref=$3, metadata=$4::jsonb"
-                " WHERE name=$5 AND user_id IS NOT DISTINCT FROM $6",
-                cfg.base_url,
-                cfg.model,
-                cfg.api_key_ref,
-                json.dumps(cfg.to_metadata()),
-                cfg.name,
-                uid,
-            )
-        if int(status.split()[-1]) == 0:
-            raise KeyError(cfg.name)
-
-    async def remove(self, name: str, user_id: int | str | None = None) -> None:
-        check_user_id(user_id)
-        uid = to_uid(user_id)
-        await ensure_schema(self._pool)
-        async with self._pool.acquire() as conn:
-            status = await conn.execute(
-                "DELETE FROM llmbroker_registry WHERE name=$1 AND user_id IS NOT DISTINCT FROM $2",
-                name,
-                uid,
-            )
-        if int(status.split()[-1]) == 0:
-            raise KeyError(name)
+            for cfg in configs:
+                metadata = json.dumps(cfg.to_metadata())
+                if cfg.name in existing_names:
+                    await conn.execute(
+                        "UPDATE llmbroker_registry"
+                        " SET base_url=$1, model=$2, api_key_ref=$3, metadata=$4::jsonb"
+                        " WHERE name=$5 AND user_id IS NOT DISTINCT FROM $6",
+                        cfg.base_url,
+                        cfg.model,
+                        cfg.api_key_ref,
+                        metadata,
+                        cfg.name,
+                        uid,
+                    )
+                else:
+                    await conn.execute(
+                        "INSERT INTO llmbroker_registry"
+                        " (name, base_url, model, api_key_ref, metadata, user_id)"
+                        " VALUES ($1, $2, $3, $4, $5::jsonb, $6)",
+                        cfg.name,
+                        cfg.base_url,
+                        cfg.model,
+                        cfg.api_key_ref,
+                        metadata,
+                        uid,
+                    )
 
     async def aclose(self) -> None:
         return

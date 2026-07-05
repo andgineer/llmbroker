@@ -126,9 +126,8 @@ def test_seed_seeds_secret_from_env(tmp_path, monkeypatch):
         broker = llmbroker.AsyncBroker(
             registry=llmbroker.sqlite.Registry(db),
             secrets=secrets,
-            seed=FileRegistry(src),
-            seed_policy=llmbroker.SeedPolicy.MIRROR,
         )
+        await broker.sync(FileRegistry(src))
         async with broker:
             return await secrets.resolve("SEED_KEY")
 
@@ -149,9 +148,8 @@ def test_seed_preserves_existing_secret(tmp_path, monkeypatch):
         broker = llmbroker.AsyncBroker(
             registry=llmbroker.sqlite.Registry(db),
             secrets=secrets,
-            seed=FileRegistry(src),
-            seed_policy=llmbroker.SeedPolicy.MIRROR,
         )
+        await broker.sync(FileRegistry(src))
         async with broker:
             return await secrets.resolve("SEED_KEY")
 
@@ -167,11 +165,8 @@ def test_missing_ref_with_readonly_secrets_does_not_block(tmp_path, monkeypatch)
     )
 
     async def run():
-        broker = llmbroker.AsyncBroker(
-            registry=llmbroker.sqlite.Registry(db),
-            seed=FileRegistry(src),
-            seed_policy=llmbroker.SeedPolicy.MIRROR,
-        )
+        broker = llmbroker.AsyncBroker(registry=llmbroker.sqlite.Registry(db))
+        await broker.sync(FileRegistry(src))
         async with broker:
             await broker.get("p1")
             return True

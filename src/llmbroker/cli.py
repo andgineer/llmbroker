@@ -1,9 +1,11 @@
 """python -m llmbroker <command>.
 
-Subcommands: env (emit .env skeleton), preset (download curated preset TOML).
+Subcommands: env (emit .env skeleton), preset (download curated preset TOML),
+sync (mirror a preset TOML into a sqlite registry — DB-init workflow).
 """
 
 import argparse
+import asyncio
 import os
 import re
 import sys
@@ -13,8 +15,14 @@ import urllib.request
 from http import HTTPStatus
 from pathlib import Path
 
+from llmbroker.broker import AsyncBroker
 from llmbroker.models import EffortLevel, KeyInfo, ValueLevel
-from llmbroker.standalone.registry import key_info_from_entry
+from llmbroker.standalone.registry import Registry, key_info_from_entry
+
+try:
+    import llmbroker.sqlite as _sqlite_backend
+except ImportError:
+    _sqlite_backend = None
 
 _PRESET_URL = "https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/{name}.toml"
 _PRESET_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -117,6 +125,30 @@ def _cmd_preset(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_sync(args: argparse.Namespace) -> int:
+    preset_path = Path(args.preset)
+    if not preset_path.exists():
+        print(f"error: no such file: {preset_path}", file=sys.stderr)
+        return 1
+    if _sqlite_backend is None:
+        print(
+            "error: the sqlite extra is required for `sync` — pip install llmbroker[sqlite]",
+            file=sys.stderr,
+        )
+        return 1
+
+    async def run() -> None:
+        broker = AsyncBroker(registry=_sqlite_backend.Registry(args.db))
+        try:
+            await broker.sync(Registry(preset_path))
+        finally:
+            await broker.aclose()
+
+    asyncio.run(run())
+    print(f"synced {preset_path} -> {args.db}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m llmbroker")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -134,6 +166,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     preset_p.add_argument("name", help="preset name (e.g. freetier)")
     preset_p.set_defaults(func=_cmd_preset)
+
+    sync_p = sub.add_parser(
+        "sync",
+        help="mirror a preset TOML into a sqlite registry (DB-init workflow)",
+        description=(
+            "Mirror a preset TOML into a sqlite registry: add new entries, update"
+            " existing ones, delete entries absent from the preset."
+        ),
+    )
+    sync_p.add_argument("preset", help="path to the preset .toml file")
+    sync_p.add_argument("db", help="path to the sqlite database file")
+    sync_p.set_defaults(func=_cmd_sync)
 
     args = parser.parse_args(argv)
     return args.func(args)

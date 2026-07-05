@@ -11,6 +11,19 @@ from llmbroker.optimizer import Optimizer
 from llmbroker.standalone.secrets import DictSecrets
 
 
+class _EmptySource:
+    async def load(self, user_id=None) -> list[LLMConfig]:
+        return []
+
+
+class _OneConfigSource:
+    def __init__(self, cfg: LLMConfig) -> None:
+        self._cfg = cfg
+
+    async def load(self, user_id=None) -> list[LLMConfig]:
+        return [self._cfg]
+
+
 def _cfg(name: str = "p1") -> LLMConfig:
     return LLMConfig(name=name, base_url="https://x/v1", model="m", api_key_ref="K")
 
@@ -23,7 +36,7 @@ async def test_persisted_manual_latch_applied_at_provision(tmp_path):
     """The disabled map warm-starts at provision via the journal-rebuild path."""
     db = str(tmp_path / "b.db")
     reg = llmbroker.sqlite.Registry(db)
-    await reg.add(_cfg())
+    await reg.mirror([_cfg()])
     await llmbroker.sqlite.Telemetry(db).set_disabled("p1", True)
 
     async with AsyncBroker(
@@ -38,7 +51,7 @@ async def test_disable_enable_llm_round_trip_preserves_quality_window(tmp_path):
     """No quality reset on re-enable (user decision) — the window survives untouched."""
     db = str(tmp_path / "b.db")
     reg = llmbroker.sqlite.Registry(db)
-    await reg.add(_cfg())
+    await reg.mirror([_cfg()])
     opt = Optimizer(quality_min_count=4, quality_confidence=0.8)
 
     async with AsyncBroker(
@@ -68,7 +81,7 @@ async def test_disable_enable_llm_without_optimizer_still_persists(tmp_path):
     provision-time warm start needs the learning hook, not the admin write path."""
     db = str(tmp_path / "b.db")
     reg = llmbroker.sqlite.Registry(db)
-    await reg.add(_cfg())
+    await reg.mirror([_cfg()])
 
     async with AsyncBroker(
         registry=llmbroker.sqlite.Registry(db),
@@ -93,7 +106,7 @@ async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path):
     non-routable — no error, just never acquirable."""
     db = str(tmp_path / "b.db")
     reg = llmbroker.sqlite.Registry(db)
-    await reg.add(_cfg())
+    await reg.mirror([_cfg()])
 
     async with AsyncBroker(
         registry=llmbroker.sqlite.Registry(db),
@@ -103,9 +116,9 @@ async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path):
         await broker.disable_llm("p1")
         assert broker._pool.is_disabled("p1")
 
-        await broker.remove("p1")
+        await broker.sync(_EmptySource())
 
-        await broker.add(_cfg())
+        await broker.sync(_OneConfigSource(_cfg()))
         assert not broker._pool.is_disabled("p1")
         picked = await broker._pool.acquire(0)
         assert picked.name == "p1"

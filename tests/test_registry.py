@@ -91,7 +91,7 @@ def test_sqlite_registry_per_user_row_isolated(tmp_path):
     reg = llmbroker.sqlite.Registry(db)
 
     async def run():
-        await reg.add(_cfg("alice-llm"), "alice")
+        await reg.mirror([_cfg("alice-llm")], "alice")
         alice_rows = await reg.load("alice")
         bob_rows = await reg.load("bob")
         assert len(alice_rows) == 1
@@ -106,25 +106,12 @@ def test_sqlite_registry_same_name_different_users_allowed(tmp_path):
     reg = llmbroker.sqlite.Registry(db)
 
     async def run():
-        await reg.add(_cfg("llm", "https://a/v1"), "alice")
-        await reg.add(_cfg("llm", "https://b/v1"), "bob")
+        await reg.mirror([_cfg("llm", "https://a/v1")], "alice")
+        await reg.mirror([_cfg("llm", "https://b/v1")], "bob")
         alice_rows = await reg.load("alice")
         bob_rows = await reg.load("bob")
         assert alice_rows[0].base_url == "https://a/v1"
         assert bob_rows[0].base_url == "https://b/v1"
-
-    asyncio.run(run())
-
-
-def test_sqlite_registry_duplicate_within_user_rejected(tmp_path):
-    """Adding the same name twice for the same user raises ValueError."""
-    db = str(tmp_path / "b.db")
-    reg = llmbroker.sqlite.Registry(db)
-
-    async def run():
-        await reg.add(_cfg("llm"), "alice")
-        with pytest.raises(ValueError, match="already exists"):
-            await reg.add(_cfg("llm"), "alice")
 
     asyncio.run(run())
 
@@ -135,8 +122,8 @@ def test_sqlite_registry_load_none_returns_only_unscoped(tmp_path):
     reg = llmbroker.sqlite.Registry(db)
 
     async def run():
-        await reg.add(_cfg("shared"))
-        await reg.add(_cfg("alice-llm"), "alice")
+        await reg.mirror([_cfg("shared")])
+        await reg.mirror([_cfg("alice-llm")], "alice")
         none_rows = await reg.load()
         alice_rows = await reg.load("alice")
         assert [r.name for r in none_rows] == ["shared"]
@@ -145,48 +132,28 @@ def test_sqlite_registry_load_none_returns_only_unscoped(tmp_path):
     asyncio.run(run())
 
 
-def test_sqlite_registry_get_existing(tmp_path):
+def test_sqlite_registry_mirror_updates_existing(tmp_path):
     db = str(tmp_path / "b.db")
     reg = llmbroker.sqlite.Registry(db)
 
     async def run():
-        await reg.add(_cfg("p1", "https://x/v1"))
-        result = await reg.get("p1")
-        assert result is not None
-        assert result.name == "p1"
-        assert result.base_url == "https://x/v1"
+        await reg.mirror([_cfg("p1", "https://old/v1")])
+        await reg.mirror([_cfg("p1", "https://new/v1")])
+        result = {c.name: c for c in await reg.load()}
+        assert result["p1"].base_url == "https://new/v1"
 
     asyncio.run(run())
 
 
-def test_sqlite_registry_get_missing_returns_none(tmp_path):
+def test_sqlite_registry_mirror_deletes_absent(tmp_path):
     db = str(tmp_path / "b.db")
     reg = llmbroker.sqlite.Registry(db)
 
     async def run():
-        assert await reg.get("ghost") is None
-
-    asyncio.run(run())
-
-
-def test_sqlite_registry_update_missing_raises_key_error(tmp_path):
-    db = str(tmp_path / "b.db")
-    reg = llmbroker.sqlite.Registry(db)
-
-    async def run():
-        with pytest.raises(KeyError):
-            await reg.update(_cfg("ghost"))
-
-    asyncio.run(run())
-
-
-def test_sqlite_registry_remove_missing_raises_key_error(tmp_path):
-    db = str(tmp_path / "b.db")
-    reg = llmbroker.sqlite.Registry(db)
-
-    async def run():
-        with pytest.raises(KeyError):
-            await reg.remove("ghost")
+        await reg.mirror([_cfg("p1"), _cfg("p2")])
+        await reg.mirror([_cfg("p1")])
+        result = {c.name: c for c in await reg.load()}
+        assert set(result) == {"p1"}
 
     asyncio.run(run())
 
@@ -212,14 +179,14 @@ async def mutable_registry(request, tmp_path_factory, pg_pool, mongo_db):
         await mongo_db["llmbroker_registry"].delete_many({})
 
 
-async def test_mutable_add_and_load(mutable_registry):
-    await mutable_registry.add(_cfg("llm1"))
+async def test_mutable_mirror_adds(mutable_registry):
+    await mutable_registry.mirror([_cfg("llm1")])
     rows = await mutable_registry.load()
     assert any(r.name == "llm1" for r in rows)
 
 
 async def test_mutable_load_returns_only_matching_user(mutable_registry):
-    await mutable_registry.add(_cfg("alice-llm"), "alice")
+    await mutable_registry.mirror([_cfg("alice-llm")], "alice")
     alice = await mutable_registry.load("alice")
     bob = await mutable_registry.load("bob")
     assert len(alice) == 1
@@ -227,58 +194,37 @@ async def test_mutable_load_returns_only_matching_user(mutable_registry):
 
 
 async def test_mutable_same_name_different_users_allowed(mutable_registry):
-    await mutable_registry.add(_cfg("llm", "https://a/v1"), "alice")
-    await mutable_registry.add(_cfg("llm", "https://b/v1"), "bob")
+    await mutable_registry.mirror([_cfg("llm", "https://a/v1")], "alice")
+    await mutable_registry.mirror([_cfg("llm", "https://b/v1")], "bob")
     assert (await mutable_registry.load("alice"))[0].base_url == "https://a/v1"
     assert (await mutable_registry.load("bob"))[0].base_url == "https://b/v1"
 
 
-async def test_mutable_duplicate_within_user_raises_value_error(mutable_registry):
-    await mutable_registry.add(_cfg("llm"), "alice")
-    with pytest.raises(ValueError, match="already exists"):
-        await mutable_registry.add(_cfg("llm"), "alice")
-
-
 async def test_mutable_load_none_returns_unscoped_only(mutable_registry):
-    await mutable_registry.add(_cfg("shared"))
-    await mutable_registry.add(_cfg("alice-llm"), "alice")
+    await mutable_registry.mirror([_cfg("shared")])
+    await mutable_registry.mirror([_cfg("alice-llm")], "alice")
     none_rows = await mutable_registry.load()
     assert [r.name for r in none_rows] == ["shared"]
 
 
-async def test_mutable_get_existing(mutable_registry):
-    await mutable_registry.add(_cfg("p1", "https://x/v1"))
-    result = await mutable_registry.get("p1")
-    assert result is not None
-    assert result.base_url == "https://x/v1"
+async def test_mutable_mirror_updates_existing_fields(mutable_registry):
+    await mutable_registry.mirror([_cfg("p1", "https://old/v1")])
+    await mutable_registry.mirror([_cfg("p1", "https://new/v1")])
+    result = {c.name: c for c in await mutable_registry.load()}
+    assert result["p1"].base_url == "https://new/v1"
 
 
-async def test_mutable_get_missing_returns_none(mutable_registry):
-    assert await mutable_registry.get("ghost") is None
+async def test_mutable_mirror_deletes_absent_entries(mutable_registry):
+    await mutable_registry.mirror([_cfg("p1"), _cfg("p2")])
+    await mutable_registry.mirror([_cfg("p1")])
+    result = {c.name: c for c in await mutable_registry.load()}
+    assert set(result) == {"p1"}
 
 
-async def test_mutable_update_changes_fields(mutable_registry):
-    await mutable_registry.add(_cfg("p1", "https://old/v1"))
-    await mutable_registry.update(_cfg("p1", "https://new/v1"))
-    result = await mutable_registry.get("p1")
-    assert result is not None
-    assert result.base_url == "https://new/v1"
-
-
-async def test_mutable_update_missing_raises_key_error(mutable_registry):
-    with pytest.raises(KeyError):
-        await mutable_registry.update(_cfg("ghost"))
-
-
-async def test_mutable_remove_deletes_entry(mutable_registry):
-    await mutable_registry.add(_cfg("p1"))
-    await mutable_registry.remove("p1")
-    assert await mutable_registry.get("p1") is None
-
-
-async def test_mutable_remove_missing_raises_key_error(mutable_registry):
-    with pytest.raises(KeyError):
-        await mutable_registry.remove("ghost")
+async def test_mutable_mirror_empty_list_deletes_everything(mutable_registry):
+    await mutable_registry.mirror([_cfg("p1")])
+    await mutable_registry.mirror([])
+    assert await mutable_registry.load() == []
 
 
 # ── LLMConfig ⇄ metadata round-trip (model level) ────────────────────────────
@@ -327,21 +273,19 @@ async def test_mutable_registry_parallel_round_trip(mutable_registry):
         api_key_ref="K",
         parallel=3,
     )
-    await mutable_registry.add(cfg)
-    result = await mutable_registry.get("p1")
-    assert result is not None
-    assert result.parallel == 3
+    await mutable_registry.mirror([cfg])
+    result = {c.name: c for c in await mutable_registry.load()}
+    assert result["p1"].parallel == 3
 
 
 async def test_mutable_registry_parallel_none_round_trip(mutable_registry):
-    await mutable_registry.add(_cfg("p1"))
-    result = await mutable_registry.get("p1")
-    assert result is not None
-    assert result.parallel is None
+    await mutable_registry.mirror([_cfg("p1")])
+    result = {c.name: c for c in await mutable_registry.load()}
+    assert result["p1"].parallel is None
 
 
 async def test_mutable_registry_update_preserves_changed_parallel(mutable_registry):
-    await mutable_registry.add(_cfg("p1"))
+    await mutable_registry.mirror([_cfg("p1")])
     updated = LLMConfig(
         name="p1",
         base_url="https://new/v1",
@@ -349,10 +293,9 @@ async def test_mutable_registry_update_preserves_changed_parallel(mutable_regist
         api_key_ref="K",
         parallel=1,
     )
-    await mutable_registry.update(updated)
-    result = await mutable_registry.get("p1")
-    assert result is not None
-    assert result.parallel == 1
+    await mutable_registry.mirror([updated])
+    result = {c.name: c for c in await mutable_registry.load()}
+    assert result["p1"].parallel == 1
 
 
 # ── Legacy rows with NULL/absent metadata (pre-migration shape) ──────────────
@@ -363,13 +306,12 @@ def test_sqlite_registry_legacy_null_metadata_loads_parallel_none(tmp_path):
     reg = llmbroker.sqlite.Registry(db)
 
     async def run():
-        await reg.add(_cfg("p1"))
+        await reg.mirror([_cfg("p1")])
         async with aiosqlite.connect(db) as conn:
             await conn.execute("UPDATE llmbroker_registry SET metadata = NULL WHERE name = 'p1'")
             await conn.commit()
-        result = await reg.get("p1")
-        assert result is not None
-        assert result.parallel is None
+        result = {c.name: c for c in await reg.load()}
+        assert result["p1"].parallel is None
 
     asyncio.run(run())
 
@@ -377,14 +319,13 @@ def test_sqlite_registry_legacy_null_metadata_loads_parallel_none(tmp_path):
 async def test_postgres_registry_legacy_null_metadata_loads_parallel_none(pg_pool):
     reg = llmbroker.postgres.Registry(pg_pool)
     try:
-        await reg.add(_cfg("legacy-null-meta"))
+        await reg.mirror([_cfg("legacy-null-meta")])
         async with pg_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE llmbroker_registry SET metadata = NULL WHERE name = 'legacy-null-meta'",
             )
-        result = await reg.get("legacy-null-meta")
-        assert result is not None
-        assert result.parallel is None
+        result = {c.name: c for c in await reg.load()}
+        assert result["legacy-null-meta"].parallel is None
     finally:
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM llmbroker_registry WHERE name = 'legacy-null-meta'")
@@ -402,8 +343,7 @@ async def test_mongodb_registry_legacy_doc_without_metadata_loads_parallel_none(
                 "user_id": None,
             },
         )
-        result = await reg.get("legacy-doc")
-        assert result is not None
-        assert result.parallel is None
+        result = {c.name: c for c in await reg.load()}
+        assert result["legacy-doc"].parallel is None
     finally:
         await mongo_db["llmbroker_registry"].delete_many({"name": "legacy-doc"})

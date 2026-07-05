@@ -1,4 +1,4 @@
-"""Registry contract: load LLM configs; mutable backends also CRUD them."""
+"""Registry contract: load LLM configs; mutable backends also mirror a preset into them."""
 
 from typing import Protocol, runtime_checkable
 
@@ -11,10 +11,10 @@ class RegistryProtocol(Protocol):
 
 @runtime_checkable
 class MutableRegistryProtocol(RegistryProtocol, Protocol):
-    async def get(self, name: str, user_id: int | str | None = None) -> LLMConfig | None: ...
-    async def add(self, cfg: LLMConfig, user_id: int | str | None = None) -> None: ...
-    async def update(self, cfg: LLMConfig, user_id: int | str | None = None) -> None: ...
-    async def remove(self, name: str, user_id: int | str | None = None) -> None: ...
+    async def mirror(self, configs: list[LLMConfig], user_id: int | str | None = None) -> None:
+        """Total mirror: add entries absent from the store, update existing ones,
+        delete stored entries absent from ``configs``. The only registry write path."""
+        ...
 
 
 @runtime_checkable

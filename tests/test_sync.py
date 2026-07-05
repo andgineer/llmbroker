@@ -9,7 +9,7 @@ import llmbroker.sqlite
 import pytest
 
 from llmbroker.exceptions import NoLLMAvailableError
-from llmbroker.models import LifecyclePhase, LLMConfig, SeedPolicy
+from llmbroker.models import LifecyclePhase, LLMConfig
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.sync import Broker
@@ -140,16 +140,24 @@ def test_broker_gc_stops_thread_without_close(tmp_path):
 
 def test_broker_disable_llm_benches_and_excludes_from_pool(tmp_path):
     db = str(tmp_path / "b.db")
+    asyncio.run(
+        llmbroker.sqlite.Registry(db).mirror(
+            [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")],
+        )
+    )
     with Broker(registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()) as broker:
-        broker.add(LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K"))
         broker.disable_llm("p1")
         assert broker._async._pool.is_disabled("p1")
 
 
 def test_broker_enable_llm_readmits_after_disable(tmp_path):
     db = str(tmp_path / "b.db")
+    asyncio.run(
+        llmbroker.sqlite.Registry(db).mirror(
+            [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")],
+        )
+    )
     with Broker(registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()) as broker:
-        broker.add(LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K"))
         broker.disable_llm("p1")
         broker.enable_llm("p1")
         assert not broker._async._pool.is_disabled("p1")
@@ -157,12 +165,15 @@ def test_broker_enable_llm_readmits_after_disable(tmp_path):
 
 def test_broker_disable_llm_persists_to_telemetry_disabled_map(tmp_path):
     db = str(tmp_path / "b.db")
-    reg_path = llmbroker.sqlite.Registry(db)
+    asyncio.run(
+        llmbroker.sqlite.Registry(db).mirror(
+            [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")],
+        )
+    )
     with Broker(
-        registry=reg_path,
+        registry=llmbroker.sqlite.Registry(db),
         telemetry=llmbroker.sqlite.Telemetry(db),
     ) as broker:
-        broker.add(LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K"))
         broker.disable_llm("p1")
 
     async def read_back():
@@ -171,15 +182,7 @@ def test_broker_disable_llm_persists_to_telemetry_disabled_map(tmp_path):
     assert asyncio.run(read_back()) is True
 
 
-def test_broker_update_changes_config(tmp_path):
-    db = str(tmp_path / "b.db")
-    with Broker(registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()) as broker:
-        broker.add(LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K"))
-        broker.update(LLMConfig(name="p1", base_url="https://new/v1", model="m2", api_key_ref="K"))
-        assert broker.get("p1").config.base_url == "https://new/v1"
-
-
-# ── constructor seed tests ────────────────────────────────────────────────────
+# ── sync() ────────────────────────────────────────────────────────────────
 
 
 def _seed_registry(tmp_path, name="p1"):
@@ -188,69 +191,44 @@ def _seed_registry(tmp_path, name="p1"):
     return FileRegistry(f)
 
 
-def test_broker_enter_seeds_eagerly(tmp_path):
-    """with Broker(..., seed=...) populates the pool before the body runs."""
+def test_broker_sync_populates_a_fresh_db(tmp_path):
     db = str(tmp_path / "b.db")
-    with Broker(
-        registry=llmbroker.sqlite.Registry(db),
-        seed=_seed_registry(tmp_path),
-        seed_policy=SeedPolicy.IF_EMPTY,
-        telemetry=NoTelemetry(),
-    ) as broker:
+    broker = Broker(registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry())
+    broker.sync(_seed_registry(tmp_path))
+    with broker:
         assert broker.count() == 1
         assert broker.get("p1").config.name == "p1"
 
 
-def test_broker_seed_policy_add_preserves_existing(tmp_path):
-    """seed_policy=ADD adds new entries but leaves existing ones untouched."""
+def test_broker_sync_reconciles_registry_to_preset(tmp_path):
+    """sync() mirrors: adds new, updates existing, deletes entries absent from the preset."""
     db = str(tmp_path / "b.db")
     extra = LLMConfig(name="extra", base_url="https://e/v1", model="m", api_key_ref="K")
-    asyncio.run(llmbroker.sqlite.Registry(db).add(extra))
+    asyncio.run(llmbroker.sqlite.Registry(db).mirror([extra]))
 
-    with Broker(
-        registry=llmbroker.sqlite.Registry(db),
-        seed=_seed_registry(tmp_path),
-        seed_policy=SeedPolicy.ADD,
-        telemetry=NoTelemetry(),
-    ) as broker:
-        assert broker.get("p1").config.name == "p1"
-        assert broker.get("extra").config.name == "extra"
-
-
-def test_broker_seed_policy_mirror_reconciles(tmp_path):
-    """seed_policy=MIRROR removes entries absent from seed on first enter."""
-    db = str(tmp_path / "b.db")
-    extra = LLMConfig(name="extra", base_url="https://e/v1", model="m", api_key_ref="K")
-    asyncio.run(llmbroker.sqlite.Registry(db).add(extra))
-
-    with Broker(
-        registry=llmbroker.sqlite.Registry(db),
-        seed=_seed_registry(tmp_path),
-        seed_policy=SeedPolicy.MIRROR,
-        telemetry=NoTelemetry(),
-    ) as broker:
+    broker = Broker(registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry())
+    broker.sync(_seed_registry(tmp_path))
+    with broker:
         assert broker.get("p1").config.name == "p1"
         with pytest.raises(KeyError):
             broker.get("extra")
 
 
-def test_broker_seed_with_readonly_registry_raises(tmp_path):
-    """Passing seed= with a read-only registry raises TypeError on enter."""
+def test_broker_sync_with_readonly_source_registry_raises(tmp_path):
+    broker = Broker(registry=_registry(tmp_path), telemetry=NoTelemetry())
     with pytest.raises(TypeError, match="does not support mutations"):
-        with Broker(
-            registry=_registry(tmp_path),
-            seed=_seed_registry(tmp_path),
-            telemetry=NoTelemetry(),
-        ):
-            pass
+        broker.sync(_seed_registry(tmp_path))
 
 
 def test_broker_scope_forwarded_to_async_broker(tmp_path):
     """Broker(scope=...) forwards scope to the underlying AsyncBroker."""
     db = str(tmp_path / "b.db")
-    with Broker(
+    broker = Broker(
         registry=llmbroker.sqlite.Registry(db),
         scope="alice",
         telemetry=NoTelemetry(),
-    ) as broker:
+    )
+    try:
         assert broker._async._scope == "alice"
+    finally:
+        broker.close()

@@ -203,20 +203,12 @@ class KeyInfo:
     help: str
 
 
-class Origin(Enum):
-    """Provenance of a catalog entry — who is authoritative for its static fields."""
-
-    PRESET = "preset"
-    USER = "user"
-
-
 @dataclass(frozen=True, slots=True)
 class LLMConfig:
     """Pure stored config for one LLM — no secret, safe to expose.
 
-    ``origin`` and ``deprecated`` are the two curated markers of the static catalog
-    half (see architecture.md#columns-vs-json): written only by the seed path and
-    ``broker.add`` — never by the optimizer.
+    The registry is a pure mirror of the preset (see ``sync``): nothing else
+    writes it, so there is no provenance/curation marker to carry here.
     """
 
     name: str
@@ -224,8 +216,6 @@ class LLMConfig:
     model: str
     api_key_ref: str
     parallel: int | None = None
-    origin: Origin | None = None
-    deprecated: bool = False
 
     def to_metadata(self) -> dict[str, object]:
         """Structured optional config, serialized for the registry's JSON column.
@@ -236,10 +226,6 @@ class LLMConfig:
         metadata: dict[str, object] = {}
         if self.parallel is not None:
             metadata["parallel"] = self.parallel
-        if self.origin is not None:
-            metadata["origin"] = self.origin.value
-        if self.deprecated:
-            metadata["deprecated"] = True
         return metadata
 
     @classmethod
@@ -256,16 +242,12 @@ class LLMConfig:
         metadata = metadata or {}
         raw_parallel = metadata.get("parallel")
         parallel = raw_parallel if isinstance(raw_parallel, int) else None
-        raw_origin = metadata.get("origin")
-        origin = Origin(raw_origin) if isinstance(raw_origin, str) else None
         return cls(
             name=name,
             base_url=base_url,
             model=model,
             api_key_ref=api_key_ref,
             parallel=parallel,
-            origin=origin,
-            deprecated=bool(metadata.get("deprecated", False)),
         )
 
 
@@ -347,13 +329,6 @@ class LLMSnapshot:
     cooldown_until: datetime | None
     demoted_operations: tuple[str, ...]
     metrics: LLMMetrics | None
-
-
-class SeedPolicy(Enum):
-    MIRROR = "mirror"
-    ADD = "add"
-    IF_EMPTY = "if_empty"
-    SYNC = "sync"
 
 
 @runtime_checkable

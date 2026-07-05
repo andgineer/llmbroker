@@ -1,7 +1,6 @@
-"""MongoDB-backed mutable registry over ``llmbroker_registry``."""
+"""MongoDB-backed mutable registry over ``llmbroker_registry`` — a pure preset mirror."""
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo.errors import DuplicateKeyError
 
 from llmbroker.models import LLMConfig, check_user_id
 from llmbroker.mongodb.schema import ensure_schema
@@ -18,7 +17,7 @@ def _config_from_doc(doc: dict) -> LLMConfig:
 
 
 class Registry:
-    """MongoDB-backed mutable registry over ``llmbroker_registry``."""
+    """MongoDB-backed mutable registry over ``llmbroker_registry`` — a pure preset mirror."""
 
     def __init__(self, db: AsyncIOMotorDatabase) -> None:
         self._db = db
@@ -30,55 +29,40 @@ class Registry:
         docs = await cursor.to_list(length=None)
         return [_config_from_doc(d) for d in docs]
 
-    async def get(self, name: str, user_id: int | str | None = None) -> LLMConfig | None:
+    async def mirror(self, configs: list[LLMConfig], user_id: int | str | None = None) -> None:
+        """Total mirror: add new, update existing, delete stored entries absent
+        from ``configs`` — the only registry write path."""
         check_user_id(user_id)
         await ensure_schema(self._db)
-        doc = await self._db["llmbroker_registry"].find_one({"name": name, "user_id": user_id})
-        if doc is None:
-            return None
-        return _config_from_doc(doc)
+        source_names = {c.name for c in configs}
+        existing_docs = (
+            await self._db["llmbroker_registry"]
+            .find(
+                {"user_id": user_id},
+                {"name": 1},
+            )
+            .to_list(length=None)
+        )
+        existing_names = {d["name"] for d in existing_docs}
 
-    async def add(self, cfg: LLMConfig, user_id: int | str | None = None) -> None:
-        check_user_id(user_id)
-        await ensure_schema(self._db)
-        doc = {
-            "name": cfg.name,
-            "base_url": cfg.base_url,
-            "model": cfg.model,
-            "api_key_ref": cfg.api_key_ref,
-            "metadata": cfg.to_metadata(),
-            "user_id": user_id,
-        }
-        try:
-            await self._db["llmbroker_registry"].insert_one(doc)
-        except DuplicateKeyError:
-            raise ValueError(f"LLM {cfg.name!r} already exists") from None
-
-    async def update(self, cfg: LLMConfig, user_id: int | str | None = None) -> None:
-        check_user_id(user_id)
-        await ensure_schema(self._db)
-        result = await self._db["llmbroker_registry"].update_one(
-            {"name": cfg.name, "user_id": user_id},
-            {
-                "$set": {
-                    "base_url": cfg.base_url,
-                    "model": cfg.model,
-                    "api_key_ref": cfg.api_key_ref,
-                    "metadata": cfg.to_metadata(),
+        stale = existing_names - source_names
+        if stale:
+            await self._db["llmbroker_registry"].delete_many(
+                {"user_id": user_id, "name": {"$in": list(stale)}},
+            )
+        for cfg in configs:
+            await self._db["llmbroker_registry"].update_one(
+                {"name": cfg.name, "user_id": user_id},
+                {
+                    "$set": {
+                        "base_url": cfg.base_url,
+                        "model": cfg.model,
+                        "api_key_ref": cfg.api_key_ref,
+                        "metadata": cfg.to_metadata(),
+                    },
                 },
-            },
-        )
-        if result.matched_count == 0:
-            raise KeyError(cfg.name)
-
-    async def remove(self, name: str, user_id: int | str | None = None) -> None:
-        check_user_id(user_id)
-        await ensure_schema(self._db)
-        result = await self._db["llmbroker_registry"].delete_one(
-            {"name": name, "user_id": user_id},
-        )
-        if result.deleted_count == 0:
-            raise KeyError(name)
+                upsert=True,
+            )
 
     async def aclose(self) -> None:
         return

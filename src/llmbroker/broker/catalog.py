@@ -1,15 +1,14 @@
 """Catalog: keep the live pool's membership in sync with the registry.
 
 Loads configs from the registry, resolves their API keys via the secrets
-backend, seeds from a source registry when configured, and applies live
-add/update/remove edits — reflecting every change into the ``LLMPool``.
+backend, and reflects every change into the ``LLMPool``. The registry is a
+pure mirror of a preset (see ``sync``) — nothing else writes it.
 """
 
 import logging
-from dataclasses import replace
 
 from llmbroker.broker.pool import LLMPool
-from llmbroker.models import LLMConfig, Origin, SeedPolicy
+from llmbroker.models import LLMConfig
 from llmbroker.protocols.registry import MutableRegistryProtocol, RegistryProtocol
 from llmbroker.protocols.secrets import MutableSecretsProtocol, SecretsProtocol
 from llmbroker.standalone.secrets import Secrets
@@ -18,51 +17,42 @@ logger = logging.getLogger("llmbroker.broker")
 
 
 class Catalog:
-    """Reconciles the persistent registry into the live pool, and edits both."""
+    """Reconciles the persistent registry into the live pool, and mirrors presets into it."""
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         registry: RegistryProtocol,
         secrets: SecretsProtocol,
         pool: LLMPool,
         *,
-        seed: RegistryProtocol | None,
-        seed_policy: SeedPolicy,
         scope: str | None,
     ) -> None:
         self._registry = registry
         self._secrets = secrets
         self._pool = pool
-        self._seed = seed
-        self._seed_policy = seed_policy
         self._scope = scope
 
-    async def provision(self) -> list[str]:
-        """Seed (if configured) then reconcile the pool with the registry.
-
-        The caller serializes this one-time init; it is not re-entrant. Returns
-        any seed-time alert messages (currently only ``SYNC``'s refused
-        model-identity changes) for the caller to surface.
-        """
-        alerts: list[str] = []
-        if self._seed is not None:
-            alerts = await apply_seed(
-                self._require_mutable_registry(),
-                self._secrets,
-                self._seed,
-                self._seed_policy,
-                self._scope,
+    async def provision(self) -> None:
+        """Reconcile the pool with the registry. The caller serializes this
+        one-time init; it is not re-entrant. Raises if the registry is empty."""
+        configs = await self._registry.load(user_id=None)
+        if not configs:
+            raise RuntimeError(
+                "registry is empty — call sync(preset) to mirror a preset into it before"
+                " provisioning (e.g. `await broker.sync(preset)` or `python -m llmbroker sync`)",
             )
-        await self.resync()
-        return alerts
+        await self._reconcile(configs)
 
     async def resync(self) -> None:
-        """Re-read the registry and reconcile pool membership — no reseed.
+        """Re-read the registry and reconcile pool membership — no emptiness check.
 
-        Called by the debounced journal rebuild so registry edits and key
-        changes from other processes/nodes take effect on a running broker.
+        Called by the debounced journal rebuild so registry edits and key changes
+        from other processes/nodes take effect on a running broker.
         """
-        configs = await self._registry.load(user_id=self._scope)
+        configs = await self._registry.load(user_id=None)
+        await self._reconcile(configs)
+
+    async def _reconcile(self, configs: list[LLMConfig]) -> None:
         names = {c.name for c in configs}
         for name in list(self._pool.configs):
             if name not in names:
@@ -70,26 +60,26 @@ class Catalog:
         for order, cfg in enumerate(configs):
             await self._pool.add(cfg, await self._resolve_key(cfg), order=order)
 
-    async def add(self, cfg: LLMConfig) -> None:
+    async def sync(self, preset: RegistryProtocol) -> None:
+        """Mirror ``preset`` into the registry: add new entries, update existing
+        ones, delete entries absent from the preset — the total mirror, nothing to
+        preserve. Refuses (raises) a ``model`` identity change under an existing
+        name, since that binds learned stats to the model name; a model bump must
+        land under a new entry name instead.
+        """
         registry = self._require_mutable_registry()
-        if cfg.name in self._pool:
-            raise ValueError(f"LLM {cfg.name!r} already exists; use update()")
-        cfg = replace(cfg, origin=Origin.USER)
-        await registry.add(cfg, self._scope)
-        await self._pool.add(cfg, await self._resolve_key(cfg))
-
-    async def update(self, cfg: LLMConfig) -> None:
-        registry = self._require_mutable_registry()
-        if cfg.name not in self._pool:
-            raise KeyError(cfg.name)
-        cfg = replace(cfg, origin=Origin.USER)
-        await registry.update(cfg, self._scope)
-        await self._pool.add(cfg, await self._resolve_key(cfg))
-
-    async def remove(self, name: str) -> None:
-        registry = self._require_mutable_registry()
-        await registry.remove(name, self._scope)
-        await self._pool.drop(name)
+        source_configs = await preset.load()
+        existing = {c.name: c for c in await registry.load(user_id=None)}
+        for cfg in source_configs:
+            current = existing.get(cfg.name)
+            if current is not None and current.model != cfg.model:
+                raise ValueError(
+                    f"sync: refusing to change model for {cfg.name!r}"
+                    f" (stored {current.model!r} vs preset {cfg.model!r}) — a model bump"
+                    " must be a new entry name",
+                )
+        await registry.mirror(source_configs, user_id=None)
+        await self._seed_secrets(source_configs)
 
     async def _resolve_key(self, cfg: LLMConfig) -> str | None:
         """Try the scope-prefixed (own) ref first, falling back to the shared ref."""
@@ -109,116 +99,27 @@ class Catalog:
             )
             return None
 
+    async def _seed_secrets(self, configs: list[LLMConfig]) -> None:
+        """Copy any env-resolvable keys into a mutable secrets backend, preserving existing."""
+        if not isinstance(self._secrets, MutableSecretsProtocol):
+            return
+        bootstrap = Secrets()
+        for cfg in configs:
+            try:
+                await self._secrets.resolve(cfg.api_key_ref, None)
+                continue  # already resolvable — preserve
+            except KeyError:
+                pass
+            try:
+                value = await bootstrap.resolve(cfg.api_key_ref)
+            except KeyError:
+                continue
+            await self._secrets.set(cfg.api_key_ref, value, None)
+
     def _require_mutable_registry(self) -> MutableRegistryProtocol:
         if not isinstance(self._registry, MutableRegistryProtocol):
             raise TypeError(
                 f"{type(self._registry).__name__} does not support mutations"
-                " (add/remove/seed require a mutable registry such as"
-                " llmbroker.sqlite.Registry)",
+                " (sync requires a mutable registry such as llmbroker.sqlite.Registry)",
             )
         return self._registry
-
-
-async def apply_seed(
-    registry: MutableRegistryProtocol,
-    secrets: SecretsProtocol,
-    source: RegistryProtocol,
-    policy: SeedPolicy,
-    user_id: int | str | None,
-) -> list[str]:
-    """Mirror a source registry into the mutable store per ``policy``.
-
-    Runs once at provision time, before the live pool exists; the caller holds
-    the pool lock. Writes only the static fields — never ``profile`` (learned
-    data) — regardless of policy. Returns any alert messages generated
-    (currently only ``SYNC``'s refused model-identity changes).
-    """
-    source_configs = await source.load()
-    existing = {c.name: c for c in await registry.load(user_id=user_id)}
-    alerts: list[str] = []
-
-    if policy is SeedPolicy.IF_EMPTY and existing:
-        return alerts
-
-    if policy is SeedPolicy.MIRROR:
-        source_names = {c.name for c in source_configs}
-        for name in list(existing):
-            if name not in source_names:
-                await registry.remove(name, user_id)
-        for cfg in source_configs:
-            if cfg.name in existing:
-                await registry.update(cfg, user_id)
-            else:
-                await registry.add(cfg, user_id)
-    elif policy is SeedPolicy.SYNC:
-        alerts = await _apply_sync(registry, existing, source_configs, user_id)
-    else:  # ADD or IF_EMPTY (empty store)
-        for cfg in source_configs:
-            if cfg.name not in existing:
-                await registry.add(cfg, user_id)
-
-    await _seed_secrets(secrets, source_configs, user_id)
-    return alerts
-
-
-async def _apply_sync(
-    registry: MutableRegistryProtocol,
-    existing: dict[str, LLMConfig],
-    source_configs: list[LLMConfig],
-    user_id: int | str | None,
-) -> list[str]:
-    """``SeedPolicy.SYNC``: add-new, update operational fields, refuse a ``model``
-    change under an existing name, deprecate absent preset-origin entries (never
-    delete), only ever touch ``origin: preset`` entries. See architecture.md for the
-    identity invariant this enforces.
-    """
-    alerts: list[str] = []
-    source_names = {c.name for c in source_configs}
-
-    for cfg in source_configs:
-        current = existing.get(cfg.name)
-        if current is None:
-            await registry.add(replace(cfg, origin=Origin.PRESET, deprecated=False), user_id)
-            continue
-        if current.origin is not Origin.PRESET:
-            continue
-        if current.model != cfg.model:
-            alerts.append(
-                f"seed SYNC: refusing to change model for {cfg.name!r}"
-                f" (stored {current.model!r} vs preset {cfg.model!r}) — a model bump"
-                " must be a new entry name; entry left untouched",
-            )
-            continue
-        await registry.update(
-            replace(cfg, model=current.model, origin=Origin.PRESET, deprecated=False),
-            user_id,
-        )
-
-    for name, current in existing.items():
-        if name in source_names or current.origin is not Origin.PRESET or current.deprecated:
-            continue
-        await registry.update(replace(current, deprecated=True), user_id)
-
-    return alerts
-
-
-async def _seed_secrets(
-    secrets: SecretsProtocol,
-    configs: list[LLMConfig],
-    user_id: int | str | None,
-) -> None:
-    """Copy any env-resolvable keys into a mutable secrets backend, preserving existing."""
-    if not isinstance(secrets, MutableSecretsProtocol):
-        return
-    bootstrap = Secrets()
-    for cfg in configs:
-        try:
-            await secrets.resolve(cfg.api_key_ref, user_id)
-            continue  # already resolvable — preserve
-        except KeyError:
-            pass
-        try:
-            value = await bootstrap.resolve(cfg.api_key_ref)
-        except KeyError:
-            continue
-        await secrets.set(cfg.api_key_ref, value, user_id)

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from llmbroker.broker import AsyncBroker, AsyncResult
-from llmbroker.models import Call, LLMConfig, LLMMetrics, LLMSnapshot, LLMState, SeedPolicy
+from llmbroker.models import Call, LLMConfig, LLMMetrics, LLMSnapshot, LLMState
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.backend_stack import BackendStack
 from llmbroker.protocols.registry import RegistryProtocol
@@ -85,22 +85,16 @@ class Broker:
         secrets: SecretsProtocol | None = None,
         telemetry: TelemetryProtocol | None = None,
         optimize: bool | Optimizer = True,
-        seed: RegistryProtocol | str | Path | None = None,
-        seed_policy: SeedPolicy = SeedPolicy.SYNC,
         scope: str | None = None,
     ) -> None:
         if isinstance(registry, (str, Path)):
             registry = Registry(registry)
-        if isinstance(seed, (str, Path)):
-            seed = Registry(seed)
         self._async = AsyncBroker(
             registry,
             stack=stack,
             secrets=secrets,
             telemetry=telemetry,
             optimize=optimize,
-            seed=seed,
-            seed_policy=seed_policy,
             scope=scope,
         )
         self._loop = asyncio.new_event_loop()
@@ -181,14 +175,8 @@ class Broker:
     def snapshot(self) -> Mapping[str, LLMSnapshot]:
         return self._run(self._async.snapshot())
 
-    def add(self, cfg: LLMConfig) -> None:
-        self._run(self._async.add(cfg))
-
-    def update(self, cfg: LLMConfig) -> None:
-        self._run(self._async.update(cfg))
-
-    def remove(self, name: str) -> None:
-        self._run(self._async.remove(name))
+    def sync(self, preset: RegistryProtocol | str | Path) -> None:
+        self._run(self._async.sync(preset))
 
     def disable_llm(self, name: str) -> None:
         self._run(self._async.disable_llm(name))

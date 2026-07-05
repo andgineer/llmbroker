@@ -21,7 +21,7 @@ async def test_sqlite_stack_wires_three_ports(tmp_path):
     db_path = str(tmp_path / "broker.db")
     stack = llmbroker.sqlite.Stack(db_path)
 
-    await stack.registry.add(_cfg())
+    await stack.registry.mirror([_cfg()])
     await stack.secrets.set("KEY", "secret-value")
     assert await stack.secrets.resolve("KEY") == "secret-value"
 
@@ -33,7 +33,7 @@ async def test_sqlite_stack_wires_three_ports(tmp_path):
 async def test_stack_with_explicit_secrets_override(tmp_path):
     db_path = str(tmp_path / "broker.db")
     stack = llmbroker.sqlite.Stack(db_path)
-    await stack.registry.add(_cfg())
+    await stack.registry.mirror([_cfg()])
     await stack.secrets.set("KEY", "from-stack")
     override_secrets = DictSecrets({"KEY": "from-override"})
 
@@ -58,7 +58,7 @@ async def test_bare_path_shortcut_still_works(tmp_path):
 async def test_postgres_stack_wires_three_ports(pg_pool):
     stack = llmbroker.postgres.Stack(pg_pool)
     try:
-        await stack.registry.add(_cfg())
+        await stack.registry.mirror([_cfg()])
         await stack.secrets.set("KEY", "secret-value")
 
         async with AsyncBroker(stack=stack) as broker:
@@ -88,7 +88,7 @@ async def test_postgres_stack_wires_three_ports(pg_pool):
 async def test_mongodb_stack_wires_three_ports(mongo_db):
     stack = llmbroker.mongodb.Stack(mongo_db)
     try:
-        await stack.registry.add(_cfg())
+        await stack.registry.mirror([_cfg()])
         await stack.secrets.set("KEY", "secret-value")
 
         async with AsyncBroker(stack=stack) as broker:
@@ -104,7 +104,7 @@ def test_sync_broker_stack_wires_three_ports(tmp_path):
     stack = llmbroker.sqlite.Stack(db_path)
 
     async def _seed():
-        await stack.registry.add(_cfg())
+        await stack.registry.mirror([_cfg()])
         await stack.secrets.set("KEY", "secret-value")
 
     asyncio.run(_seed())

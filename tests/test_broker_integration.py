@@ -62,8 +62,7 @@ def _cfg(name: str, api_key_ref: str = "KEY") -> LLMConfig:
 async def _seed_stack(stack, configs: list[LLMConfig], keys: dict[str, str], monkeypatch) -> None:
     """Populate registry and secrets for any stack variant before the broker opens."""
     if isinstance(stack.registry, MutableRegistryProtocol):
-        for cfg in configs:
-            await stack.registry.add(cfg)
+        await stack.registry.mirror(configs)
     else:
         lines = []
         for cfg in configs:
@@ -168,14 +167,20 @@ async def test_all_offline_raises_and_alerts(stack, monkeypatch, caplog):
 
 
 async def test_catalog_mutation_persists(stack, monkeypatch):
-    """broker.add() persists via mutable registry; a rebuilt broker sees the entry."""
+    """broker.sync() persists via a mutable registry; a rebuilt broker sees the entry."""
     if isinstance(stack.registry, MutableRegistryProtocol):
-        await _seed_stack(stack, [], {"KEY": "test-key"}, monkeypatch)
-        async with stack.make_broker() as broker1:
-            await broker1.add(_cfg("llm1"))
+        await stack.registry.mirror([_cfg("llm1")])
+        for ref, val in {"KEY": "test-key"}.items():
+            if isinstance(stack.secrets, MutableSecretsProtocol):
+                await stack.secrets.set(ref, val)
+            elif isinstance(stack.secrets, DictSecrets):
+                stack.secrets._mapping[ref] = val  # type: ignore[attr-defined]
+            else:
+                monkeypatch.setenv(ref, val)
         async with stack.make_broker() as broker2:
             assert await broker2.count() == 1
             assert (await broker2.get("llm1")).config.name == "llm1"
     else:
-        async with stack.make_broker() as broker:
-            assert await broker.count() == 0
+        with pytest.raises(RuntimeError, match="sync"):
+            async with stack.make_broker():
+                pass
