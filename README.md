@@ -2,90 +2,60 @@
 [![Coverage](https://raw.githubusercontent.com/andgineer/llmbroker/python-coverage-comment-action-data/badge.svg)](https://htmlpreview.github.io/?https://github.com/andgineer/llmbroker/blob/python-coverage-comment-action-data/htmlcov/index.html)
 # llmbroker
 
-Turn a crowd of free, rate-limited LLMs into one reliable model — no premium subscription, no single point of failure.
+Turn a crowd of free, rate-limited LLMs into one reliable model — no premium
+subscription, no single point of failure. No LangChain, no heavy deps.
 
-Many free LLMs are unreliable and mediocre on their own. llmbroker pools them and routes
-across the pool, turning quantity into dependable, good-enough quality — without paying
-for a premium model.
-
-No LangChain, no heavy deps.
+```bash
+pip install llmbroker
+llmbroker preset freetier > llms.toml   # ready-made pool of free models
+llmbroker env llms.toml > .env          # which API keys to get, and where
+```
 
 ```python
 llms = llmbroker.Broker("llms.toml")
-print(llms.ask("Explain Python decorators in one sentence").text)
+reply = llms.ask("Explain decorators in one sentence")
+print(reply.text)   # groq rate-limited? gemini answers instead
 ```
 
-Put your LLMs in `llms.toml` — or grab a preset:
+Fill in whichever keys are easy — models without keys just stay inactive.
 
-```bash
-llmbroker preset freetier > llms.toml
-```
+| | |
+|---|---|
+| **Automatic failover** | `llms.ask(...)` — next model answers when one is down |
+| **Chat, tools & agents** | `llms.chat(messages, tools=...)`, `run_tool_loop(...)` |
+| **Async-first** | `AsyncBroker` — same engine, for FastAPI / agents / workers |
+| **Scale out** | `Broker("postgresql://…")` — sqlite / Postgres / MongoDB, calling code unchanged |
+| **Self-regulating pool** | `reply.record_quality(0.3)` — weak models sink per task kind |
+| **Pluggable secrets** | env vars, DB, AWS, Vault, or your own backend |
+| **Multi-user mode** | per-user API keys on top of one shared pool |
 
-The only setup is the API keys. Ask llmbroker which ones your pool needs — each with a note on
-where to get it, ordered easiest-and-most-valuable first:
+[Documentation](https://andgineer.github.io/llmbroker/)
 
-```bash
-llmbroker env llms.toml > .env
-```
+<details>
+<summary>Development</summary>
 
-Running with only some of the keys is the normal, intended mode — add the keys that are easy
-and worth it, and the pool assembles itself from whatever is present. A missing key just means
-that one model stays inactive; it is not an error.
-
-The same `Broker` scales straight to a server or cluster — add Redis or Postgres to share cooldown state across instances, the calling code stays the same.
-
-**Why llmbroker:**
-
-- **Automatic failover** — when one LLM is rate-limited or down, the next one in
-  the pool answers instead; you get a reply, not an error, as long as any LLM is up.
-- **Chat, tools & agents** — one-shot `ask`, multi-turn `chat`, and function/tool
-  calling for agentic workflows.
-- **Async-first** — `llmbroker.AsyncBroker` built on asyncio for FastAPI, agents, and async workers;
-  `llmbroker.Broker` wraps the same engine in a blocking API for plain scripts.
-- **Pluggable backends** — swap registry, state store, and telemetry independently: DB, Redis etc.
-- **API keys configurable storage** — environment variables, DB, AWS, Vault, your own store.
-- **Multi-user mode** -- optionally separate secrets and LLMs list for each application user.
-- **Self-regulating pool** — rate a reply's quality and llmbroker learns, per kind of
-  task, which models are actually worth routing to; a consistently weak model quietly
-  drops to the back of the queue instead of being nagged about by a human.
-
-# Documentation
-
-[llmbroker](https://andgineer.github.io/llmbroker/)
-
-# Developers
-
-Do not forget to run `. ./activate.sh`.
-
-For work it need [uv](https://github.com/astral-sh/uv) installed.
+Do not forget to run `. ./activate.sh`. It needs [uv](https://github.com/astral-sh/uv) installed.
 
 Use [pre-commit](https://pre-commit.com/#install) hooks for code quality:
 
     pre-commit install
 
-## Allure test report
-
-* [Allure report](https://andgineer.github.io/llmbroker/builds/tests/)
-
-# Scripts
 Install [invoke](https://docs.pyinvoke.org/en/stable/) preferably with [uv tool](https://docs.astral.sh/uv/):
 
     uv tool install invoke
 
-For a list of available scripts run:
-
-    invoke --list
-
-For more information about a script run:
-
-    invoke <script> --help
+For a list of available scripts run `invoke --list`; for details on one, `invoke <script> --help`.
 
 The bundled `freetier` preset drifts as providers change their free tiers; refresh
 it with `invoke catalog-refresh`, which prints the maintenance runbook
 (`presets/freetier-refresh-prompt.md`).
 
-## Coverage report
+Reports:
+
+* [Allure test report](https://andgineer.github.io/llmbroker/builds/tests/)
 * [Codecov](https://app.codecov.io/gh/andgineer/llmbroker/tree/main/src%2Fllmbroker)
 * [Coveralls](https://coveralls.io/github/andgineer/llmbroker)
 
 > Created with cookiecutter using [template](https://github.com/andgineer/cookiecutter-python-package)
+
+</details>

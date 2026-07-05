@@ -1,45 +1,49 @@
 # llmbroker
 
-Turn a crowd of free, rate-limited LLMs into one reliable model — no premium subscription, no single point of failure.
-
-No heavy deps like LangChain.
+Turn a crowd of free, rate-limited LLMs into one reliable model — no premium
+subscription, no single point of failure. No heavy dependencies like LangChain.
 
 ## Quick start
 
-Grab a ready-made pool, or write your own `llms.toml` (see [Usage](usage.md)):
+[Install llmbroker](installation.md), then:
 
 ```bash
-llmbroker preset freetier > llms.toml
+llmbroker preset freetier > llms.toml   # ready-made pool of free models
+llmbroker env llms.toml > .env          # which keys you need, and where to get them
 ```
-
-List the API keys it needs, get them from the providers, and set them:
-
-```bash
-llmbroker env llms.toml > .env
-```
-
-Each provider issues its own key (free-tier keys take about a minute to sign up for).
-A `.env` file is the simplest option — secrets can also come from environment variables,
-AWS, Vault, or any backend you plug in. Then call the broker:
 
 ```python
-import llmbroker
-
 llms = llmbroker.Broker("llms.toml")
 print(llms.ask("Hello, how are you?").text)
 ```
 
-If one LLM is rate-limited, the broker cools it down and switches to the next one.
-The caller never sees a rate-limit error as long as at least one LLM is available.
+Fill in whichever keys are easy to get: a model without a key simply stays
+inactive. When a model hits its rate limit, the broker cools it down and switches
+to the next one — you get an answer, not an error, as long as any model is up.
 
-## How it works
+## Where to go next
 
-- Each LLM in the pool gets one queue slot: at most one in-flight request per LLM.
-- When an LLM is rate-limited or unavailable, the broker puts it on cooldown and
-  re-enqueues it after a delay (the provider's `Retry-After`, or 60 s by default).
-- `ask(prompt)` is a shortcut for `chat([{"role": "user", "content": prompt}])`.
-- If all LLMs are on cooldown and `wait` expires — `NoLLMAvailableError`.
-- If an LLM was tried and returned an error — `AllLLMsFailedError`.
+| Your scenario | Read |
+|---|---|
+| **A simple script** | [Usage](usage.md): the pool, timeouts, quality rating |
+| **FastAPI, agents, workers** | [Async](async.md): the same API with `await` |
+| **Function calling** | [Tools & agents](tools.md): the whole tool loop in one call |
+| **Secrets already in AWS or Vault** | [API keys](secrets.md): the broker reads them right from there |
+| **Multiple instances, a shared DB** | [Servers & clusters](server.md): sqlite / Postgres / MongoDB, per-user keys |
 
-`AsyncBroker` is the core engine (FastAPI, agents, async workers); `Broker` is the
-blocking wrapper shown above. See [Usage](usage.md) for both, tools, and multi-user.
+## Features
+
+- **Automatic failover** — an error only when no one is left at all
+  (`NoLLMAvailableError` / `AllLLMsFailedError`).
+- **Chat, tools & agents** — `ask`, multi-turn `chat`, [tool calling](tools.md).
+- **Async-first** — [`AsyncBroker`](async.md); `Broker` is a blocking wrapper
+  around the same engine.
+- **Self-learning pool** — [rate the replies](usage.md#quality), weak models sink
+  to the back of the queue.
+- **Keys anywhere** — environment, `.env`, DB, [AWS, Vault](secrets.md) or your
+  own backend.
+- **Scale out without code changes** — a [shared DB](server.md) across instances,
+  a per-user key.
+- **[Disabling models](disable.md)** manually, plus a pool state snapshot.
+
+Full API reference — [Reference](reference.md).

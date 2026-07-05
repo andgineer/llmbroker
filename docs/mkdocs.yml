@@ -44,4 +44,9 @@ nav:
   - index.md
   - installation.md
   - usage.md
+  - tools.md
+  - async.md
+  - secrets.md
+  - server.md
+  - disable.md
   - cli.md

@@ -10,16 +10,16 @@
 uv pip install llmbroker
 ```
 
-Для использования бэкенда установите соответствующий extra:
+Для общей БД на несколько инстансов установите соответствующий extra
+(см. [Серверы и кластеры](server.md)):
 
 ```bash
 uv pip install "llmbroker[sqlite]"
-uv pip install "llmbroker[redis]"
 uv pip install "llmbroker[postgres]"
 uv pip install "llmbroker[mongodb]"
 ```
 
-Для использования управляемого хранилища секретов:
+Для управляемого хранилища секретов (см. [API-ключи и секреты](secrets.md)):
 
 ```bash
 uv pip install "llmbroker[aws]"    # AWS Secrets Manager

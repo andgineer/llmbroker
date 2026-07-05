@@ -1,40 +1,37 @@
 # CLI
 
-## env — получить список переменных окружения
-
-```bash
-llmbroker env llms.toml
-```
-
-Читает файл конфигурации и выводит имена переменных окружения (`api_key_ref`)
-которые нужно заполнить. Если в конфиге есть секция `[keys]`, перед каждой
-переменной выводится комментарий (с именем переменной в начале), где её взять:
-
-```
-# OPENROUTER_API_KEY — Create a free API key at [openrouter](https://openrouter.ai/keys).
-OPENROUTER_API_KEY=
-```
-
-Это только имена переменных — сами ключи нужно получить у каждого провайдера и
-вписать их. Быстрее всего сохранить список как `.env`-файл
-(`llmbroker env llms.toml > .env`), но llmbroker умеет читать секреты откуда угодно:
-переменные окружения, AWS, Vault или любой подключённый вами бэкенд.
-
 ## preset — скачать готовый список LLM
 
 ```bash
 llmbroker preset freetier > llms.toml
 ```
 
-Скачивает готовый список LLM и выводит его в stdout. Доступные пресеты:
+Доступные пресеты:
 
 - `freetier` — бесплатные endpoints от Groq, OpenRouter и Gemini
 
-После сохранения посмотрите, какие API-ключи нужны этому пулу:
+## env — сформировать .env с ключами
 
 ```bash
-llmbroker env llms.toml
+llmbroker env llms.toml > .env
 ```
 
-Каждый провайдер выдаёт свой ключ (у бесплатного тарифа они бесплатны) —
-зарегистрируйтесь и передайте ключи через `.env`-файл или любой другой бэкенд секретов.
+Печатает заготовку `.env`: над каждым ключом — подсказка, где его получить:
+
+```
+# OPENROUTER_API_KEY — Create a free API key at [openrouter](https://openrouter.ai/keys).
+OPENROUTER_API_KEY=
+```
+
+Сами ключи получите у провайдеров и впишите. Ключи не обязаны лежать в `.env` —
+см. [API-ключи](secrets.md).
+
+## sync — залить пресет в БД
+
+```bash
+llmbroker sync llms.toml broker.db
+llmbroker sync llms.toml "postgresql://host/db"
+```
+
+Полная синхронизация БД с файлом пресета: добавляет, обновляет и удаляет
+записи — см. [Серверы и кластеры](server.md#datasource).
