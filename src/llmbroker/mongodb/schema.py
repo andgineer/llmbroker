@@ -2,7 +2,9 @@
 
 ``ensure_schema`` is the single authority for the package's mongodb indexes.
 Every collection is ``llmbroker_``-prefixed. Idempotent by default in MongoDB.
-Schema version tracked via ``llmbroker_schema_version``.
+Schema version tracked via ``llmbroker_schema_version``. One known
+installation, upgraded manually — on a version-marker mismatch
+``ensure_schema`` fails fast with an actionable error.
 """
 
 import asyncio
@@ -10,7 +12,7 @@ from datetime import UTC, datetime
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 5
 _schema_ready: set[int] = set()
 _schema_lock = asyncio.Lock()
 
@@ -28,6 +30,14 @@ async def ensure_schema(db: AsyncIOMotorDatabase) -> None:
     async with _schema_lock:
         if id(db) in _schema_ready:
             return
+        version_doc = await db["llmbroker_schema_version"].find_one({})
+        current = int(version_doc["version"]) if version_doc else 0
+        if current not in (0, _SCHEMA_VERSION):
+            raise RuntimeError(
+                f"llmbroker schema version {current} found, this release expects"
+                f" {_SCHEMA_VERSION} — drop the llmbroker_* collections and restart"
+                " (export registry/secrets/calls first if you need them)",
+            )
         await db["llmbroker_registry"].create_index(
             [("name", 1), ("user_id", 1)],
             unique=True,
@@ -41,15 +51,18 @@ async def ensure_schema(db: AsyncIOMotorDatabase) -> None:
             [("called_at", -1)],
             name="llmbroker_idx_calls_called_at",
         )
-        await db["llmbroker_calls"].create_index(
-            [("user_id", 1)],
-            name="llmbroker_idx_calls_user_id",
+        await db["llmbroker_disabled"].create_index(
+            [("name", 1)],
+            unique=True,
+            name="llmbroker_disabled_unique",
         )
         await db["llmbroker_secrets"].create_index(
             [("ref", 1), ("user_id", 1)],
             unique=True,
             name="llmbroker_secrets_unique",
         )
+        # Unused by the broker (shared cooldowns derive from the journal) but kept so
+        # the standalone mongodb.StateStore class stays functional until it is deleted.
         await db["llmbroker_state"].create_index(
             [("llm_name", 1), ("user_id", 1)],
             unique=True,
@@ -60,9 +73,10 @@ async def ensure_schema(db: AsyncIOMotorDatabase) -> None:
             unique=True,
             name="llmbroker_summaries_unique",
         )
-        await db["llmbroker_schema_version"].replace_one(
-            {},
-            {"version": _SCHEMA_VERSION},
-            upsert=True,
-        )
+        if current == 0:
+            await db["llmbroker_schema_version"].replace_one(
+                {},
+                {"version": _SCHEMA_VERSION},
+                upsert=True,
+            )
         _schema_ready.add(id(db))

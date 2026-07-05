@@ -1,12 +1,13 @@
 """Router: route one completion over the pool with per-LLM failover.
 
 Acquires a free slot, calls the provider, and on a 429/503 cools that LLM down
-and tries the next free one; every attempt is recorded to telemetry.
+and tries the next free one; every attempt is recorded to the journal.
 """
 
 import logging
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -14,7 +15,7 @@ from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.result import AsyncResult
 from llmbroker.chat import call_provider, is_rate_limit, retry_after_seconds
 from llmbroker.exceptions import AllLLMsFailedError, NoLLMAvailableError
-from llmbroker.models import Call, CallStatus, LLMConfig, Usage
+from llmbroker.models import Call, CallStatus, LLMConfig, Usage, key_hash
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.telemetry import TelemetryProtocol
 
@@ -32,12 +33,12 @@ class Router:
         pool: LLMPool,
         telemetry: TelemetryProtocol,
         *,
-        user_id: int | str | None,
+        scope: str | None,
         optimizer: Optimizer | None = None,
     ) -> None:
         self._pool = pool
         self._telemetry = telemetry
-        self._user_id = user_id
+        self._scope = scope
         self._optimizer = optimizer
 
     async def ask(
@@ -80,9 +81,6 @@ class Router:
             except TimeoutError as exc:
                 raise NoLLMAvailableError("no LLM slot came free within wait") from exc
 
-            if await self._pool.apply_shared_cooling(config):
-                continue
-
             result = await self._attempt(
                 config,
                 messages,
@@ -112,14 +110,21 @@ class Router:
         """Run one LLM. Return its result, or ``None`` to signal 'try the next LLM'."""
         call_id = str(uuid.uuid4())
         t0 = time.monotonic()
+        resolved_key = self._pool.resolved_key(config.name)
 
-        async def record(
+        async def record(  # noqa: PLR0913
             status: CallStatus,
             *,
             http_status: int | None = None,
             error_detail: str | None = None,
             usage: Usage | None = None,
+            cooldown_delay: float | None = None,
         ) -> None:
+            cooldown_until = (
+                datetime.now(UTC) + timedelta(seconds=cooldown_delay)
+                if cooldown_delay is not None
+                else None
+            )
             await self._log_call(
                 Call(
                     id=call_id,
@@ -127,23 +132,26 @@ class Router:
                     operation=operation,
                     trace_id=trace_id,
                     status=status,
+                    ts=datetime.now(UTC),
                     http_status=http_status,
                     latency_ms=int((time.monotonic() - t0) * 1000),
                     error_detail=error_detail,
                     usage=usage,
-                    user_id=self._user_id,
+                    scope=self._scope,
+                    cooldown_until=cooldown_until,
+                    key_hash=key_hash(resolved_key) if cooldown_delay is not None else None,
                 ),
             )
 
         # Read before record() is awaited (which increments rl_fail_count via
-        # OptimizerTelemetry), so the first failure in a streak always sees exponent 0.
+        # the learning hook), so the first failure in a streak always sees exponent 0.
         fails_before = self._optimizer.rl_fail_count(config.name) if self._optimizer else 0
         backoff = self._optimizer.backoff_factor**fails_before if self._optimizer else 1.0
 
         try:
             content, tool_calls, usage = await call_provider(
                 config,
-                self._pool.resolved_key(config.name),
+                resolved_key,
                 messages,
                 tools,
             )
@@ -153,20 +161,25 @@ class Router:
             if is_rate_limit(code):
                 status = CallStatus.RATE_LIMITED if code == HTTP_429 else CallStatus.UNAVAILABLE
                 base = retry_after_seconds(exc.response.headers, _DEFAULT_RATE_LIMIT_SEC)
-                await self._pool.cool_down(config, self._capped_wait(base, backoff))
-                await record(status, http_status=code, error_detail=detail)
+                delay = self._capped_wait(base, backoff)
+                await self._pool.cool_down(config, delay)
+                await record(status, http_status=code, error_detail=detail, cooldown_delay=delay)
             else:
-                await self._pool.cool_down(
-                    config,
-                    self._capped_wait(_DEFAULT_RATE_LIMIT_SEC, backoff),
+                delay = self._capped_wait(_DEFAULT_RATE_LIMIT_SEC, backoff)
+                await self._pool.cool_down(config, delay)
+                await record(
+                    CallStatus.ERROR,
+                    http_status=code,
+                    error_detail=detail,
+                    cooldown_delay=delay,
                 )
-                await record(CallStatus.ERROR, http_status=code, error_detail=detail)
             if wait == 0:
                 raise NoLLMAvailableError(f"{config.name} failed and wait=0") from exc
             return None
         except (httpx.TimeoutException, httpx.ConnectError, OSError) as exc:
-            await self._pool.cool_down(config, self._capped_wait(_DEFAULT_RATE_LIMIT_SEC, backoff))
-            await record(CallStatus.ERROR, error_detail=type(exc).__name__)
+            delay = self._capped_wait(_DEFAULT_RATE_LIMIT_SEC, backoff)
+            await self._pool.cool_down(config, delay)
+            await record(CallStatus.ERROR, error_detail=type(exc).__name__, cooldown_delay=delay)
             if wait == 0:
                 raise NoLLMAvailableError(f"{config.name} failed and wait=0") from exc
             return None
@@ -180,6 +193,7 @@ class Router:
             usage=usage,
             call_id=call_id,
             llm_name=config.name,
+            operation=operation,
             telemetry=self._telemetry,
             pool=self._pool,
         )

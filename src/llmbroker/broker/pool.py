@@ -13,6 +13,9 @@ with the same demotion verdict, curated priority wins (``_Slot.order``, the
 model's position in the registry/preset — lower is better). Demotion is soft
 (consulted at acquire time, never withdraws a slot) — only ``disabled`` and a
 missing key make a slot unavailable.
+
+There is no separate state store: cooldowns are local until a peer's failure
+surfaces through the journal rebuild, which calls ``apply_peer_cooldowns``.
 """
 
 import asyncio
@@ -23,11 +26,8 @@ from datetime import UTC, datetime, timedelta
 
 from llmbroker.models import LifecyclePhase, LLMConfig, LLMState
 from llmbroker.optimizer import Optimizer
-from llmbroker.protocols.state_store import StateStoreProtocol
 
 logger = logging.getLogger("llmbroker.broker")
-
-_STORE_CACHE_TTL = 2.0  # seconds
 
 
 @dataclass
@@ -46,21 +46,11 @@ class _Slot:
 class LLMPool:
     """The pool of LLM slots and their live cooldown / quality state."""
 
-    def __init__(
-        self,
-        state_store: StateStoreProtocol | None,
-        user_id: int | str | None,
-        *,
-        optimizer: Optimizer | None = None,
-    ) -> None:
+    def __init__(self, *, optimizer: Optimizer | None = None) -> None:
         self._slots: dict[str, _Slot] = {}
         self._cond = asyncio.Condition()
         self._next_order = 0
-        self._state_store = state_store
-        self._user_id = user_id
         self._optimizer = optimizer
-        self._store_cache: dict[str, LLMState] | None = None
-        self._store_cache_expires: float = 0.0
 
     # ------------------------------------------------------------------
     # Membership / lookup
@@ -212,7 +202,7 @@ class LLMPool:
             slot.cooldown_until = None
 
     async def cool_down(self, config: LLMConfig, delay: float) -> None:
-        """Withdraw the slot for ``delay`` seconds, persisting the new state."""
+        """Withdraw the slot for ``delay`` seconds."""
         cooldown_until = datetime.now(UTC) + timedelta(seconds=delay)
         async with self._cond:
             slot = self._slots.get(config.name)
@@ -221,13 +211,6 @@ class LLMPool:
                 slot.fail_count += 1
                 slot.in_flight = max(0, slot.in_flight - 1)
             self._cond.notify_all()
-        if slot is not None and self._state_store is not None:
-            await self._state_store.write(
-                config.name,
-                self.state(config.name),
-                self._user_id,
-            )
-            self._store_cache = None
         logger.warning("LLM %s cooling for %ds", config.name, delay)
 
     def mark_quality_fail(self, name: str) -> None:
@@ -252,60 +235,30 @@ class LLMPool:
             fail_count=slot.fail_count,
         )
 
-    async def stored_states(self) -> dict[str, LLMState]:
-        """Read persisted per-LLM state from the store, or ``{}`` if none configured."""
-        if self._state_store is None:
-            return {}
-        return await self._state_store.read(self._user_id)
+    async def apply_peer_cooldowns(
+        self,
+        cooldowns: dict[str, datetime],
+        fail_counts: dict[str, int] | None = None,
+    ) -> None:
+        """Raise each named slot's ``cooldown_until`` to at least the given value.
 
-    async def _get_store_cache(self) -> dict[str, LLMState]:
-        now = time.monotonic()
-        if self._store_cache is not None and now < self._store_cache_expires:
-            return self._store_cache
-        self._store_cache = await self.stored_states()
-        self._store_cache_expires = now + _STORE_CACHE_TTL
-        return self._store_cache
-
-    @staticmethod
-    def _active_shared_cooldown(stored: LLMState | None, now: datetime) -> datetime | None:
-        """The stored cooldown_until, or ``None`` if it does not represent an active cooldown.
-
-        A naive cooldown_until can't be compared to an aware ``now``; treat it as "not
-        cooling" rather than risk a TypeError mid-routing.
+        Called from the debounced journal rebuild — never lowers an already-later
+        local cooldown, and never touches ``in_flight`` (nothing was acquired in
+        this code path). The peer fail-streak folds in as ``max(local, peer)``.
         """
-        if stored is None or stored.phase is not LifecyclePhase.COOLING:
-            return None
-        if stored.cooldown_until is None or stored.cooldown_until.tzinfo is None:
-            return None
-        if stored.cooldown_until <= now:
-            return None
-        return stored.cooldown_until
-
-    async def apply_shared_cooling(self, config: LLMConfig) -> bool:
-        """Return True if shared store shows this LLM cooling and the slot was deferred.
-
-        The caller must have already acquired ``config`` via ``acquire()`` (so its
-        slot is marked in-flight); this clears that claim and marks it cooling instead.
-        """
-        if self._state_store is None:
-            return False
-        try:
-            shared = await self._get_store_cache()
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "LLM %s: shared-state read failed; proceeding without shared cooling",
-                config.name,
-            )
-            return False
-        now_utc = datetime.now(UTC)
-        stored = shared.get(config.name)
-        cooldown_until = self._active_shared_cooldown(stored, now_utc)
-        slot = self._slots.get(config.name)
-        if cooldown_until is None or slot is None or stored is None:
-            return False
-        slot.fail_count = max(slot.fail_count, stored.fail_count)
-        slot.cooldown_until = cooldown_until
-        slot.in_flight = max(0, slot.in_flight - 1)
-        delay = (cooldown_until - now_utc).total_seconds()
-        logger.info("LLM %s: shared cooldown applied, %.0fs remaining", config.name, delay)
-        return True
+        fail_counts = fail_counts or {}
+        async with self._cond:
+            changed = False
+            for name, until in cooldowns.items():
+                slot = self._slots.get(name)
+                if slot is None:
+                    continue
+                if slot.cooldown_until is None or until > slot.cooldown_until:
+                    slot.cooldown_until = until
+                    changed = True
+            for name, count in fail_counts.items():
+                slot = self._slots.get(name)
+                if slot is not None and count > slot.fail_count:
+                    slot.fail_count = count
+            if changed:
+                self._cond.notify_all()

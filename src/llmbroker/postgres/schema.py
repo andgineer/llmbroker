@@ -2,14 +2,17 @@
 
 ``ensure_schema`` is the single authority for the package's postgres tables.
 Every object is ``llmbroker_``-prefixed. Idempotent: safe to call repeatedly.
-The schema version is tracked via ``llmbroker_schema_version``.
+The schema version is tracked via ``llmbroker_schema_version``. One known
+installation, upgraded manually — on a fresh database the schema is created
+and stamped; on a version-marker mismatch ``ensure_schema`` fails fast with an
+actionable error instead of attempting an in-place migration.
 """
 
 import asyncio
 
 import asyncpg
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 _schema_ready: set[int] = set()
 _schema_lock = asyncio.Lock()
 
@@ -26,10 +29,6 @@ CREATE TABLE IF NOT EXISTS llmbroker_schema_version (
 )\
 """
 
-# State/summaries are live caches rebuilt from traffic; no data migration needed.
-_DROP_STATE = "DROP TABLE IF EXISTS llmbroker_state"
-_DROP_SUMMARIES = "DROP TABLE IF EXISTS llmbroker_summaries"
-
 _DDL = """\
 CREATE TABLE IF NOT EXISTS llmbroker_registry (
     id          BIGSERIAL PRIMARY KEY,
@@ -37,6 +36,7 @@ CREATE TABLE IF NOT EXISTS llmbroker_registry (
     base_url    TEXT NOT NULL,
     model       TEXT NOT NULL,
     api_key_ref TEXT NOT NULL,
+    metadata    JSONB,
     user_id     TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS llmbroker_registry_unique
@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS llmbroker_calls (
     llm_name          TEXT NOT NULL,
     operation         TEXT,
     trace_id          TEXT,
-    status            TEXT NOT NULL,
+    status            TEXT,
+    kind              TEXT NOT NULL DEFAULT 'call',
     http_status       INTEGER,
     latency_ms        INTEGER,
     error_detail      TEXT,
@@ -55,12 +56,18 @@ CREATE TABLE IF NOT EXISTS llmbroker_calls (
     total_tokens      INTEGER,
     usage_extra       TEXT,
     quality_score     DOUBLE PRECISION,
+    call_id           TEXT,
     called_at         TIMESTAMPTZ NOT NULL,
-    user_id           TEXT
+    scope             TEXT,
+    cooldown_until    TIMESTAMPTZ,
+    key_hash          TEXT
 );
 CREATE INDEX IF NOT EXISTS llmbroker_idx_calls_llm_name ON llmbroker_calls(llm_name);
 CREATE INDEX IF NOT EXISTS llmbroker_idx_calls_called_at ON llmbroker_calls(called_at);
-CREATE INDEX IF NOT EXISTS llmbroker_idx_calls_user_id  ON llmbroker_calls(user_id);
+CREATE TABLE IF NOT EXISTS llmbroker_disabled (
+    name     TEXT PRIMARY KEY,
+    disabled BOOLEAN NOT NULL DEFAULT FALSE
+);
 CREATE TABLE IF NOT EXISTS llmbroker_secrets (
     id      BIGSERIAL PRIMARY KEY,
     ref     TEXT NOT NULL,
@@ -91,10 +98,9 @@ CREATE TABLE IF NOT EXISTS llmbroker_summaries (
 CREATE UNIQUE INDEX IF NOT EXISTS llmbroker_summaries_unique
     ON llmbroker_summaries(name, COALESCE(operation, ''), kind, COALESCE(user_id, ''));\
 """
-
-_ADD_REGISTRY_METADATA = "ALTER TABLE llmbroker_registry ADD COLUMN IF NOT EXISTS metadata JSONB"
-
-_ADD_REGISTRY_PROFILE = "ALTER TABLE llmbroker_registry ADD COLUMN IF NOT EXISTS profile JSONB"
+# llmbroker_state / llmbroker_summaries are unused by the broker (shared cooldowns
+# derive from the journal) but kept so the standalone postgres.StateStore class stays
+# functional until it is deleted outright.
 
 _UPSERT_VERSION = """\
 INSERT INTO llmbroker_schema_version (id, version)
@@ -119,12 +125,13 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
             await conn.execute(_CREATE_VERSION_TABLE)
             row = await conn.fetchrow("SELECT version FROM llmbroker_schema_version WHERE id = 1")
             current = int(row["version"]) if row else 0
-            if current < _SCHEMA_VERSION:
-                await conn.execute(_DROP_STATE)
-                await conn.execute(_DROP_SUMMARIES)
+            if current not in (0, _SCHEMA_VERSION):
+                raise RuntimeError(
+                    f"llmbroker schema version {current} found, this release expects"
+                    f" {_SCHEMA_VERSION} — drop the llmbroker_* tables and restart"
+                    " (export registry/secrets/calls first if you need them)",
+                )
             await conn.execute(_DDL)
-            if current < _SCHEMA_VERSION:
-                await conn.execute(_ADD_REGISTRY_METADATA)
-                await conn.execute(_ADD_REGISTRY_PROFILE)
+            if current == 0:
                 await conn.execute(_UPSERT_VERSION, _SCHEMA_VERSION)
         _schema_ready.add(id(pool))

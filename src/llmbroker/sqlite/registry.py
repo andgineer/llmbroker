@@ -6,7 +6,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from llmbroker.models import LLMConfig, LLMProfile, check_user_id
+from llmbroker.models import LLMConfig, check_user_id
 from llmbroker.sqlite.schema import ensure_schema
 
 
@@ -108,38 +108,6 @@ class Registry:
             cursor = await db.execute(
                 "DELETE FROM llmbroker_registry WHERE name = ? AND user_id IS ?",
                 [name, user_id],
-            )
-            if cursor.rowcount == 0:
-                raise KeyError(name)
-            await db.commit()
-
-    async def read_profiles(self, user_id: int | str | None = None) -> dict[str, LLMProfile]:
-        check_user_id(user_id)
-        async with aiosqlite.connect(self._db_path) as db:
-            await ensure_schema(db, self._db_path)
-            rows = await (
-                await db.execute(
-                    "SELECT name, profile FROM llmbroker_registry WHERE user_id IS ?",
-                    [user_id],
-                )
-            ).fetchall()
-        return {
-            str(r[0]): LLMProfile.from_dict(json.loads(r[1])) if r[1] else LLMProfile()
-            for r in rows
-        }
-
-    async def write_profile(
-        self,
-        name: str,
-        profile: LLMProfile,
-        user_id: int | str | None = None,
-    ) -> None:
-        check_user_id(user_id)
-        async with aiosqlite.connect(self._db_path) as db:
-            await ensure_schema(db, self._db_path)
-            cursor = await db.execute(
-                "UPDATE llmbroker_registry SET profile=? WHERE name=? AND user_id IS ?",
-                [json.dumps(profile.to_dict()), name, user_id],
             )
             if cursor.rowcount == 0:
                 raise KeyError(name)

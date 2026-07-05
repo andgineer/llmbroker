@@ -1,12 +1,13 @@
-"""SQLite-backed queryable telemetry over ``llmbroker_calls``."""
+"""SQLite-backed queryable telemetry + admin disabled-map over one DB file."""
 
 import json
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
 import aiosqlite
 
-from llmbroker.models import Call, CallStatus, LLMMetrics, Usage, check_user_id
+from llmbroker.models import Call, CallStatus, LLMMetrics, Usage
 from llmbroker.sqlite.schema import ensure_schema
 
 
@@ -24,6 +25,7 @@ def _call_from_row(row) -> Call:  # noqa: ANN001
         operation,
         trace_id,
         status,
+        kind,
         http_status,
         latency_ms,
         error_detail,
@@ -32,7 +34,11 @@ def _call_from_row(row) -> Call:  # noqa: ANN001
         total_tokens,
         usage_extra,
         quality_score,
-        user_id,
+        call_id,
+        called_at,
+        scope,
+        cooldown_until,
+        key_hash_val,
     ) = row
     extra = json.loads(usage_extra) if usage_extra else None
     usage = None
@@ -48,18 +54,31 @@ def _call_from_row(row) -> Call:  # noqa: ANN001
         llm_name=str(llm_name),
         operation=operation,
         trace_id=trace_id,
-        status=CallStatus(status),
+        status=CallStatus(status) if status is not None else None,
+        kind=str(kind),
+        ts=datetime.fromisoformat(called_at) if called_at else None,
         http_status=http_status,
         latency_ms=latency_ms,
         error_detail=error_detail,
         usage=usage,
         quality_score=quality_score,
-        user_id=user_id,
+        call_id=call_id,
+        scope=scope,
+        cooldown_until=datetime.fromisoformat(cooldown_until) if cooldown_until else None,
+        key_hash=key_hash_val,
     )
 
 
+_SELECT_COLUMNS = (
+    "id, llm_name, operation, trace_id, status, kind, http_status, latency_ms,"
+    " error_detail, prompt_tokens, completion_tokens, total_tokens, usage_extra,"
+    " quality_score, call_id, called_at, scope, cooldown_until, key_hash"
+)
+
+
 class Telemetry:
-    """SQLite-backed queryable telemetry over ``llmbroker_calls``."""
+    """SQLite-backed queryable telemetry over ``llmbroker_calls`` + the
+    ``llmbroker_disabled`` admin verdict map."""
 
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)
@@ -70,16 +89,17 @@ class Telemetry:
             await ensure_schema(db, self._db_path)
             await db.execute(
                 "INSERT INTO llmbroker_calls"
-                " (id, llm_name, operation, trace_id, status, http_status, latency_ms,"
+                " (id, llm_name, operation, trace_id, status, kind, http_status, latency_ms,"
                 "  error_detail, prompt_tokens, completion_tokens, total_tokens, usage_extra,"
-                "  quality_score, called_at, user_id)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  quality_score, call_id, called_at, scope, cooldown_until, key_hash)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     call.id,
                     call.llm_name,
                     call.operation,
                     call.trace_id,
-                    call.status.value,
+                    call.status.value if call.status is not None else None,
+                    call.kind,
                     call.http_status,
                     call.latency_ms,
                     call.error_detail,
@@ -88,31 +108,81 @@ class Telemetry:
                     tt,
                     extra,
                     call.quality_score,
-                    datetime.now(UTC).isoformat(),
-                    call.user_id,
+                    call.call_id,
+                    (call.ts or datetime.now(UTC)).isoformat(),
+                    call.scope,
+                    call.cooldown_until.isoformat() if call.cooldown_until else None,
+                    call.key_hash,
                 ],
             )
             await db.commit()
 
-    async def record_quality(self, call_id: str, score: float) -> None:
+    async def record_quality(
+        self,
+        llm_name: str,
+        operation: str | None,
+        score: float,
+        *,
+        call_id: str | None = None,
+    ) -> None:
+        """Append a self-contained quality record — never updates the call row."""
+        await self.record(
+            Call(
+                id=str(uuid.uuid4()),
+                llm_name=llm_name,
+                operation=operation,
+                trace_id=None,
+                status=None,
+                kind="quality",
+                ts=datetime.now(UTC),
+                quality_score=score,
+                call_id=call_id,
+            ),
+        )
+
+    async def calls(self, *, limit: int, scope: str | None = None) -> list[Call]:  # noqa: ARG002
+        """Newest-first tail of the journal, both kinds interleaved — unfiltered by scope
+        (learning is global); ``scope`` is accepted for the host-facing filter only."""
+        async with aiosqlite.connect(self._db_path) as db:
+            await ensure_schema(db, self._db_path)
+            if scope is None:
+                rows = await (
+                    await db.execute(
+                        f"SELECT {_SELECT_COLUMNS} FROM llmbroker_calls"  # noqa: S608
+                        " ORDER BY called_at DESC LIMIT ?",
+                        [limit],
+                    )
+                ).fetchall()
+            else:
+                rows = await (
+                    await db.execute(
+                        f"SELECT {_SELECT_COLUMNS} FROM llmbroker_calls"  # noqa: S608
+                        " WHERE scope = ? ORDER BY called_at DESC LIMIT ?",
+                        [scope, limit],
+                    )
+                ).fetchall()
+        return [_call_from_row(r) for r in rows]
+
+    async def purge_calls(self, *, before: datetime) -> int:
+        """Delete all calls older than *before*, across all scopes. Admin operation."""
         async with aiosqlite.connect(self._db_path) as db:
             await ensure_schema(db, self._db_path)
             cursor = await db.execute(
-                "UPDATE llmbroker_calls SET quality_score = ? WHERE id = ?",
-                [score, call_id],
+                "DELETE FROM llmbroker_calls WHERE called_at < ?",
+                [before.isoformat()],
             )
-            if cursor.rowcount == 0:
-                raise KeyError(call_id)
             await db.commit()
+            return cursor.rowcount
 
     async def metrics(
         self,
         *,
         since: datetime | None = None,
         user_id: int | str | None = None,
-    ) -> dict[str, LLMMetrics]:
-        check_user_id(user_id)
-        conditions: list[str] = ["user_id IS ?"]
+    ) -> dict:
+        """Unused by the broker (metrics are served from the rebuild's cached tail);
+        kept for hosts that want a direct read."""
+        conditions: list[str] = ["scope IS ?", "kind = 'call'"]
         params: list = [user_id]
         if since is not None:
             conditions.append("called_at >= ?")
@@ -133,14 +203,14 @@ class Telemetry:
                 inner_params: list = [name, user_id]
                 inner_sql = (
                     "SELECT status FROM llmbroker_calls"  # noqa: S608
-                    " WHERE llm_name = ? AND user_id IS ?"
+                    " WHERE llm_name = ? AND scope IS ? AND kind = 'call'"
                 )
                 if since is not None:
                     inner_sql += " AND called_at >= ?"
                     inner_params.append(since.isoformat())
                 inner_sql += " ORDER BY called_at DESC LIMIT 1"
                 last = await (await db.execute(inner_sql, inner_params)).fetchone()
-                last_status = CallStatus(last[0]) if last else None
+                last_status = CallStatus(last[0]) if last and last[0] else None
                 last_at = datetime.fromisoformat(r[2]) if r[2] else None
                 result[name] = LLMMetrics(
                     call_count=int(r[1]),
@@ -149,36 +219,48 @@ class Telemetry:
                 )
         return result
 
-    async def calls(
-        self,
-        *,
-        limit: int,
-        user_id: int | str | None = None,
-    ) -> list[Call]:
-        check_user_id(user_id)
+    # ------------------------------------------------------------------
+    # Admin disabled-verdict map
+    # ------------------------------------------------------------------
+
+    async def get_disabled(self, name: str) -> bool:
+        async with aiosqlite.connect(self._db_path) as db:
+            await ensure_schema(db, self._db_path)
+            row = await (
+                await db.execute(
+                    "SELECT disabled FROM llmbroker_disabled WHERE name = ?",
+                    [name],
+                )
+            ).fetchone()
+        return bool(row[0]) if row else False
+
+    async def set_disabled(self, name: str, flag: bool) -> None:  # noqa: FBT001
+        async with aiosqlite.connect(self._db_path) as db:
+            await ensure_schema(db, self._db_path)
+            await db.execute(
+                "INSERT INTO llmbroker_disabled (name, disabled) VALUES (?, ?)"
+                " ON CONFLICT(name) DO UPDATE SET disabled = excluded.disabled",
+                [name, int(flag)],
+            )
+            await db.commit()
+
+    async def seed_disabled(self, names: list[str]) -> None:
+        """Insert-if-absent every name with ``disabled=False`` — never touches existing values."""
+        async with aiosqlite.connect(self._db_path) as db:
+            await ensure_schema(db, self._db_path)
+            await db.executemany(
+                "INSERT OR IGNORE INTO llmbroker_disabled (name, disabled) VALUES (?, 0)",
+                [(name,) for name in names],
+            )
+            await db.commit()
+
+    async def disabled_map(self) -> dict[str, bool]:
         async with aiosqlite.connect(self._db_path) as db:
             await ensure_schema(db, self._db_path)
             rows = await (
-                await db.execute(
-                    "SELECT id, llm_name, operation, trace_id, status, http_status, latency_ms,"  # noqa: S608
-                    " error_detail, prompt_tokens, completion_tokens, total_tokens, usage_extra,"
-                    " quality_score, user_id FROM llmbroker_calls"
-                    " WHERE user_id IS ? ORDER BY called_at DESC LIMIT ?",
-                    [user_id, limit],
-                )
+                await db.execute("SELECT name, disabled FROM llmbroker_disabled")
             ).fetchall()
-        return [_call_from_row(r) for r in rows]
-
-    async def purge_calls(self, *, before: datetime) -> int:
-        """Delete all calls older than *before*, across all users. Admin operation."""
-        async with aiosqlite.connect(self._db_path) as db:
-            await ensure_schema(db, self._db_path)
-            cursor = await db.execute(
-                "DELETE FROM llmbroker_calls WHERE called_at < ?",
-                [before.isoformat()],
-            )
-            await db.commit()
-            return cursor.rowcount
+        return {str(r[0]): bool(r[1]) for r in rows}
 
     async def aclose(self) -> None:
         return

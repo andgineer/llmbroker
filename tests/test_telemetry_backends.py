@@ -7,14 +7,14 @@ import pytest
 from llmbroker.models import Call, CallStatus, Usage
 
 
-def _call(call_id="c1", llm_name="p1", user_id=None, **kw):
+def _call(call_id="c1", llm_name="p1", scope=None, **kw):
     return Call(
         id=call_id,
         llm_name=llm_name,
         operation=None,
         trace_id=None,
         status=CallStatus.OK,
-        user_id=user_id,
+        scope=scope,
         **kw,
     )
 
@@ -33,12 +33,20 @@ async def test_calls_respects_limit(queryable_telemetry):
     assert len(calls) == 3
 
 
-async def test_calls_user_id_scoping(queryable_telemetry):
-    await queryable_telemetry.record(_call("ca", user_id="alice"))
-    await queryable_telemetry.record(_call("cb", user_id="bob"))
-    alice_calls = await queryable_telemetry.calls(limit=10, user_id="alice")
+async def test_calls_scope_filter(queryable_telemetry):
+    await queryable_telemetry.record(_call("ca", scope="alice"))
+    await queryable_telemetry.record(_call("cb", scope="bob"))
+    alice_calls = await queryable_telemetry.calls(limit=10, scope="alice")
     assert len(alice_calls) == 1
     assert alice_calls[0].id == "ca"
+
+
+async def test_calls_unscoped_read_spans_all_scopes(queryable_telemetry):
+    """The rebuild's tail read is unscoped — learning is global."""
+    await queryable_telemetry.record(_call("ca", scope="alice"))
+    await queryable_telemetry.record(_call("cb", scope="bob"))
+    all_calls = await queryable_telemetry.calls(limit=10)
+    assert {c.id for c in all_calls} == {"ca", "cb"}
 
 
 async def test_calls_roundtrips_usage_with_extra(queryable_telemetry):
@@ -57,16 +65,23 @@ async def test_calls_none_usage_roundtrips_as_none(queryable_telemetry):
     assert calls[0].usage is None
 
 
-async def test_record_quality_updates_score(queryable_telemetry):
-    await queryable_telemetry.record(_call())
-    await queryable_telemetry.record_quality("c1", 0.8)
-    calls = await queryable_telemetry.calls(limit=1)
-    assert calls[0].quality_score == pytest.approx(0.8)
+async def test_record_quality_appends_self_contained_row(queryable_telemetry):
+    """record_quality appends its own journal row — never updates the call row."""
+    await queryable_telemetry.record(_call("c1"))
+    await queryable_telemetry.record_quality("p1", "summarize", 0.8, call_id="c1")
 
+    rows = await queryable_telemetry.calls(limit=10)
+    assert len(rows) == 2
+    quality_rows = [r for r in rows if r.kind == "quality"]
+    assert len(quality_rows) == 1
+    assert quality_rows[0].quality_score == pytest.approx(0.8)
+    assert quality_rows[0].llm_name == "p1"
+    assert quality_rows[0].operation == "summarize"
+    assert quality_rows[0].call_id == "c1"
+    assert quality_rows[0].status is None
 
-async def test_record_quality_missing_raises_key_error(queryable_telemetry):
-    with pytest.raises(KeyError):
-        await queryable_telemetry.record_quality("nonexistent", 1.0)
+    call_rows = [r for r in rows if r.kind == "call"]
+    assert call_rows[0].quality_score is None
 
 
 async def test_purge_calls_removes_old_records(queryable_telemetry):
@@ -98,8 +113,8 @@ async def test_metrics_since_filters_past_calls(queryable_telemetry):
 
 
 async def test_metrics_user_id_scoping(queryable_telemetry):
-    await queryable_telemetry.record(_call("ca", llm_name="llm1", user_id="alice"))
-    await queryable_telemetry.record(_call("cb", llm_name="llm1", user_id="bob"))
+    await queryable_telemetry.record(_call("ca", llm_name="llm1", scope="alice"))
+    await queryable_telemetry.record(_call("cb", llm_name="llm1", scope="bob"))
     m_alice = await queryable_telemetry.metrics(user_id="alice")
     m_bob = await queryable_telemetry.metrics(user_id="bob")
     m_unscoped = await queryable_telemetry.metrics()

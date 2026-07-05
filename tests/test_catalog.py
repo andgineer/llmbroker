@@ -9,7 +9,7 @@ import llmbroker.sqlite
 from llmbroker.broker import AsyncBroker
 from llmbroker.broker.catalog import Catalog, apply_seed
 from llmbroker.broker.pool import LLMPool
-from llmbroker.models import LLMConfig, LLMProfile, Origin, SeedPolicy
+from llmbroker.models import LLMConfig, Origin, SeedPolicy
 from llmbroker.standalone.registry import Registry as TomlRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.telemetry import NoTelemetry
@@ -33,12 +33,6 @@ class _MutableRegistry:
 
     async def remove(self, name, user_id=None):
         self._store.pop(name, None)
-
-    async def read_profiles(self, user_id=None):
-        return {}
-
-    async def write_profile(self, name, profile, user_id=None):
-        pass
 
 
 class _ReadOnlyRegistry:
@@ -136,14 +130,14 @@ def test_mirror_updates_existing():
 
 def test_unresolved_key_logs_info_not_warning(caplog):
     async def run():
-        pool = LLMPool(state_store=None, user_id=None)
+        pool = LLMPool()
         catalog = Catalog(
             _ReadOnlyRegistry([_cfg("p1")]),
             _NoSecrets(),
             pool,
             seed=None,
             seed_policy=SeedPolicy.IF_EMPTY,
-            user_id=None,
+            scope=None,
         )
         with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
             await catalog.provision()
@@ -326,14 +320,14 @@ def test_catalog_update_stamps_origin_user():
 
     async def run():
         registry = _MutableRegistry()
-        pool = LLMPool(state_store=None, user_id=None)
+        pool = LLMPool()
         catalog = Catalog(
             registry,
             _NoSecrets(),
             pool,
             seed=None,
             seed_policy=SeedPolicy.SYNC,
-            user_id=None,
+            scope=None,
         )
         await catalog.add(_cfg("p1"))
         await catalog.update(_cfg("p1", "https://new/v1"))
@@ -350,14 +344,14 @@ def test_sync_leaves_updated_user_model_alone():
 
     async def run():
         registry = _MutableRegistry()
-        pool = LLMPool(state_store=None, user_id=None)
+        pool = LLMPool()
         catalog = Catalog(
             registry,
             _NoSecrets(),
             pool,
             seed=None,
             seed_policy=SeedPolicy.SYNC,
-            user_id=None,
+            scope=None,
         )
         await catalog.add(_cfg("p1"))
         await catalog.update(_cfg("p1", "https://mine/v1"))
@@ -415,7 +409,7 @@ async def test_manual_latch_survives_sync_reseed(tmp_path):
             name="p1", base_url="https://x/v1", model="m", api_key_ref="K", origin=Origin.PRESET
         ),
     )
-    await reg.write_profile("p1", LLMProfile(benched=True, benched_reason="manual review"))
+    await llmbroker.sqlite.Telemetry(db).set_disabled("p1", True)
 
     seed_path = tmp_path / "preset.toml"
     seed_path.write_text(
@@ -425,11 +419,9 @@ async def test_manual_latch_survives_sync_reseed(tmp_path):
     async with AsyncBroker(
         registry=llmbroker.sqlite.Registry(db),
         secrets=DictSecrets({"K": "key"}),
-        telemetry=NoTelemetry(),
+        telemetry=llmbroker.sqlite.Telemetry(db),
         seed=TomlRegistry(seed_path),
         seed_policy=SeedPolicy.SYNC,
     ) as broker:
         assert broker._pool.is_disabled("p1")
-        profiles = await reg.read_profiles()
-        assert profiles["p1"].benched is True
-        assert profiles["p1"].benched_reason == "manual review"
+        assert await llmbroker.sqlite.Telemetry(db).get_disabled("p1") is True

@@ -8,7 +8,6 @@ state directly on its slots.
 import asyncio
 from datetime import UTC, datetime, timedelta
 
-import llmbroker
 import llmbroker.sqlite
 import pytest
 
@@ -173,51 +172,5 @@ def test_sqlite_state_store_user_id_none_unscoped(tmp_path):
         result = await store.read()
         assert list(result) == ["shared"]
         assert result["shared"].fail_count == 5
-
-    asyncio.run(run())
-
-
-def test_cooldown_persisted_in_sqlite_survives_broker_restart(tmp_path):
-    """A cooldown in the sqlite StateStore is visible to a second broker on the same DB.
-
-    Exercises the full sqlite round-trip through the public broker API
-    (StateStore.write -> broker.snapshot()), simulating a process restart
-    or a second worker reading shared cooldown state.
-    """
-    db = str(tmp_path / "state.db")
-    toml = tmp_path / "llms.toml"
-    toml.write_text('[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n')
-    cooldown_until = datetime.now(UTC) + timedelta(seconds=300)
-
-    def _broker():
-        return llmbroker.AsyncBroker(
-            registry=llmbroker.sqlite.Registry(db),
-            secrets=llmbroker.sqlite.Secrets(db),
-            state_store=llmbroker.sqlite.StateStore(db),
-            seed=llmbroker.Registry(toml),
-            seed_policy=llmbroker.SeedPolicy.ADD,
-        )
-
-    async def run():
-        store = llmbroker.sqlite.StateStore(db)
-        broker_a = _broker()
-        await broker_a.ensure_pool()
-        await store.write(
-            "p1",
-            LLMState(phase=LifecyclePhase.COOLING, cooldown_until=cooldown_until, fail_count=3),
-        )
-        await broker_a.aclose()
-
-        broker_b = _broker()
-        await broker_b.ensure_pool()
-        snap = await broker_b.snapshot()
-        await broker_b.aclose()
-
-        assert "p1" in snap
-        state = snap["p1"].state
-        assert state.phase is LifecyclePhase.COOLING
-        assert state.fail_count == 3
-        assert state.cooldown_until is not None
-        assert state.cooldown_until > datetime.now(UTC)
 
     asyncio.run(run())

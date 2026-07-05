@@ -2,21 +2,13 @@
 quality-window demotion verdicts feeding the pool's demoted-last selection order."""
 
 import logging
-from collections import OrderedDict, deque
+from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime
 from statistics import NormalDist
-from typing import TYPE_CHECKING
 
-from llmbroker.models import Alert, Call, CallStatus, LLMMetrics
-from llmbroker.protocols.telemetry import QueryableTelemetryProtocol, TelemetryProtocol
-
-if TYPE_CHECKING:
-    from llmbroker.broker.pool import LLMPool
+from llmbroker.models import Alert
 
 logger = logging.getLogger("llmbroker.broker")
-
-_CALL_INDEX_CAP = 10_000
 
 
 def _z_score(confidence: float) -> float:
@@ -138,97 +130,3 @@ class Optimizer:
             logger.warning("%s: quality-demoted for operation=%r", llm_name, operation)
         else:
             logger.info("%s: quality demotion cleared for operation=%r", llm_name, operation)
-
-
-class OptimizerTelemetry:
-    """Wraps any TelemetryProtocol and drives Optimizer bookkeeping from the live event stream."""
-
-    def __init__(
-        self,
-        optimizer: Optimizer,
-        inner: TelemetryProtocol,
-        pool: "LLMPool",
-    ) -> None:
-        self._opt = optimizer
-        self._inner = inner
-        self._pool = pool
-        self._call_index: OrderedDict[str, tuple[str, str | None]] = OrderedDict()
-
-    async def record(self, call: Call) -> None:
-        try:
-            await self._inner.record(call)
-        finally:
-            self._call_index[call.id] = (call.llm_name, call.operation)
-            if len(self._call_index) > _CALL_INDEX_CAP:
-                self._call_index.popitem(last=False)
-            await self._drive_fsm(call)
-
-    def peek_call(self, call_id: str) -> tuple[str, str | None] | None:
-        """The ``(name, operation)`` a not-yet-rated ``call_id`` belongs to, or ``None``.
-
-        Exposed for the broker's live profile-sync path, which needs to know where a
-        rating is headed *before* ``record_quality`` pops the index entry.
-        """
-        return self._call_index.get(call_id)
-
-    async def record_quality(self, call_id: str, score: float) -> None:
-        await self._inner.record_quality(call_id, score)
-        entry = self._call_index.pop(call_id, None)
-        if entry is None:
-            logger.warning(
-                "record_quality: call %s not indexed (aged out or prior process);"
-                " quality score not aggregated",
-                call_id,
-            )
-            return
-        name, operation = entry
-        self._opt.record_quality(name, operation, score)
-
-    async def metrics(
-        self,
-        *,
-        since: datetime | None = None,
-        user_id: int | str | None = None,
-    ) -> dict[str, LLMMetrics]:
-        if isinstance(self._inner, QueryableTelemetryProtocol):
-            return await self._inner.metrics(since=since, user_id=user_id)
-        return {}
-
-    async def calls(
-        self,
-        *,
-        limit: int,
-        user_id: int | str | None = None,
-    ) -> list[Call]:
-        if isinstance(self._inner, QueryableTelemetryProtocol):
-            return await self._inner.calls(limit=limit, user_id=user_id)
-        return []
-
-    async def purge_calls(self, *, before: datetime) -> int:
-        if isinstance(self._inner, QueryableTelemetryProtocol):
-            return await self._inner.purge_calls(before=before)
-        return 0
-
-    def __getattr__(self, name: str) -> object:
-        return getattr(self._inner, name)
-
-    async def _drive_fsm(self, call: Call) -> None:
-        name = call.llm_name
-
-        if call.status in (CallStatus.RATE_LIMITED, CallStatus.UNAVAILABLE):
-            self._opt.on_rate_limited(name)
-        elif call.status == CallStatus.OK:
-            self._opt.on_success(name)
-        elif call.status == CallStatus.ERROR:
-            if call.http_status in (401, 403):
-                cfg = self._pool.configs.get(name)
-                ref = cfg.api_key_ref if cfg else "unknown"
-                await self._pool.drop(name)
-                msg = (
-                    f"{name}: API key appears dead (HTTP {call.http_status})"
-                    f" — check api_key_ref {ref!r}"
-                )
-                logger.error(msg)
-                self._opt.add_alert(msg)
-            else:
-                self._opt.on_rate_limited(name)

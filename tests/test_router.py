@@ -6,11 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from llmbroker.broker.learning import _LearningHook
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.router import Router
 from llmbroker.exceptions import AllLLMsFailedError, NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
-from llmbroker.optimizer import Optimizer, OptimizerTelemetry
+from llmbroker.optimizer import Optimizer
 from llmbroker.standalone.telemetry import NoTelemetry
 
 
@@ -18,8 +19,8 @@ class _NoTelemetry:
     async def record(self, call):
         pass
 
-    async def record_quality(self, call_id, score):
-        raise KeyError(call_id)
+    async def record_quality(self, llm_name, operation, score, *, call_id=None):
+        pass
 
 
 def _cfg(name="p1"):
@@ -27,20 +28,24 @@ def _cfg(name="p1"):
 
 
 async def _pool(*cfgs, key="secret") -> LLMPool:
-    pool = LLMPool(state_store=None, user_id=None)
+    pool = LLMPool()
     for cfg in cfgs:
         await pool.add(cfg, key)
     return pool
 
 
 def _router(pool: LLMPool) -> Router:
-    return Router(pool, _NoTelemetry(), user_id=None)
+    return Router(pool, _NoTelemetry(), scope=None)
+
+
+async def _noop_resync() -> None:
+    return
 
 
 def _router_with_optimizer(pool: LLMPool, opt: Optimizer) -> Router:
-    """Wire OptimizerTelemetry like AsyncBroker does, so rl_fail_count/retirement drive for real."""
-    telemetry = OptimizerTelemetry(opt, NoTelemetry(), pool)
-    return Router(pool, telemetry, user_id=None, optimizer=opt)
+    """Wire _LearningHook like AsyncBroker does, so rl_fail_count/dead-key drop drive for real."""
+    telemetry = _LearningHook(opt, NoTelemetry(), pool, _noop_resync)
+    return Router(pool, telemetry, scope=None, optimizer=opt)
 
 
 def _spy_cool_down(pool: LLMPool) -> list[float]:
@@ -92,7 +97,7 @@ def test_zero_keyed_configs_raises_immediately_with_default_wait():
     the default wait=None forever — the check runs before any slot acquisition."""
 
     async def run():
-        pool = LLMPool(state_store=None, user_id=None)
+        pool = LLMPool()
         await pool.add(_cfg(), None)  # keyless — never acquirable
         router = _router(pool)
         with pytest.raises(AllLLMsFailedError, match="api_key_ref"):
@@ -107,7 +112,7 @@ def test_mixed_keyed_and_keyless_pool_routes_over_keyed_only():
 
     async def run():
         keyed, keyless = _cfg("keyed"), _cfg("keyless")
-        pool = LLMPool(state_store=None, user_id=None)
+        pool = LLMPool()
         await pool.add(keyed, "secret")
         await pool.add(keyless, None)
         router = _router(pool)
@@ -211,38 +216,9 @@ def test_dropped_slot_mid_flight_is_skipped_by_release():
 
 def test_empty_pool_wait0_raises_no_llm_available():
     async def run():
-        router = _router(LLMPool(state_store=None, user_id=None))
+        router = _router(LLMPool())
         with pytest.raises(NoLLMAvailableError):
             await router.chat([{"role": "user", "content": "hi"}], wait=0)
-
-    asyncio.run(run())
-
-
-def test_router_skips_slot_shared_cooling():
-    """Router skips a slot when apply_shared_cooling returns True, then proceeds."""
-
-    async def run():
-        cfg = _cfg()
-        pool = await _pool(cfg)
-        router = _router(pool)
-
-        call_count = 0
-
-        async def cooling_effect(c):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                pool._slots[c.name].in_flight = False  # simulate the skip releasing the slot
-                return True
-            return False
-
-        pool.apply_shared_cooling = AsyncMock(side_effect=cooling_effect)
-
-        with patch(_PATCH, new=AsyncMock(return_value=("ok", None, None))):
-            result = await router.chat([{"role": "user", "content": "hi"}])
-
-        assert pool.apply_shared_cooling.call_count == 2
-        assert result.text == "ok"
 
     asyncio.run(run())
 

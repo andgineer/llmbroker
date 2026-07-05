@@ -142,7 +142,7 @@ def test_broker_disable_llm_benches_and_excludes_from_pool(tmp_path):
     db = str(tmp_path / "b.db")
     with Broker(registry=llmbroker.sqlite.Registry(db), telemetry=NoTelemetry()) as broker:
         broker.add(LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K"))
-        broker.disable_llm("p1", reason="manual review")
+        broker.disable_llm("p1")
         assert broker._async._pool.is_disabled("p1")
 
 
@@ -155,19 +155,20 @@ def test_broker_enable_llm_readmits_after_disable(tmp_path):
         assert not broker._async._pool.is_disabled("p1")
 
 
-def test_broker_disable_llm_persists_reason_to_registry(tmp_path):
+def test_broker_disable_llm_persists_to_telemetry_disabled_map(tmp_path):
     db = str(tmp_path / "b.db")
     reg_path = llmbroker.sqlite.Registry(db)
-    with Broker(registry=reg_path, telemetry=NoTelemetry()) as broker:
+    with Broker(
+        registry=reg_path,
+        telemetry=llmbroker.sqlite.Telemetry(db),
+    ) as broker:
         broker.add(LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K"))
-        broker.disable_llm("p1", reason="manual review")
+        broker.disable_llm("p1")
 
     async def read_back():
-        return await llmbroker.sqlite.Registry(db).read_profiles()
+        return await llmbroker.sqlite.Telemetry(db).get_disabled("p1")
 
-    profiles = asyncio.run(read_back())
-    assert profiles["p1"].benched is True
-    assert profiles["p1"].benched_reason == "manual review"
+    assert asyncio.run(read_back()) is True
 
 
 def test_broker_update_changes_config(tmp_path):
@@ -244,12 +245,12 @@ def test_broker_seed_with_readonly_registry_raises(tmp_path):
             pass
 
 
-def test_broker_user_id_forwarded_to_async_broker(tmp_path):
-    """Broker(user_id=...) forwards user_id to the underlying AsyncBroker."""
+def test_broker_scope_forwarded_to_async_broker(tmp_path):
+    """Broker(scope=...) forwards scope to the underlying AsyncBroker."""
     db = str(tmp_path / "b.db")
     with Broker(
         registry=llmbroker.sqlite.Registry(db),
-        user_id="alice",
+        scope="alice",
         telemetry=NoTelemetry(),
     ) as broker:
-        assert broker._async._user_id == "alice"
+        assert broker._async._scope == "alice"

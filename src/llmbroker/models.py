@@ -4,6 +4,7 @@ Pure data and the one cross-cutting capability protocol. No I/O, no driver
 imports — safe to import from anywhere in the package.
 """
 
+import hashlib
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
@@ -168,98 +169,6 @@ class QualitySummary:
         )
 
 
-_RESERVED_PROFILE_KEYS = frozenset({"stats", "benched", "benched_since", "benched_reason"})
-
-
-@dataclass(frozen=True, slots=True)
-class LLMProfile:
-    """The durable learned half of one catalog entry.
-
-    Per-``(operation, kind)`` decayed summaries (``kind`` ∈ quality / transport /
-    latency) plus the manual-bench latch. Owned by the optimizer (and, for the
-    latch, the admin); the seed path never writes this. Demotions are derived from
-    ``stats`` at read time and are deliberately not stored here.
-    """
-
-    stats: dict[str | None, dict[str, QualitySummary]] = field(default_factory=dict)
-    benched: bool = False
-    benched_since: datetime | None = None
-    benched_reason: str | None = None
-    extra: dict[str, object] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, object]:
-        """Serialize to a plain, JSON-storable dict.
-
-        >>> from datetime import UTC
-        >>> p = LLMProfile(
-        ...     stats={
-        ...         "summarize": {"quality": QualitySummary(1.0, 0.8, 1.0, 1)},
-        ...         None: {"transport": QualitySummary(2.0, 1.5, 1.5, 2)},
-        ...     },
-        ...     benched=True,
-        ...     benched_since=datetime(2030, 1, 1, tzinfo=UTC),
-        ...     benched_reason="manual review",
-        ... )
-        >>> LLMProfile.from_dict(p.to_dict()) == p
-        True
-        >>> LLMProfile.from_dict({}) == LLMProfile()
-        True
-        >>> LLMProfile.from_dict({"future_field": 1}).extra
-        {'future_field': 1}
-        """
-        collision = _RESERVED_PROFILE_KEYS & self.extra.keys()
-        if collision:
-            raise ValueError(
-                f"LLMProfile.extra must not contain reserved keys: {sorted(collision)}",
-            )
-        stats_list = [
-            {"operation": operation, "kind": kind, **summary.to_dict()}
-            for operation, kinds in self.stats.items()
-            for kind, summary in kinds.items()
-        ]
-        return {
-            "stats": stats_list,
-            "benched": self.benched,
-            "benched_since": self.benched_since.isoformat()
-            if self.benched_since is not None
-            else None,
-            "benched_reason": self.benched_reason,
-            **self.extra,
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict[str, object]) -> "LLMProfile":
-        """Deserialize from a plain dict; a missing key falls back to its dataclass default."""
-        stats: dict[str | None, dict[str, QualitySummary]] = {}
-        raw_stats = d.get("stats")
-        if isinstance(raw_stats, list):
-            for entry in raw_stats:
-                if not isinstance(entry, dict):
-                    continue
-                kind = entry.get("kind")
-                if not isinstance(kind, str):
-                    continue
-                operation = entry.get("operation")
-                op_key = operation if isinstance(operation, str) else None
-                stats.setdefault(op_key, {})[kind] = QualitySummary.from_dict(entry)
-        benched_since_raw = d.get("benched_since")
-        benched_since = (
-            datetime.fromisoformat(benched_since_raw)
-            if isinstance(benched_since_raw, str)
-            else None
-        )
-        benched_reason_raw = d.get("benched_reason")
-        benched_reason = benched_reason_raw if isinstance(benched_reason_raw, str) else None
-        extra = {k: v for k, v in d.items() if k not in _RESERVED_PROFILE_KEYS}
-        return cls(
-            stats=stats,
-            benched=bool(d.get("benched", False)),
-            benched_since=benched_since,
-            benched_reason=benched_reason,
-            extra=extra,
-        )
-
-
 class EffortLevel(Enum):
     """How hard an api_key_ref is to obtain, easiest first.
 
@@ -379,19 +288,43 @@ class Usage:
 
 @dataclass(frozen=True, slots=True)
 class Call:
-    """One telemetry record. ``id`` is the uuid record_quality updates by."""
+    """One append-only journal record: a call attempt (``kind="call"``) or a
+    self-contained quality rating (``kind="quality"``), interleaved in one stream.
+
+    A quality record fills only ``llm_name``, ``operation``, ``quality_score``,
+    ``ts``, and optionally ``call_id`` (an opaque host-UI passthrough — never
+    joined against the call row it rates); ``status`` is ``None`` exactly on
+    quality records.
+    """
 
     id: str
     llm_name: str
     operation: str | None
     trace_id: str | None
-    status: CallStatus
+    status: CallStatus | None
+    kind: str = "call"
+    ts: datetime | None = None
     http_status: int | None = None
     latency_ms: int | None = None
     error_detail: str | None = None
     usage: Usage | None = None
     quality_score: float | None = None
-    user_id: int | str | None = None
+    call_id: str | None = None
+    scope: str | None = None
+    cooldown_until: datetime | None = None
+    key_hash: str | None = None
+
+
+def key_hash(secret: str) -> str:
+    """Short digest of a resolved key value — the quota-scope identity for shared
+    cooldowns and dead-key drops (never the key itself).
+
+    >>> key_hash("sk-abc") == key_hash("sk-abc")
+    True
+    >>> len(key_hash("sk-abc"))
+    12
+    """
+    return hashlib.sha256(secret.encode()).hexdigest()[:12]
 
 
 @dataclass(frozen=True, slots=True)

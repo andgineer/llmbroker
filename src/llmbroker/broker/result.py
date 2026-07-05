@@ -1,8 +1,8 @@
 """Per-call result handle and the live per-LLM view returned by the broker."""
 
 import logging
-from datetime import datetime
 
+from llmbroker.broker.learning import _LearningHook
 from llmbroker.broker.pool import LLMPool
 from llmbroker.models import LLMConfig, LLMMetrics, LLMState, Usage
 from llmbroker.protocols.telemetry import QueryableTelemetryProtocol, TelemetryProtocol
@@ -21,6 +21,7 @@ class AsyncResult:
         usage: Usage | None,
         call_id: str,
         llm_name: str,
+        operation: str | None = None,
         telemetry: TelemetryProtocol,
         pool: LLMPool,
     ) -> None:
@@ -29,16 +30,19 @@ class AsyncResult:
         self.usage = usage
         self._call_id = call_id
         self._llm_name = llm_name
+        self._operation = operation
         self._telemetry = telemetry
         self._pool = pool
 
     async def record_quality(self, score: float) -> None:
         if score == 0.0:
             self._pool.mark_quality_fail(self._llm_name)
-        try:
-            await self._telemetry.record_quality(self._call_id, score)
-        except KeyError:
-            logger.warning("record_quality: call %s not found, score dropped", self._call_id)
+        await self._telemetry.record_quality(
+            self._llm_name,
+            self._operation,
+            score,
+            call_id=self._call_id,
+        )
 
 
 class AsyncLLM:
@@ -50,27 +54,23 @@ class AsyncLLM:
         config: LLMConfig,
         pool: LLMPool,
         telemetry: TelemetryProtocol,
-        *,
-        user_id: int | str | None = None,
     ) -> None:
         self._name = name
         self._config = config
         self._pool = pool
         self._telemetry = telemetry
-        self._user_id = user_id
 
     @property
     def config(self) -> LLMConfig:
         return self._config
 
     async def state(self) -> LLMState:
-        stored = await self._pool.stored_states()
-        if self._name in stored:
-            return stored[self._name]
         return self._pool.state(self._name)
 
-    async def metrics(self, *, since: datetime | None = None) -> LLMMetrics:
+    async def metrics(self) -> LLMMetrics:
+        if isinstance(self._telemetry, _LearningHook):
+            return self._telemetry.metrics_cache.get(self._name, LLMMetrics(0, None, None))
         if isinstance(self._telemetry, QueryableTelemetryProtocol):
-            all_metrics = await self._telemetry.metrics(since=since, user_id=self._user_id)
+            all_metrics = await self._telemetry.metrics()
             return all_metrics.get(self._name, LLMMetrics(0, None, None))
         return LLMMetrics(0, None, None)

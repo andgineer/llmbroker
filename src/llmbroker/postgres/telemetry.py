@@ -1,12 +1,14 @@
-"""Postgres-backed queryable telemetry over ``llmbroker_calls``."""
+"""Postgres-backed queryable telemetry over ``llmbroker_calls`` + the
+``llmbroker_disabled`` admin verdict map."""
 
 import json
+import uuid
 from datetime import UTC, datetime
 
 import asyncpg
 
-from llmbroker.models import Call, CallStatus, LLMMetrics, Usage, check_user_id
-from llmbroker.postgres.schema import ensure_schema, to_uid
+from llmbroker.models import Call, CallStatus, LLMMetrics, Usage
+from llmbroker.postgres.schema import ensure_schema
 
 
 def _usage_columns(usage: Usage | None) -> tuple:
@@ -29,23 +31,29 @@ def _call_from_row(row: asyncpg.Record) -> Call:
             total_tokens=row["total_tokens"],
             extra=extra,
         )
+    status = row["status"]
     return Call(
         id=str(row["id"]),
         llm_name=str(row["llm_name"]),
         operation=row["operation"],
         trace_id=row["trace_id"],
-        status=CallStatus(row["status"]),
+        status=CallStatus(status) if status is not None else None,
+        kind=str(row["kind"]),
+        ts=row["called_at"],
         http_status=row["http_status"],
         latency_ms=row["latency_ms"],
         error_detail=row["error_detail"],
         usage=usage,
         quality_score=row["quality_score"],
-        user_id=row["user_id"],
+        call_id=row["call_id"],
+        scope=row["scope"],
+        cooldown_until=row["cooldown_until"],
+        key_hash=row["key_hash"],
     )
 
 
 class Telemetry:
-    """Postgres-backed queryable telemetry over ``llmbroker_calls``."""
+    """Postgres-backed queryable telemetry over ``llmbroker_calls`` + admin verdicts."""
 
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
@@ -56,15 +64,16 @@ class Telemetry:
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO llmbroker_calls"
-                " (id, llm_name, operation, trace_id, status, http_status, latency_ms,"
+                " (id, llm_name, operation, trace_id, status, kind, http_status, latency_ms,"
                 "  error_detail, prompt_tokens, completion_tokens, total_tokens, usage_extra,"
-                "  quality_score, called_at, user_id)"
-                " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
+                "  quality_score, call_id, called_at, scope, cooldown_until, key_hash)"
+                " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)",
                 call.id,
                 call.llm_name,
                 call.operation,
                 call.trace_id,
-                call.status.value,
+                call.status.value if call.status is not None else None,
+                call.kind,
                 call.http_status,
                 call.latency_ms,
                 call.error_detail,
@@ -73,20 +82,35 @@ class Telemetry:
                 tt,
                 extra,
                 call.quality_score,
-                datetime.now(UTC),
-                to_uid(call.user_id),
+                call.call_id,
+                call.ts or datetime.now(UTC),
+                call.scope,
+                call.cooldown_until,
+                call.key_hash,
             )
 
-    async def record_quality(self, call_id: str, score: float) -> None:
-        await ensure_schema(self._pool)
-        async with self._pool.acquire() as conn:
-            status = await conn.execute(
-                "UPDATE llmbroker_calls SET quality_score=$1 WHERE id=$2",
-                score,
-                call_id,
-            )
-        if int(status.split()[-1]) == 0:
-            raise KeyError(call_id)
+    async def record_quality(
+        self,
+        llm_name: str,
+        operation: str | None,
+        score: float,
+        *,
+        call_id: str | None = None,
+    ) -> None:
+        """Append a self-contained quality record — never updates the call row."""
+        await self.record(
+            Call(
+                id=str(uuid.uuid4()),
+                llm_name=llm_name,
+                operation=operation,
+                trace_id=None,
+                status=None,
+                kind="quality",
+                ts=datetime.now(UTC),
+                quality_score=score,
+                call_id=call_id,
+            ),
+        )
 
     async def metrics(
         self,
@@ -94,11 +118,11 @@ class Telemetry:
         since: datetime | None = None,
         user_id: int | str | None = None,
     ) -> dict[str, LLMMetrics]:
-        check_user_id(user_id)
-        uid = to_uid(user_id)
+        """Unused by the broker (metrics are served from the rebuild's cached tail);
+        kept for hosts that want a direct read."""
         await ensure_schema(self._pool)
-        conditions = ["user_id IS NOT DISTINCT FROM $1"]
-        params: list = [uid]
+        conditions = ["scope IS NOT DISTINCT FROM $1", "kind = 'call'"]
+        params: list = [user_id]
         if since is not None:
             params.append(since)
             conditions.append(f"called_at >= ${len(params)}")
@@ -115,29 +139,39 @@ class Telemetry:
         return {
             str(row["llm_name"]): LLMMetrics(
                 call_count=int(row["cnt"]),
-                last_status=CallStatus(row["status"]),
+                last_status=CallStatus(row["status"]) if row["status"] else None,
                 last_at=row["last_at"],
             )
             for row in rows
         }
 
-    async def calls(self, *, limit: int, user_id: int | str | None = None) -> list[Call]:
-        check_user_id(user_id)
-        uid = to_uid(user_id)
+    async def calls(self, *, limit: int, scope: str | None = None) -> list[Call]:
+        """Newest-first tail of the journal, both kinds interleaved — unfiltered by scope
+        (learning is global); ``scope`` is accepted for the host-facing filter only."""
         await ensure_schema(self._pool)
+        columns = (
+            "id, llm_name, operation, trace_id, status, kind, http_status, latency_ms,"
+            " error_detail, prompt_tokens, completion_tokens, total_tokens, usage_extra,"
+            " quality_score, call_id, called_at, scope, cooldown_until, key_hash"
+        )
         async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT id, llm_name, operation, trace_id, status, http_status, latency_ms,"  # noqa: S608
-                " error_detail, prompt_tokens, completion_tokens, total_tokens, usage_extra,"
-                " quality_score, user_id FROM llmbroker_calls"
-                " WHERE user_id IS NOT DISTINCT FROM $1 ORDER BY called_at DESC LIMIT $2",
-                uid,
-                limit,
-            )
+            if scope is None:
+                rows = await conn.fetch(
+                    f"SELECT {columns} FROM llmbroker_calls"  # noqa: S608
+                    " ORDER BY called_at DESC LIMIT $1",
+                    limit,
+                )
+            else:
+                rows = await conn.fetch(
+                    f"SELECT {columns} FROM llmbroker_calls"  # noqa: S608
+                    " WHERE scope = $1 ORDER BY called_at DESC LIMIT $2",
+                    scope,
+                    limit,
+                )
         return [_call_from_row(r) for r in rows]
 
     async def purge_calls(self, *, before: datetime) -> int:
-        """Delete all calls older than *before*, across all users. Admin operation."""
+        """Delete all calls older than *before*, across all scopes. Admin operation."""
         await ensure_schema(self._pool)
         async with self._pool.acquire() as conn:
             status = await conn.execute(
@@ -145,6 +179,45 @@ class Telemetry:
                 before,
             )
         return int(status.split()[-1])
+
+    # ------------------------------------------------------------------
+    # Admin disabled-verdict map
+    # ------------------------------------------------------------------
+
+    async def get_disabled(self, name: str) -> bool:
+        await ensure_schema(self._pool)
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT disabled FROM llmbroker_disabled WHERE name = $1",
+                name,
+            )
+        return bool(row["disabled"]) if row else False
+
+    async def set_disabled(self, name: str, flag: bool) -> None:  # noqa: FBT001
+        await ensure_schema(self._pool)
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO llmbroker_disabled (name, disabled) VALUES ($1, $2)"
+                " ON CONFLICT (name) DO UPDATE SET disabled = EXCLUDED.disabled",
+                name,
+                flag,
+            )
+
+    async def seed_disabled(self, names: list[str]) -> None:
+        """Insert-if-absent every name with ``disabled=False`` — never touches existing values."""
+        await ensure_schema(self._pool)
+        async with self._pool.acquire() as conn:
+            await conn.executemany(
+                "INSERT INTO llmbroker_disabled (name, disabled) VALUES ($1, FALSE)"
+                " ON CONFLICT (name) DO NOTHING",
+                [(name,) for name in names],
+            )
+
+    async def disabled_map(self) -> dict[str, bool]:
+        await ensure_schema(self._pool)
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch("SELECT name, disabled FROM llmbroker_disabled")
+        return {str(r["name"]): bool(r["disabled"]) for r in rows}
 
     async def aclose(self) -> None:
         return

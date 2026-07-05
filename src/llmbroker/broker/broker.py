@@ -1,12 +1,15 @@
 """The ``AsyncBroker`` façade over the LLM pool and its collaborators.
 
-``AsyncBroker`` owns the external ports (registry, secrets, telemetry, state
-store), lazily provisions the live ``LLMPool`` once, and delegates each
-operation to the collaborator that owns it:
+``AsyncBroker`` owns the external ports (registry, secrets, telemetry),
+lazily provisions the live ``LLMPool`` once, and delegates each operation to
+the collaborator that owns it:
 
-* ``Catalog``  — pool membership in sync with the registry (seed/load + edits)
-* ``Router``   — routing a completion over the pool with failover
-* ``PoolView`` — read-only views of current pool state
+* ``Catalog``       — pool membership in sync with the registry (seed/load + edits)
+* ``Router``        — routing a completion over the pool with failover
+* ``PoolView``       — read-only views of current pool state
+* ``_LearningHook`` — quality windows, dead-key drops, and the debounced
+  journal rebuild feeding shared cooldowns, snapshot metrics, and the admin
+  disabled-verdict map (only wired when ``optimize`` is truthy)
 
 The call journal (``calls``/``purge_calls``) is a thin pass-through to a queryable
 telemetry backend; ``alerts`` is delegated to ``Optimizer``.
@@ -16,12 +19,12 @@ import asyncio
 import logging
 import time
 from collections.abc import Mapping
-from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import cast
 
 from llmbroker.broker.catalog import Catalog
+from llmbroker.broker.learning import _LearningHook
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.pool_view import PoolView
 from llmbroker.broker.result import AsyncLLM, AsyncResult
@@ -33,16 +36,18 @@ from llmbroker.models import (
     Call,
     LifecyclePhase,
     LLMConfig,
-    LLMProfile,
     LLMSnapshot,
     SeedPolicy,
 )
-from llmbroker.optimizer import Optimizer, OptimizerTelemetry
-from llmbroker.protocols.backend_stack import UNSET, BackendStack, _UnsetType
+from llmbroker.optimizer import Optimizer
+from llmbroker.protocols.backend_stack import BackendStack
 from llmbroker.protocols.registry import RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
-from llmbroker.protocols.state_store import StateStoreProtocol
-from llmbroker.protocols.telemetry import QueryableTelemetryProtocol, TelemetryProtocol
+from llmbroker.protocols.telemetry import (
+    DisabledMapProtocol,
+    QueryableTelemetryProtocol,
+    TelemetryProtocol,
+)
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import Secrets, as_secrets
 from llmbroker.standalone.telemetry import Telemetry
@@ -59,13 +64,14 @@ class AsyncBroker:
         *,
         stack: BackendStack | None = None,
         secrets: SecretsProtocol | None = None,
-        state_store: StateStoreProtocol | None | _UnsetType = UNSET,
         telemetry: TelemetryProtocol | None = None,
         optimize: bool | Optimizer = True,
         seed: RegistryProtocol | str | Path | None = None,
         seed_policy: SeedPolicy = SeedPolicy.SYNC,
-        user_id: int | str | None = None,
+        scope: str | None = None,
     ) -> None:
+        if scope == "":
+            raise ValueError("scope must not be empty string; use None for unscoped")
         if registry is None and stack is None:
             raise ValueError("AsyncBroker requires either `registry` or `stack`")
 
@@ -87,12 +93,6 @@ class AsyncBroker:
         )
         seed = Registry(seed) if isinstance(seed, (str, Path)) else seed
 
-        resolved_state_store: StateStoreProtocol | None
-        if isinstance(state_store, _UnsetType):
-            resolved_state_store = stack.state_store if stack is not None else None
-        else:
-            resolved_state_store = state_store
-
         if isinstance(optimize, Optimizer):
             self._optimizer: Optimizer | None = optimize
         elif optimize:
@@ -103,11 +103,9 @@ class AsyncBroker:
         self._registry = registry
         self._secrets = secrets
         self._base_telemetry = telemetry
-        self._state_store = resolved_state_store
-        self._user_id = user_id
-        self._benched_meta: dict[str, tuple[datetime | None, str | None]] = {}
+        self._scope = scope
 
-        pool = LLMPool(resolved_state_store, user_id, optimizer=self._optimizer)
+        pool = LLMPool(optimizer=self._optimizer)
         self._pool = pool
         self._catalog = Catalog(
             registry,
@@ -115,23 +113,25 @@ class AsyncBroker:
             pool,
             seed=seed,
             seed_policy=seed_policy,
-            user_id=user_id,
+            scope=scope,
         )
 
+        self._learning_hook: _LearningHook | None = None
         effective_telemetry: TelemetryProtocol
         if self._optimizer is not None:
-            effective_telemetry = OptimizerTelemetry(self._optimizer, telemetry, pool)
+            self._learning_hook = _LearningHook(
+                self._optimizer,
+                telemetry,
+                pool,
+                self._catalog.resync,
+            )
+            effective_telemetry = self._learning_hook
         else:
             effective_telemetry = telemetry
 
         self._telemetry = effective_telemetry
-        self._router = Router(
-            pool,
-            effective_telemetry,
-            user_id=user_id,
-            optimizer=self._optimizer,
-        )
-        self._pool_view = PoolView(pool, effective_telemetry, user_id=user_id)
+        self._router = Router(pool, effective_telemetry, scope=scope, optimizer=self._optimizer)
+        self._pool_view = PoolView(pool, effective_telemetry)
 
         self._provisioned = False
         self._provision_lock = asyncio.Lock()
@@ -153,19 +153,13 @@ class AsyncBroker:
             if self._optimizer is not None:
                 for msg in seed_alerts:
                     self._optimizer.add_alert(msg)
-                await self._warm_start_disabled()
+            if self._learning_hook is not None:
+                # warm start — provision() above already resynced the registry
+                await self._learning_hook.maybe_rebuild(force=True, resync_registry=False)
             self._provisioned = True
 
-    async def _warm_start_disabled(self) -> None:
-        """Restore the manual disable latch from persisted profiles at provision time."""
-        profiles = await self._registry.read_profiles(user_id=self._user_id)
-        for name, profile in profiles.items():
-            if profile.benched:
-                self._pool.set_disabled(name)
-                self._benched_meta[name] = (profile.benched_since, profile.benched_reason)
-
     async def aclose(self) -> None:
-        for port in (self._registry, self._secrets, self._telemetry, self._state_store):
+        for port in (self._registry, self._secrets, self._telemetry):
             if isinstance(port, AsyncResourceProtocol):
                 await port.aclose()
 
@@ -229,9 +223,9 @@ class AsyncBroker:
         await self.ensure_pool()
         return self._pool_view.count()
 
-    async def snapshot(self, *, since: datetime | None = None) -> Mapping[str, LLMSnapshot]:
+    async def snapshot(self) -> Mapping[str, LLMSnapshot]:
         await self.ensure_pool()
-        return await self._pool_view.snapshot(since=since)
+        return await self._pool_view.snapshot()
 
     # ------------------------------------------------------------------
     # Mutation
@@ -248,51 +242,33 @@ class AsyncBroker:
     async def remove(self, name: str) -> None:
         await self.ensure_pool()
         await self._catalog.remove(name)
-        self._benched_meta.pop(name, None)
 
     # ------------------------------------------------------------------
-    # Manual bench — the one verdict that actually excludes
+    # Manual disable — the one verdict that actually excludes
     # ------------------------------------------------------------------
 
-    async def _bench_profile(
-        self,
-        name: str,
-        *,
-        benched: bool,
-        since: datetime | None,
-        reason: str | None,
-    ) -> LLMProfile:
-        """Build the profile to persist for a bench-latch change, preserving whatever
-        is already stored instead of overwriting it with an empty profile."""
-        profiles = await self._registry.read_profiles(user_id=self._user_id)
-        profile = profiles.get(name, LLMProfile())
-        return replace(profile, benched=benched, benched_since=since, benched_reason=reason)
-
-    async def disable_llm(self, name: str, *, reason: str | None = None) -> None:
+    async def disable_llm(self, name: str) -> None:
         """Set the manual latch: withdraws the slot, survives preset rolls, covers
         every operation including future ones. Only ``enable_llm`` clears it."""
         await self.ensure_pool()
         self._pool.set_disabled(name)
-        since = datetime.now(UTC)
-        self._benched_meta[name] = (since, reason)
-        profile = await self._bench_profile(name, benched=True, since=since, reason=reason)
-        await self._registry.write_profile(name, profile, self._user_id)
+        if isinstance(self._base_telemetry, DisabledMapProtocol):
+            await self._base_telemetry.set_disabled(name, True)
 
     async def enable_llm(self, name: str) -> None:
         """Clear the manual latch — a re-enabled model rehabilitates through new
         ratings, no quality reset exists."""
         await self.ensure_pool()
         await self._pool.clear_disabled(name)
-        self._benched_meta.pop(name, None)
-        profile = await self._bench_profile(name, benched=False, since=None, reason=None)
-        await self._registry.write_profile(name, profile, self._user_id)
+        if isinstance(self._base_telemetry, DisabledMapProtocol):
+            await self._base_telemetry.set_disabled(name, False)
 
     # ------------------------------------------------------------------
     # Call journal / retention
     # ------------------------------------------------------------------
 
     async def calls(self, *, limit: int) -> list[Call]:
-        return await self._require_queryable().calls(limit=limit, user_id=self._user_id)
+        return await self._require_queryable().calls(limit=limit, scope=self._scope)
 
     async def purge_calls(self, *, before: datetime) -> int:
         return await self._require_queryable().purge_calls(before=before)

@@ -1,15 +1,14 @@
 """Tests for the manual disable latch: warm start, live round trip, remove/readd.
 
-Uses sqlite (registry) for determinism/speed.
+Uses sqlite (registry + telemetry disabled-map) for determinism/speed.
 """
 
 import llmbroker.sqlite
 
 from llmbroker.broker import AsyncBroker
-from llmbroker.models import Call, CallStatus, LLMConfig, LLMProfile
+from llmbroker.models import Call, CallStatus, LLMConfig
 from llmbroker.optimizer import Optimizer
 from llmbroker.standalone.secrets import DictSecrets
-from llmbroker.standalone.telemetry import NoTelemetry
 
 
 def _cfg(name: str = "p1") -> LLMConfig:
@@ -21,15 +20,16 @@ def _call(call_id: str, name: str = "p1", operation: str | None = None) -> Call:
 
 
 async def test_persisted_manual_latch_applied_at_provision(tmp_path):
+    """The disabled map warm-starts at provision via the journal-rebuild path."""
     db = str(tmp_path / "b.db")
     reg = llmbroker.sqlite.Registry(db)
     await reg.add(_cfg())
-    await reg.write_profile("p1", LLMProfile(benched=True, benched_reason="manual review"))
+    await llmbroker.sqlite.Telemetry(db).set_disabled("p1", True)
 
     async with AsyncBroker(
         registry=llmbroker.sqlite.Registry(db),
         secrets=DictSecrets({"K": "key"}),
-        telemetry=NoTelemetry(),
+        telemetry=llmbroker.sqlite.Telemetry(db),
     ) as broker:
         assert broker._pool.is_disabled("p1")
 
@@ -44,54 +44,47 @@ async def test_disable_enable_llm_round_trip_preserves_quality_window(tmp_path):
     async with AsyncBroker(
         registry=llmbroker.sqlite.Registry(db),
         secrets=DictSecrets({"K": "key"}),
-        telemetry=NoTelemetry(),
+        telemetry=llmbroker.sqlite.Telemetry(db),
         optimize=opt,
     ) as broker:
         for i in range(5):
             call = _call(f"c{i}", operation="summarize")
             await broker._telemetry.record(call)
-            await broker._telemetry.record_quality(call.id, 0.0)
+            await broker._telemetry.record_quality("p1", "summarize", 0.0)
         assert len(opt._scores[("p1", "summarize")]) == 5
 
-        await broker.disable_llm("p1", reason="manual review")
+        await broker.disable_llm("p1")
         assert broker._pool.is_disabled("p1")
-        profiles = await reg.read_profiles()
-        assert profiles["p1"].benched is True
-        assert profiles["p1"].benched_reason == "manual review"
+        assert await llmbroker.sqlite.Telemetry(db).get_disabled("p1") is True
 
         await broker.enable_llm("p1")
         assert not broker._pool.is_disabled("p1")
         assert len(opt._scores[("p1", "summarize")]) == 5
-        profiles2 = await reg.read_profiles()
-        assert profiles2["p1"].benched is False
+        assert await llmbroker.sqlite.Telemetry(db).get_disabled("p1") is False
 
 
-async def test_disable_enable_llm_without_optimizer_preserves_existing_profile_stats(tmp_path):
-    """Regression: disable_llm/enable_llm used to write a brand-new empty profile,
-    silently wiping any stats accumulated by a prior run."""
+async def test_disable_enable_llm_without_optimizer_still_persists(tmp_path):
+    """disable_llm/enable_llm write the disabled map even with optimize=False — only the
+    provision-time warm start needs the learning hook, not the admin write path."""
     db = str(tmp_path / "b.db")
     reg = llmbroker.sqlite.Registry(db)
     await reg.add(_cfg())
-    await reg.write_profile("p1", LLMProfile(extra={"legacy": "kept"}))
 
     async with AsyncBroker(
         registry=llmbroker.sqlite.Registry(db),
         secrets=DictSecrets({"K": "key"}),
-        telemetry=NoTelemetry(),
+        telemetry=llmbroker.sqlite.Telemetry(db),
         optimize=False,
     ) as broker:
         assert broker._optimizer is None
 
-        await broker.disable_llm("p1", reason="manual review")
-        profiles = await reg.read_profiles()
-        assert profiles["p1"].benched is True
-        assert profiles["p1"].benched_reason == "manual review"
-        assert profiles["p1"].extra == {"legacy": "kept"}
+        await broker.disable_llm("p1")
+        assert broker._pool.is_disabled("p1")
+        assert await llmbroker.sqlite.Telemetry(db).get_disabled("p1") is True
 
         await broker.enable_llm("p1")
-        profiles2 = await reg.read_profiles()
-        assert profiles2["p1"].benched is False
-        assert profiles2["p1"].extra == {"legacy": "kept"}
+        assert not broker._pool.is_disabled("p1")
+        assert await llmbroker.sqlite.Telemetry(db).get_disabled("p1") is False
 
 
 async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path):
@@ -105,13 +98,12 @@ async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path):
     async with AsyncBroker(
         registry=llmbroker.sqlite.Registry(db),
         secrets=DictSecrets({"K": "key"}),
-        telemetry=NoTelemetry(),
+        telemetry=llmbroker.sqlite.Telemetry(db),
     ) as broker:
-        await broker.disable_llm("p1", reason="manual review")
+        await broker.disable_llm("p1")
         assert broker._pool.is_disabled("p1")
 
         await broker.remove("p1")
-        assert "p1" not in broker._benched_meta
 
         await broker.add(_cfg())
         assert not broker._pool.is_disabled("p1")

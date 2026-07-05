@@ -1,7 +1,9 @@
-"""Postgres backend: registry, telemetry, state-store, and secrets.
+"""Postgres backend: registry, telemetry, and secrets.
 
 Needs the ``asyncpg`` driver (``llmbroker[postgres]``). All tables are
-``llmbroker_``-prefixed and owned by ``ensure_schema``.
+``llmbroker_``-prefixed and owned by ``ensure_schema``. ``StateStore`` is
+unused by the broker (shared cooldowns derive from the journal) — it stays
+importable as a standalone class.
 """
 
 import asyncpg
@@ -15,7 +17,7 @@ __all__ = ["Registry", "Secrets", "Stack", "StateStore", "Telemetry"]
 
 
 class Stack:
-    """One asyncpg pool backing registry, secrets, telemetry, and state store.
+    """One asyncpg pool backing registry, secrets, and telemetry.
 
     Build the pool yourself first — pool creation is async, ``Broker.__init__``
     is sync: ``pool = await asyncpg.create_pool(dsn)``.
@@ -25,4 +27,3 @@ class Stack:
         self.registry = Registry(pool)
         self.secrets = Secrets(pool, require_user_id=require_user_id)
         self.telemetry = Telemetry(pool)
-        self.state_store = StateStore(pool)

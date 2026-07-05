@@ -1,20 +1,10 @@
 """File-backed registry: ``.toml`` / ``.json`` of ``[[llms]]`` rows, no secrets."""
 
-import contextlib
 import json
-import os
-import tempfile
 import tomllib
 from pathlib import Path
 
-from llmbroker.models import (
-    EffortLevel,
-    KeyInfo,
-    LLMConfig,
-    LLMProfile,
-    ValueLevel,
-    check_user_id,
-)
+from llmbroker.models import EffortLevel, KeyInfo, LLMConfig, ValueLevel
 
 
 def _int_or_none(value: object) -> int | None:
@@ -73,51 +63,11 @@ def _read_data(path: Path) -> dict:
     )
 
 
-def _scope_key(user_id: int | str | None) -> str:
-    """JSON-object key for one user's profile scope; ``""`` for the unscoped default.
-
-    Safe because ``check_user_id`` forbids a real ``user_id`` from being an empty string.
-    """
-    return "" if user_id is None else str(user_id)
-
-
-def _atomic_write_json(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh)
-        os.replace(tmp_name, path)
-    except BaseException:
-        with contextlib.suppress(FileNotFoundError):
-            os.remove(tmp_name)
-        raise
-
-
 class Registry:
-    """File-backed read-only registry — ``.toml`` / ``.json`` by extension.
+    """File-backed read-only registry — ``.toml`` / ``.json`` by extension."""
 
-    The catalog config itself stays read-only, but the learned profile is
-    persisted to a sibling JSON file (``<config_stem>.profile.json`` by
-    default) so a preset overwriting the config file cannot touch learned
-    data. ``persist_profile=False`` is the explicit zero-write mode: profiles
-    live only in process memory for the caller's lifetime.
-    """
-
-    def __init__(
-        self,
-        path: str | Path,
-        *,
-        profile_path: str | Path | None = None,
-        persist_profile: bool = True,
-    ) -> None:
+    def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
-        self._persist_profile = persist_profile
-        self._profile_path = (
-            Path(profile_path)
-            if profile_path is not None
-            else self._path.parent / f"{self._path.stem}.profile.json"
-        )
 
     async def load(self, user_id: int | str | None = None) -> list[LLMConfig]:  # noqa: ARG002
         data = _read_data(self._path)
@@ -134,31 +84,3 @@ class Registry:
         if not isinstance(raw, dict):
             return {}
         return {str(ref): key_info_from_entry(str(ref), val) for ref, val in raw.items()}
-
-    def _read_profile_file(self) -> dict:
-        if not self._profile_path.exists():
-            return {}
-        return json.loads(self._profile_path.read_text(encoding="utf-8"))
-
-    async def read_profiles(self, user_id: int | str | None = None) -> dict[str, LLMProfile]:
-        check_user_id(user_id)
-        if not self._persist_profile:
-            return {}
-        scope = self._read_profile_file().get(_scope_key(user_id), {})
-        if not isinstance(scope, dict):
-            return {}
-        return {name: LLMProfile.from_dict(d) for name, d in scope.items()}
-
-    async def write_profile(
-        self,
-        name: str,
-        profile: LLMProfile,
-        user_id: int | str | None = None,
-    ) -> None:
-        check_user_id(user_id)
-        if not self._persist_profile:
-            return
-        data = self._read_profile_file()
-        scope = data.setdefault(_scope_key(user_id), {})
-        scope[name] = profile.to_dict()
-        _atomic_write_json(self._profile_path, data)

@@ -28,14 +28,14 @@ class Catalog:
         *,
         seed: RegistryProtocol | None,
         seed_policy: SeedPolicy,
-        user_id: int | str | None,
+        scope: str | None,
     ) -> None:
         self._registry = registry
         self._secrets = secrets
         self._pool = pool
         self._seed = seed
         self._seed_policy = seed_policy
-        self._user_id = user_id
+        self._scope = scope
 
     async def provision(self) -> list[str]:
         """Seed (if configured) then reconcile the pool with the registry.
@@ -51,23 +51,31 @@ class Catalog:
                 self._secrets,
                 self._seed,
                 self._seed_policy,
-                self._user_id,
+                self._scope,
             )
-        configs = await self._registry.load(user_id=self._user_id)
+        await self.resync()
+        return alerts
+
+    async def resync(self) -> None:
+        """Re-read the registry and reconcile pool membership — no reseed.
+
+        Called by the debounced journal rebuild so registry edits and key
+        changes from other processes/nodes take effect on a running broker.
+        """
+        configs = await self._registry.load(user_id=self._scope)
         names = {c.name for c in configs}
         for name in list(self._pool.configs):
             if name not in names:
                 await self._pool.drop(name)
         for order, cfg in enumerate(configs):
             await self._pool.add(cfg, await self._resolve_key(cfg), order=order)
-        return alerts
 
     async def add(self, cfg: LLMConfig) -> None:
         registry = self._require_mutable_registry()
         if cfg.name in self._pool:
             raise ValueError(f"LLM {cfg.name!r} already exists; use update()")
         cfg = replace(cfg, origin=Origin.USER)
-        await registry.add(cfg, self._user_id)
+        await registry.add(cfg, self._scope)
         await self._pool.add(cfg, await self._resolve_key(cfg))
 
     async def update(self, cfg: LLMConfig) -> None:
@@ -75,17 +83,23 @@ class Catalog:
         if cfg.name not in self._pool:
             raise KeyError(cfg.name)
         cfg = replace(cfg, origin=Origin.USER)
-        await registry.update(cfg, self._user_id)
+        await registry.update(cfg, self._scope)
         await self._pool.add(cfg, await self._resolve_key(cfg))
 
     async def remove(self, name: str) -> None:
         registry = self._require_mutable_registry()
-        await registry.remove(name, self._user_id)
+        await registry.remove(name, self._scope)
         await self._pool.drop(name)
 
     async def _resolve_key(self, cfg: LLMConfig) -> str | None:
+        """Try the scope-prefixed (own) ref first, falling back to the shared ref."""
+        if self._scope is not None:
+            try:
+                return await self._secrets.resolve(f"{self._scope}/{cfg.api_key_ref}", None)
+            except KeyError:
+                pass
         try:
-            return await self._secrets.resolve(cfg.api_key_ref, self._user_id)
+            return await self._secrets.resolve(cfg.api_key_ref, None)
         except KeyError:
             logger.info(
                 "LLM %s: api_key_ref %r not resolved — inactive until the env var /"

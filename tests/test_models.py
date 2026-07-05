@@ -1,11 +1,10 @@
 """Tests for onboarding DTOs and enums: EffortLevel, ValueLevel, KeyInfo."""
 
 import math
-from datetime import UTC, datetime
 
 import pytest
 
-from llmbroker.models import EffortLevel, KeyInfo, LLMProfile, QualitySummary, ValueLevel
+from llmbroker.models import EffortLevel, KeyInfo, QualitySummary, ValueLevel, key_hash
 
 
 def test_effort_level_easiest_first_order():
@@ -88,41 +87,13 @@ def test_wilson_upper_none_when_weight_is_zero():
     assert s.wilson_upper(1.96, min_count=0) is None
 
 
-# --- LLMProfile -----------------------------------------------------------
+# --- key_hash -----------------------------------------------------------
 
 
-def test_llm_profile_round_trip_populated():
-    profile = LLMProfile(
-        stats={
-            "summarize": {
-                "quality": QualitySummary(weight=10.0, weighted_good=7.0, weight_sq=5.0, count=12),
-                "transport": QualitySummary(weight=5.0, weighted_good=5.0, weight_sq=3.0, count=6),
-            },
-            None: {
-                "transport": QualitySummary(weight=2.0, weighted_good=1.0, weight_sq=1.5, count=2),
-            },
-        },
-        benched=True,
-        benched_since=datetime(2030, 1, 1, tzinfo=UTC),
-        benched_reason="manual review",
-    )
-    assert LLMProfile.from_dict(profile.to_dict()) == profile
+def test_key_hash_is_deterministic_and_short():
+    assert key_hash("sk-abc") == key_hash("sk-abc")
+    assert len(key_hash("sk-abc")) == 12
 
 
-def test_llm_profile_round_trip_empty():
-    assert LLMProfile.from_dict({}) == LLMProfile()
-    assert LLMProfile.from_dict(LLMProfile().to_dict()) == LLMProfile()
-
-
-def test_llm_profile_unknown_extra_key_preserved():
-    d = LLMProfile().to_dict()
-    d["future_field"] = "keep me"
-    profile = LLMProfile.from_dict(d)
-    assert profile.extra == {"future_field": "keep me"}
-    assert LLMProfile.from_dict(profile.to_dict()) == profile
-
-
-def test_llm_profile_extra_reserved_key_collision_raises():
-    profile = LLMProfile(extra={"benched": True})
-    with pytest.raises(ValueError, match="reserved"):
-        profile.to_dict()
+def test_key_hash_differs_for_different_keys():
+    assert key_hash("sk-abc") != key_hash("sk-xyz")

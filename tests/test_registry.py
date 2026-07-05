@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-from datetime import UTC, datetime
 
 import aiosqlite
 import llmbroker.mongodb
@@ -10,7 +9,7 @@ import llmbroker.postgres
 import llmbroker.sqlite
 import pytest
 
-from llmbroker.models import LLMConfig, LLMProfile, QualitySummary
+from llmbroker.models import LLMConfig
 from llmbroker.standalone.registry import Registry
 
 
@@ -389,181 +388,6 @@ async def test_postgres_registry_legacy_null_metadata_loads_parallel_none(pg_poo
     finally:
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM llmbroker_registry WHERE name = 'legacy-null-meta'")
-
-
-def _profile(quality_val: float = 0.7) -> LLMProfile:
-    return LLMProfile(
-        stats={
-            "summarize": {
-                "quality": QualitySummary(
-                    weight=10.0,
-                    weighted_good=quality_val * 10,
-                    weight_sq=5.0,
-                    count=12,
-                ),
-            },
-        },
-        benched=False,
-    )
-
-
-# ── Learned profile: registry read_profiles / write_profile (DB backends) ────
-
-
-async def test_mutable_registry_profile_round_trip(mutable_registry):
-    await mutable_registry.add(_cfg("p1"))
-    profile = _profile()
-    await mutable_registry.write_profile("p1", profile)
-    result = await mutable_registry.read_profiles()
-    assert result["p1"] == profile
-
-
-async def test_mutable_registry_profile_missing_returns_default_empty(mutable_registry):
-    await mutable_registry.add(_cfg("p1"))
-    result = await mutable_registry.read_profiles()
-    assert result["p1"] == LLMProfile()
-
-
-async def test_mutable_registry_write_profile_missing_entry_raises_key_error(mutable_registry):
-    with pytest.raises(KeyError):
-        await mutable_registry.write_profile("ghost", _profile())
-
-
-async def test_mutable_registry_update_does_not_clobber_profile(mutable_registry):
-    """Regression: mongodb update() used a full-document replace_one that silently wiped profile."""
-    await mutable_registry.add(_cfg("p1", "https://old/v1"))
-    profile = _profile()
-    await mutable_registry.write_profile("p1", profile)
-    await mutable_registry.update(_cfg("p1", "https://new/v1"))
-    result = await mutable_registry.read_profiles()
-    assert result["p1"] == profile
-    updated_cfg = await mutable_registry.get("p1")
-    assert updated_cfg is not None
-    assert updated_cfg.base_url == "https://new/v1"
-
-
-async def test_mutable_registry_profile_isolated_per_user(mutable_registry):
-    await mutable_registry.add(_cfg("p1"), "alice")
-    profile = _profile()
-    await mutable_registry.write_profile("p1", profile, "alice")
-    alice_profiles = await mutable_registry.read_profiles("alice")
-    bob_profiles = await mutable_registry.read_profiles("bob")
-    assert alice_profiles["p1"] == profile
-    assert "p1" not in bob_profiles
-
-
-# ── Learned profile: file/TOML registry sibling JSON file ────────────────────
-
-
-def test_toml_registry_profile_default_sibling_path(tmp_path):
-    config_path = tmp_path / "llms.toml"
-    config_path.write_text("")
-    reg = Registry(config_path)
-    profile = _profile()
-    asyncio.run(reg.write_profile("p1", profile))
-
-    expected_path = tmp_path / "llms.profile.json"
-    assert expected_path.exists()
-    reg2 = Registry(config_path, profile_path=expected_path)
-    result = asyncio.run(reg2.read_profiles())
-    assert result["p1"] == profile
-
-
-def test_toml_registry_profile_round_trip(tmp_path):
-    config_path = tmp_path / "llms.toml"
-    config_path.write_text("")
-    reg = Registry(config_path)
-    profile = _profile()
-
-    async def run():
-        await reg.write_profile("p1", profile)
-        return await reg.read_profiles()
-
-    result = asyncio.run(run())
-    assert result["p1"] == profile
-
-
-def test_toml_registry_profile_custom_path(tmp_path):
-    config_path = tmp_path / "llms.toml"
-    config_path.write_text("")
-    profile_path = tmp_path / "custom.profile.json"
-    reg = Registry(config_path, profile_path=profile_path)
-
-    asyncio.run(reg.write_profile("p1", _profile()))
-    assert profile_path.exists()
-    assert not (tmp_path / "llms.profile.json").exists()
-
-
-def test_toml_registry_persist_profile_false_writes_nothing_and_reads_empty(tmp_path):
-    config_path = tmp_path / "llms.toml"
-    config_path.write_text("")
-    reg = Registry(config_path, persist_profile=False)
-
-    async def run():
-        await reg.write_profile("p1", _profile())
-        return await reg.read_profiles()
-
-    result = asyncio.run(run())
-    assert result == {}
-    assert not (tmp_path / "llms.profile.json").exists()
-
-
-def test_toml_registry_profile_missing_file_returns_empty(tmp_path):
-    config_path = tmp_path / "llms.toml"
-    config_path.write_text("")
-    reg = Registry(config_path)
-    assert asyncio.run(reg.read_profiles()) == {}
-
-
-def test_toml_registry_profile_isolated_per_user(tmp_path):
-    config_path = tmp_path / "llms.toml"
-    config_path.write_text("")
-    reg = Registry(config_path)
-    profile = _profile()
-
-    async def run():
-        await reg.write_profile("p1", profile, "alice")
-        alice = await reg.read_profiles("alice")
-        bob = await reg.read_profiles("bob")
-        return alice, bob
-
-    alice, bob = asyncio.run(run())
-    assert alice["p1"] == profile
-    assert "p1" not in bob
-
-
-def test_toml_registry_profile_survives_config_overwrite(tmp_path):
-    """The whole point: a preset overwriting llm.toml must not touch the sibling profile file."""
-    config_path = tmp_path / "llms.toml"
-    config_path.write_text("")
-    reg = Registry(config_path)
-    profile = _profile()
-    asyncio.run(reg.write_profile("p1", profile))
-
-    config_path.write_text(
-        '[[llms]]\nname="new"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
-    )
-
-    result = asyncio.run(reg.read_profiles())
-    assert result["p1"] == profile
-
-
-def test_toml_registry_profile_with_benched_latch_round_trip(tmp_path):
-    config_path = tmp_path / "llms.toml"
-    config_path.write_text("")
-    reg = Registry(config_path)
-    profile = LLMProfile(
-        benched=True,
-        benched_since=datetime(2030, 1, 1, tzinfo=UTC),
-        benched_reason="manual review",
-    )
-
-    async def run():
-        await reg.write_profile("p1", profile)
-        return await reg.read_profiles()
-
-    result = asyncio.run(run())
-    assert result["p1"] == profile
 
 
 async def test_mongodb_registry_legacy_doc_without_metadata_loads_parallel_none(mongo_db):

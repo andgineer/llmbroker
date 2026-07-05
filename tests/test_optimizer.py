@@ -1,4 +1,8 @@
-"""Tests for Optimizer failure bookkeeping, quality windows, and OptimizerTelemetry."""
+"""Tests for the Optimizer: backoff bookkeeping, quality windows, and demotion verdicts.
+
+Dead-key-drop / journal-rebuild behavior lives in ``_LearningHook`` — see
+``tests/test_learning.py``.
+"""
 
 import asyncio
 from datetime import UTC, datetime, timedelta
@@ -6,21 +10,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from llmbroker.broker import AsyncBroker
-from llmbroker.broker.pool import LLMPool
 from llmbroker.exceptions import NoLLMAvailableError
-from llmbroker.models import (
-    Call,
-    CallStatus,
-    LLMConfig,
-    LLMMetrics,
-)
-from llmbroker.optimizer import (
-    _CALL_INDEX_CAP,
-    Optimizer,
-    OptimizerTelemetry,
-    wilson_upper,
-)
-from llmbroker.protocols.telemetry import QueryableTelemetryProtocol
+from llmbroker.models import LLMConfig
+from llmbroker.optimizer import Optimizer, wilson_upper
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.telemetry import NoTelemetry
@@ -35,32 +27,10 @@ def _cfg(name: str = "x") -> LLMConfig:
     return LLMConfig(name=name, base_url="https://x/v1", model="m", api_key_ref="k")
 
 
-def _call(
-    name: str,
-    status: CallStatus,
-    operation: str | None = None,
-    latency_ms: int | None = None,
-    http_status: int | None = None,
-) -> Call:
-    return Call(
-        id="test",
-        llm_name=name,
-        operation=operation,
-        trace_id=None,
-        status=status,
-        latency_ms=latency_ms,
-        http_status=http_status,
-    )
-
-
 def _registry(tmp_path, name="p1"):
     f = tmp_path / "llms.toml"
     f.write_text(f'[[llms]]\nname="{name}"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n')
     return Registry(f)
-
-
-def _opt_tel(opt: Optimizer, pool: LLMPool, telemetry=None) -> OptimizerTelemetry:
-    return OptimizerTelemetry(opt, telemetry or NoTelemetry(), pool)
 
 
 # ---------------------------------------------------------------------------
@@ -90,143 +60,6 @@ def test_alerts_consume_and_clear():
     assert [a.message for a in first] == ["boom", "bam"]
     second = opt.alerts()
     assert second == []
-
-
-# ---------------------------------------------------------------------------
-# Dead-key handling (401/403 drop) via OptimizerTelemetry
-# ---------------------------------------------------------------------------
-
-
-def test_auth_failure_401_drops_llm_and_logs(caplog):
-    async def run():
-        pool = LLMPool(state_store=None, user_id=None)
-        await pool.add(_cfg(), "key")
-        opt = Optimizer()
-        opt_tel = _opt_tel(opt, pool)
-
-        with caplog.at_level("ERROR"):
-            await opt_tel.record(_call("x", CallStatus.ERROR, http_status=401))
-
-        assert "x" not in pool
-        assert any("API key" in r.message and "401" in r.message for r in caplog.records)
-        alerts = opt.alerts()
-        assert len(alerts) == 1
-        assert "'k'" in alerts[0].message  # api_key_ref value
-
-    asyncio.run(run())
-
-
-def test_auth_failure_403_drops_llm_and_alerts():
-    async def run():
-        pool = LLMPool(state_store=None, user_id=None)
-        await pool.add(_cfg(), "key")
-        opt = Optimizer()
-        opt_tel = _opt_tel(opt, pool)
-
-        await opt_tel.record(_call("x", CallStatus.ERROR, http_status=403))
-
-        assert "x" not in pool
-        alerts = opt.alerts()
-        assert len(alerts) == 1
-        assert "403" in alerts[0].message
-
-    asyncio.run(run())
-
-
-def test_generic_error_does_not_drop_llm():
-    async def run():
-        pool = LLMPool(state_store=None, user_id=None)
-        await pool.add(_cfg(), "key")
-        opt = Optimizer()
-        opt_tel = _opt_tel(opt, pool)
-
-        for _ in range(3):
-            await opt_tel.record(_call("x", CallStatus.ERROR))
-
-        assert "x" in pool
-        assert opt.rl_fail_count("x") == 3
-
-    asyncio.run(run())
-
-
-def test_ok_calls_reset_rl_fail_count():
-    async def run():
-        pool = LLMPool(state_store=None, user_id=None)
-        await pool.add(_cfg(), "key")
-        opt = Optimizer()
-        opt_tel = _opt_tel(opt, pool)
-
-        await opt_tel.record(_call("x", CallStatus.RATE_LIMITED))
-        assert opt.rl_fail_count("x") == 1
-        await opt_tel.record(_call("x", CallStatus.OK))
-        assert opt.rl_fail_count("x") == 0
-
-    asyncio.run(run())
-
-
-def test_drop_removes_the_slot_entirely():
-    async def run():
-        pool = LLMPool(state_store=None, user_id=None)
-        await pool.add(_cfg(), "key")
-        await pool.drop("x")
-        assert "x" not in pool
-        with pytest.raises(TimeoutError):
-            await pool.acquire(0)
-
-    asyncio.run(run())
-
-
-# ---------------------------------------------------------------------------
-# Broker-level integration tests
-# ---------------------------------------------------------------------------
-
-
-def test_cold_boot_no_telemetry(tmp_path):
-    """AsyncBroker with NoTelemetry and optimize=True provisions without error."""
-
-    async def run():
-        async with AsyncBroker(
-            registry=_registry(tmp_path),
-            telemetry=NoTelemetry(),
-            optimize=True,
-        ) as broker:
-            assert await broker.count() == 1
-            assert await broker.alerts() == []
-
-    asyncio.run(run())
-
-
-class _FakeQueryableTelemetry:
-    """Minimal queryable telemetry stub returning preset metrics."""
-
-    def __init__(self, metrics: dict[str, LLMMetrics]) -> None:
-        self._metrics = metrics
-
-    async def record(self, call: Call) -> None:
-        pass
-
-    async def record_quality(self, call_id: str, score: float) -> None:
-        pass
-
-    async def metrics(
-        self, *, since: datetime | None = None, user_id: object = None
-    ) -> dict[str, LLMMetrics]:
-        return self._metrics
-
-    async def calls(self, *, limit: int, user_id: object = None) -> list[Call]:
-        return []
-
-    async def purge_calls(self, *, before: datetime) -> int:
-        return 0
-
-
-def test_optimizer_telemetry_proxies_queryable():
-    """isinstance check passes when inner backend is queryable."""
-    tel = _FakeQueryableTelemetry({})
-    pool = LLMPool(state_store=None, user_id=None)
-    opt = Optimizer()
-    opt_tel = OptimizerTelemetry(opt, tel, pool)
-    assert isinstance(opt_tel, QueryableTelemetryProtocol)
 
 
 # ---------------------------------------------------------------------------
@@ -493,66 +326,5 @@ def test_alerts_returns_empty_optimize_false(tmp_path):
             optimize=False,
         ) as broker:
             assert await broker.alerts() == []
-
-    asyncio.run(run())
-
-
-# ---------------------------------------------------------------------------
-# record_quality via OptimizerTelemetry: call_id -> (name, operation) resolution
-# ---------------------------------------------------------------------------
-
-
-def test_record_quality_updates_the_right_name_and_operation():
-    async def run():
-        pool = LLMPool(state_store=None, user_id=None)
-        await pool.add(_cfg(), "key")
-        opt = Optimizer()
-        opt_tel = _opt_tel(opt, pool)
-
-        call = _call("x", CallStatus.OK, operation="summarize")
-        await opt_tel.record(call)
-        await opt_tel.record_quality(call.id, 0.8)
-
-        window = opt._scores[("x", "summarize")]
-        assert list(window) == [0.8]
-
-    asyncio.run(run())
-
-
-def test_record_quality_unknown_call_id_warns_and_is_dropped(caplog):
-    async def run():
-        pool = LLMPool(state_store=None, user_id=None)
-        await pool.add(_cfg(), "key")
-        opt = Optimizer()
-        opt_tel = _opt_tel(opt, pool)
-
-        with caplog.at_level("WARNING"):
-            await opt_tel.record_quality("never-recorded", 0.8)
-
-        assert opt._scores == {}
-        assert any("not indexed" in r.message for r in caplog.records)
-
-    asyncio.run(run())
-
-
-def test_call_index_never_exceeds_cap_under_sustained_traffic():
-    async def run():
-        pool = LLMPool(state_store=None, user_id=None)
-        await pool.add(_cfg(), "key")
-        opt = Optimizer()
-        opt_tel = _opt_tel(opt, pool)
-
-        for i in range(_CALL_INDEX_CAP + 500):
-            await opt_tel.record(
-                Call(
-                    id=f"call-{i}",
-                    llm_name="x",
-                    operation=None,
-                    trace_id=None,
-                    status=CallStatus.OK,
-                )
-            )
-
-        assert len(opt_tel._call_index) <= _CALL_INDEX_CAP
 
     asyncio.run(run())

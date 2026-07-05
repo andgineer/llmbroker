@@ -105,7 +105,8 @@ async def test_provision_loads_registry_and_resolves_keys(stack, monkeypatch):
 
 
 async def test_state_persists_across_restart(persistent_stack, monkeypatch):
-    """Cooldown written by broker 1 is restored by broker 2 from the same state_store."""
+    """Cooldown written by broker 1 is restored by broker 2 via the shared journal
+    (the provision-time rebuild warm start applies the peer's cooldown row)."""
     await _seed_stack(persistent_stack, [_cfg("llm1")], {"KEY": "test-key"}, monkeypatch)
     async with persistent_stack.make_broker() as broker1:
         with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(429)):

@@ -24,7 +24,6 @@ import llmbroker.vault
 from llmbroker.broker import AsyncBroker
 from llmbroker.protocols.registry import MutableRegistryProtocol, RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
-from llmbroker.protocols.state_store import StateStoreProtocol
 from llmbroker.protocols.telemetry import TelemetryProtocol
 from llmbroker.standalone.registry import Registry as TomlRegistry
 from llmbroker.standalone.secrets import DictSecrets, Secrets
@@ -173,12 +172,11 @@ async def queryable_telemetry(request, tmp_path_factory, pg_pool, mongo_db):
 
 @dataclass
 class Stack:
-    """All four ports wired together; make_broker() constructs an AsyncBroker over them."""
+    """The three ports wired together; make_broker() constructs an AsyncBroker over them."""
 
     name: str
     registry: RegistryProtocol
     secrets: SecretsProtocol
-    state_store: StateStoreProtocol | None
     telemetry: TelemetryProtocol
     queryable: bool
     persistent: bool
@@ -187,7 +185,6 @@ class Stack:
         return AsyncBroker(
             self.registry,
             secrets=self.secrets,
-            state_store=self.state_store,
             telemetry=self.telemetry,
             **kw,
         )
@@ -248,8 +245,12 @@ async def any_secrets(request, tmp_path_factory, pg_pool, mongo_db) -> SecretsPr
     params=["sqlite", "postgres", "mongodb", "redis"],
     ids=["sqlite", "postgres", "mongodb", "redis"],
 )
-async def any_state_store(request, tmp_path_factory, pg_pool, mongo_db) -> StateStoreProtocol:
-    """State-store backend parametrized over every implemented storage layer."""
+async def any_state_store(request, tmp_path_factory, pg_pool, mongo_db):
+    """State-store backend parametrized over every implemented storage layer.
+
+    Unused by the broker (shared cooldowns derive from the journal); these classes
+    stay standalone-testable until they are deleted outright.
+    """
     param = request.param
     if param == "sqlite":
         db_path = str(tmp_path_factory.mktemp("any_ss_sqlite") / "ss.db")
@@ -309,7 +310,6 @@ async def _stack_ctx(
             name="all_sqlite",
             registry=llmbroker.sqlite.Registry(f"{base}/llms.db"),
             secrets=llmbroker.sqlite.Secrets(f"{base}/llms.db"),
-            state_store=llmbroker.sqlite.StateStore(f"{base}/llms.db"),
             telemetry=llmbroker.sqlite.Telemetry(f"{base}/llms.db"),
             queryable=True,
             persistent=True,
@@ -320,7 +320,6 @@ async def _stack_ctx(
             name="all_postgres",
             registry=llmbroker.postgres.Registry(pg_pool),
             secrets=llmbroker.postgres.Secrets(pg_pool),
-            state_store=llmbroker.postgres.StateStore(pg_pool),
             telemetry=llmbroker.postgres.Telemetry(pg_pool),
             queryable=True,
             persistent=True,
@@ -337,7 +336,6 @@ async def _stack_ctx(
             name="all_mongodb",
             registry=llmbroker.mongodb.Registry(mongo_db),
             secrets=llmbroker.mongodb.Secrets(mongo_db),
-            state_store=llmbroker.mongodb.StateStore(mongo_db),
             telemetry=llmbroker.mongodb.Telemetry(mongo_db),
             queryable=True,
             persistent=True,
@@ -349,12 +347,10 @@ async def _stack_ctx(
                 await mongo_db[coll].delete_many({})
 
     elif name == "scaled":
-        redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
         s = Stack(
             name="scaled",
             registry=llmbroker.postgres.Registry(pg_pool),
             secrets=DictSecrets({}),
-            state_store=llmbroker.redis.StateStore(redis_client),
             telemetry=llmbroker.postgres.Telemetry(pg_pool),
             queryable=True,
             persistent=True,
@@ -373,19 +369,16 @@ async def _stack_ctx(
             name="minimal",
             registry=TomlRegistry(toml_path),
             secrets=Secrets(),
-            state_store=None,
             telemetry=NoTelemetry(),
             queryable=False,
             persistent=False,
         )
 
     elif name == "scaled_aws_secrets":
-        redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
         s = Stack(
             name="scaled_aws_secrets",
             registry=llmbroker.postgres.Registry(pg_pool),
             secrets=llmbroker.aws.Secrets(region_name="us-east-1", endpoint_url=localstack_url),
-            state_store=llmbroker.redis.StateStore(redis_client),
             telemetry=llmbroker.postgres.Telemetry(pg_pool),
             queryable=True,
             persistent=True,
@@ -400,12 +393,10 @@ async def _stack_ctx(
 
     elif name == "scaled_vault_secrets":
         url, token = vault_params
-        redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
         s = Stack(
             name="scaled_vault_secrets",
             registry=llmbroker.postgres.Registry(pg_pool),
             secrets=llmbroker.vault.Secrets(url=url, token=token),
-            state_store=llmbroker.redis.StateStore(redis_client),
             telemetry=llmbroker.postgres.Telemetry(pg_pool),
             queryable=True,
             persistent=True,
@@ -441,6 +432,6 @@ async def stack(request, tmp_path_factory, pg_pool, mongo_db) -> Stack:
 
 @pytest.fixture(params=_PERSISTENT_STACKS, ids=_PERSISTENT_STACKS)
 async def persistent_stack(request, tmp_path_factory, pg_pool, mongo_db) -> Stack:
-    """Full-stack fixture restricted to stacks with a real state_store and queryable telemetry."""
+    """Full-stack fixture restricted to persistent, queryable stacks."""
     async with _stack_ctx(request.param, tmp_path_factory, pg_pool, mongo_db) as s:
         yield s

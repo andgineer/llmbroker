@@ -11,7 +11,7 @@ import pytest
 
 from llmbroker.broker import AsyncBroker
 from llmbroker.exceptions import AllLLMsFailedError, NoLLMAvailableError
-from llmbroker.models import Call, CallStatus, LifecyclePhase, LLMConfig, LLMState, SeedPolicy
+from llmbroker.models import LifecyclePhase, LLMConfig, SeedPolicy
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.telemetry import NoTelemetry
@@ -284,84 +284,6 @@ def test_update_changes_config_without_extra_slot(tmp_path):
     asyncio.run(run())
 
 
-class _FakeStateStore:
-    """Minimal StateStoreProtocol returning a fixed cooling state."""
-
-    def __init__(self, state: LLMState) -> None:
-        self._state = state
-
-    async def read(self, user_id: int | str | None = None) -> dict[str, LLMState]:
-        return {"p1": self._state}
-
-    async def write(self, name: str, state: LLMState, user_id: int | str | None = None) -> None:
-        pass
-
-    async def apply_summary_delta(self, *args: object, **kwargs: object) -> None:
-        pass
-
-    async def read_summaries(self, user_id: int | str | None = None) -> dict:
-        return {}
-
-    async def seed_summary(self, *args: object, **kwargs: object) -> None:
-        pass
-
-
-class _PerUserStateStore:
-    """StateStoreProtocol that segregates state by user_id."""
-
-    def __init__(self) -> None:
-        self._data: dict[int | str | None, dict[str, LLMState]] = {}
-
-    async def read(self, user_id: int | str | None = None) -> dict[str, LLMState]:
-        return dict(self._data.get(user_id, {}))
-
-    async def write(self, name: str, state: LLMState, user_id: int | str | None = None) -> None:
-        self._data.setdefault(user_id, {})[name] = state
-
-    async def apply_summary_delta(self, *args: object, **kwargs: object) -> None:
-        pass
-
-    async def read_summaries(self, user_id: int | str | None = None) -> dict:
-        return {}
-
-    async def seed_summary(self, *args: object, **kwargs: object) -> None:
-        pass
-
-
-def test_snapshot_picks_up_state_store(tmp_path):
-    cooling = LLMState(phase=LifecyclePhase.COOLING, fail_count=3)
-    store = _FakeStateStore(cooling)
-
-    async def run():
-        async with AsyncBroker(
-            registry=_registry(tmp_path),
-            state_store=store,
-            telemetry=NoTelemetry(),
-        ) as broker:
-            snap = await broker.snapshot()
-            assert snap["p1"].state.phase is LifecyclePhase.COOLING
-            assert snap["p1"].state.fail_count == 3
-
-    asyncio.run(run())
-
-
-def test_get_state_picks_up_state_store(tmp_path):
-    cooling = LLMState(phase=LifecyclePhase.COOLING, fail_count=2)
-    store = _FakeStateStore(cooling)
-
-    async def run():
-        async with AsyncBroker(
-            registry=_registry(tmp_path),
-            state_store=store,
-            telemetry=NoTelemetry(),
-        ) as broker:
-            state = await (await broker.get("p1")).state()
-            assert state.phase is LifecyclePhase.COOLING
-            assert state.fail_count == 2
-
-    asyncio.run(run())
-
-
 def test_seed_with_readonly_registry_raises(tmp_path):
     other = tmp_path / "other.toml"
     other.write_text('[[llms]]\nname="p2"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n')
@@ -543,8 +465,12 @@ def test_constructor_seed_policy_add_does_not_overwrite(tmp_path):
 # ── per-user scoping tests ────────────────────────────────────────────────────
 
 
-def test_two_users_have_isolated_pool(tmp_path):
-    """Two brokers with different user_id over one SQLite registry see separate configs."""
+def test_two_scopes_have_isolated_pool(tmp_path):
+    """Two brokers with different scope over one SQLite registry see separate configs.
+
+    The registry itself still scopes by ``user_id`` internally (Plan 3 removes that
+    parameter); the broker just forwards its ``scope`` string through.
+    """
 
     async def run():
         db = str(tmp_path / "b.db")
@@ -558,12 +484,12 @@ def test_two_users_have_isolated_pool(tmp_path):
 
         broker_a = AsyncBroker(
             registry=llmbroker.sqlite.Registry(db),
-            user_id="alice",
+            scope="alice",
             telemetry=NoTelemetry(),
         )
         broker_b = AsyncBroker(
             registry=llmbroker.sqlite.Registry(db),
-            user_id="bob",
+            scope="bob",
             telemetry=NoTelemetry(),
         )
         async with broker_a, broker_b:
@@ -573,8 +499,8 @@ def test_two_users_have_isolated_pool(tmp_path):
     asyncio.run(run())
 
 
-def test_user_none_reproduces_single_tenant_behavior(tmp_path):
-    """user_id=None (default) is equivalent to single-tenant behavior."""
+def test_scope_none_reproduces_single_tenant_behavior(tmp_path):
+    """scope=None (default) is equivalent to single-tenant behavior."""
 
     async def run():
         db = str(tmp_path / "b.db")
@@ -589,39 +515,8 @@ def test_user_none_reproduces_single_tenant_behavior(tmp_path):
     asyncio.run(run())
 
 
-def test_cooldown_invisible_to_other_user(tmp_path):
-    """A cooldown triggered under user A is not visible to user B."""
-    store = _PerUserStateStore()
-
-    async def run():
-        async with AsyncBroker(
-            registry=_registry(tmp_path),
-            secrets=_secrets(),
-            state_store=store,
-            telemetry=NoTelemetry(),
-            user_id="alice",
-        ) as broker_a:
-            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(429)):
-                with pytest.raises(NoLLMAvailableError):
-                    await broker_a.chat([{"role": "user", "content": "hi"}], wait=0)
-            state_a = await (await broker_a.get("p1")).state()
-            assert state_a.phase is LifecyclePhase.COOLING
-
-        async with AsyncBroker(
-            registry=_registry(tmp_path),
-            secrets=_secrets(),
-            state_store=store,
-            telemetry=NoTelemetry(),
-            user_id="bob",
-        ) as broker_b:
-            state_b = await (await broker_b.get("p1")).state()
-            assert state_b.phase is LifecyclePhase.AVAILABLE
-
-    asyncio.run(run())
-
-
-def test_seed_from_unscoped_source_writes_to_user_scope(tmp_path):
-    """Seeding from an unscoped (file) source writes entries under user_id, not under NULL."""
+def test_seed_from_unscoped_source_writes_to_scope(tmp_path):
+    """Seeding from an unscoped (file) source writes entries under scope, not under NULL."""
 
     async def run():
         db = str(tmp_path / "b.db")
@@ -629,7 +524,7 @@ def test_seed_from_unscoped_source_writes_to_user_scope(tmp_path):
             registry=llmbroker.sqlite.Registry(db),
             seed=_toml_registry(tmp_path),
             telemetry=NoTelemetry(),
-            user_id="alice",
+            scope="alice",
         ):
             pass
         reg = llmbroker.sqlite.Registry(db)
@@ -643,14 +538,15 @@ def test_seed_from_unscoped_source_writes_to_user_scope(tmp_path):
     asyncio.run(run())
 
 
-def test_two_users_have_isolated_secrets(tmp_path):
-    """Two brokers with different user_id resolve different values for the same api_key_ref."""
+def test_two_scopes_have_isolated_secrets(tmp_path):
+    """Two brokers with different scope resolve different values for the same api_key_ref,
+    via the scope-prefixed ref (own key), falling back to the shared ref."""
 
     async def run():
         db = str(tmp_path / "b.db")
         secrets = llmbroker.sqlite.Secrets(db)
-        await secrets.set("KEY", "alice-secret", "alice")
-        await secrets.set("KEY", "bob-secret", "bob")
+        await secrets.set("alice/KEY", "alice-secret")
+        await secrets.set("bob/KEY", "bob-secret")
 
         cfg = LLMConfig(name="llm", base_url="https://x/v1", model="m", api_key_ref="KEY")
         reg = llmbroker.sqlite.Registry(db)
@@ -660,13 +556,13 @@ def test_two_users_have_isolated_secrets(tmp_path):
         broker_a = AsyncBroker(
             registry=llmbroker.sqlite.Registry(db),
             secrets=secrets,
-            user_id="alice",
+            scope="alice",
             telemetry=NoTelemetry(),
         )
         broker_b = AsyncBroker(
             registry=llmbroker.sqlite.Registry(db),
             secrets=secrets,
-            user_id="bob",
+            scope="bob",
             telemetry=NoTelemetry(),
         )
         async with broker_a, broker_b:
@@ -676,40 +572,24 @@ def test_two_users_have_isolated_secrets(tmp_path):
     asyncio.run(run())
 
 
-def test_two_users_snapshot_isolated(tmp_path):
-    """snapshot() for bob does not include alice's telemetry metrics or cooldown state."""
-    store = _PerUserStateStore()
+def test_scope_without_own_key_falls_back_to_shared_ref(tmp_path):
+    """A scope with no own-prefixed secret falls back to the shared (unprefixed) ref."""
 
     async def run():
         db = str(tmp_path / "b.db")
-        tel = llmbroker.sqlite.Telemetry(db)
-        reg = llmbroker.sqlite.Registry(db)
-        cfg = LLMConfig(name="llm", base_url="https://x/v1", model="m", api_key_ref="K")
-        await reg.add(cfg, "alice")
-        await reg.add(cfg, "bob")
+        secrets = llmbroker.sqlite.Secrets(db)
+        await secrets.set("KEY", "shared-secret")
 
-        await store.write("llm", LLMState(phase=LifecyclePhase.COOLING, fail_count=3), "alice")
-        await tel.record(
-            Call(
-                id="c1",
-                llm_name="llm",
-                operation=None,
-                trace_id=None,
-                status=CallStatus.OK,
-                user_id="alice",
-            )
-        )
+        cfg = LLMConfig(name="llm", base_url="https://x/v1", model="m", api_key_ref="KEY")
+        reg = llmbroker.sqlite.Registry(db)
+        await reg.add(cfg, "alice")
 
         async with AsyncBroker(
             registry=llmbroker.sqlite.Registry(db),
-            secrets=DictSecrets({"K": "key"}),
-            telemetry=tel,
-            state_store=store,
-            user_id="bob",
-        ) as broker_b:
-            snap = await broker_b.snapshot()
-
-        assert snap["llm"].state.phase is LifecyclePhase.AVAILABLE
-        assert snap["llm"].metrics is None or snap["llm"].metrics.call_count == 0
+            secrets=secrets,
+            scope="alice",
+            telemetry=NoTelemetry(),
+        ) as broker:
+            assert broker._pool.resolved_key("llm") == "shared-secret"
 
     asyncio.run(run())

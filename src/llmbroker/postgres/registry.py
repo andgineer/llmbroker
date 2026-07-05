@@ -4,7 +4,7 @@ import json
 
 import asyncpg
 
-from llmbroker.models import LLMConfig, LLMProfile, check_user_id
+from llmbroker.models import LLMConfig, check_user_id
 from llmbroker.postgres.schema import ensure_schema, to_uid
 
 
@@ -98,43 +98,6 @@ class Registry:
         async with self._pool.acquire() as conn:
             status = await conn.execute(
                 "DELETE FROM llmbroker_registry WHERE name=$1 AND user_id IS NOT DISTINCT FROM $2",
-                name,
-                uid,
-            )
-        if int(status.split()[-1]) == 0:
-            raise KeyError(name)
-
-    async def read_profiles(self, user_id: int | str | None = None) -> dict[str, LLMProfile]:
-        check_user_id(user_id)
-        uid = to_uid(user_id)
-        await ensure_schema(self._pool)
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT name, profile FROM llmbroker_registry"
-                " WHERE user_id IS NOT DISTINCT FROM $1",
-                uid,
-            )
-        return {
-            row["name"]: LLMProfile.from_dict(json.loads(row["profile"]))
-            if row["profile"]
-            else LLMProfile()
-            for row in rows
-        }
-
-    async def write_profile(
-        self,
-        name: str,
-        profile: LLMProfile,
-        user_id: int | str | None = None,
-    ) -> None:
-        check_user_id(user_id)
-        uid = to_uid(user_id)
-        await ensure_schema(self._pool)
-        async with self._pool.acquire() as conn:
-            status = await conn.execute(
-                "UPDATE llmbroker_registry SET profile=$1::jsonb"
-                " WHERE name=$2 AND user_id IS NOT DISTINCT FROM $3",
-                json.dumps(profile.to_dict()),
                 name,
                 uid,
             )

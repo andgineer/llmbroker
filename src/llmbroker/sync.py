@@ -14,19 +14,11 @@ from pathlib import Path
 from typing import Any
 
 from llmbroker.broker import AsyncBroker, AsyncResult
-from llmbroker.models import (
-    Call,
-    LLMConfig,
-    LLMMetrics,
-    LLMSnapshot,
-    LLMState,
-    SeedPolicy,
-)
+from llmbroker.models import Call, LLMConfig, LLMMetrics, LLMSnapshot, LLMState, SeedPolicy
 from llmbroker.optimizer import Optimizer
-from llmbroker.protocols.backend_stack import UNSET, BackendStack, _UnsetType
+from llmbroker.protocols.backend_stack import BackendStack
 from llmbroker.protocols.registry import RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
-from llmbroker.protocols.state_store import StateStoreProtocol
 from llmbroker.protocols.telemetry import TelemetryProtocol
 from llmbroker.standalone.registry import Registry
 
@@ -78,8 +70,8 @@ class LLM:
     def state(self) -> LLMState:
         return self._broker.state_of(self._name)
 
-    def metrics(self, *, since: datetime | None = None) -> LLMMetrics:
-        return self._broker.metrics_of(self._name, since=since)
+    def metrics(self) -> LLMMetrics:
+        return self._broker.metrics_of(self._name)
 
 
 class Broker:
@@ -91,12 +83,11 @@ class Broker:
         *,
         stack: BackendStack | None = None,
         secrets: SecretsProtocol | None = None,
-        state_store: StateStoreProtocol | None | _UnsetType = UNSET,
         telemetry: TelemetryProtocol | None = None,
         optimize: bool | Optimizer = True,
         seed: RegistryProtocol | str | Path | None = None,
         seed_policy: SeedPolicy = SeedPolicy.SYNC,
-        user_id: int | str | None = None,
+        scope: str | None = None,
     ) -> None:
         if isinstance(registry, (str, Path)):
             registry = Registry(registry)
@@ -106,12 +97,11 @@ class Broker:
             registry,
             stack=stack,
             secrets=secrets,
-            state_store=state_store,
             telemetry=telemetry,
             optimize=optimize,
             seed=seed,
             seed_policy=seed_policy,
-            user_id=user_id,
+            scope=scope,
         )
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
@@ -148,9 +138,9 @@ class Broker:
         llm = self._run(self._async.get(name))
         return self._run(llm.state())
 
-    def metrics_of(self, name: str, *, since: datetime | None = None) -> LLMMetrics:
+    def metrics_of(self, name: str) -> LLMMetrics:
         llm = self._run(self._async.get(name))
-        return self._run(llm.metrics(since=since))
+        return self._run(llm.metrics())
 
     # ── calls ──
     def ask(
@@ -188,8 +178,8 @@ class Broker:
             ),
         )
 
-    def snapshot(self, *, since: datetime | None = None) -> Mapping[str, LLMSnapshot]:
-        return self._run(self._async.snapshot(since=since))
+    def snapshot(self) -> Mapping[str, LLMSnapshot]:
+        return self._run(self._async.snapshot())
 
     def add(self, cfg: LLMConfig) -> None:
         self._run(self._async.add(cfg))
@@ -200,8 +190,8 @@ class Broker:
     def remove(self, name: str) -> None:
         self._run(self._async.remove(name))
 
-    def disable_llm(self, name: str, *, reason: str | None = None) -> None:
-        self._run(self._async.disable_llm(name, reason=reason))
+    def disable_llm(self, name: str) -> None:
+        self._run(self._async.disable_llm(name))
 
     def enable_llm(self, name: str) -> None:
         self._run(self._async.enable_llm(name))

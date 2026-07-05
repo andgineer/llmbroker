@@ -2,14 +2,15 @@
 
 ``ensure_schema`` is the single authority for the package's sqlite tables.
 Every object is ``llmbroker_``-prefixed and owned by ``ensure_schema``.
-Idempotent: safe to call repeatedly.
-The schema version is tracked via ``PRAGMA user_version``. Later releases
-hang additive, data-preserving ALTERs off the version marker.
+Idempotent: safe to call repeatedly. One known installation, upgraded
+manually by its operator — on a fresh database the schema is created and
+stamped; on a version-marker mismatch ``ensure_schema`` fails fast with an
+actionable error instead of attempting an in-place migration.
 """
 
 import aiosqlite
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 _CREATE_REGISTRY = """
 CREATE TABLE IF NOT EXISTS llmbroker_registry (
@@ -17,6 +18,7 @@ CREATE TABLE IF NOT EXISTS llmbroker_registry (
     base_url    TEXT NOT NULL,
     model       TEXT NOT NULL,
     api_key_ref TEXT NOT NULL,
+    metadata    TEXT,
     user_id     TEXT
 )
 """
@@ -27,7 +29,8 @@ CREATE TABLE IF NOT EXISTS llmbroker_calls (
     llm_name          TEXT NOT NULL,
     operation         TEXT,
     trace_id          TEXT,
-    status            TEXT NOT NULL,
+    status            TEXT,
+    kind              TEXT NOT NULL DEFAULT 'call',
     http_status       INTEGER,
     latency_ms        INTEGER,
     error_detail      TEXT,
@@ -36,8 +39,18 @@ CREATE TABLE IF NOT EXISTS llmbroker_calls (
     total_tokens      INTEGER,
     usage_extra       TEXT,
     quality_score     REAL,
+    call_id           TEXT,
     called_at         TEXT NOT NULL,
-    user_id           TEXT
+    scope             TEXT,
+    cooldown_until    TEXT,
+    key_hash          TEXT
+)
+"""
+
+_CREATE_DISABLED = """
+CREATE TABLE IF NOT EXISTS llmbroker_disabled (
+    name     TEXT PRIMARY KEY,
+    disabled INTEGER NOT NULL DEFAULT 0
 )
 """
 
@@ -49,28 +62,8 @@ CREATE TABLE IF NOT EXISTS llmbroker_secrets (
 )
 """
 
-_CREATE_IDX_LLM_NAME = (
-    "CREATE INDEX IF NOT EXISTS llmbroker_idx_calls_llm_name ON llmbroker_calls(llm_name)"
-)
-
-_CREATE_IDX_CALLED_AT = (
-    "CREATE INDEX IF NOT EXISTS llmbroker_idx_calls_called_at ON llmbroker_calls(called_at)"
-)
-
-_CREATE_IDX_CALLS_USER_ID = (
-    "CREATE INDEX IF NOT EXISTS llmbroker_idx_calls_user_id ON llmbroker_calls(user_id)"
-)
-
-_CREATE_IDX_REGISTRY_UNIQUE = (
-    "CREATE UNIQUE INDEX IF NOT EXISTS llmbroker_registry_unique"
-    " ON llmbroker_registry(name, COALESCE(user_id, ''))"
-)
-
-_CREATE_IDX_SECRETS_UNIQUE = (
-    "CREATE UNIQUE INDEX IF NOT EXISTS llmbroker_secrets_unique"
-    " ON llmbroker_secrets(ref, COALESCE(user_id, ''))"
-)
-
+# Unused by the broker (shared cooldowns derive from the journal) but kept so the
+# standalone sqlite.StateStore class stays functional until it is deleted outright.
 _CREATE_STATE = """
 CREATE TABLE IF NOT EXISTS llmbroker_state (
     llm_name TEXT NOT NULL,
@@ -102,41 +95,52 @@ _CREATE_IDX_SUMMARIES_UNIQUE = (
     " ON llmbroker_summaries(name, COALESCE(operation, ''), kind, COALESCE(user_id, ''))"
 )
 
-_ADD_REGISTRY_METADATA = "ALTER TABLE llmbroker_registry ADD COLUMN metadata TEXT"
+_CREATE_IDX_LLM_NAME = (
+    "CREATE INDEX IF NOT EXISTS llmbroker_idx_calls_llm_name ON llmbroker_calls(llm_name)"
+)
 
-_ADD_REGISTRY_PROFILE = "ALTER TABLE llmbroker_registry ADD COLUMN profile TEXT"
+_CREATE_IDX_CALLED_AT = (
+    "CREATE INDEX IF NOT EXISTS llmbroker_idx_calls_called_at ON llmbroker_calls(called_at)"
+)
+
+_CREATE_IDX_REGISTRY_UNIQUE = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS llmbroker_registry_unique"
+    " ON llmbroker_registry(name, COALESCE(user_id, ''))"
+)
+
+_CREATE_IDX_SECRETS_UNIQUE = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS llmbroker_secrets_unique"
+    " ON llmbroker_secrets(ref, COALESCE(user_id, ''))"
+)
 
 _schema_ready: dict[str, int] = {}
 
 
 async def _apply_ddl(db: aiosqlite.Connection) -> None:
-    """Run the version-gated migration phases against *db* (no transaction control)."""
+    """Create the schema from scratch on a fresh database; fail fast on a version
+    mismatch — there is exactly one known installation, upgraded manually."""
     cursor = await db.execute("PRAGMA user_version")
     row = await cursor.fetchone()
     current = int(row[0]) if row else 0
-    if current < _SCHEMA_VERSION:
-        # State/summaries are live caches rebuilt from traffic; no data migration needed.
-        await db.execute("DROP TABLE IF EXISTS llmbroker_state")
-        await db.execute("DROP TABLE IF EXISTS llmbroker_summaries")
+    if current not in (0, _SCHEMA_VERSION):
+        raise RuntimeError(
+            f"llmbroker schema version {current} found, this release expects"
+            f" {_SCHEMA_VERSION} — drop the llmbroker_* tables and restart"
+            " (export registry/secrets/calls first if you need them)",
+        )
     await db.execute(_CREATE_REGISTRY)
     await db.execute(_CREATE_CALLS)
+    await db.execute(_CREATE_DISABLED)
     await db.execute(_CREATE_SECRETS)
     await db.execute(_CREATE_STATE)
     await db.execute(_CREATE_SUMMARIES)
     await db.execute(_CREATE_IDX_LLM_NAME)
     await db.execute(_CREATE_IDX_CALLED_AT)
-    await db.execute(_CREATE_IDX_CALLS_USER_ID)
     await db.execute(_CREATE_IDX_REGISTRY_UNIQUE)
     await db.execute(_CREATE_IDX_SECRETS_UNIQUE)
     await db.execute(_CREATE_IDX_STATE_UNIQUE)
     await db.execute(_CREATE_IDX_SUMMARIES_UNIQUE)
-    if current < _SCHEMA_VERSION:
-        table_info = await (await db.execute("PRAGMA table_info(llmbroker_registry)")).fetchall()
-        existing_cols = {r[1] for r in table_info}
-        if "metadata" not in existing_cols:
-            await db.execute(_ADD_REGISTRY_METADATA)
-        if "profile" not in existing_cols:
-            await db.execute(_ADD_REGISTRY_PROFILE)
+    if current == 0:
         await db.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
 
 
