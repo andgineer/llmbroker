@@ -25,18 +25,27 @@
 | src/llmbroker/integrations/alembic.py |        2 |        0 |    100% |           |
 | src/llmbroker/models.py               |      117 |        4 |     97% |130, 146, 155, 164 |
 | src/llmbroker/mongodb/driver.py       |       84 |        4 |     95% |20, 62, 143-144 |
+| src/llmbroker/mongodb/knowledge.py    |        8 |        0 |    100% |           |
+| src/llmbroker/mongodb/registry.py     |        6 |        0 |    100% |           |
+| src/llmbroker/mongodb/secrets.py      |        6 |        0 |    100% |           |
 | src/llmbroker/optimizer.py            |       61 |        4 |     93% |     67-70 |
 | src/llmbroker/postgres/driver.py      |      138 |        5 |     96% |110, 125, 127, 219-220 |
+| src/llmbroker/postgres/knowledge.py   |        8 |        0 |    100% |           |
+| src/llmbroker/postgres/registry.py    |        6 |        0 |    100% |           |
+| src/llmbroker/postgres/secrets.py     |        6 |        0 |    100% |           |
 | src/llmbroker/protocols/knowledge.py  |        9 |        0 |    100% |           |
 | src/llmbroker/protocols/registry.py   |        8 |        0 |    100% |           |
 | src/llmbroker/protocols/secrets.py    |        5 |        0 |    100% |           |
 | src/llmbroker/sqlite/driver.py        |      154 |        2 |     99% |   225-226 |
+| src/llmbroker/sqlite/knowledge.py     |        8 |        0 |    100% |           |
+| src/llmbroker/sqlite/registry.py      |        6 |        0 |    100% |           |
+| src/llmbroker/sqlite/secrets.py       |        6 |        0 |    100% |           |
 | src/llmbroker/standalone/knowledge.py |      127 |        4 |     97% |160, 170, 189-190 |
 | src/llmbroker/standalone/registry.py  |       49 |        1 |     98% |        81 |
 | src/llmbroker/standalone/secrets.py   |       34 |        3 |     91% |46, 53, 58 |
-| src/llmbroker/sync.py                 |       87 |        5 |     94% |71, 129-130, 181, 186 |
+| src/llmbroker/sync.py                 |       88 |        5 |     94% |72, 130-131, 182, 187 |
 | src/llmbroker/vault/secrets.py        |       19 |        0 |    100% |           |
-| **TOTAL**                             | **1948** |   **91** | **95%** |           |
+| **TOTAL**                             | **2009** |   **91** | **95%** |           |
 
 
 ## Setup coverage badge
