@@ -57,14 +57,19 @@ Run `invoke pre` after each discrete batch of changes, not only at the end.
   never pulls in an optional driver.
 - **No `from __future__ import annotations`** — use `X | Y` union syntax directly (Python 3.11+).
 - **No re-export patterns** — when a symbol moves, update importers to point at the new module instead of leaving a shim re-export.
-- **`__init__.py` files carry no code.** The top-level package `src/llmbroker/__init__.py` is the
-  only exception: it may import and re-export the public API surface (plus `__all__`), nothing else
-  — no class/function definitions, no internal-only names. Every other `__init__.py` (every
-  subpackage: `sqlite/`, `postgres/`, `mongodb/`, `aws/`, `vault/`, `broker/`, `standalone/`, …) has
-  **zero imports and zero code** — a docstring at most. A class or function belongs in a named
-  module (e.g. `sqlite/registry.py`), and every caller — internal or external — imports it from
-  that exact module (`from llmbroker.sqlite.registry import Registry`), never via a subpackage
-  shortcut like `llmbroker.sqlite.Registry`.
+- **`__init__.py` files carry no code**, with two exceptions for re-exports:
+  - The top-level package `src/llmbroker/__init__.py` imports and re-exports the public API
+    surface (plus `__all__`), including the zero-dependency `standalone` backend.
+  - Each optional-dependency backend subpackage (`sqlite/`, `postgres/`, `mongodb/`, `aws/`,
+    `vault/`) imports and re-exports its own classes (plus `__all__`) from its `__init__.py` —
+    e.g. `sqlite/__init__.py` re-exports `Registry`, `Store`, `Secrets` so callers can write
+    `from llmbroker.sqlite import Registry` instead of `from llmbroker.sqlite.registry import
+    Registry`. These classes can't live on the top-level `__init__.py` the way `standalone` does,
+    since that would force the optional driver import on a bare `import llmbroker`; re-exporting
+    from the subpackage's own `__init__.py` keeps the short, compact syntax without that cost.
+  - No other `__init__.py` (`broker/`, `standalone/`, and any internal-only subpackage) gets this
+    treatment — **zero imports and zero code**, a docstring at most. Internal-only classes and
+    functions belong in a named module, and every caller imports from that exact module.
 
 ### Plan and spec files
 - Never reference plan file paths or step numbers inside code comments or docstrings.

@@ -11,8 +11,8 @@ from llmbroker.backends.ports import DriverStore
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.exceptions import AllLLMsFailedError, NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
-from llmbroker.sqlite.registry import Registry as SqliteRegistry
-from llmbroker.sqlite.secrets import Secrets as SqliteSecrets
+from llmbroker.sqlite import Registry as SqliteRegistry
+from llmbroker.sqlite import Secrets as SqliteSecrets
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import InMemoryStore

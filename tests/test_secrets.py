@@ -7,16 +7,16 @@ import hvac
 import llmbroker
 import pytest
 
-from llmbroker.aws.secrets import Secrets as AwsSecrets
+from llmbroker.aws import Secrets as AwsSecrets
 from llmbroker.models import LLMConfig
-from llmbroker.mongodb.secrets import Secrets as MongoSecrets
-from llmbroker.postgres.secrets import Secrets as PostgresSecrets
+from llmbroker.mongodb import Secrets as MongoSecrets
+from llmbroker.postgres import Secrets as PostgresSecrets
 from llmbroker.protocols.secrets import MutableSecretsProtocol
-from llmbroker.sqlite.registry import Registry as SqliteRegistry
-from llmbroker.sqlite.secrets import Secrets as SqliteSecrets
+from llmbroker.sqlite import Registry as SqliteRegistry
+from llmbroker.sqlite import Secrets as SqliteSecrets
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets, Secrets, as_secrets
-from llmbroker.vault.secrets import Secrets as VaultSecrets
+from llmbroker.vault import Secrets as VaultSecrets
 
 
 def _vault_delete_recursive(client: hvac.Client, path: str, mount_point: str = "secret") -> None:

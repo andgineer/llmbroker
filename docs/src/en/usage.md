@@ -302,7 +302,7 @@ supplied:
 
 ```python
 import llmbroker
-from llmbroker.postgres.registry import Registry as PostgresRegistry
+from llmbroker.postgres import Registry as PostgresRegistry
 
 pool = await asyncpg.create_pool(dsn)
 async with llmbroker.AsyncBroker(
@@ -317,9 +317,12 @@ async with llmbroker.AsyncBroker(
 A DB-backed registry starts empty; mirror a preset into it explicitly, once:
 
 ```python
+from llmbroker.sqlite import Registry as SqliteRegistry
+from llmbroker.sqlite import Secrets as SqliteSecrets
+
 llms = llmbroker.AsyncBroker(
-    registry=llmbroker.sqlite.registry.Registry("broker.db"),
-    secrets=llmbroker.sqlite.secrets.Secrets("broker.db"),
+    registry=SqliteRegistry("broker.db"),
+    secrets=SqliteSecrets("broker.db"),
 )
 await llms.sync(llmbroker.Registry(".deploy/llms.toml"))  # once, e.g. at deploy
 await llms.ensure_pool()   # eager init at startup
@@ -396,7 +399,7 @@ uv pip install "llmbroker[aws]"
 
 ```python
 import llmbroker
-from llmbroker.aws.secrets import Secrets as AwsSecrets
+from llmbroker.aws import Secrets as AwsSecrets
 
 secrets = AwsSecrets(region_name="us-east-1")
 
@@ -421,7 +424,7 @@ uv pip install "llmbroker[vault]"
 
 ```python
 import llmbroker
-from llmbroker.vault.secrets import Secrets as VaultSecrets
+from llmbroker.vault import Secrets as VaultSecrets
 
 secrets = VaultSecrets(url="https://vault.example.com", token="s.xxx")
 

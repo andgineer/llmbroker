@@ -14,24 +14,24 @@ from testcontainers.mongodb import MongoDbContainer
 from testcontainers.postgres import PostgresContainer
 from testcontainers.vault import VaultContainer
 
-from llmbroker.aws.secrets import Secrets as AwsSecrets
+from llmbroker.aws import Secrets as AwsSecrets
 from llmbroker.broker.broker import AsyncBroker
-from llmbroker.mongodb.store import Store as MongoStore
-from llmbroker.mongodb.registry import Registry as MongoRegistry
-from llmbroker.mongodb.secrets import Secrets as MongoSecrets
-from llmbroker.postgres.store import Store as PostgresStore
-from llmbroker.postgres.registry import Registry as PostgresRegistry
-from llmbroker.postgres.secrets import Secrets as PostgresSecrets
+from llmbroker.mongodb import Registry as MongoRegistry
+from llmbroker.mongodb import Secrets as MongoSecrets
+from llmbroker.mongodb import Store as MongoStore
+from llmbroker.postgres import Registry as PostgresRegistry
+from llmbroker.postgres import Secrets as PostgresSecrets
+from llmbroker.postgres import Store as PostgresStore
 from llmbroker.protocols.registry import MutableRegistryProtocol, RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
 from llmbroker.protocols.store import StoreProtocol
-from llmbroker.sqlite.store import Store as SqliteStore
-from llmbroker.sqlite.registry import Registry as SqliteRegistry
-from llmbroker.sqlite.secrets import Secrets as SqliteSecrets
+from llmbroker.sqlite import Registry as SqliteRegistry
+from llmbroker.sqlite import Secrets as SqliteSecrets
+from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.standalone.registry import Registry as TomlRegistry
 from llmbroker.standalone.secrets import DictSecrets, Secrets
 from llmbroker.standalone.store import FileStore, InMemoryStore
-from llmbroker.vault.secrets import Secrets as VaultSecrets
+from llmbroker.vault import Secrets as VaultSecrets
 
 # On macOS the Ryuk sidecar container (testcontainers' cleanup daemon) occasionally
 # fails to expose its port in time, causing a flaky ConnectionError on the first run.

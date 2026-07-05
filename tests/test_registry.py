@@ -7,9 +7,9 @@ import aiosqlite
 import pytest
 
 from llmbroker.models import LLMConfig
-from llmbroker.mongodb.registry import Registry as MongoRegistry
-from llmbroker.postgres.registry import Registry as PostgresRegistry
-from llmbroker.sqlite.registry import Registry as SqliteRegistry
+from llmbroker.mongodb import Registry as MongoRegistry
+from llmbroker.postgres import Registry as PostgresRegistry
+from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.standalone.registry import Registry
 
 

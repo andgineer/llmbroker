@@ -6,7 +6,7 @@ import urllib.error
 from unittest.mock import MagicMock, patch
 
 from llmbroker.cli import main
-from llmbroker.sqlite.store import Store as SqliteStore
+from llmbroker.sqlite import Store as SqliteStore
 
 
 def _write_toml(tmp_path, entries):

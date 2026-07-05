@@ -8,7 +8,7 @@ import pytest
 
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.models import Call, CallStatus, LLMConfig, key_hash
-from llmbroker.sqlite.registry import Registry as SqliteRegistry
+from llmbroker.sqlite import Registry as SqliteRegistry
 
 
 def _toml(tmp_path, name="m1", ref="FL_KEY"):

@@ -287,6 +287,6 @@ class AsyncBroker:
         if not isinstance(self._base_store, QueryableStoreProtocol):
             raise TypeError(
                 "this store backend is not queryable — use a queryable backend"
-                " (e.g. llmbroker.sqlite.store.Store) for calls()",
+                " (e.g. llmbroker.sqlite.Store) for calls()",
             )
         return cast(QueryableStoreProtocol, self._store)

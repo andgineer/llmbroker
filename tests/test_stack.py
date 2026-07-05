@@ -12,8 +12,8 @@ from llmbroker.models import LLMConfig
 from llmbroker.mongodb.driver import MongoDriver
 from llmbroker.postgres.driver import PostgresDriver
 from llmbroker.sqlite.driver import SqliteDriver
-from llmbroker.sqlite.registry import Registry as SqliteRegistry
-from llmbroker.sqlite.secrets import Secrets as SqliteSecrets
+from llmbroker.sqlite import Registry as SqliteRegistry
+from llmbroker.sqlite import Secrets as SqliteSecrets
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.sync import Broker
 

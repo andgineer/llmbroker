@@ -10,8 +10,8 @@ import logging
 
 import llmbroker
 
-from llmbroker.sqlite.registry import Registry as SqliteRegistry
-from llmbroker.sqlite.secrets import Secrets as SqliteSecrets
+from llmbroker.sqlite import Registry as SqliteRegistry
+from llmbroker.sqlite import Secrets as SqliteSecrets
 
 _KEY_REF = "TEST_LLM_SYNC_API_KEY"
 _TOML = f'[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="{_KEY_REF}"\n'

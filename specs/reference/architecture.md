@@ -30,13 +30,12 @@ journal, the admin disabled-verdict map, and any future operational data
   `llmbroker.Registry`, `llmbroker.Secrets`, `llmbroker.FileStore` (plus variants
   `DictSecrets`, `InMemoryStore`). This is the simplest usage — a config file,
   env-var secrets, a file-backed store, no integration code.
-- **Dependency-carrying backends** are named modules imported explicitly
-  (`llmbroker.sqlite.registry.Registry`, …), one subpackage per driver
-  (`llmbroker.sqlite`, `llmbroker.postgres`, `llmbroker.mongodb`, `llmbroker.aws`,
-  `llmbroker.vault`) — the subpackage's own `__init__.py` carries no code, so
-  `llmbroker.sqlite.Registry` is not importable; only the exact module path is.
-  Importing the submodule is the dependency declaration: a bare `import llmbroker`
-  never pulls in a driver. Internally, each of sqlite/postgres/mongodb is one
+- **Dependency-carrying backends** are one subpackage per driver (`llmbroker.sqlite`,
+  `llmbroker.postgres`, `llmbroker.mongodb`, `llmbroker.aws`, `llmbroker.vault`), each
+  re-exporting its own classes from its `__init__.py` (e.g. `llmbroker.sqlite.Registry`)
+  — these can't live on the top-level `llmbroker` package the way `standalone` does,
+  since that would force the optional driver import on a bare `import llmbroker`.
+  Importing the subpackage is the dependency declaration. Internally, each of sqlite/postgres/mongodb is one
   storage `Driver` (`backends/driver.py` — `fetch`/`get`/`upsert`/`delete` for
   registry/disabled/secrets, `append`/`recent`/`purge` for the journal) behind
   one shared port implementation (`backends/ports.py`) written once against the
@@ -91,9 +90,9 @@ object as the first argument (instead of a string) skips dispatch entirely.
 
 | Backend | Implemented |
 |---|---|
-| Registry | `Registry(path)` (file, `.toml`/`.json`), `llmbroker.sqlite.registry.Registry`, `llmbroker.postgres.registry.Registry`, `llmbroker.mongodb.registry.Registry` |
-| Secrets | `Secrets()` (env), `DictSecrets(mapping)` (test double), `llmbroker.sqlite.secrets.Secrets`, `llmbroker.postgres.secrets.Secrets`, `llmbroker.mongodb.secrets.Secrets`, `llmbroker.aws.secrets.Secrets`, `llmbroker.vault.secrets.Secrets` |
-| Store | `FileStore(path)` (day-split journal + YAML disabled map), `InMemoryStore()`, `llmbroker.sqlite.store.Store`, `llmbroker.postgres.store.Store`, `llmbroker.mongodb.store.Store` |
+| Registry | `Registry(path)` (file, `.toml`/`.json`), `llmbroker.sqlite.Registry`, `llmbroker.postgres.Registry`, `llmbroker.mongodb.Registry` |
+| Secrets | `Secrets()` (env), `DictSecrets(mapping)` (test double), `llmbroker.sqlite.Secrets`, `llmbroker.postgres.Secrets`, `llmbroker.mongodb.Secrets`, `llmbroker.aws.Secrets`, `llmbroker.vault.Secrets` |
+| Store | `FileStore(path)` (day-split journal + YAML disabled map), `InMemoryStore()`, `llmbroker.sqlite.Store`, `llmbroker.postgres.Store`, `llmbroker.mongodb.Store` |
 
 ### CLI
 
@@ -258,8 +257,8 @@ the registry against its own local copy and diverging copies would flip-flop it.
 
 ```python
 llms = llmbroker.AsyncBroker(
-    registry=llmbroker.sqlite.registry.Registry("broker.db"),
-    secrets=llmbroker.sqlite.secrets.Secrets("broker.db"),
+    registry=llmbroker.sqlite.Registry("broker.db"),
+    secrets=llmbroker.sqlite.Secrets("broker.db"),
 )
 await llms.sync(llmbroker.Registry(".deploy/llms.toml"))  # once, e.g. at deploy
 await llms.ensure_pool()   # eager init at startup
@@ -325,13 +324,13 @@ llmbroker are identifiable and isolated from the rest of the account. Neither ba
 has a user/scope parameter — `ref` is the whole identity, already carrying any scope
 prefix the broker added (see "Per-user scoping" above).
 
-### AWS Secrets Manager (`llmbroker.aws.secrets.Secrets`)
+### AWS Secrets Manager (`llmbroker.aws.Secrets`)
 
 Secret name in Secrets Manager: `{prefix}{ref}` — `prefix` defaults to `"llmbroker/"`.
 Secrets created via `set()` carry the tag `{"Key": "llmbroker", "Value": "1"}` for
 independent enumeration and cleanup.
 
-### HashiCorp Vault (`llmbroker.vault.secrets.Secrets`)
+### HashiCorp Vault (`llmbroker.vault.Secrets`)
 
 KV v2 engine. KV path: `llmbroker/{ref}`.
 

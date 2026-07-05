@@ -9,8 +9,8 @@ import pytest
 
 from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
-from llmbroker.sqlite.store import Store as SqliteStore
-from llmbroker.sqlite.registry import Registry as SqliteRegistry
+from llmbroker.sqlite import Store as SqliteStore
+from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.sync import Broker
