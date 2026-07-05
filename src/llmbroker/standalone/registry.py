@@ -4,7 +4,7 @@ import json
 import tomllib
 from pathlib import Path
 
-from llmbroker.models import EffortLevel, KeyInfo, LLMConfig, ValueLevel
+from llmbroker.models import KeyInfo, LLMConfig
 
 
 def _int_or_none(value: object) -> int | None:
@@ -26,25 +26,17 @@ def _config_from_entry(entry: dict) -> LLMConfig | None:
 
 
 def key_info_from_entry(ref: str, raw: object) -> KeyInfo:
-    """Parse one ``[keys.REF]`` entry; a bare string is the legacy help-only form."""
+    """Parse one ``[keys.REF]`` entry; a bare string is the help-only form."""
     if isinstance(raw, str):
-        return KeyInfo(api_key_ref=ref, effort=None, value=None, help=raw)
+        return KeyInfo(api_key_ref=ref, help=raw, extra={})
     if not isinstance(raw, dict):
-        return KeyInfo(api_key_ref=ref, effort=None, value=None, help="")
-    try:
-        effort = EffortLevel(raw["effort"]) if "effort" in raw else None
-    except ValueError:
-        effort = None
-    try:
-        value = ValueLevel(raw["value"]) if "value" in raw else None
-    except ValueError:
-        value = None
+        return KeyInfo(api_key_ref=ref, help="", extra={})
     help_text = raw.get("help")
+    extra = {str(k): str(v) for k, v in raw.items() if k != "help"}
     return KeyInfo(
         api_key_ref=ref,
-        effort=effort,
-        value=value,
         help=help_text if isinstance(help_text, str) else "",
+        extra=extra,
     )
 
 

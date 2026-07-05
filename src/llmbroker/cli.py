@@ -16,7 +16,6 @@ from http import HTTPStatus
 from pathlib import Path
 
 from llmbroker.broker import AsyncBroker
-from llmbroker.models import EffortLevel, KeyInfo, ValueLevel
 from llmbroker.standalone.registry import Registry, key_info_from_entry
 
 try:
@@ -37,24 +36,6 @@ def _api_key_refs(data: dict) -> list[str]:
     return refs
 
 
-def _onboarding_sort_key(ref: str, info: KeyInfo) -> tuple:
-    """Easiest+most-valuable first; unknown effort/value sort last."""
-    effort_idx = (
-        list(EffortLevel).index(info.effort) if info.effort is not None else len(EffortLevel)
-    )
-    value_idx = list(ValueLevel).index(info.value) if info.value is not None else len(ValueLevel)
-    return (effort_idx, value_idx, ref)
-
-
-def _annotation(info: KeyInfo) -> str | None:
-    parts = []
-    if info.effort is not None:
-        parts.append(f"effort={info.effort.value}")
-    if info.value is not None:
-        parts.append(f"value={info.value.value}")
-    return ", ".join(parts) if parts else None
-
-
 def _cmd_env(args: argparse.Namespace) -> int:
     toml_path = Path(args.config)
     if not toml_path.exists():
@@ -66,9 +47,8 @@ def _cmd_env(args: argparse.Namespace) -> int:
     if not isinstance(raw_keys, dict):
         raw_keys = {}
 
-    refs = _api_key_refs(data)
+    refs = _api_key_refs(data)  # file order — no onboarding taxonomy to sort by
     infos = {ref: key_info_from_entry(ref, raw_keys.get(ref)) for ref in refs}
-    refs.sort(key=lambda ref: _onboarding_sort_key(ref, infos[ref]))
 
     lines: list[str] = []
     for ref in refs:
@@ -76,9 +56,6 @@ def _cmd_env(args: argparse.Namespace) -> int:
         if info.help.strip():
             for i, line in enumerate(info.help.splitlines()):
                 lines.append(f"# {ref} — {line}" if i == 0 else f"# {line}")
-        annotation = _annotation(info)
-        if annotation is not None:
-            lines.append(f"# {annotation}")
         if ref in os.environ:
             lines.append(f"# {ref} already set")
         else:

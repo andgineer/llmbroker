@@ -169,38 +169,15 @@ class QualitySummary:
         )
 
 
-class EffortLevel(Enum):
-    """How hard an api_key_ref is to obtain, easiest first.
-
-    Declaration order is the onboarding sort key: ``list(EffortLevel).index(...)``.
-    """
-
-    OAUTH = "oauth"
-    SIGNUP = "signup"
-    VERIFY = "verify"
-    CONSOLE = "console"
-    WAITLIST = "waitlist"
-
-
-class ValueLevel(Enum):
-    """How good the best model an api_key_ref unlocks is, most desirable first."""
-
-    HIGH = "high"
-    GOOD = "good"
-    NICHE = "niche"
-
-
 @dataclass(frozen=True, slots=True)
 class KeyInfo:
-    """Per-provider onboarding metadata for one ``api_key_ref``.
-
-    ``rate_limit`` is not here — it's per-model, not per-key.
-    """
+    """Per-provider onboarding metadata for one ``api_key_ref``: a help blurb plus
+    a free-form passthrough of whatever else the TOML ``[keys.REF]`` section holds —
+    llmbroker has no taxonomy opinion on it."""
 
     api_key_ref: str
-    effort: EffortLevel | None
-    value: ValueLevel | None
     help: str
+    extra: dict[str, str]
 
 
 @dataclass(frozen=True, slots=True)

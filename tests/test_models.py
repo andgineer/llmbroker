@@ -1,44 +1,26 @@
-"""Tests for onboarding DTOs and enums: EffortLevel, ValueLevel, KeyInfo."""
+"""Tests for onboarding DTOs: KeyInfo."""
 
 import math
 
 import pytest
 
-from llmbroker.models import EffortLevel, KeyInfo, QualitySummary, ValueLevel, key_hash
-
-
-def test_effort_level_easiest_first_order():
-    assert list(EffortLevel) == [
-        EffortLevel.OAUTH,
-        EffortLevel.SIGNUP,
-        EffortLevel.VERIFY,
-        EffortLevel.CONSOLE,
-        EffortLevel.WAITLIST,
-    ]
-    assert list(EffortLevel).index(EffortLevel.OAUTH) < list(EffortLevel).index(EffortLevel.SIGNUP)
-
-
-def test_value_level_most_desirable_first_order():
-    assert list(ValueLevel) == [ValueLevel.HIGH, ValueLevel.GOOD, ValueLevel.NICHE]
+from llmbroker.models import KeyInfo, QualitySummary, key_hash
 
 
 def test_key_info_full():
     info = KeyInfo(
         api_key_ref="GROQ_API_KEY",
-        effort=EffortLevel.SIGNUP,
-        value=ValueLevel.GOOD,
         help="Create a free account.",
+        extra={"effort": "signup", "value": "good"},
     )
     assert info.api_key_ref == "GROQ_API_KEY"
-    assert info.effort is EffortLevel.SIGNUP
-    assert info.value is ValueLevel.GOOD
     assert info.help == "Create a free account."
+    assert info.extra == {"effort": "signup", "value": "good"}
 
 
-def test_key_info_partial_none_fields():
-    info = KeyInfo(api_key_ref="K", effort=None, value=None, help="")
-    assert info.effort is None
-    assert info.value is None
+def test_key_info_no_extra():
+    info = KeyInfo(api_key_ref="K", help="", extra={})
+    assert info.extra == {}
 
 
 # --- QualitySummary -----------------------------------------------------
