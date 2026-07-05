@@ -14,7 +14,7 @@
 | src/llmbroker/broker/broker.py        |      143 |        3 |     98% |80, 143, 272 |
 | src/llmbroker/broker/catalog.py       |       68 |        0 |    100% |           |
 | src/llmbroker/broker/learning.py      |      118 |        4 |     97% |96, 99, 145, 197 |
-| src/llmbroker/broker/pool.py          |      154 |        1 |     99% |        79 |
+| src/llmbroker/broker/pool.py          |      154 |        1 |     99% |        61 |
 | src/llmbroker/broker/pool\_view.py    |       29 |        4 |     86% |     34-37 |
 | src/llmbroker/broker/result.py        |       42 |        6 |     86% | 43, 81-85 |
 | src/llmbroker/broker/router.py        |       79 |        3 |     96% |184, 204-205 |
