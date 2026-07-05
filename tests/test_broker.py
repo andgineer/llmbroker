@@ -331,6 +331,30 @@ def test_snapshot_returns_entry_per_llm(tmp_path):
     asyncio.run(run())
 
 
+def test_snapshot_carries_raw_facts_no_status_enum(tmp_path):
+    """LLMSnapshot exposes disabled/has_key/cooldown_until/demoted_operations directly —
+    no LifecyclePhase/status enum, no precedence rule."""
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            secrets=_secrets(),
+            telemetry=NoTelemetry(),
+        ) as broker:
+            snap = await broker.snapshot()
+            entry = snap["p1"]
+            assert entry.disabled is False
+            assert entry.has_key is True
+            assert entry.cooldown_until is None
+            assert entry.demoted_operations == ()
+
+            await broker.disable_llm("p1")
+            snap2 = await broker.snapshot()
+            assert snap2["p1"].disabled is True
+
+    asyncio.run(run())
+
+
 # ── constructor seed tests ────────────────────────────────────────────────────
 
 

@@ -55,18 +55,17 @@ async def test_auth_failure_401_drops_llm_and_logs(caplog):
     assert any("API key" in r.message and "401" in r.message for r in caplog.records)
 
 
-async def test_auth_failure_403_drops_llm_and_alerts():
+async def test_auth_failure_403_drops_llm_and_logs(caplog):
     pool = LLMPool()
     await pool.add(_cfg(), "key")
     opt = Optimizer()
     hook = _hook(opt, NoTelemetry(), pool)
 
-    await hook.record(_call("x", CallStatus.ERROR, http_status=403))
+    with caplog.at_level("ERROR"):
+        await hook.record(_call("x", CallStatus.ERROR, http_status=403))
 
     assert "x" not in pool
-    alerts = opt.alerts()
-    assert len(alerts) == 1
-    assert "403" in alerts[0].message
+    assert any("403" in r.message for r in caplog.records)
 
 
 async def test_generic_error_does_not_drop_llm():

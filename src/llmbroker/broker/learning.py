@@ -93,12 +93,12 @@ class _LearningHook:
                 cfg = self._pool.configs.get(name)
                 ref = cfg.api_key_ref if cfg else "unknown"
                 await self._pool.drop(name)
-                msg = (
-                    f"{name}: API key appears dead (HTTP {call.http_status})"
-                    f" — check api_key_ref {ref!r}"
+                logger.error(
+                    "%s: API key appears dead (HTTP %s) — check api_key_ref %r",
+                    name,
+                    call.http_status,
+                    ref,
                 )
-                logger.error(msg)
-                self._opt.add_alert(msg)
             else:
                 self._opt.on_rate_limited(name)
             await self.maybe_rebuild(force=True)

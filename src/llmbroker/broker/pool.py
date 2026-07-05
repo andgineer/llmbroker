@@ -147,6 +147,11 @@ class LLMPool:
     def _is_demoted(self, name: str, operation: str | None) -> bool:
         return self._optimizer is not None and self._optimizer.is_demoted(name, operation)
 
+    def demoted_operations(self, name: str) -> frozenset[str | None]:
+        return (
+            self._optimizer.demoted_operations(name) if self._optimizer is not None else frozenset()
+        )
+
     def _wake_timeout(self, now: datetime, deadline: float | None) -> float | None:
         """Seconds until the nearest event that could make a slot available, or
         ``None`` when nothing is scheduled (wait solely on notification)."""

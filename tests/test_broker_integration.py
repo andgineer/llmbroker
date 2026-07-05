@@ -144,21 +144,22 @@ async def test_failover_routes_and_journals(stack, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_all_offline_raises_and_alerts(stack, monkeypatch):
-    """All LLMs rate-limited → NoLLMAvailableError and an under-provision alert."""
+async def test_all_offline_raises_and_alerts(stack, monkeypatch, caplog):
+    """All LLMs rate-limited → NoLLMAvailableError and an under-provision log line."""
     await _seed_stack(stack, [_cfg("llm1"), _cfg("llm2")], {"KEY": "test-key"}, monkeypatch)
     async with stack.make_broker() as broker:
-        with patch(
-            "llmbroker.chat.httpx.AsyncClient",
-            side_effect=[_http_error(429), _http_error(429)],
+        with (
+            patch(
+                "llmbroker.chat.httpx.AsyncClient",
+                side_effect=[_http_error(429), _http_error(429)],
+            ),
+            caplog.at_level("WARNING", logger="llmbroker.broker"),
         ):
             with pytest.raises(NoLLMAvailableError):
                 await broker.chat([{"role": "user", "content": "hi"}], wait=0)
             with pytest.raises(NoLLMAvailableError):
                 await broker.chat([{"role": "user", "content": "hi"}], wait=0)
-        alerts = await broker.alerts()
-        assert len(alerts) >= 1
-        assert any("under-provisioned" in a.message for a in alerts)
+        assert any("under-provisioned" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

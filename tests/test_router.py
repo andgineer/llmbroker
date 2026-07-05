@@ -178,7 +178,7 @@ def test_network_error_fails_over_to_next_llm():
     asyncio.run(run())
 
 
-def test_401_fails_over_to_next_llm_within_same_request():
+def test_401_fails_over_to_next_llm_within_same_request(caplog):
     """A dead key still drops the LLM immediately, but the *current* request fails over."""
 
     async def run():
@@ -186,14 +186,14 @@ def test_401_fails_over_to_next_llm_within_same_request():
         pool = await _pool(a, b)
         opt = Optimizer()
         router = _router_with_optimizer(pool, opt)
-        with patch(
-            _PATCH,
-            new=AsyncMock(side_effect=[_http_status_error(401), ("ok", None, None)]),
+        with (
+            patch(_PATCH, new=AsyncMock(side_effect=[_http_status_error(401), ("ok", None, None)])),
+            caplog.at_level("ERROR", logger="llmbroker.broker"),
         ):
             result = await router.chat([{"role": "user", "content": "hi"}])
         assert result.text == "ok"
         assert "a" not in pool
-        assert any("API key" in alert.message for alert in opt.alerts())
+        assert any("API key" in r.message for r in caplog.records)
 
     asyncio.run(run())
 

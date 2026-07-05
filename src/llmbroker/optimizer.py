@@ -6,8 +6,6 @@ from collections import deque
 from dataclasses import dataclass, field
 from statistics import NormalDist
 
-from llmbroker.models import Alert
-
 logger = logging.getLogger("llmbroker.broker")
 
 
@@ -43,7 +41,6 @@ class Optimizer:
     quality_window: int = 30  # ratings kept per (model, operation)
     quality_min_count: int = 10  # verdicts need at least this many
 
-    _pending_alerts: list[Alert] = field(default_factory=list, init=False, repr=False)
     _rl_fail_count: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     _scores: dict[tuple[str, str | None], deque] = field(
         default_factory=dict,
@@ -60,14 +57,6 @@ class Optimizer:
 
     def on_success(self, llm_name: str) -> None:
         self._rl_fail_count[llm_name] = 0
-
-    def alerts(self) -> list[Alert]:
-        result = list(self._pending_alerts)
-        self._pending_alerts.clear()
-        return result
-
-    def add_alert(self, msg: str) -> None:
-        self._pending_alerts.append(Alert(message=msg))
 
     # ------------------------------------------------------------------
     # Quality windows + derived per-operation demotion verdicts

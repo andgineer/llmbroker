@@ -37,7 +37,10 @@ class PoolView:
         for name, cfg in self._pool.configs.items():
             result[name] = LLMSnapshot(
                 config=cfg,
-                state=self._pool.state(name),
+                disabled=self._pool.is_disabled(name),
+                has_key=self._pool.has_key(name),
+                cooldown_until=self._pool.state(name).cooldown_until,
+                demoted_operations=tuple(self._pool.demoted_operations(name)),
                 metrics=metrics_map.get(name),
             )
         return result

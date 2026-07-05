@@ -58,8 +58,8 @@ def _hook(opt: Optimizer, telemetry: object, pool: LLMPool) -> _LearningHook:
 
 
 @pytest.mark.parametrize("http_status", [401, 403])
-async def test_auth_failure_drops_llm_cleanly(any_telemetry, http_status):
-    """HTTP 401/403 drops the LLM from pool immediately and fires an API-key alert.
+async def test_auth_failure_drops_llm_cleanly(any_telemetry, http_status, caplog):
+    """HTTP 401/403 drops the LLM from pool immediately and logs an API-key error.
 
     Verifies a re-added LLM starts fresh — no stale bookkeeping survives the drop.
     """
@@ -68,13 +68,11 @@ async def test_auth_failure_drops_llm_cleanly(any_telemetry, http_status):
     opt = Optimizer()
     hook = _hook(opt, any_telemetry, pool)
 
-    await hook.record(_call("llm1", CallStatus.ERROR, http_status=http_status))
+    with caplog.at_level("ERROR", logger="llmbroker.broker"):
+        await hook.record(_call("llm1", CallStatus.ERROR, http_status=http_status))
 
     assert "llm1" not in pool
-    alerts = opt.alerts()
-    assert len(alerts) == 1
-    assert "API key" in alerts[0].message
-    assert str(http_status) in alerts[0].message
+    assert any("API key" in r.message and str(http_status) in r.message for r in caplog.records)
     await pool.add(_cfg("llm1"), "key")
     assert pool.state("llm1").phase is LifecyclePhase.AVAILABLE
 

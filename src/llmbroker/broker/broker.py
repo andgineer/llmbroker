@@ -12,7 +12,9 @@ the collaborator that owns it:
   disabled-verdict map (only wired when ``optimize`` is truthy)
 
 The call journal (``calls``/``purge_calls``) is a thin pass-through to a queryable
-telemetry backend; ``alerts`` is delegated to ``Optimizer``.
+telemetry backend. There is no alerts API: the few human-actionable events
+(dead key, demotion flip, under-provisioned pool) are log lines; hosts poll
+``snapshot()`` for current raw state or hook the ``llmbroker`` logger.
 """
 
 import asyncio
@@ -31,7 +33,6 @@ from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.broker.router import Router
 from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import (
-    Alert,
     AsyncResourceProtocol,
     Call,
     LifecyclePhase,
@@ -150,9 +151,8 @@ class AsyncBroker:
             if self._provisioned:
                 return
             seed_alerts = await self._catalog.provision()
-            if self._optimizer is not None:
-                for msg in seed_alerts:
-                    self._optimizer.add_alert(msg)
+            for msg in seed_alerts:
+                logger.warning(msg)
             if self._learning_hook is not None:
                 # warm start — provision() above already resynced the registry
                 await self._learning_hook.maybe_rebuild(force=True, resync_registry=False)
@@ -273,11 +273,6 @@ class AsyncBroker:
     async def purge_calls(self, *, before: datetime) -> int:
         return await self._require_queryable().purge_calls(before=before)
 
-    async def alerts(self) -> list[Alert]:
-        if self._optimizer is None:
-            return []
-        return self._optimizer.alerts()
-
     def _maybe_alert_underprov(self) -> None:
         """Fire when zero keyed configs are routable — the genuine "no usable models" alarm.
 
@@ -299,7 +294,7 @@ class AsyncBroker:
         )
         if all_offline:
             self._last_underprov_alert = now
-            self._optimizer.add_alert(
+            logger.warning(
                 "pool under-provisioned: all LLMs are COOLING — add more LLMs to the registry",
             )
 

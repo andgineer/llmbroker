@@ -202,9 +202,6 @@ class Broker:
     def purge_calls(self, *, before: datetime) -> int:
         return self._run(self._async.purge_calls(before=before))
 
-    def alerts(self) -> list:
-        return self._run(self._async.alerts())
-
     # ── lifecycle ──
     def close(self) -> None:
         if not self._finalizer.alive:

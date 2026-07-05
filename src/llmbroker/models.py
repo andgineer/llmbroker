@@ -338,18 +338,15 @@ class LLMMetrics:
 
 @dataclass(frozen=True, slots=True)
 class LLMSnapshot:
-    """Frozen point-in-time materialization of one LLM (config + state + metrics)."""
+    """Frozen point-in-time materialization of one LLM: raw facts, no status enum
+    or precedence rule — the host derives whatever presentation it wants."""
 
     config: LLMConfig
-    state: LLMState
+    disabled: bool
+    has_key: bool
+    cooldown_until: datetime | None
+    demoted_operations: tuple[str, ...]
     metrics: LLMMetrics | None
-
-
-@dataclass(frozen=True, slots=True)
-class Alert:
-    """One human-actionable signal from the Optimizer."""
-
-    message: str = field(default="")
 
 
 class SeedPolicy(Enum):
