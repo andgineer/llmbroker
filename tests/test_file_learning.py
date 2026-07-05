@@ -7,8 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from llmbroker.broker.broker import AsyncBroker
-from llmbroker.models import Call, CallStatus, LLMConfig, key_hash
-from llmbroker.sqlite import Registry as SqliteRegistry
+from llmbroker.models import Call, CallStatus, key_hash
 
 
 def _toml(tmp_path, name="m1", ref="FL_KEY"):
@@ -60,12 +59,9 @@ async def test_two_brokers_converge_over_one_journal(tmp_path, monkeypatch, stor
         await b.ensure_pool()
     else:
         db = str(tmp_path / "b.db")
-        await SqliteRegistry(db).mirror(
-            [LLMConfig(name="m1", base_url="https://x/v1", model="m", api_key_ref="FL_KEY")]
-        )
         a = AsyncBroker(db)
         b = AsyncBroker(db)
-        await a.sync(str(toml))  # env bootstrap copies the key into the DB secrets
+        await a.sync(str(toml))  # populates the empty registry; env bootstrap copies the key
         await a.ensure_pool()
         await b.ensure_pool()
 

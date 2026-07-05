@@ -1,4 +1,4 @@
-"""Tests for the source-parameter dispatch on AsyncBroker/Broker (replaces ``stack=``)."""
+"""Tests for the source-parameter dispatch on AsyncBroker/Broker."""
 
 import asyncio
 import sys
