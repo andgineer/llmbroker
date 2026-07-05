@@ -58,9 +58,8 @@ class Catalog:
         for name in list(self._pool.configs):
             if name not in names:
                 await self._pool.drop(name)
-        for cfg in configs:
-            await self._pool.add(cfg, await self._resolve_key(cfg))
-            self._sync_deprecated(cfg)
+        for order, cfg in enumerate(configs):
+            await self._pool.add(cfg, await self._resolve_key(cfg), order=order)
         return alerts
 
     async def add(self, cfg: LLMConfig) -> None:
@@ -70,7 +69,6 @@ class Catalog:
         cfg = replace(cfg, origin=Origin.USER)
         await registry.add(cfg, self._user_id)
         await self._pool.add(cfg, await self._resolve_key(cfg))
-        self._sync_deprecated(cfg)
 
     async def update(self, cfg: LLMConfig) -> None:
         registry = self._require_mutable_registry()
@@ -79,15 +77,6 @@ class Catalog:
         cfg = replace(cfg, origin=Origin.USER)
         await registry.update(cfg, self._user_id)
         await self._pool.add(cfg, await self._resolve_key(cfg))
-        self._sync_deprecated(cfg)
-
-    def _sync_deprecated(self, cfg: LLMConfig) -> None:
-        """Mirror the curated ``deprecated`` marker (static half) into the pool's
-        soft tier-1 marker — never withdraws the slot (see broker/pool.py)."""
-        if cfg.deprecated:
-            self._pool.set_deprecated(cfg.name)
-        else:
-            self._pool.clear_deprecated(cfg.name)
 
     async def remove(self, name: str) -> None:
         registry = self._require_mutable_registry()

@@ -1,4 +1,4 @@
-"""Unit tests for LLMPool: slot invariants and key-resolution handling."""
+"""Unit tests for LLMPool: slot invariants, key-resolution handling, and selection."""
 
 import asyncio
 from datetime import UTC, datetime, timedelta
@@ -6,16 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from llmbroker.broker.pool import (
-    TIER_DEMOTED_EVIDENCED,
-    TIER_DEMOTED_UNTRIED,
-    TIER_DEPRECATED,
-    TIER_NORMAL,
-    LLMPool,
-    _STORE_CACHE_TTL,
-)
+from llmbroker.broker.pool import _STORE_CACHE_TTL, LLMPool
 from llmbroker.models import LifecyclePhase, LLMConfig, LLMState
-from llmbroker.optimizer import FirstAvailablePolicy
+from llmbroker.optimizer import Optimizer
 from llmbroker.sqlite.state_store import StateStore
 
 
@@ -93,7 +86,7 @@ async def test_drop_nonexistent_does_not_raise():
 
 
 async def test_drop_clears_disabled_so_a_readded_config_is_routable():
-    """Regression: drop() used to leave stale tier state behind, so a fresh config
+    """Regression: drop() used to leave stale state behind, so a fresh config
     re-added under the same name silently inherited the old disabled latch forever."""
     pool = LLMPool(state_store=None, user_id=None)
     await pool.add(_cfg(), "key")
@@ -104,21 +97,6 @@ async def test_drop_clears_disabled_so_a_readded_config_is_routable():
     assert not pool.is_disabled("p1")
     picked = await pool.acquire(0)
     assert picked.name == "p1"
-
-
-async def test_drop_clears_deprecated_demoted_and_alert_state():
-    pool = LLMPool(state_store=None, user_id=None)
-    await pool.add(_cfg(), "key")
-    pool.set_deprecated("p1")
-    pool.update_demotions("p1", frozenset({"summarize"}), globally_demoted=True)
-    pool._last_degraded_alert[("p1", "summarize", TIER_DEMOTED_EVIDENCED)] = 123.0
-
-    await pool.drop("p1")
-
-    assert not pool.is_deprecated("p1")
-    assert pool.demoted_operations("p1") == frozenset()
-    assert not pool.is_globally_demoted("p1")
-    assert not any(key[0] == "p1" for key in pool._last_degraded_alert)
 
 
 async def test_len_tracks_membership():
@@ -434,7 +412,7 @@ async def test_set_disabled_excludes_slot_immediately():
     pool.set_disabled("p1")
     assert pool.is_disabled("p1")
     with pytest.raises(TimeoutError):
-        await pool.acquire(0, policy=FirstAvailablePolicy(), operation=None)
+        await pool.acquire(0)
 
 
 async def test_disabled_config_in_configs_but_never_acquired_even_as_only_candidate():
@@ -443,7 +421,7 @@ async def test_disabled_config_in_configs_but_never_acquired_even_as_only_candid
     pool.set_disabled("p1")
     assert "p1" in pool.configs
     with pytest.raises(TimeoutError):
-        await pool.acquire(0, policy=FirstAvailablePolicy(), operation=None)
+        await pool.acquire(0)
 
 
 async def test_clear_disabled_readmits_slot():
@@ -510,171 +488,7 @@ async def test_release_of_dropped_config_is_a_noop():
 
 
 # ---------------------------------------------------------------------------
-# Tiered selection: deprecated / demoted (soft — never withdraw the slot)
-# ---------------------------------------------------------------------------
-
-
-async def test_tier_of_defaults_to_normal():
-    pool = LLMPool(state_store=None, user_id=None)
-    assert pool.tier_of("x", None) == TIER_NORMAL
-
-
-async def test_tier0_preferred_over_deprecated_when_both_available():
-    pool = LLMPool(state_store=None, user_id=None)
-    await pool.add(_cfg("normal", parallel=1), "k")
-    await pool.add(_cfg("dep", parallel=1), "k")
-    pool.set_deprecated("dep")
-    picked = await pool.acquire(0, policy=FirstAvailablePolicy(), operation=None)
-    assert picked.name == "normal"
-    # the deprecated candidate stays acquirable, not excluded
-    picked2 = await pool.acquire(0, policy=FirstAvailablePolicy(), operation=None)
-    assert picked2.name == "dep"
-
-
-async def test_deprecated_config_acquired_only_when_no_tier0_available():
-    pool = LLMPool(state_store=None, user_id=None)
-    await pool.add(_cfg("dep"), "k")
-    pool.set_deprecated("dep")
-    picked = await pool.acquire(0, policy=FirstAvailablePolicy(), operation=None)
-    assert picked.name == "dep"
-
-
-async def test_clear_deprecated_restores_tier0():
-    pool = LLMPool(state_store=None, user_id=None)
-    await pool.add(_cfg("x"), "k")
-    pool.set_deprecated("x")
-    assert pool.is_deprecated("x")
-    pool.clear_deprecated("x")
-    assert not pool.is_deprecated("x")
-
-
-async def test_op_demoted_skipped_for_that_operation_while_alternative_exists():
-    pool = LLMPool(state_store=None, user_id=None)
-    await pool.add(_cfg("good"), "k")
-    await pool.add(_cfg("bad"), "k")
-    pool.update_demotions("bad", frozenset({"summarize"}), globally_demoted=False)
-    picked = await pool.acquire(0, policy=FirstAvailablePolicy(), operation="summarize")
-    assert picked.name == "good"
-
-
-async def test_op_demoted_chosen_when_no_alternative():
-    pool = LLMPool(state_store=None, user_id=None)
-    await pool.add(_cfg("bad"), "k")
-    pool.update_demotions("bad", frozenset({"summarize"}), globally_demoted=False)
-    picked = await pool.acquire(0, policy=FirstAvailablePolicy(), operation="summarize")
-    assert picked.name == "bad"
-
-
-async def test_op_demoted_acquired_normally_for_other_operations():
-    pool = LLMPool(state_store=None, user_id=None)
-    await pool.add(_cfg("bad"), "k")
-    pool.update_demotions("bad", frozenset({"summarize"}), globally_demoted=False)
-    picked = await pool.acquire(0, policy=FirstAvailablePolicy(), operation="translate")
-    assert picked.name == "bad"
-
-
-async def test_globally_demoted_untried_operation_ranks_ahead_of_evidenced_bad():
-    pool = LLMPool(state_store=None, user_id=None)
-    pool.update_demotions("x", frozenset({"summarize"}), globally_demoted=True)
-    assert pool.tier_of("x", "translate") == TIER_DEMOTED_UNTRIED  # untried -> new territory
-    assert pool.tier_of("x", "summarize") == TIER_DEMOTED_EVIDENCED  # evidenced bad
-    assert TIER_DEMOTED_UNTRIED < TIER_DEMOTED_EVIDENCED
-
-
-async def test_update_demotions_clearing_globally_demoted_restores_untried_tier():
-    pool = LLMPool(state_store=None, user_id=None)
-    pool.update_demotions("x", frozenset({"summarize"}), globally_demoted=True)
-    pool.update_demotions("x", frozenset(), globally_demoted=False)
-    assert pool.tier_of("x", "translate") == TIER_NORMAL
-    assert pool.tier_of("x", "summarize") == TIER_NORMAL
-    assert not pool.is_globally_demoted("x")
-
-
-async def test_every_model_demoted_pool_still_serves():
-    """A rater that scores everything low demotes everything to tier 2/3 — the pool
-    keeps operating on transport ranking within that tier, never goes empty."""
-    pool = LLMPool(state_store=None, user_id=None)
-    await pool.add(_cfg("a"), "k")
-    await pool.add(_cfg("b"), "k")
-    pool.update_demotions("a", frozenset({None}), globally_demoted=True)
-    pool.update_demotions("b", frozenset({None}), globally_demoted=True)
-    picked = await pool.acquire(0, policy=FirstAvailablePolicy(), operation=None)
-    assert picked.name in ("a", "b")
-
-
-# ---------------------------------------------------------------------------
-# Degraded-tier alert (debounced)
-# ---------------------------------------------------------------------------
-
-
-async def test_degraded_tier_alert_fires_debounced():
-    alerts = []
-    pool = LLMPool(
-        state_store=None,
-        user_id=None,
-        on_degraded_tier=lambda name, op, tier: alerts.append((name, op, tier)),
-    )
-    await pool.add(_cfg("dep"), "k")
-    pool.set_deprecated("dep")
-
-    picked = await pool.acquire(0, policy=FirstAvailablePolicy(), operation=None)
-    await pool.release(picked)
-    picked2 = await pool.acquire(0, policy=FirstAvailablePolicy(), operation=None)
-    await pool.release(picked2)
-
-    assert len(alerts) == 1
-    assert alerts[0] == ("dep", None, TIER_DEPRECATED)
-
-
-async def test_no_degraded_tier_alert_for_tier0():
-    alerts = []
-    pool = LLMPool(
-        state_store=None,
-        user_id=None,
-        on_degraded_tier=lambda name, op, tier: alerts.append((name, op, tier)),
-    )
-    await pool.add(_cfg("normal"), "k")
-    await pool.acquire(0, policy=FirstAvailablePolicy(), operation=None)
-    assert alerts == []
-
-
-async def test_degraded_tier_alert_fires_again_on_escalation_within_debounce_window():
-    """Regression: the alert dedup key didn't include tier, so an escalation from a
-    milder tier to a worse one within the realert window was silently suppressed."""
-    alerts = []
-    pool = LLMPool(
-        state_store=None,
-        user_id=None,
-        on_degraded_tier=lambda name, op, tier: alerts.append((name, op, tier)),
-    )
-    await pool.add(_cfg("dep"), "k")
-    pool.set_deprecated("dep")
-
-    picked = await pool.acquire(0, policy=FirstAvailablePolicy(), operation=None)
-    await pool.release(picked)
-    assert alerts == [("dep", None, TIER_DEPRECATED)]
-
-    # Escalate to quality-demoted (a worse tier), well within the 60s realert window.
-    pool.update_demotions("dep", frozenset({None}), globally_demoted=False)
-    picked2 = await pool.acquire(0, policy=FirstAvailablePolicy(), operation=None)
-    await pool.release(picked2)
-
-    assert alerts == [
-        ("dep", None, TIER_DEPRECATED),
-        ("dep", None, TIER_DEMOTED_EVIDENCED),
-    ]
-
-
-async def test_no_degraded_tier_alert_when_callback_not_configured():
-    pool = LLMPool(state_store=None, user_id=None)
-    await pool.add(_cfg("dep"), "k")
-    pool.set_deprecated("dep")
-    picked = await pool.acquire(0, policy=FirstAvailablePolicy(), operation=None)
-    assert picked.name == "dep"  # no callback configured — must not raise
-
-
-# ---------------------------------------------------------------------------
-# acquire(): round-robin, waiting, and policy interaction
+# acquire(): curated order, demoted-last, waiting
 # ---------------------------------------------------------------------------
 
 
@@ -718,74 +532,111 @@ async def test_acquire_waiter_wakes_on_release():
     assert picked.name == "p1"
 
 
-async def test_round_robin_order_under_no_policy():
+async def test_curated_order_preferred_best_available_takes_all_traffic():
+    """Curated priority: the best (lowest-order) available slot is picked every time,
+    not round-robin — round-robin was removed."""
     pool = LLMPool(state_store=None, user_id=None)
-    await pool.add(_cfg("a"), "k")
-    await pool.add(_cfg("b"), "k")
-    await pool.add(_cfg("c"), "k")
+    await pool.add(_cfg("a"), "k", order=0)
+    await pool.add(_cfg("b"), "k", order=1)
+    await pool.add(_cfg("c"), "k", order=2)
 
-    order = []
-    for _ in range(6):
+    picked_names = []
+    for _ in range(4):
         picked = await pool.acquire(0)
-        order.append(picked.name)
+        picked_names.append(picked.name)
         await pool.release(picked)
 
-    assert order == ["a", "b", "c", "a", "b", "c"]
+    assert picked_names == ["a", "a", "a", "a"]
 
 
-async def test_policy_select_raising_leaves_pool_clean():
+async def test_curated_order_falls_back_to_next_when_best_is_cooling():
     pool = LLMPool(state_store=None, user_id=None)
-    await pool.add(_cfg("a"), "k")
+    cfg_a = _cfg("a")
+    await pool.add(cfg_a, "k", order=0)
+    await pool.add(_cfg("b"), "k", order=1)
 
-    policy = MagicMock()
-    policy.select.side_effect = RuntimeError("boom")
+    acquired_a = await pool.acquire(0)
+    await pool.cool_down(acquired_a, 60)
 
-    with pytest.raises(RuntimeError, match="boom"):
-        await pool.acquire(0, policy=policy, operation=None)
-
-    # Nothing was mutated before the raise — the slot is still acquirable.
     picked = await pool.acquire(0)
-    assert picked.name == "a"
+    assert picked.name == "b"
 
 
-async def test_pool_acquire_policy_picks_among_available_slots():
-    a, b, c = _cfg("a"), _cfg("b"), _cfg("c")
+async def test_add_reasserts_curated_order_on_refresh():
     pool = LLMPool(state_store=None, user_id=None)
-    await pool.add(a, "k")
-    await pool.add(b, "k")
-    await pool.add(c, "k")
-
-    policy = MagicMock()
-    policy.select.return_value = b
-
-    result = await pool.acquire(0, policy=policy, operation="op")
-    assert result is b
-    (candidates,), kwargs = policy.select.call_args
-    assert {c.name for c in candidates} == {"a", "b", "c"}
-    assert kwargs == {"operation": "op"}
+    await pool.add(_cfg("a"), "k", order=5)
+    await pool.add(_cfg("b"), "k", order=1)
+    picked = await pool.acquire(0)
+    assert picked.name == "b"
 
 
-async def test_pool_acquire_single_slot_no_policy():
+async def test_pool_acquire_returns_only_available_slot():
     pool = LLMPool(state_store=None, user_id=None)
     a = _cfg("a")
     await pool.add(a, "k")
-
-    policy = MagicMock()
-    policy.select.return_value = a
-
-    result = await pool.acquire(0, policy=policy, operation=None)
-    assert result is a
-    policy.select.assert_called_once_with([a], operation=None)
-
-
-async def test_pool_acquire_no_policy_returns_available():
-    pool = LLMPool(state_store=None, user_id=None)
-    a, b = _cfg("a"), _cfg("b")
-    await pool.add(a, "k")
-    await pool.add(b, "k")
-
     result = await pool.acquire(0)
-    assert result in (a, b)
+    assert result is a
+
+
+# ---------------------------------------------------------------------------
+# Demoted-last selection (Optimizer.is_demoted feeds the sort key)
+# ---------------------------------------------------------------------------
+
+
+async def test_demoted_for_operation_sorts_last_while_alternative_exists():
+    opt = Optimizer(quality_min_count=10, quality_floor=0.3)
+    for _ in range(10):
+        opt.record_quality("bad", "summarize", 0.0)
+    pool = LLMPool(state_store=None, user_id=None, optimizer=opt)
+    await pool.add(_cfg("bad"), "k", order=0)
+    await pool.add(_cfg("good"), "k", order=1)
+
+    picked = await pool.acquire(0, operation="summarize")
+    assert picked.name == "good"
+
+
+async def test_demoted_model_still_serves_when_no_alternative():
+    opt = Optimizer(quality_min_count=10, quality_floor=0.3)
+    for _ in range(10):
+        opt.record_quality("bad", "summarize", 0.0)
+    pool = LLMPool(state_store=None, user_id=None, optimizer=opt)
+    await pool.add(_cfg("bad"), "k")
+
+    picked = await pool.acquire(0, operation="summarize")
+    assert picked.name == "bad"
+
+
+async def test_demotion_is_per_operation_not_global():
+    opt = Optimizer(quality_min_count=10, quality_floor=0.3)
+    for _ in range(10):
+        opt.record_quality("bad", "summarize", 0.0)
+    pool = LLMPool(state_store=None, user_id=None, optimizer=opt)
+    await pool.add(_cfg("bad"), "k")
+
+    picked = await pool.acquire(0, operation="translate")
+    assert picked.name == "bad"
+
+
+async def test_every_model_demoted_pool_still_serves():
+    """A rater that scores everything low demotes everything — the pool keeps
+    operating on curated order within the demoted set, never goes empty."""
+    opt = Optimizer(quality_min_count=10, quality_floor=0.3)
+    for _ in range(10):
+        opt.record_quality("a", None, 0.0)
+        opt.record_quality("b", None, 0.0)
+    pool = LLMPool(state_store=None, user_id=None, optimizer=opt)
+    await pool.add(_cfg("a"), "k")
+    await pool.add(_cfg("b"), "k")
+
+    picked = await pool.acquire(0, operation=None)
+    assert picked.name in ("a", "b")
+
+
+async def test_no_optimizer_never_demotes():
+    pool = LLMPool(state_store=None, user_id=None)
+    await pool.add(_cfg("a"), "k", order=0)
+    picked = await pool.acquire(0, operation="summarize")
+    assert picked.name == "a"
 
 
 # ---------------------------------------------------------------------------

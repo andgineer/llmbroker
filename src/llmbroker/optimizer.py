@@ -1,39 +1,20 @@
-"""The ``Optimizer`` knob — per-LLM failure bookkeeping, decayed quality aggregates,
-and automatic retirement/demotion policy for the pool."""
+"""The ``Optimizer`` knob — per-LLM failure bookkeeping, and per-(model, operation)
+quality-window demotion verdicts feeding the pool's demoted-last selection order."""
 
 import logging
-import random
-import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from statistics import NormalDist
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
-from llmbroker.models import (
-    Alert,
-    Call,
-    CallStatus,
-    LLMConfig,
-    LLMMetrics,
-    LLMProfile,
-    QualitySummary,
-)
+from llmbroker.models import Alert, Call, CallStatus, LLMMetrics
 from llmbroker.protocols.telemetry import QueryableTelemetryProtocol, TelemetryProtocol
 
 if TYPE_CHECKING:
     from llmbroker.broker.pool import LLMPool
 
 logger = logging.getLogger("llmbroker.broker")
-
-_KIND_TRANSPORT = "transport"
-_KIND_LATENCY = "latency"
-_KIND_QUALITY = "quality"
-
-# Ranking (usable_rate / mean_latency_ms): 80% confidence to resolve a 0.2 gap
-# around p=0.5 -> n ~= 1.28^2 * 0.25 / 0.2^2 ~= 10 -> d = (n-1)/(n+1).
-_RANK_N = 10
-_D_RANK = (_RANK_N - 1) / (_RANK_N + 1)  # 9/11
 
 _CALL_INDEX_CAP = 10_000
 
@@ -43,59 +24,40 @@ def _z_score(confidence: float) -> float:
     return NormalDist().inv_cdf((1 + confidence) / 2)
 
 
-class SelectionPolicy(Protocol):
-    def select(self, candidates: list[LLMConfig], *, operation: str | None) -> LLMConfig | None:
-        """Pick the best candidate from the currently available list.
-        None means no preference — caller may pick any."""
+def wilson_upper(scores: list[float], z: float) -> float:
+    """Wilson-score upper bound of the mean of ``scores`` at confidence ``z``.
 
-
-class FirstAvailablePolicy:
-    def select(self, candidates: list[LLMConfig], *, operation: str | None) -> LLMConfig | None:  # noqa: ARG002
-        return candidates[0] if candidates else None
+    >>> round(wilson_upper([1.0] * 25 + [0.0] * 5, 1.96), 4)
+    0.9266
+    """
+    n = len(scores)
+    p = sum(scores) / n
+    z2 = z * z
+    center = p + z2 / (2 * n)
+    margin = z * ((p * (1 - p) / n) + z2 / (4 * n * n)) ** 0.5
+    denom = 1 + z2 / n
+    return (center + margin) / denom
 
 
 @dataclass
 class Optimizer:
-    """Consecutive-failure counter, decayed quality/transport aggregates, and
-    retirement/demotion policy for the pool."""
+    """Consecutive-failure counter for backoff, plus per-(model, operation) sliding
+    windows of raw quality ratings backing the demoted-last selection order."""
 
     max_delay: float = 3600.0
     backoff_factor: float = 2.0
-    min_sample_count: int = 10
-    usable_rate_floor: float = 0.5
-    removal_rate_floor: float = 0.15
-    exploration_fraction: float = 0.1
-    background_operations: frozenset[str] = field(default_factory=frozenset)
-
     quality_floor: float = 0.3
-    quality_margin: float = 0.15
-    quality_confidence: float = 0.95
-    quality_effective_n: int = 36
-    demotion_realert_interval: float = 3600.0
+    quality_confidence: float = 0.95  # z for the Wilson upper bound
+    quality_window: int = 30  # ratings kept per (model, operation)
+    quality_min_count: int = 10  # verdicts need at least this many
 
     _pending_alerts: list[Alert] = field(default_factory=list, init=False, repr=False)
     _rl_fail_count: dict[str, int] = field(default_factory=dict, init=False, repr=False)
-    _ranking: dict[tuple[str, str | None], QualitySummary] = field(
+    _scores: dict[tuple[str, str | None], deque] = field(
         default_factory=dict,
         init=False,
         repr=False,
     )
-    _latency: dict[tuple[str, str | None], QualitySummary] = field(
-        default_factory=dict,
-        init=False,
-        repr=False,
-    )
-    _quality: dict[tuple[str, str | None], QualitySummary] = field(
-        default_factory=dict,
-        init=False,
-        repr=False,
-    )
-    _benched: set[str] = field(default_factory=set, init=False, repr=False)
-
-    @property
-    def _d_quality(self) -> float:
-        n = self.quality_effective_n
-        return (n - 1) / (n + 1)
 
     def rl_fail_count(self, llm_name: str) -> int:
         return self._rl_fail_count.get(llm_name, 0)
@@ -116,147 +78,66 @@ class Optimizer:
         self._pending_alerts.append(Alert(message=msg))
 
     # ------------------------------------------------------------------
-    # Ranking aggregate (transport outcome + latency) — every call
+    # Quality windows + derived per-operation demotion verdicts
     # ------------------------------------------------------------------
-
-    def _record_transport(self, llm_name: str, operation: str | None, call: Call) -> None:
-        key = (llm_name, operation)
-        summary = self._ranking.setdefault(key, QualitySummary())
-        summary.update(1.0 if call.status == CallStatus.OK else 0.0, _D_RANK)
-        if call.status == CallStatus.OK and call.latency_ms is not None:
-            lat_summary = self._latency.setdefault(key, QualitySummary())
-            lat_summary.update(float(call.latency_ms), _D_RANK)
-
-    def usable_rate(self, llm_name: str, operation: str | None) -> float | None:
-        """Jeffreys-smoothed decayed rate. None if fewer than min_sample_count events."""
-        summary = self._ranking.get((llm_name, operation))
-        if summary is None or summary.count < self.min_sample_count:
-            return None
-        return (summary.weighted_good + 0.5) / (summary.weight + 1.0)
-
-    def mean_latency_ms(self, llm_name: str, operation: str | None) -> float | None:
-        """Decayed mean latency of OK calls; None if no OK call recorded."""
-        summary = self._latency.get((llm_name, operation))
-        if summary is None or summary.count == 0:
-            return None
-        return summary.weighted_good / summary.weight
-
-    def should_retire(self, llm_name: str, operation: str | None) -> bool:
-        """True once usable_rate has enough samples and sits below removal_rate_floor.
-
-        Distinct from (and stricter than) usable_rate_floor, which only deprioritizes a
-        candidate in routing — reusing that floor here would remove a model the instant
-        it dips below it, with no margin for the still-useful-as-last-resort case.
-        """
-        rate = self.usable_rate(llm_name, operation)
-        return rate is not None and rate < self.removal_rate_floor
-
-    # ------------------------------------------------------------------
-    # Quality aggregate + derived per-operation / global demotions
-    # ------------------------------------------------------------------
-
-    def _record_quality(self, llm_name: str, operation: str | None, score: float) -> None:
-        key = (llm_name, operation)
-        summary = self._quality.setdefault(key, QualitySummary())
-        summary.update(score, self._d_quality)
-
-    def reset_quality(self, llm_name: str) -> None:
-        """Clear every operation's quality aggregate for this model — a clean trial period.
-
-        Called by ``enable_llm`` so stale evidence cannot immediately re-derive a demotion.
-        """
-        for key in [k for k in self._quality if k[0] == llm_name]:
-            del self._quality[key]
-
-    def set_benched(self, llm_name: str) -> None:
-        self._benched.add(llm_name)
-
-    def clear_benched(self, llm_name: str) -> None:
-        self._benched.discard(llm_name)
 
     def wilson_bound(self, llm_name: str, operation: str | None) -> float | None:
-        """The Wilson-score upper bound backing ``evaluate_demotions``, for alert messages."""
-        summary = self._quality.get((llm_name, operation))
-        if summary is None:
+        """The Wilson-score upper bound backing ``is_demoted``, for diagnostics."""
+        window = self._scores.get((llm_name, operation))
+        if not window:
             return None
-        z = _z_score(self.quality_confidence)
-        return summary.wilson_upper(z, min_count=self.quality_effective_n)
+        return wilson_upper(list(window), _z_score(self.quality_confidence))
 
-    def _demotion_verdicts(self, llm_name: str) -> dict[str | None, bool | None]:
-        """Per-operation verdicts: ``True``/``False`` when evidenced, ``None`` when the
-        Wilson-score bound could not be computed (insufficient samples)."""
-        if llm_name in self._benched:
-            return {}
-        result: dict[str | None, bool | None] = {}
-        for name, operation in self._quality:
-            if name != llm_name:
-                continue
-            upper = self.wilson_bound(name, operation)
-            result[operation] = None if upper is None else upper < self.quality_floor
-        return result
+    def is_demoted(self, llm_name: str, operation: str | None) -> bool:
+        """True iff the window holds at least ``quality_min_count`` ratings and their
+        Wilson-score upper bound sits below ``quality_floor``."""
+        window = self._scores.get((llm_name, operation))
+        if window is None or len(window) < self.quality_min_count:
+            return False
+        bound = wilson_upper(list(window), _z_score(self.quality_confidence))
+        return bound < self.quality_floor
 
-    def evaluate_demotions(self, llm_name: str) -> dict[str | None, bool]:
-        """Per-operation demotion verdicts, derived from the quality aggregate.
+    def demoted_operations(self, llm_name: str) -> frozenset[str | None]:
+        return frozenset(
+            operation
+            for name, operation in self._scores
+            if name == llm_name and self.is_demoted(name, operation)
+        )
 
-        Demoted (for an operation with sufficient evidence) iff the Wilson-score upper
-        bound sits below ``quality_floor``. Returns ``{}`` unconditionally when the model
-        is manually benched — the manual latch already excludes it; deriving demotions on
-        top would be meaningless.
-        """
-        return {op: bool(verdict) for op, verdict in self._demotion_verdicts(llm_name).items()}
+    def record_quality(self, llm_name: str, operation: str | None, score: float) -> None:
+        """Fold one rating into the (model, operation) window, oldest evicted first."""
+        before = self.is_demoted(llm_name, operation)
+        window = self._scores.setdefault(
+            (llm_name, operation),
+            deque(maxlen=self.quality_window),
+        )
+        window.append(score)
+        self._log_flip(llm_name, operation, before, self.is_demoted(llm_name, operation))
 
-    def is_globally_demoted(self, llm_name: str) -> bool:
-        """True iff every operation with sufficient evidence is demoted and at least one exists.
+    def load_scores(self, scores: dict[tuple[str, str | None], list[float]]) -> None:
+        """Replace every window wholesale — used by the journal rebuild."""
+        keys = set(self._scores) | set(scores)
+        before = {key: self.is_demoted(*key) for key in keys}
+        self._scores = {
+            key: deque(values[-self.quality_window :], maxlen=self.quality_window)
+            for key, values in scores.items()
+        }
+        for key in keys:
+            self._log_flip(key[0], key[1], before[key], self.is_demoted(*key))
 
-        Operations with insufficient evidence (``None``) are excluded from this check —
-        counting them as "not demoted" would let one freshly-tried operation mask an
-        otherwise uniformly-bad model, and counting them as "demoted" would flag a model
-        that has not actually been shown bad on any operation yet.
-        """
-        evidenced = [v for v in self._demotion_verdicts(llm_name).values() if v is not None]
-        return bool(evidenced) and all(evidenced)
-
-    @property
-    def transport_decay(self) -> float:
-        """The ranking aggregate's per-event decay constant — for the broker's live sync."""
-        return _D_RANK
-
-    @property
-    def quality_decay(self) -> float:
-        """The quality aggregate's per-event decay constant — for the broker's live sync."""
-        return self._d_quality
-
-    # ------------------------------------------------------------------
-    # Durable profile snapshot / warm-start
-    # ------------------------------------------------------------------
-
-    def to_profile(self, llm_name: str) -> LLMProfile:
-        """Snapshot this model's summaries (all kinds) into a durable ``LLMProfile``.
-
-        The manual-bench latch fields are the broker's concern — this only carries
-        the learned aggregates.
-        """
-        stats: dict[str | None, dict[str, QualitySummary]] = {}
-        for (name, operation), summary in self._ranking.items():
-            if name == llm_name:
-                stats.setdefault(operation, {})[_KIND_TRANSPORT] = summary
-        for (name, operation), summary in self._latency.items():
-            if name == llm_name:
-                stats.setdefault(operation, {})[_KIND_LATENCY] = summary
-        for (name, operation), summary in self._quality.items():
-            if name == llm_name:
-                stats.setdefault(operation, {})[_KIND_QUALITY] = summary
-        return LLMProfile(stats=stats)
-
-    def load_summaries(self, llm_name: str, profile: LLMProfile) -> None:
-        """Warm-start this model's in-memory aggregates from a persisted ``LLMProfile``."""
-        for operation, kinds in profile.stats.items():
-            if _KIND_TRANSPORT in kinds:
-                self._ranking[(llm_name, operation)] = kinds[_KIND_TRANSPORT]
-            if _KIND_LATENCY in kinds:
-                self._latency[(llm_name, operation)] = kinds[_KIND_LATENCY]
-            if _KIND_QUALITY in kinds:
-                self._quality[(llm_name, operation)] = kinds[_KIND_QUALITY]
+    def _log_flip(
+        self,
+        llm_name: str,
+        operation: str | None,
+        before: bool,  # noqa: FBT001
+        after: bool,  # noqa: FBT001
+    ) -> None:
+        if before == after:
+            return
+        if after:
+            logger.warning("%s: quality-demoted for operation=%r", llm_name, operation)
+        else:
+            logger.info("%s: quality demotion cleared for operation=%r", llm_name, operation)
 
 
 class OptimizerTelemetry:
@@ -301,7 +182,7 @@ class OptimizerTelemetry:
             )
             return
         name, operation = entry
-        self._opt._record_quality(name, operation, score)  # noqa: SLF001
+        self._opt.record_quality(name, operation, score)
 
     async def metrics(
         self,
@@ -331,18 +212,11 @@ class OptimizerTelemetry:
     def __getattr__(self, name: str) -> object:
         return getattr(self._inner, name)
 
-    async def _maybe_retire(self, name: str, operation: str | None) -> None:
-        if self._opt.should_retire(name, operation):
-            await self._pool.drop(name)
-            self._opt.add_alert(f"{name}: retired — success rate too low over recent calls")
-
     async def _drive_fsm(self, call: Call) -> None:
         name = call.llm_name
-        self._opt._record_transport(name, call.operation, call)  # noqa: SLF001
 
         if call.status in (CallStatus.RATE_LIMITED, CallStatus.UNAVAILABLE):
             self._opt.on_rate_limited(name)
-            await self._maybe_retire(name, call.operation)
         elif call.status == CallStatus.OK:
             self._opt.on_success(name)
         elif call.status == CallStatus.ERROR:
@@ -350,57 +224,11 @@ class OptimizerTelemetry:
                 cfg = self._pool.configs.get(name)
                 ref = cfg.api_key_ref if cfg else "unknown"
                 await self._pool.drop(name)
-                self._opt.add_alert(
+                msg = (
                     f"{name}: API key appears dead (HTTP {call.http_status})"
-                    f" — check api_key_ref '{ref}'",
+                    f" — check api_key_ref {ref!r}"
                 )
+                logger.error(msg)
+                self._opt.add_alert(msg)
             else:
                 self._opt.on_rate_limited(name)
-                await self._maybe_retire(name, call.operation)
-
-
-class OptimizerPolicy:
-    _FLOOR_ALERT_INTERVAL = 60.0
-
-    def __init__(self, optimizer: Optimizer) -> None:
-        self._opt = optimizer
-        self._last_floor_alert: dict[str | None, float] = {}
-
-    def select(self, candidates: list[LLMConfig], *, operation: str | None) -> LLMConfig | None:
-        if not candidates:
-            return None
-        if random.random() < self._opt.exploration_fraction:  # noqa: S311
-            return random.choice(candidates)  # noqa: S311
-        gated = [c for c in candidates if self._passes_floor(c, operation)]
-        pool = gated if gated else candidates
-        if not gated:
-            now = time.monotonic()
-            if (
-                now - self._last_floor_alert.get(operation, float("-inf"))
-                >= self._FLOOR_ALERT_INTERVAL
-            ):
-                self._last_floor_alert[operation] = now
-                self._opt.add_alert(
-                    f"quality floor {self._opt.usable_rate_floor} dropped all candidates "
-                    f"for operation={operation!r}; using score-ranked fallback over all candidates",
-                )
-        is_background = operation in self._opt.background_operations
-        return min(pool, key=lambda c: self._rank_key(c, operation, is_background))
-
-    def _passes_floor(self, config: LLMConfig, operation: str | None) -> bool:
-        rate = self._opt.usable_rate(config.name, operation)
-        return rate is None or rate >= self._opt.usable_rate_floor
-
-    def _rank_key(
-        self,
-        config: LLMConfig,
-        operation: str | None,
-        is_background: bool,
-    ) -> tuple:
-        rate_val = self._opt.usable_rate(config.name, operation)
-        rate = rate_val if rate_val is not None else 0.5
-        latency_val = self._opt.mean_latency_ms(config.name, operation)
-        latency = latency_val if latency_val is not None else float("inf")
-        if is_background:
-            return (-rate, latency)
-        return (latency, -rate)

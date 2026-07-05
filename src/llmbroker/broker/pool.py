@@ -7,37 +7,27 @@ frees up or a cooldown expires. Parallel calls to one LLM are allowed by
 default; ``LLMConfig.parallel`` caps simultaneous in-flight requests per slot
 (1 = serialize).
 
-Tiered selection: candidates for an operation partition into tier 0 (normal),
-tier 1 (``deprecated`` — curator withdrew the endorsement), tier 2 (a
-globally-demoted model's untried operation — new evidence territory), tier 3
-(quality-demoted for this specific operation — evidenced bad). ``acquire()``
-serves the best non-empty tier; the caller's ``SelectionPolicy`` ranks only
-within that tier. ``deprecated``/demotion markers are soft (consulted at
-acquire time, never withdraw a slot) — only ``disabled`` and a missing key
-make a slot unavailable.
+Selection is one sort key: a slot quality-demoted for the requested operation
+(see ``Optimizer.is_demoted``) sorts after every non-demoted slot; among slots
+with the same demotion verdict, curated priority wins (``_Slot.order``, the
+model's position in the registry/preset — lower is better). Demotion is soft
+(consulted at acquire time, never withdraws a slot) — only ``disabled`` and a
+missing key make a slot unavailable.
 """
 
 import asyncio
 import logging
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from llmbroker.models import LifecyclePhase, LLMConfig, LLMState
-from llmbroker.optimizer import SelectionPolicy
+from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.state_store import StateStoreProtocol
 
 logger = logging.getLogger("llmbroker.broker")
 
 _STORE_CACHE_TTL = 2.0  # seconds
-_DEGRADED_TIER_ALERT_INTERVAL = 60.0  # seconds
-
-# Tier ordinals — lower is better; acquire() serves the best non-empty tier.
-TIER_NORMAL = 0
-TIER_DEPRECATED = 1
-TIER_DEMOTED_UNTRIED = 2
-TIER_DEMOTED_EVIDENCED = 3
 
 
 @dataclass
@@ -50,8 +40,7 @@ class _Slot:
     cooldown_until: datetime | None = None  # aware UTC
     fail_count: int = 0
     disabled: bool = False  # manual admin verdict
-    deprecated: bool = False
-    pick_seq: int = 0  # monotone counter for round-robin
+    order: int = 0  # curated priority: registry/preset position, lower is better
 
 
 class LLMPool:
@@ -62,19 +51,16 @@ class LLMPool:
         state_store: StateStoreProtocol | None,
         user_id: int | str | None,
         *,
-        on_degraded_tier: Callable[[str, str | None, int], None] | None = None,
+        optimizer: Optimizer | None = None,
     ) -> None:
         self._slots: dict[str, _Slot] = {}
         self._cond = asyncio.Condition()
-        self._pick_counter = 0
+        self._next_order = 0
         self._state_store = state_store
         self._user_id = user_id
+        self._optimizer = optimizer
         self._store_cache: dict[str, LLMState] | None = None
         self._store_cache_expires: float = 0.0
-        self._demoted_operations: dict[str, frozenset[str | None]] = {}
-        self._globally_demoted: set[str] = set()
-        self._on_degraded_tier = on_degraded_tier
-        self._last_degraded_alert: dict[tuple[str, str | None, int], float] = {}
 
     # ------------------------------------------------------------------
     # Membership / lookup
@@ -107,35 +93,34 @@ class LLMPool:
     # Membership mutation
     # ------------------------------------------------------------------
 
-    async def add(self, cfg: LLMConfig, key: str | None) -> None:
+    async def add(self, cfg: LLMConfig, key: str | None, order: int | None = None) -> None:
         """Register/refresh a config. A ``None`` key leaves any prior key intact.
 
         Upserts in place so an existing slot's live state (cooldown, fail count,
-        in-flight, disabled, deprecated) survives a config refresh.
+        in-flight, disabled) survives a config refresh. ``order`` defaults to
+        insertion order when the caller has no curated position to assert.
         """
         async with self._cond:
+            resolved_order = order if order is not None else self._next_order
+            self._next_order = max(self._next_order, resolved_order + 1)
             slot = self._slots.get(cfg.name)
             if slot is None:
-                self._slots[cfg.name] = _Slot(config=cfg, key=key)
+                self._slots[cfg.name] = _Slot(config=cfg, key=key, order=resolved_order)
             else:
                 slot.config = cfg
+                slot.order = resolved_order
                 if key is not None:
                     slot.key = key
             self._cond.notify_all()
 
     async def drop(self, name: str) -> None:
-        """Remove a slot entirely, so a later re-add under the same name starts clean
-        rather than inheriting stale tier/alert state."""
+        """Remove a slot entirely, so a later re-add under the same name starts clean."""
         async with self._cond:
             self._slots.pop(name, None)
-            self._demoted_operations.pop(name, None)
-            self._globally_demoted.discard(name)
-            for key in [k for k in self._last_degraded_alert if k[0] == name]:
-                del self._last_degraded_alert[key]
             self._cond.notify_all()
 
     # ------------------------------------------------------------------
-    # Manual disable (hard exclusion) / deprecated / demotion markers (soft, tiered)
+    # Manual disable (hard exclusion)
     # ------------------------------------------------------------------
 
     def set_disabled(self, name: str) -> None:
@@ -156,65 +141,6 @@ class LLMPool:
         slot = self._slots.get(name)
         return slot is not None and slot.disabled
 
-    def set_deprecated(self, name: str) -> None:
-        slot = self._slots.get(name)
-        if slot is not None:
-            slot.deprecated = True
-
-    def clear_deprecated(self, name: str) -> None:
-        slot = self._slots.get(name)
-        if slot is not None:
-            slot.deprecated = False
-
-    def is_deprecated(self, name: str) -> bool:
-        slot = self._slots.get(name)
-        return slot is not None and slot.deprecated
-
-    def update_demotions(
-        self,
-        name: str,
-        demoted_operations: frozenset[str | None],
-        *,
-        globally_demoted: bool,
-    ) -> None:
-        """Refresh the demotion markers for one model from the optimizer's derivation."""
-        if demoted_operations:
-            self._demoted_operations[name] = demoted_operations
-        else:
-            self._demoted_operations.pop(name, None)
-        if globally_demoted:
-            self._globally_demoted.add(name)
-        else:
-            self._globally_demoted.discard(name)
-
-    def demoted_operations(self, name: str) -> frozenset[str | None]:
-        return self._demoted_operations.get(name, frozenset())
-
-    def is_globally_demoted(self, name: str) -> bool:
-        return name in self._globally_demoted
-
-    def tier_of(self, name: str, operation: str | None) -> int:
-        """The tier a candidate falls into for ``operation`` — lower is better."""
-        if operation in self._demoted_operations.get(name, frozenset()):
-            return TIER_DEMOTED_EVIDENCED
-        if name in self._globally_demoted:
-            return TIER_DEMOTED_UNTRIED
-        if self.is_deprecated(name):
-            return TIER_DEPRECATED
-        return TIER_NORMAL
-
-    def _maybe_alert_degraded_tier(self, name: str, operation: str | None, tier: int) -> None:
-        """Keyed on tier as well as (name, operation): an escalation to a worse tier
-        always alerts even inside another tier's realert window."""
-        if self._on_degraded_tier is None or tier <= TIER_NORMAL:
-            return
-        key = (name, operation, tier)
-        now = time.monotonic()
-        if now - self._last_degraded_alert.get(key, float("-inf")) < _DEGRADED_TIER_ALERT_INTERVAL:
-            return
-        self._last_degraded_alert[key] = now
-        self._on_degraded_tier(name, operation, tier)
-
     # ------------------------------------------------------------------
     # Slot acquisition
     # ------------------------------------------------------------------
@@ -228,17 +154,8 @@ class LLMPool:
             and (slot.cooldown_until is None or slot.cooldown_until <= now)
         )
 
-    def _partition_by_tier(
-        self,
-        available: list[_Slot],
-        operation: str | None,
-    ) -> tuple[int, list[_Slot]]:
-        """Split into (best_tier, best_tier_slots)."""
-        tiered: dict[int, list[_Slot]] = {}
-        for slot in available:
-            tiered.setdefault(self.tier_of(slot.config.name, operation), []).append(slot)
-        best_tier = min(tiered)
-        return best_tier, tiered[best_tier]
+    def _is_demoted(self, name: str, operation: str | None) -> bool:
+        return self._optimizer is not None and self._optimizer.is_demoted(name, operation)
 
     def _wake_timeout(self, now: datetime, deadline: float | None) -> float | None:
         """Seconds until the nearest event that could make a slot available, or
@@ -253,34 +170,18 @@ class LLMPool:
             candidates.append(deadline - time.monotonic())
         return min(candidates) if candidates else None
 
-    async def acquire(
-        self,
-        wait: float | None,
-        *,
-        policy: SelectionPolicy | None = None,
-        operation: str | None = None,
-    ) -> LLMConfig:
+    async def acquire(self, wait: float | None, *, operation: str | None = None) -> LLMConfig:
         deadline = None if wait is None else time.monotonic() + wait
         async with self._cond:
             while True:
                 now = datetime.now(UTC)
                 avail = [s for s in self._slots.values() if self._available(s, now)]
                 if avail:
-                    best_tier, candidates = self._partition_by_tier(avail, operation)
-                    picked_cfg = (
-                        policy.select([s.config for s in candidates], operation=operation)
-                        if policy is not None
-                        else None
-                    )
-                    slot = (
-                        self._slots[picked_cfg.name]
-                        if picked_cfg is not None
-                        else min(candidates, key=lambda s: s.pick_seq)
+                    slot = min(
+                        avail,
+                        key=lambda s: (self._is_demoted(s.config.name, operation), s.order),
                     )
                     slot.in_flight += 1
-                    self._pick_counter += 1
-                    slot.pick_seq = self._pick_counter
-                    self._maybe_alert_degraded_tier(slot.config.name, operation, best_tier)
                     return slot.config
                 if wait == 0:
                     raise TimeoutError("no LLM slot available and wait=0")

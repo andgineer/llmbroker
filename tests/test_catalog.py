@@ -8,9 +8,8 @@ import llmbroker.sqlite
 
 from llmbroker.broker import AsyncBroker
 from llmbroker.broker.catalog import Catalog, apply_seed
-from llmbroker.broker.pool import TIER_DEPRECATED, LLMPool
+from llmbroker.broker.pool import LLMPool
 from llmbroker.models import LLMConfig, LLMProfile, Origin, SeedPolicy
-from llmbroker.optimizer import FirstAvailablePolicy
 from llmbroker.standalone.registry import Registry as TomlRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.telemetry import NoTelemetry
@@ -380,9 +379,9 @@ def test_broker_default_seed_policy_is_sync():
     )
 
 
-async def test_sync_deprecated_entry_acquired_only_when_no_tier0_candidate(tmp_path):
-    """Broker-level: a SYNC-deprecated model is demoted to tier 1 — still keeps its
-    slot and profile, just deprioritized behind any tier-0 alternative."""
+async def test_sync_deprecated_entry_stays_routable(tmp_path):
+    """Broker-level: a SYNC-deprecated model keeps its slot and profile — the
+    deprecated marker is a registry-only concern, it has no effect on selection."""
     db = str(tmp_path / "b.db")
     reg = llmbroker.sqlite.Registry(db)
     await reg.add(
@@ -404,11 +403,8 @@ async def test_sync_deprecated_entry_acquired_only_when_no_tier0_candidate(tmp_p
         seed=TomlRegistry(seed_path),
         seed_policy=SeedPolicy.SYNC,
     ) as broker:
-        assert broker._pool.is_deprecated("dep")
-        assert broker._pool.tier_of("dep", None) == TIER_DEPRECATED
-
-        picked = await broker._pool.acquire(0, policy=FirstAvailablePolicy(), operation=None)
-        assert picked.name == "dep"  # still routable — last resort, not excluded
+        picked = await broker._pool.acquire(0, operation=None)
+        assert picked.name == "dep"  # still routable
 
 
 async def test_manual_latch_survives_sync_reseed(tmp_path):
