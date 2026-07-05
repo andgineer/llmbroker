@@ -28,7 +28,6 @@ Zero-administration routing over a pool of 4-5 free-tier LLMs:
    to the same LLM are allowed by default (`parallel` restricts this for
    finicky providers).
 
-The plans implementing these requirements live in `specs/plans/simplify-core.md`
-→ `specs/plans/simplify-learning.md` → `specs/plans/simplify-storage.md`. The
-decisions taken to satisfy these requirements and their cost estimate are
-recorded in `specs/plans/simplify-rationale.md`.
+The decisions taken to satisfy these requirements and their cost estimate are
+recorded in [`decisions.md`](decisions.md); the current behavior rules live in
+[`architecture.md`](architecture.md) and [`optimizer.md`](optimizer.md).

@@ -1,11 +1,9 @@
-# Simplification rationale (2026-07)
+# Design decisions and cost rationale (2026-07)
 
-Background discussion behind the three simplification plans:
-`specs/plans/simplify-core.md` → `specs/plans/simplify-learning.md` →
-`specs/plans/simplify-storage.md`. Requirements are captured in
-[`specs/reference/mission.md`](../reference/mission.md); this document
-records the decisions taken to satisfy them and the resulting cost estimate.
-It does not modify the plans themselves.
+Requirements are captured in [`mission.md`](mission.md); this document records
+the decisions taken to satisfy them during the 2026-07 simplification and the
+resulting cost estimate. The current behavior rules themselves live in
+[`architecture.md`](architecture.md) and [`optimizer.md`](optimizer.md).
 
 ## Decisions accepted (2026-07)
 
@@ -244,8 +242,7 @@ It does not modify the plans themselves.
 
 ## Function → mechanism → cost
 
-Line estimates are after all three plans are executed (current `src` ≈
-6000).
+Line estimates for the design as built (pre-simplification `src` ≈ 6000).
 
 | Function | Requirement | Mechanism after simplification | ~lines | DB per call |
 |---|---|---|---|---|

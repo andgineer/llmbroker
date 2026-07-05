@@ -85,7 +85,11 @@ optional `call_id` as an opaque host-UI passthrough, never joined against a
 call row) rather than updating an existing row.
 
 A debounced read of the most recent records (`quality_rebuild_limit`,
-default 300; at most once every 60 seconds, forced on a failure) re-derives:
+default 300; at most once every 60 seconds, forced on a failure) re-derives
+the state below. The tail is shared across all models and operations — a
+chatty model can crowd a quiet model's ratings out of the last
+`quality_rebuild_limit` records; this is an accepted consequence, and the
+limit is the tuning knob. The same read re-derives:
 quality-window verdicts, shared cooldowns (above), snapshot metrics, pool
 membership (re-reads the registry), and the admin disabled-verdict map — so
 edits from another process or node reach a running broker without a
