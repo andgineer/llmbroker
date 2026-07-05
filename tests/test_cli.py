@@ -1,10 +1,12 @@
 """Unit tests for the CLI (python -m llmbroker)."""
 
+import asyncio
 import socket
 import urllib.error
 from unittest.mock import MagicMock, patch
 
 from llmbroker.cli import main
+from llmbroker.sqlite.store import Store as SqliteStore
 
 
 def _write_toml(tmp_path, entries):
@@ -137,3 +139,27 @@ def test_preset_timeout_returns_1(capsys):
         rc = main(["preset", "freetier"])
     assert rc == 1
     assert "timed out" in capsys.readouterr().err
+
+
+# --- sync command ---
+
+
+def test_sync_seeds_disabled_map_on_the_target_db_via_source_dispatch(tmp_path, monkeypatch):
+    """sync must dispatch on the db argument (source dispatch), so `llmbroker_disabled`
+    is seeded on the target DB — not on a stray `./store` sibling under the CWD."""
+    monkeypatch.chdir(tmp_path)
+    preset = _write_toml(tmp_path, [("a", "KEY_A"), ("b", "KEY_B")])
+    db = str(tmp_path / "x.db")
+
+    rc = main(["sync", preset, db])
+    assert rc == 0
+
+    disabled = asyncio.run(SqliteStore(db).disabled_map())
+    assert disabled == {"a": False, "b": False}
+    assert not (tmp_path / "store").exists()
+
+
+def test_sync_missing_file_returns_1(tmp_path, capsys):
+    rc = main(["sync", str(tmp_path / "nope.toml"), str(tmp_path / "x.db")])
+    assert rc == 1
+    assert "error" in capsys.readouterr().err

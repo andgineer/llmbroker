@@ -2,10 +2,14 @@
 
 import logging
 
-from llmbroker.broker.learning import _LearningHook
+from llmbroker.broker.learning import (
+    _DEFAULT_QUALITY_REBUILD_LIMIT,
+    _LearningHook,
+    metrics_from_calls,
+)
 from llmbroker.broker.pool import LLMPool
 from llmbroker.models import LLMConfig, LLMMetrics, LLMState, Usage
-from llmbroker.protocols.knowledge import KnowledgeProtocol, QueryableKnowledgeProtocol
+from llmbroker.protocols.store import QueryableStoreProtocol, StoreProtocol
 
 logger = logging.getLogger("llmbroker.broker")
 
@@ -22,7 +26,7 @@ class AsyncResult:
         call_id: str,
         llm_name: str,
         operation: str | None = None,
-        knowledge: KnowledgeProtocol,
+        store: StoreProtocol,
         pool: LLMPool,
     ) -> None:
         self.text = text
@@ -31,13 +35,13 @@ class AsyncResult:
         self._call_id = call_id
         self._llm_name = llm_name
         self._operation = operation
-        self._knowledge = knowledge
+        self._store = store
         self._pool = pool
 
     async def record_quality(self, score: float) -> None:
         if score == 0.0:
             self._pool.mark_quality_fail(self._llm_name)
-        await self._knowledge.record_quality(
+        await self._store.record_quality(
             self._llm_name,
             self._operation,
             score,
@@ -53,24 +57,29 @@ class AsyncLLM:
         name: str,
         config: LLMConfig,
         pool: LLMPool,
-        knowledge: KnowledgeProtocol,
+        store: StoreProtocol,
     ) -> None:
         self._name = name
         self._config = config
         self._pool = pool
-        self._knowledge = knowledge
+        self._store = store
 
     @property
     def config(self) -> LLMConfig:
         return self._config
 
+    @property
+    def disabled(self) -> bool:
+        return self._pool.is_disabled(self._name)
+
     async def state(self) -> LLMState:
         return self._pool.state(self._name)
 
     async def metrics(self) -> LLMMetrics:
-        if isinstance(self._knowledge, _LearningHook):
-            return self._knowledge.metrics_cache.get(self._name, LLMMetrics(0, None, None))
-        if isinstance(self._knowledge, QueryableKnowledgeProtocol):
-            all_metrics = await self._knowledge.metrics()
+        if isinstance(self._store, _LearningHook):
+            return self._store.metrics_cache.get(self._name, LLMMetrics(0, None, None))
+        if isinstance(self._store, QueryableStoreProtocol):
+            rows = await self._store.calls(limit=_DEFAULT_QUALITY_REBUILD_LIMIT)
+            all_metrics = metrics_from_calls(rows)
             return all_metrics.get(self._name, LLMMetrics(0, None, None))
         return LLMMetrics(0, None, None)

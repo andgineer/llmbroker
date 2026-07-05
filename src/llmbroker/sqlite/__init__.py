@@ -1,4 +1,4 @@
-"""SQLite backend: registry, knowledge store, and secrets over one DB file.
+"""SQLite backend: registry, store, and secrets over one DB file.
 
 Needs the ``aiosqlite`` driver (``llmbroker[sqlite]``); importing a submodule is
 how a host declares that dependency, so a bare ``import llmbroker`` stays

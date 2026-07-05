@@ -15,20 +15,26 @@ Every host plugs in up to three backends; only the registry is required:
 |---|---|---|---|
 | **config** | `RegistryProtocol` | `Registry(path)` (file: `.toml`/`.json`) | where LLM configurations are stored — a pure mirror of a preset, see "Provider seeding" |
 | **secrets** | `SecretsProtocol` | `Secrets()` (env vars) | how `api_key_ref` names resolve to real keys |
-| **knowledge** | `KnowledgeProtocol` | `FileKnowledge(path)` (`state/` dir) | append-only call journal plus the admin disabled-verdict map; see [`optimizer.md`](optimizer.md) |
+| **store** | `StoreProtocol` | `FileStore(path)` (`store/` dir) | append-only call journal plus the admin disabled-verdict map; see [`optimizer.md`](optimizer.md) |
+
+The store is the only storage llmbroker owns and writes: the append-only call
+journal, the admin disabled-verdict map, and any future operational data
+(aggregates, per-user settings).
 
 **Where each kind lives:**
-- **Contracts** (`RegistryProtocol`, `SecretsProtocol`, `KnowledgeProtocol`, …) live in
+- **Contracts** (`RegistryProtocol`, `SecretsProtocol`, `StoreProtocol`, …) live in
   `llmbroker.protocols` — implement one to add a custom backend. They are not part of
   the top-level surface.
 - **Zero-dependency implementations** that work without any external backend live in
   `llmbroker.standalone` and are re-exported for convenience: construct them directly as
-  `llmbroker.Registry`, `llmbroker.Secrets`, `llmbroker.FileKnowledge` (plus variants
-  `DictSecrets`, `InMemoryKnowledge`). This is the simplest usage — a config file,
-  env-var secrets, a file-backed knowledge store, no integration code.
-- **Dependency-carrying backends** are submodules imported explicitly
-  (`llmbroker.sqlite.Registry`, …), one subpackage per driver (`llmbroker.sqlite`,
-  `llmbroker.postgres`, `llmbroker.mongodb`, `llmbroker.aws`, `llmbroker.vault`).
+  `llmbroker.Registry`, `llmbroker.Secrets`, `llmbroker.FileStore` (plus variants
+  `DictSecrets`, `InMemoryStore`). This is the simplest usage — a config file,
+  env-var secrets, a file-backed store, no integration code.
+- **Dependency-carrying backends** are named modules imported explicitly
+  (`llmbroker.sqlite.registry.Registry`, …), one subpackage per driver
+  (`llmbroker.sqlite`, `llmbroker.postgres`, `llmbroker.mongodb`, `llmbroker.aws`,
+  `llmbroker.vault`) — the subpackage's own `__init__.py` carries no code, so
+  `llmbroker.sqlite.Registry` is not importable; only the exact module path is.
   Importing the submodule is the dependency declaration: a bare `import llmbroker`
   never pulls in a driver. Internally, each of sqlite/postgres/mongodb is one
   storage `Driver` (`backends/driver.py` — `fetch`/`get`/`upsert`/`delete` for
@@ -46,7 +52,7 @@ file registry with env-var secrets; a sqlite path/URL (`.db`, `.sqlite`,
 unrecognized form raises a clear error naming the accepted ones; a missing extra
 raises an actionable `pip install llmbroker[...]` message. Each backend package is
 imported lazily so a bare `import llmbroker` still never pulls in a driver.
-Explicit `registry=`/`secrets=`/`knowledge=` arguments always win over whatever the
+Explicit `registry=`/`secrets=`/`store=` arguments always win over whatever the
 source would have supplied — passing a already-constructed `RegistryProtocol`
 object as the first argument (instead of a string) skips dispatch entirely.
 `aws`/`vault` are single-port secrets backends and stay override-only.
@@ -85,9 +91,9 @@ object as the first argument (instead of a string) skips dispatch entirely.
 
 | Backend | Implemented |
 |---|---|
-| Registry | `Registry(path)` (file, `.toml`/`.json`), `llmbroker.sqlite.Registry`, `llmbroker.postgres.Registry`, `llmbroker.mongodb.Registry` |
-| Secrets | `Secrets()` (env), `DictSecrets(mapping)` (test double), `llmbroker.sqlite.Secrets`, `llmbroker.postgres.Secrets`, `llmbroker.mongodb.Secrets`, `llmbroker.aws.Secrets`, `llmbroker.vault.Secrets` |
-| Knowledge | `FileKnowledge(path)` (day-split journal + YAML disabled map), `InMemoryKnowledge()`, `llmbroker.sqlite.Knowledge`, `llmbroker.postgres.Knowledge`, `llmbroker.mongodb.Knowledge` |
+| Registry | `Registry(path)` (file, `.toml`/`.json`), `llmbroker.sqlite.registry.Registry`, `llmbroker.postgres.registry.Registry`, `llmbroker.mongodb.registry.Registry` |
+| Secrets | `Secrets()` (env), `DictSecrets(mapping)` (test double), `llmbroker.sqlite.secrets.Secrets`, `llmbroker.postgres.secrets.Secrets`, `llmbroker.mongodb.secrets.Secrets`, `llmbroker.aws.secrets.Secrets`, `llmbroker.vault.secrets.Secrets` |
+| Store | `FileStore(path)` (day-split journal + YAML disabled map), `InMemoryStore()`, `llmbroker.sqlite.store.Store`, `llmbroker.postgres.store.Store`, `llmbroker.mongodb.store.Store` |
 
 ### CLI
 
@@ -96,8 +102,10 @@ object as the first argument (instead of a string) skips dispatch entirely.
   (see "Key acquisition help" above). Onboarding is folded into this command rather
   than a separate `setup`/`status` command, to keep the CLI surface small.
 - `python -m llmbroker preset <name>` — print a curated preset TOML to stdout (redirect to save: `preset freetier > freetier.toml`)
-- `python -m llmbroker sync <preset> <db>` — mirror a preset TOML into a sqlite
-  registry; a DB-init CLI touchpoint for the same `sync(preset)` the broker exposes.
+- `python -m llmbroker sync <preset> <db>` — mirror a preset TOML into a DB
+  registry, `<db>` accepting any source dispatch form (sqlite path/URL,
+  `postgresql://…`, `mongodb://…`); a DB-init CLI touchpoint for the same
+  `sync(preset)` the broker exposes.
 
 ### DB schema
 
@@ -114,7 +122,7 @@ tables/collections and restarting (export registry/secrets/calls first if needed
 or the other tables directly, but at its own risk — column names and shapes may
 change between releases without notice. The supported read surface is
 `snapshot()` (raw per-model facts + metrics); hosts that need more should read
-through a `QueryableKnowledgeProtocol`/`DisabledMapProtocol` backend, not the
+through a `QueryableStoreProtocol`/`DisabledMapProtocol` backend, not the
 raw table.
 
 Four tables/collections exist: **registry**, **secrets**, **disabled** (admin
@@ -142,7 +150,7 @@ indexes.
 
 Per table:
 
-- **Calls** (`llmbroker_calls`) — the knowledge journal: `id`, `llm_name`,
+- **Calls** (`llmbroker_calls`) — the store journal: `id`, `llm_name`,
   `called_at`, `kind` (`call`/`quality`), `scope`, `status` are queried/indexed
   columns; open-ended provider extras live in the `usage_extra` JSON column;
   `cooldown_until`/`key_hash` ride on failed rows for the shared-cooldown rebuild
@@ -250,8 +258,8 @@ the registry against its own local copy and diverging copies would flip-flop it.
 
 ```python
 llms = llmbroker.AsyncBroker(
-    registry=llmbroker.sqlite.Registry("broker.db"),
-    secrets=llmbroker.sqlite.Secrets("broker.db"),
+    registry=llmbroker.sqlite.registry.Registry("broker.db"),
+    secrets=llmbroker.sqlite.secrets.Secrets("broker.db"),
 )
 await llms.sync(llmbroker.Registry(".deploy/llms.toml"))  # once, e.g. at deploy
 await llms.ensure_pool()   # eager init at startup
@@ -260,7 +268,7 @@ await llms.ensure_pool()   # eager init at startup
 `sync(preset)` is a total mirror: add new entries, update existing ones, delete
 entries absent from the preset — nothing is lost by a delete, since keys live in
 the secrets store, learned state derives from the journal, and admin verdicts
-live in the knowledge disabled map (a model returning to the preset is simply
+live in the store disabled map (a model returning to the preset is simply
 re-added, and its old ratings and verdict resurface). Refusing a `model`-identity
 change under an existing entry name is a synchronous error — entry identity is
 immutable, a model bump must be a new entry name; this protects the binding
@@ -273,7 +281,7 @@ call `sync(preset)` first.
 cannot be resolved by the configured `secrets=` backend, it tries
 `llmbroker.Secrets()` (env vars) and, if found, persists the value via
 `secrets.set()`. Existing secrets are never overwritten — admin-edited values
-win. It also seeds the knowledge disabled map with any missing model names
+win. It also seeds the store disabled map with any missing model names
 (`disabled: false`), never touching existing verdict values.
 
 ---
@@ -281,13 +289,13 @@ win. It also seeds the knowledge disabled map with any missing model names
 ## Per-user scoping
 
 A multi-user host can give each end user its own LLM API key over one shared
-registry and knowledge store. `scope: str | None` on the broker (`""` is
+registry and store. `scope: str | None` on the broker (`""` is
 rejected — use `None` for unscoped) is the one knob:
 
 - **The registry and everything the optimizer learns are always global** — one
   model list, one set of quality windows and cooldowns, shared by every scope.
   There is no per-tenant registry partition. Storage and the protocols
-  (`RegistryProtocol`, `SecretsProtocol`, `KnowledgeProtocol`) have no user concept
+  (`RegistryProtocol`, `SecretsProtocol`, `StoreProtocol`) have no user concept
   at all — `scope` is an opaque string the broker itself interprets, never a
   parameter any backend or protocol method accepts.
 - **Secrets are the one thing that is actually per-scope.** Key resolution
@@ -317,13 +325,13 @@ llmbroker are identifiable and isolated from the rest of the account. Neither ba
 has a user/scope parameter — `ref` is the whole identity, already carrying any scope
 prefix the broker added (see "Per-user scoping" above).
 
-### AWS Secrets Manager (`llmbroker.aws.Secrets`)
+### AWS Secrets Manager (`llmbroker.aws.secrets.Secrets`)
 
 Secret name in Secrets Manager: `{prefix}{ref}` — `prefix` defaults to `"llmbroker/"`.
 Secrets created via `set()` carry the tag `{"Key": "llmbroker", "Value": "1"}` for
 independent enumeration and cleanup.
 
-### HashiCorp Vault (`llmbroker.vault.Secrets`)
+### HashiCorp Vault (`llmbroker.vault.secrets.Secrets`)
 
 KV v2 engine. KV path: `llmbroker/{ref}`.
 

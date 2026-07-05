@@ -96,7 +96,7 @@ edits from another process or node reach a running broker without a
 restart. Own ratings apply to the in-memory window immediately, before any
 rebuild.
 
-Persistence is `state/` by default (a day-split JSON-lines journal plus a
+Persistence is `store/` by default (a day-split JSON-lines journal plus a
 YAML disabled-verdict document); an explicit in-memory opt-out degrades to
 session-scoped learning. The journal forgets via retention — every backend
 self-purges records older than its `retention` horizon (default 90 days).

@@ -1,18 +1,18 @@
-"""MongoDB-backed queryable knowledge store over ``llmbroker_calls`` + the
+"""MongoDB-backed queryable store over ``llmbroker_calls`` + the
 ``llmbroker_disabled`` admin verdict map."""
 
 from datetime import timedelta
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from llmbroker.backends.ports import StoreKnowledge
+from llmbroker.backends.ports import DriverStore
 from llmbroker.mongodb.driver import MongoDriver
 
 _DEFAULT_RETENTION = timedelta(days=90)
 
 
-class Knowledge(StoreKnowledge):
-    """MongoDB-backed queryable knowledge store over ``llmbroker_calls`` + the
+class Store(DriverStore):
+    """MongoDB-backed queryable store over ``llmbroker_calls`` + the
     ``llmbroker_disabled`` admin verdict map."""
 
     def __init__(

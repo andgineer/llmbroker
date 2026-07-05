@@ -78,5 +78,5 @@ All storage backends (sqlite, redis, postgres, mongodb) are `[project.optional-d
 
 - Python 3.11+ required: uses `tomllib` (stdlib) and `from datetime import UTC`
 - Secrets are pluggable via `src/llmbroker/secrets.py` (env vars, AWS, Vault)
-- State backends are optional submodules: SQLite, Redis, Postgres, MongoDB — all optional extras
+- Backends (SQLite, Redis, Postgres, MongoDB) are optional submodules — all optional extras
 - LLM registry is TOML-based (`presets/freetier.toml`); `api_key_ref` fields point to env var names

@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
-from llmbroker.backends.ports import StoreSecrets
+from llmbroker.backends.ports import DriverSecrets
 from llmbroker.sqlite.driver import SqliteDriver
 
 
-class Secrets(StoreSecrets):
+class Secrets(DriverSecrets):
     """SQLite-backed mutable secrets store over ``llmbroker_secrets``."""
 
     def __init__(self, db_path: str | Path) -> None:

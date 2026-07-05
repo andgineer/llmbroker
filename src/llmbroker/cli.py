@@ -1,7 +1,7 @@
 """python -m llmbroker <command>.
 
 Subcommands: env (emit .env skeleton), preset (download curated preset TOML),
-sync (mirror a preset TOML into a sqlite registry — DB-init workflow).
+sync (mirror a preset TOML into a DB registry — DB-init workflow).
 """
 
 import argparse
@@ -17,11 +17,6 @@ from pathlib import Path
 
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.standalone.registry import Registry, key_info_from_entry
-
-try:
-    from llmbroker.sqlite.registry import Registry as SqliteRegistry
-except ImportError:
-    SqliteRegistry = None
 
 _PRESET_URL = "https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/{name}.toml"
 _PRESET_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -107,21 +102,19 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     if not preset_path.exists():
         print(f"error: no such file: {preset_path}", file=sys.stderr)
         return 1
-    if SqliteRegistry is None:
-        print(
-            "error: the sqlite extra is required for `sync` — pip install llmbroker[sqlite]",
-            file=sys.stderr,
-        )
-        return 1
 
     async def run() -> None:
-        broker = AsyncBroker(registry=SqliteRegistry(args.db))
+        broker = AsyncBroker(args.db)
         try:
             await broker.sync(Registry(preset_path))
         finally:
             await broker.aclose()
 
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    except ImportError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     print(f"synced {preset_path} -> {args.db}")
     return 0
 
@@ -146,14 +139,14 @@ def main(argv: list[str] | None = None) -> int:
 
     sync_p = sub.add_parser(
         "sync",
-        help="mirror a preset TOML into a sqlite registry (DB-init workflow)",
+        help="mirror a preset TOML into a DB registry (DB-init workflow)",
         description=(
-            "Mirror a preset TOML into a sqlite registry: add new entries, update"
+            "Mirror a preset TOML into a DB registry: add new entries, update"
             " existing ones, delete entries absent from the preset."
         ),
     )
     sync_p.add_argument("preset", help="path to the preset .toml file")
-    sync_p.add_argument("db", help="path to the sqlite database file")
+    sync_p.add_argument("db", help="sqlite path or postgresql:// / mongodb:// URL")
     sync_p.set_defaults(func=_cmd_sync)
 
     args = parser.parse_args(argv)

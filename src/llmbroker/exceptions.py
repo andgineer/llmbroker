@@ -11,7 +11,3 @@ class NoLLMAvailableError(LLMRequestError):
 
 class AllLLMsFailedError(LLMRequestError):
     """A slot was obtained but every tried LLM errored."""
-
-
-class SecretsReadOnlyError(Exception):
-    """Raised when ``.set()`` is called on a read-only secrets backend."""

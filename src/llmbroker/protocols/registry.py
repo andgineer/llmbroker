@@ -19,7 +19,8 @@ class MutableRegistryProtocol(RegistryProtocol, Protocol):
 
 @runtime_checkable
 class KeyInfoProtocol(Protocol):
-    """Optional capability: per-key onboarding metadata (effort, value, help).
+    """Optional capability: per-key onboarding metadata (help text plus a
+    free-form ``extra`` passthrough).
 
     Maps each ``api_key_ref`` to a ``KeyInfo``. Keyed by the env-var name because
     one key is usually shared by several LLMs. A source without such metadata

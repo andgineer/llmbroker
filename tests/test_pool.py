@@ -351,6 +351,30 @@ async def test_acquire_waiter_wakes_on_release():
     assert picked.name == "p1"
 
 
+async def test_waiter_wakes_on_cooldown_expiry_with_inflight_sibling():
+    pool = LLMPool()
+    cfg = LLMConfig(name="a", base_url="u", model="m", api_key_ref="K")  # parallel=None
+    await pool.add(cfg, "key")
+    await pool.acquire(None)
+    await pool.cool_down(cfg, 0.1)  # decrements in_flight back to 0
+    pool._slots["a"].in_flight = 1  # emulate a sibling call still running
+    picked = await asyncio.wait_for(pool.acquire(None), timeout=1.0)  # was: stalls
+    assert picked.name == "a"
+
+
+async def test_cooldown_expiry_alone_does_not_admit_a_slot_at_capacity():
+    """Converse guard: with parallel=1, a busy sibling must still block acquisition
+    even once the cooldown has expired."""
+    pool = LLMPool()
+    cfg = _cfg("a", parallel=1)
+    await pool.add(cfg, "key")
+    await pool.acquire(None)
+    await pool.cool_down(cfg, 0.1)
+    pool._slots["a"].in_flight = 1  # emulate a sibling call still running, at capacity
+    with pytest.raises(TimeoutError):
+        await pool.acquire(0.3)
+
+
 async def test_curated_order_preferred_best_available_takes_all_traffic():
     """Curated priority: the best (lowest-order) available slot is picked every time,
     not round-robin — round-robin was removed."""

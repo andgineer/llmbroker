@@ -79,9 +79,5 @@ TABLES: dict[str, TableSpec] = {
     ),
 }
 
-# Bump rationale: summaries and state tables are gone (Plan 2 — shared cooldowns
-# derive from the journal); registry becomes a pure preset mirror (user_id, origin,
-# profile columns gone); calls gains kind, cooldown_until, key_hash; its attribution
-# column is scope (text); secrets keyed by ref alone (scope is a ref prefix); new
-# tiny llmbroker_disabled holds admin verdicts.
+# Gates the current TABLES shape; ensure_schema creates it fresh or raises on mismatch.
 SCHEMA_VERSION = 5

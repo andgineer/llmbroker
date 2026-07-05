@@ -1,7 +1,7 @@
-"""Dispatch a plain string/``Path`` source to a registry/secrets/knowledge triple.
+"""Dispatch a plain string/``Path`` source to a registry/secrets/store triple.
 
 Dispatch is dumb and explicit: ``.toml``/``.json`` -> file registry + env
-secrets (``AsyncBroker`` falls back to the ``state/`` sibling default); ``sqlite://``
+secrets (``AsyncBroker`` falls back to the ``store/`` sibling default); ``sqlite://``
 / ``.db`` / ``.sqlite`` -> sqlite, one file backing all three ports;
 ``postgresql://`` / ``mongodb://`` -> by scheme, one driver shared by all three
 ports. Anything else raises a clear error naming the accepted forms.
@@ -12,10 +12,10 @@ Each backend package is imported lazily here (never at module load) so a bare
 
 from pathlib import Path
 
-from llmbroker.backends.ports import StoreKnowledge, StoreRegistry, StoreSecrets
-from llmbroker.protocols.knowledge import KnowledgeProtocol
+from llmbroker.backends.ports import DriverRegistry, DriverSecrets, DriverStore
 from llmbroker.protocols.registry import RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
+from llmbroker.protocols.store import StoreProtocol
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import Secrets as EnvSecrets
 
@@ -25,9 +25,9 @@ _FILE_SUFFIXES = (".toml", ".json")
 
 def resolve_source(
     source: str | Path,
-) -> tuple[RegistryProtocol, SecretsProtocol, KnowledgeProtocol | None]:
-    """Returns ``(registry, secrets, knowledge)``; a ``None`` knowledge means
-    "use the caller's own default" (the file-registry ``state/`` sibling)."""
+) -> tuple[RegistryProtocol, SecretsProtocol, StoreProtocol | None]:
+    """Returns ``(registry, secrets, store)``; a ``None`` store means
+    "use the caller's own default" (the file-registry ``store/`` sibling)."""
     source = str(source)
     if source.endswith(_FILE_SUFFIXES):
         return FileRegistry(source), EnvSecrets(), None
@@ -41,7 +41,7 @@ def resolve_source(
                 f"sqlite source {source!r} requires: pip install llmbroker[sqlite]",
             ) from exc
         driver = SqliteDriver(sqlite_path)
-        return StoreRegistry(driver), StoreSecrets(driver), StoreKnowledge(driver)
+        return DriverRegistry(driver), DriverSecrets(driver), DriverStore(driver)
 
     if source.startswith("postgresql://"):
         try:
@@ -51,7 +51,7 @@ def resolve_source(
                 f"postgres source {source!r} requires: pip install llmbroker[postgres]",
             ) from exc
         driver = PostgresDriver(dsn=source)
-        return StoreRegistry(driver), StoreSecrets(driver), StoreKnowledge(driver)
+        return DriverRegistry(driver), DriverSecrets(driver), DriverStore(driver)
 
     if source.startswith("mongodb://"):
         try:
@@ -64,7 +64,7 @@ def resolve_source(
 
         client = AsyncIOMotorClient(source)
         driver = MongoDriver(client.get_default_database(), client=client)
-        return StoreRegistry(driver), StoreSecrets(driver), StoreKnowledge(driver)
+        return DriverRegistry(driver), DriverSecrets(driver), DriverStore(driver)
 
     raise ValueError(
         f"unrecognized registry source {source!r} — expected a .toml/.json file path,"

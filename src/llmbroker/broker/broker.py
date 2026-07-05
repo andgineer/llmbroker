@@ -1,6 +1,6 @@
 """The ``AsyncBroker`` façade over the LLM pool and its collaborators.
 
-``AsyncBroker`` owns the external ports (registry, secrets, knowledge store),
+``AsyncBroker`` owns the external ports (registry, secrets, store),
 lazily provisions the live ``LLMPool`` once, and delegates each operation to
 the collaborator that owns it:
 
@@ -12,7 +12,7 @@ the collaborator that owns it:
   journal rebuild feeding shared cooldowns, snapshot metrics, and the admin
   disabled-verdict map (only wired when ``optimize`` is truthy)
 
-The call journal (``calls``) is a thin pass-through to a queryable knowledge
+The call journal (``calls``) is a thin pass-through to a queryable store
 backend; each backend self-purges records past its retention horizon. There is
 no alerts API: the few human-actionable events (dead key, demotion flip,
 under-provisioned pool) are log lines; hosts poll ``snapshot()`` for current
@@ -41,27 +41,27 @@ from llmbroker.models import (
     LLMSnapshot,
 )
 from llmbroker.optimizer import Optimizer
-from llmbroker.protocols.knowledge import (
-    DisabledMapProtocol,
-    KnowledgeProtocol,
-    QueryableKnowledgeProtocol,
-)
 from llmbroker.protocols.registry import RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
-from llmbroker.standalone.knowledge import FileKnowledge
+from llmbroker.protocols.store import (
+    DisabledMapProtocol,
+    QueryableStoreProtocol,
+    StoreProtocol,
+)
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import Secrets, as_secrets
+from llmbroker.standalone.store import FileStore
 
 logger = logging.getLogger("llmbroker.broker")
 
 
-def _default_knowledge(registry: RegistryProtocol) -> KnowledgeProtocol:
-    """A file/TOML registry gets a ``state/`` dir sibling to its config file;
+def _default_store(registry: RegistryProtocol) -> StoreProtocol:
+    """A file/TOML registry gets a ``store/`` dir sibling to its config file;
     any other registry (a bare DB registry, a custom object) falls back to
-    ``./state`` under the CWD — not an error, just an unopinionated default."""
+    ``./store`` under the CWD — not an error, just an unopinionated default."""
     if isinstance(registry, Registry):
-        return FileKnowledge(registry.path.parent / "state")
-    return FileKnowledge(Path("state"))
+        return FileStore(registry.path.parent / "store")
+    return FileStore(Path("store"))
 
 
 class AsyncBroker:
@@ -72,7 +72,7 @@ class AsyncBroker:
         registry: RegistryProtocol | str | Path | None = None,
         *,
         secrets: SecretsProtocol | None = None,
-        knowledge: KnowledgeProtocol | None = None,
+        store: StoreProtocol | None = None,
         optimize: bool | Optimizer = True,
         scope: str | None = None,
     ) -> None:
@@ -82,16 +82,12 @@ class AsyncBroker:
             raise ValueError("AsyncBroker requires a `registry` source")
 
         source_secrets: SecretsProtocol | None = None
-        source_knowledge: KnowledgeProtocol | None = None
+        source_store: StoreProtocol | None = None
         if isinstance(registry, (str, Path)):
-            registry, source_secrets, source_knowledge = resolve_source(registry)
+            registry, source_secrets, source_store = resolve_source(registry)
 
         secrets = as_secrets(secrets) if secrets is not None else (source_secrets or Secrets())
-        knowledge = (
-            knowledge
-            if knowledge is not None
-            else (source_knowledge or _default_knowledge(registry))
-        )
+        store = store if store is not None else (source_store or _default_store(registry))
 
         if isinstance(optimize, Optimizer):
             self._optimizer: Optimizer | None = optimize
@@ -102,7 +98,7 @@ class AsyncBroker:
 
         self._registry = registry
         self._secrets = secrets
-        self._base_knowledge = knowledge
+        self._base_store = store
         self._scope = scope
 
         pool = LLMPool(optimizer=self._optimizer)
@@ -110,21 +106,21 @@ class AsyncBroker:
         self._catalog = Catalog(registry, secrets, pool, scope=scope)
 
         self._learning_hook: _LearningHook | None = None
-        effective_knowledge: KnowledgeProtocol
+        effective_store: StoreProtocol
         if self._optimizer is not None:
             self._learning_hook = _LearningHook(
                 self._optimizer,
-                knowledge,
+                store,
                 pool,
                 self._catalog.resync,
             )
-            effective_knowledge = self._learning_hook
+            effective_store = self._learning_hook
         else:
-            effective_knowledge = knowledge
+            effective_store = store
 
-        self._knowledge = effective_knowledge
-        self._router = Router(pool, effective_knowledge, scope=scope, optimizer=self._optimizer)
-        self._pool_view = PoolView(pool, effective_knowledge)
+        self._store = effective_store
+        self._router = Router(pool, effective_store, scope=scope, optimizer=self._optimizer)
+        self._pool_view = PoolView(pool, effective_store)
 
         self._provisioned = False
         self._provision_lock = asyncio.Lock()
@@ -160,14 +156,14 @@ class AsyncBroker:
         if isinstance(preset, (str, Path)):
             preset = Registry(preset)
         await self._catalog.sync(preset)
-        if isinstance(self._base_knowledge, DisabledMapProtocol):
+        if isinstance(self._base_store, DisabledMapProtocol):
             configs = await self._registry.load()
-            await self._base_knowledge.seed_disabled([c.name for c in configs])
+            await self._base_store.seed_disabled([c.name for c in configs])
         if self._provisioned:
             await self._catalog.resync()
 
     async def aclose(self) -> None:
-        for port in (self._registry, self._secrets, self._knowledge):
+        for port in (self._registry, self._secrets, self._store):
             if isinstance(port, AsyncResourceProtocol):
                 await port.aclose()
 
@@ -244,16 +240,16 @@ class AsyncBroker:
         every operation including future ones. Only ``enable_llm`` clears it."""
         await self.ensure_pool()
         self._pool.set_disabled(name)
-        if isinstance(self._base_knowledge, DisabledMapProtocol):
-            await self._base_knowledge.set_disabled(name, True)
+        if isinstance(self._base_store, DisabledMapProtocol):
+            await self._base_store.set_disabled(name, True)
 
     async def enable_llm(self, name: str) -> None:
         """Clear the manual latch — a re-enabled model rehabilitates through new
         ratings, no quality reset exists."""
         await self.ensure_pool()
         await self._pool.clear_disabled(name)
-        if isinstance(self._base_knowledge, DisabledMapProtocol):
-            await self._base_knowledge.set_disabled(name, False)
+        if isinstance(self._base_store, DisabledMapProtocol):
+            await self._base_store.set_disabled(name, False)
 
     # ------------------------------------------------------------------
     # Call journal
@@ -287,10 +283,10 @@ class AsyncBroker:
                 "pool under-provisioned: all LLMs are COOLING — add more LLMs to the registry",
             )
 
-    def _require_queryable(self) -> QueryableKnowledgeProtocol:
-        if not isinstance(self._base_knowledge, QueryableKnowledgeProtocol):
+    def _require_queryable(self) -> QueryableStoreProtocol:
+        if not isinstance(self._base_store, QueryableStoreProtocol):
             raise TypeError(
-                "this knowledge backend is not queryable — use a queryable backend"
-                " (e.g. llmbroker.sqlite.knowledge.Knowledge) for calls()",
+                "this store backend is not queryable — use a queryable backend"
+                " (e.g. llmbroker.sqlite.store.Store) for calls()",
             )
-        return cast(QueryableKnowledgeProtocol, self._knowledge)
+        return cast(QueryableStoreProtocol, self._store)

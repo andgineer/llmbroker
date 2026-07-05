@@ -16,9 +16,9 @@ from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.result import AsyncResult
 from llmbroker.models import Call, LLMConfig, LLMMetrics, LLMSnapshot, LLMState
 from llmbroker.optimizer import Optimizer
-from llmbroker.protocols.knowledge import KnowledgeProtocol
 from llmbroker.protocols.registry import RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
+from llmbroker.protocols.store import StoreProtocol
 
 
 def _run_loop(loop: asyncio.AbstractEventLoop) -> None:
@@ -65,6 +65,10 @@ class LLM:
     def config(self) -> LLMConfig:
         return self._broker.config_of(self._name)
 
+    @property
+    def disabled(self) -> bool:
+        return self._broker.disabled_of(self._name)
+
     def state(self) -> LLMState:
         return self._broker.state_of(self._name)
 
@@ -80,14 +84,14 @@ class Broker:
         registry: RegistryProtocol | str | Path | None = None,
         *,
         secrets: SecretsProtocol | None = None,
-        knowledge: KnowledgeProtocol | None = None,
+        store: StoreProtocol | None = None,
         optimize: bool | Optimizer = True,
         scope: str | None = None,
     ) -> None:
         self._async = AsyncBroker(
             registry,
             secrets=secrets,
-            knowledge=knowledge,
+            store=store,
             optimize=optimize,
             scope=scope,
         )
@@ -121,6 +125,9 @@ class Broker:
     # ── LLM accessors (used by LLM companion class) ──
     def config_of(self, name: str) -> LLMConfig:
         return self._run(self._async.get(name)).config
+
+    def disabled_of(self, name: str) -> bool:
+        return self._run(self._async.get(name)).disabled
 
     def state_of(self, name: str) -> LLMState:
         llm = self._run(self._async.get(name))

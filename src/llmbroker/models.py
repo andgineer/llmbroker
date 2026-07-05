@@ -5,7 +5,7 @@ imports — safe to import from anywhere in the package.
 """
 
 import hashlib
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Protocol, runtime_checkable
@@ -18,9 +18,6 @@ class LifecyclePhase(Enum):
     COOLING = "cooling"
 
 
-_RESERVED_STATE_KEYS = frozenset({"phase", "cooldown_until", "fail_count"})
-
-
 @dataclass(frozen=True, slots=True)
 class LLMState:
     """Snapshot of one LLM's live runtime state, built fresh on each read."""
@@ -28,145 +25,6 @@ class LLMState:
     phase: LifecyclePhase = LifecyclePhase.AVAILABLE
     cooldown_until: datetime | None = None
     fail_count: int = 0
-    extra: dict[str, object] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, object]:
-        """Serialize to a plain, JSON-storable dict.
-
-        >>> s = LLMState(fail_count=2, extra={"probe_attempts": 1})
-        >>> d = s.to_dict()
-        >>> LLMState.from_dict(d) == s
-        True
-        >>> LLMState.from_dict({}) == LLMState()
-        True
-        """
-        collision = _RESERVED_STATE_KEYS & self.extra.keys()
-        if collision:
-            raise ValueError(
-                f"LLMState.extra must not contain reserved keys: {sorted(collision)}",
-            )
-        return {
-            "phase": self.phase.value,
-            "cooldown_until": self.cooldown_until.isoformat()
-            if self.cooldown_until is not None
-            else None,
-            "fail_count": self.fail_count,
-            **self.extra,
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict[str, object]) -> "LLMState":
-        """Deserialize from a plain dict; a missing key falls back to its dataclass default."""
-        phase = LifecyclePhase(d["phase"]) if "phase" in d else LifecyclePhase.AVAILABLE
-        cooldown_raw = d.get("cooldown_until")
-        cooldown_until = (
-            datetime.fromisoformat(cooldown_raw) if isinstance(cooldown_raw, str) else None
-        )
-        fail_count_raw = d.get("fail_count", 0)
-        fail_count = fail_count_raw if isinstance(fail_count_raw, int) else 0
-        extra = {k: v for k, v in d.items() if k not in _RESERVED_STATE_KEYS}
-        return cls(phase=phase, cooldown_until=cooldown_until, fail_count=fail_count, extra=extra)
-
-
-def reconcile(state: LLMState, now: datetime) -> LLMState:
-    """Derive the effective phase from cooldown_until vs now.
-
-    >>> from datetime import UTC, datetime, timedelta
-    >>> now = datetime(2030, 1, 1, tzinfo=UTC)
-    >>> reconcile(
-    ...     LLMState(phase=LifecyclePhase.COOLING, cooldown_until=now + timedelta(days=1)), now
-    ... ).phase
-    <LifecyclePhase.COOLING: 'cooling'>
-    """
-    cooldown_until = state.cooldown_until
-    if cooldown_until is not None and cooldown_until > now:
-        phase = LifecyclePhase.COOLING
-    else:
-        phase = LifecyclePhase.AVAILABLE
-        cooldown_until = None
-    return replace(state, phase=phase, cooldown_until=cooldown_until)
-
-
-@dataclass(slots=True)
-class QualitySummary:
-    """Exponentially decayed weighted-proportion counter over per-event outcomes.
-
-    Decay is applied per event, not per elapsed time: ``weight``/``weighted_good``/
-    ``weight_sq`` are folded on every ``update()`` call, while ``count`` is a plain,
-    un-decayed integer used as the only trust gate — ``weight`` asymptotically
-    approaches but never reaches ``1 / (1 - decay)`` and must never be compared
-    against a threshold directly.
-    """
-
-    weight: float = 0.0
-    weighted_good: float = 0.0
-    weight_sq: float = 0.0
-    count: int = 0
-
-    def update(self, value: float, decay: float) -> None:
-        """Fold one new event (outcome ``value``) into the aggregate.
-
-        >>> s = QualitySummary()
-        >>> s.update(1.0, 0.5)
-        >>> s.update(0.0, 0.5)
-        >>> round(s.weight, 4), round(s.weighted_good, 4), s.count
-        (1.5, 0.5, 2)
-        """
-        self.weight = self.weight * decay + 1.0
-        self.weighted_good = self.weighted_good * decay + value
-        self.weight_sq = self.weight_sq * decay * decay + 1.0
-        self.count += 1
-
-    @property
-    def n_eff(self) -> float:
-        """Kish effective sample size ``weight² / weight_sq``; ``0.0`` when empty.
-
-        >>> s = QualitySummary()
-        >>> s.update(1.0, 0.9)
-        >>> s.n_eff
-        1.0
-        """
-        if self.weight_sq <= 0.0:
-            return 0.0
-        return self.weight * self.weight / self.weight_sq
-
-    def wilson_upper(self, z: float, *, min_count: int) -> float | None:
-        """Wilson-score upper bound of ``weighted_good / weight`` at confidence ``z``.
-
-        Computed with the exact effective sample size ``n_eff``, not the asymptotic
-        weight ceiling. Returns ``None`` when ``count < min_count`` — insufficient
-        evidence to judge, regardless of how close ``weight`` sits to its ceiling.
-        ``min_count`` is required: callers supply their own trust threshold, keeping
-        this aggregate free of any caller-specific configuration.
-        """
-        if self.count < min_count or self.weight <= 0.0:
-            return None
-        n = self.n_eff
-        if n <= 0.0:
-            return None
-        p = self.weighted_good / self.weight
-        z2 = z * z
-        center = p + z2 / (2 * n)
-        margin = z * ((p * (1 - p) / n) + z2 / (4 * n * n)) ** 0.5
-        denom = 1 + z2 / n
-        return (center + margin) / denom
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "weight": self.weight,
-            "weighted_good": self.weighted_good,
-            "weight_sq": self.weight_sq,
-            "count": self.count,
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict[str, object]) -> "QualitySummary":
-        return cls(
-            weight=float(d.get("weight", 0.0)),  # type: ignore[arg-type]
-            weighted_good=float(d.get("weighted_good", 0.0)),  # type: ignore[arg-type]
-            weight_sq=float(d.get("weight_sq", 0.0)),  # type: ignore[arg-type]
-            count=int(d.get("count", 0)),  # type: ignore[arg-type]
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -298,13 +156,17 @@ class LLMMetrics:
 @dataclass(frozen=True, slots=True)
 class LLMSnapshot:
     """Frozen point-in-time materialization of one LLM: raw facts, no status enum
-    or precedence rule — the host derives whatever presentation it wants."""
+    or precedence rule — the host derives whatever presentation it wants.
+
+    ``demoted_operations`` may contain ``None``: the bucket for calls made without
+    an ``operation=`` label.
+    """
 
     config: LLMConfig
     disabled: bool
     has_key: bool
     cooldown_until: datetime | None
-    demoted_operations: tuple[str, ...]
+    demoted_operations: tuple[str | None, ...]
     metrics: LLMMetrics | None
 
 

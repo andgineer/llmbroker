@@ -10,8 +10,8 @@ from llmbroker.broker.learning import _LearningHook
 from llmbroker.broker.pool import LLMPool
 from llmbroker.models import Call, CallStatus, LLMConfig, key_hash
 from llmbroker.optimizer import Optimizer
-from llmbroker.sqlite.knowledge import Knowledge as SqliteKnowledge
-from llmbroker.standalone.knowledge import InMemoryKnowledge
+from llmbroker.sqlite.store import Store as SqliteStore
+from llmbroker.standalone.store import InMemoryStore
 
 
 def _cfg(name: str = "x") -> LLMConfig:
@@ -34,8 +34,8 @@ async def _noop_resync() -> None:
     return
 
 
-def _hook(opt: Optimizer, knowledge, pool: LLMPool) -> _LearningHook:
-    return _LearningHook(opt, knowledge, pool, _noop_resync)
+def _hook(opt: Optimizer, store, pool: LLMPool) -> _LearningHook:
+    return _LearningHook(opt, store, pool, _noop_resync)
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@ def _hook(opt: Optimizer, knowledge, pool: LLMPool) -> _LearningHook:
 async def test_auth_failure_401_drops_llm_and_logs(caplog):
     pool = LLMPool()
     await pool.add(_cfg(), "key")
-    hook = _hook(Optimizer(), InMemoryKnowledge(), pool)
+    hook = _hook(Optimizer(), InMemoryStore(), pool)
 
     with caplog.at_level("ERROR"):
         await hook.record(_call("x", CallStatus.ERROR, http_status=401))
@@ -59,7 +59,7 @@ async def test_auth_failure_403_drops_llm_and_logs(caplog):
     pool = LLMPool()
     await pool.add(_cfg(), "key")
     opt = Optimizer()
-    hook = _hook(opt, InMemoryKnowledge(), pool)
+    hook = _hook(opt, InMemoryStore(), pool)
 
     with caplog.at_level("ERROR"):
         await hook.record(_call("x", CallStatus.ERROR, http_status=403))
@@ -72,7 +72,7 @@ async def test_generic_error_does_not_drop_llm():
     pool = LLMPool()
     await pool.add(_cfg(), "key")
     opt = Optimizer()
-    hook = _hook(opt, InMemoryKnowledge(), pool)
+    hook = _hook(opt, InMemoryStore(), pool)
 
     for _ in range(3):
         await hook.record(_call("x", CallStatus.ERROR))
@@ -85,7 +85,7 @@ async def test_ok_calls_reset_rl_fail_count():
     pool = LLMPool()
     await pool.add(_cfg(), "key")
     opt = Optimizer()
-    hook = _hook(opt, InMemoryKnowledge(), pool)
+    hook = _hook(opt, InMemoryStore(), pool)
 
     await hook.record(_call("x", CallStatus.RATE_LIMITED))
     assert opt.rl_fail_count("x") == 1
@@ -102,7 +102,7 @@ async def test_record_quality_updates_window_instantly():
     pool = LLMPool()
     await pool.add(_cfg(), "key")
     opt = Optimizer()
-    hook = _hook(opt, InMemoryKnowledge(), pool)
+    hook = _hook(opt, InMemoryStore(), pool)
 
     await hook.record_quality("x", "summarize", 0.8)
 
@@ -115,14 +115,14 @@ async def test_record_quality_updates_window_instantly():
 
 
 async def test_rebuild_loads_quality_windows_from_journal(tmp_path):
-    knowledge = SqliteKnowledge(tmp_path / "t.db")
+    store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     await pool.add(_cfg("bad"), "key")
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
-    hook = _hook(opt, knowledge, pool)
+    hook = _hook(opt, store, pool)
 
     for _ in range(10):
-        await knowledge.record_quality("bad", "summarize", 0.0)
+        await store.record_quality("bad", "summarize", 0.0)
 
     await hook.maybe_rebuild(force=True)
 
@@ -130,14 +130,14 @@ async def test_rebuild_loads_quality_windows_from_journal(tmp_path):
 
 
 async def test_rebuild_computes_metrics_cache(tmp_path):
-    knowledge = SqliteKnowledge(tmp_path / "t.db")
+    store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     await pool.add(_cfg("x"), "key")
     opt = Optimizer()
-    hook = _hook(opt, knowledge, pool)
+    hook = _hook(opt, store, pool)
 
-    await knowledge.record(_call("x", CallStatus.OK))
-    await knowledge.record(_call("x", CallStatus.OK))
+    await store.record(_call("x", CallStatus.OK))
+    await store.record(_call("x", CallStatus.OK))
 
     await hook.maybe_rebuild(force=True)
 
@@ -146,13 +146,13 @@ async def test_rebuild_computes_metrics_cache(tmp_path):
 
 
 async def test_rebuild_is_debounced_without_force(tmp_path):
-    knowledge = SqliteKnowledge(tmp_path / "t.db")
+    store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     opt = Optimizer()
-    hook = _hook(opt, knowledge, pool)
+    hook = _hook(opt, store, pool)
 
     await hook.maybe_rebuild(force=True)
-    await knowledge.record(_call("x", CallStatus.OK))
+    await store.record(_call("x", CallStatus.OK))
     await hook.maybe_rebuild()  # within TTL — no-op
 
     assert hook.metrics_cache == {}
@@ -164,14 +164,14 @@ async def test_rebuild_is_debounced_without_force(tmp_path):
 
 
 async def test_rebuild_applies_5xx_cooldown_unconditionally(tmp_path):
-    knowledge = SqliteKnowledge(tmp_path / "t.db")
+    store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     await pool.add(_cfg("x"), "key")  # a *different* key than the failing row below
     opt = Optimizer()
-    hook = _hook(opt, knowledge, pool)
+    hook = _hook(opt, store, pool)
 
     until = datetime.now(UTC) + timedelta(seconds=60)
-    await knowledge.record(
+    await store.record(
         _call(
             "x",
             CallStatus.ERROR,
@@ -187,14 +187,14 @@ async def test_rebuild_applies_5xx_cooldown_unconditionally(tmp_path):
 
 
 async def test_rebuild_applies_429_cooldown_only_when_key_hash_matches(tmp_path):
-    knowledge = SqliteKnowledge(tmp_path / "t.db")
+    store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     await pool.add(_cfg("x"), "shared-key")
     opt = Optimizer()
-    hook = _hook(opt, knowledge, pool)
+    hook = _hook(opt, store, pool)
 
     until = datetime.now(UTC) + timedelta(seconds=60)
-    await knowledge.record(
+    await store.record(
         _call(
             "x",
             CallStatus.RATE_LIMITED,
@@ -210,14 +210,14 @@ async def test_rebuild_applies_429_cooldown_only_when_key_hash_matches(tmp_path)
 
 
 async def test_rebuild_ignores_429_cooldown_when_key_hash_differs(tmp_path):
-    knowledge = SqliteKnowledge(tmp_path / "t.db")
+    store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     await pool.add(_cfg("x"), "my-own-key")
     opt = Optimizer()
-    hook = _hook(opt, knowledge, pool)
+    hook = _hook(opt, store, pool)
 
     until = datetime.now(UTC) + timedelta(seconds=60)
-    await knowledge.record(
+    await store.record(
         _call(
             "x",
             CallStatus.RATE_LIMITED,
@@ -233,13 +233,13 @@ async def test_rebuild_ignores_429_cooldown_when_key_hash_differs(tmp_path):
 
 
 async def test_rebuild_drops_dead_key_when_hash_matches(tmp_path):
-    knowledge = SqliteKnowledge(tmp_path / "t.db")
+    store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     await pool.add(_cfg("x"), "my-own-key")
     opt = Optimizer()
-    hook = _hook(opt, knowledge, pool)
+    hook = _hook(opt, store, pool)
 
-    await knowledge.record(
+    await store.record(
         _call(
             "x",
             CallStatus.ERROR,
@@ -260,38 +260,38 @@ async def test_rebuild_drops_dead_key_when_hash_matches(tmp_path):
 
 
 async def test_rebuild_seeds_and_applies_disabled_map(tmp_path):
-    knowledge = SqliteKnowledge(tmp_path / "t.db")
+    store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     await pool.add(_cfg("x"), "key")
-    hook = _hook(Optimizer(), knowledge, pool)
+    hook = _hook(Optimizer(), store, pool)
 
-    await knowledge.set_disabled("x", True)
+    await store.set_disabled("x", True)
     await hook.maybe_rebuild(force=True)
 
     assert pool.is_disabled("x")
-    assert await knowledge.get_disabled("x") is True
+    assert await store.get_disabled("x") is True
 
 
 async def test_rebuild_seeds_missing_names_as_not_disabled(tmp_path):
-    knowledge = SqliteKnowledge(tmp_path / "t.db")
+    store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     await pool.add(_cfg("fresh"), "key")
-    hook = _hook(Optimizer(), knowledge, pool)
+    hook = _hook(Optimizer(), store, pool)
 
     await hook.maybe_rebuild(force=True)
 
-    assert await knowledge.get_disabled("fresh") is False
+    assert await store.get_disabled("fresh") is False
     assert not pool.is_disabled("fresh")
 
 
 async def test_rebuild_re_enable_via_disabled_map_clears_pool_flag(tmp_path):
-    knowledge = SqliteKnowledge(tmp_path / "t.db")
+    store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     await pool.add(_cfg("x"), "key")
     pool.set_disabled("x")
-    hook = _hook(Optimizer(), knowledge, pool)
+    hook = _hook(Optimizer(), store, pool)
 
-    await knowledge.set_disabled("x", False)
+    await store.set_disabled("x", False)
     await hook.maybe_rebuild(force=True)
 
     assert not pool.is_disabled("x")
@@ -303,14 +303,14 @@ async def test_rebuild_re_enable_via_disabled_map_clears_pool_flag(tmp_path):
 
 
 async def test_maybe_rebuild_calls_resync_registry(tmp_path):
-    knowledge = SqliteKnowledge(tmp_path / "t.db")
+    store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     calls = []
 
     async def resync() -> None:
         calls.append(1)
 
-    hook = _LearningHook(Optimizer(), knowledge, pool, resync)
+    hook = _LearningHook(Optimizer(), store, pool, resync)
     await hook.maybe_rebuild(force=True)
 
     assert calls == [1]
@@ -319,14 +319,14 @@ async def test_maybe_rebuild_calls_resync_registry(tmp_path):
 async def test_maybe_rebuild_skips_resync_registry_when_disabled(tmp_path):
     """The provision-time warm start passes resync_registry=False since Catalog.provision()
     just resynced it — this must not double the registry re-read."""
-    knowledge = SqliteKnowledge(tmp_path / "t.db")
+    store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     calls = []
 
     async def resync() -> None:
         calls.append(1)
 
-    hook = _LearningHook(Optimizer(), knowledge, pool, resync)
+    hook = _LearningHook(Optimizer(), store, pool, resync)
     await hook.maybe_rebuild(force=True, resync_registry=False)
 
     assert calls == []

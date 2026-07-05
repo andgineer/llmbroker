@@ -1,18 +1,18 @@
 """Tests for the manual disable latch: warm start, live round trip, remove/readd.
 
-Uses sqlite (registry + knowledge disabled-map) for determinism/speed.
+Uses sqlite (registry + store disabled-map) for determinism/speed.
 """
 
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.models import Call, CallStatus, LLMConfig
 from llmbroker.optimizer import Optimizer
-from llmbroker.sqlite.knowledge import Knowledge as SqliteKnowledge
+from llmbroker.sqlite.store import Store as SqliteStore
 from llmbroker.sqlite.registry import Registry as SqliteRegistry
 from llmbroker.standalone.secrets import DictSecrets
 
 
 class _EmptySource:
-    async def load(self, user_id=None) -> list[LLMConfig]:
+    async def load(self) -> list[LLMConfig]:
         return []
 
 
@@ -20,7 +20,7 @@ class _OneConfigSource:
     def __init__(self, cfg: LLMConfig) -> None:
         self._cfg = cfg
 
-    async def load(self, user_id=None) -> list[LLMConfig]:
+    async def load(self) -> list[LLMConfig]:
         return [self._cfg]
 
 
@@ -37,12 +37,12 @@ async def test_persisted_manual_latch_applied_at_provision(tmp_path):
     db = str(tmp_path / "b.db")
     reg = SqliteRegistry(db)
     await reg.mirror([_cfg()])
-    await SqliteKnowledge(db).set_disabled("p1", True)
+    await SqliteStore(db).set_disabled("p1", True)
 
     async with AsyncBroker(
         registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
-        knowledge=SqliteKnowledge(db),
+        store=SqliteStore(db),
     ) as broker:
         assert broker._pool.is_disabled("p1")
 
@@ -57,23 +57,29 @@ async def test_disable_enable_llm_round_trip_preserves_quality_window(tmp_path):
     async with AsyncBroker(
         registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
-        knowledge=SqliteKnowledge(db),
+        store=SqliteStore(db),
         optimize=opt,
     ) as broker:
         for i in range(5):
             call = _call(f"c{i}", operation="summarize")
-            await broker._knowledge.record(call)
-            await broker._knowledge.record_quality("p1", "summarize", 0.0)
+            await broker._store.record(call)
+            await broker._store.record_quality("p1", "summarize", 0.0)
         assert len(opt._scores[("p1", "summarize")]) == 5
 
         await broker.disable_llm("p1")
         assert broker._pool.is_disabled("p1")
-        assert await SqliteKnowledge(db).get_disabled("p1") is True
+        assert await SqliteStore(db).get_disabled("p1") is True
+        assert (await broker.get("p1")).disabled is True
+        snapshot = await broker.snapshot()
+        assert snapshot["p1"].disabled == (await broker.get("p1")).disabled
 
         await broker.enable_llm("p1")
         assert not broker._pool.is_disabled("p1")
         assert len(opt._scores[("p1", "summarize")]) == 5
-        assert await SqliteKnowledge(db).get_disabled("p1") is False
+        assert await SqliteStore(db).get_disabled("p1") is False
+        assert (await broker.get("p1")).disabled is False
+        snapshot = await broker.snapshot()
+        assert snapshot["p1"].disabled == (await broker.get("p1")).disabled
 
 
 async def test_disable_enable_llm_without_optimizer_still_persists(tmp_path):
@@ -86,18 +92,18 @@ async def test_disable_enable_llm_without_optimizer_still_persists(tmp_path):
     async with AsyncBroker(
         registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
-        knowledge=SqliteKnowledge(db),
+        store=SqliteStore(db),
         optimize=False,
     ) as broker:
         assert broker._optimizer is None
 
         await broker.disable_llm("p1")
         assert broker._pool.is_disabled("p1")
-        assert await SqliteKnowledge(db).get_disabled("p1") is True
+        assert await SqliteStore(db).get_disabled("p1") is True
 
         await broker.enable_llm("p1")
         assert not broker._pool.is_disabled("p1")
-        assert await SqliteKnowledge(db).get_disabled("p1") is False
+        assert await SqliteStore(db).get_disabled("p1") is False
 
 
 async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path):
@@ -111,7 +117,7 @@ async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path):
     async with AsyncBroker(
         registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
-        knowledge=SqliteKnowledge(db),
+        store=SqliteStore(db),
     ) as broker:
         await broker.disable_llm("p1")
         assert broker._pool.is_disabled("p1")

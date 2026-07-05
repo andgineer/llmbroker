@@ -2,33 +2,38 @@
 
 from collections.abc import Mapping
 
-from llmbroker.broker.learning import _LearningHook
+from llmbroker.broker.learning import (
+    _DEFAULT_QUALITY_REBUILD_LIMIT,
+    _LearningHook,
+    metrics_from_calls,
+)
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.result import AsyncLLM
 from llmbroker.models import LLMMetrics, LLMSnapshot
-from llmbroker.protocols.knowledge import KnowledgeProtocol, QueryableKnowledgeProtocol
+from llmbroker.protocols.store import QueryableStoreProtocol, StoreProtocol
 
 
 class PoolView:
     """Live views over the pool: a single LLM handle, the count, a full snapshot."""
 
-    def __init__(self, pool: LLMPool, knowledge: KnowledgeProtocol) -> None:
+    def __init__(self, pool: LLMPool, store: StoreProtocol) -> None:
         self._pool = pool
-        self._knowledge = knowledge
+        self._store = store
 
     def get(self, name: str) -> AsyncLLM:
         if name not in self._pool:
             raise KeyError(name)
-        return AsyncLLM(name, self._pool.config(name), self._pool, self._knowledge)
+        return AsyncLLM(name, self._pool.config(name), self._pool, self._store)
 
     def count(self) -> int:
         return len(self._pool)
 
     async def _metrics_map(self) -> dict[str, LLMMetrics]:
-        if isinstance(self._knowledge, _LearningHook):
-            return self._knowledge.metrics_cache
-        if isinstance(self._knowledge, QueryableKnowledgeProtocol):
-            return await self._knowledge.metrics()
+        if isinstance(self._store, _LearningHook):
+            return self._store.metrics_cache
+        if isinstance(self._store, QueryableStoreProtocol):
+            rows = await self._store.calls(limit=_DEFAULT_QUALITY_REBUILD_LIMIT)
+            return metrics_from_calls(rows)
         return {}
 
     async def snapshot(self) -> Mapping[str, LLMSnapshot]:

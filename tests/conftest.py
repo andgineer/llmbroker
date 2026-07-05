@@ -16,21 +16,21 @@ from testcontainers.vault import VaultContainer
 
 from llmbroker.aws.secrets import Secrets as AwsSecrets
 from llmbroker.broker.broker import AsyncBroker
-from llmbroker.mongodb.knowledge import Knowledge as MongoKnowledge
+from llmbroker.mongodb.store import Store as MongoStore
 from llmbroker.mongodb.registry import Registry as MongoRegistry
 from llmbroker.mongodb.secrets import Secrets as MongoSecrets
-from llmbroker.postgres.knowledge import Knowledge as PostgresKnowledge
+from llmbroker.postgres.store import Store as PostgresStore
 from llmbroker.postgres.registry import Registry as PostgresRegistry
 from llmbroker.postgres.secrets import Secrets as PostgresSecrets
 from llmbroker.protocols.registry import MutableRegistryProtocol, RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
-from llmbroker.protocols.knowledge import KnowledgeProtocol
-from llmbroker.sqlite.knowledge import Knowledge as SqliteKnowledge
+from llmbroker.protocols.store import StoreProtocol
+from llmbroker.sqlite.store import Store as SqliteStore
 from llmbroker.sqlite.registry import Registry as SqliteRegistry
 from llmbroker.sqlite.secrets import Secrets as SqliteSecrets
 from llmbroker.standalone.registry import Registry as TomlRegistry
 from llmbroker.standalone.secrets import DictSecrets, Secrets
-from llmbroker.standalone.knowledge import InMemoryKnowledge
+from llmbroker.standalone.store import FileStore, InMemoryStore
 from llmbroker.vault.secrets import Secrets as VaultSecrets
 
 # On macOS the Ryuk sidecar container (testcontainers' cleanup daemon) occasionally
@@ -118,54 +118,60 @@ def _vault_delete_recursive(client: hvac.Client, path: str, mount_point: str = "
 
 
 @pytest.fixture(
-    params=["toml", "sqlite", "postgres", "mongodb"],
-    ids=["toml", "sqlite", "postgres", "mongodb"],
+    params=["toml", "file", "sqlite", "postgres", "mongodb"],
+    ids=["toml", "file", "sqlite", "postgres", "mongodb"],
 )
-async def any_knowledge(request, tmp_path_factory, pg_pool, mongo_db):
-    """Knowledge backend parametrized over every implemented storage layer.
+async def any_store(request, tmp_path_factory, pg_pool, mongo_db):
+    """Store backend parametrized over every implemented storage layer.
 
     postgres and mongodb variants are marked docker automatically (pg_pool/mongo_db
     appear in fixturenames → pytest_collection_modifyitems picks them up).
-    The toml and sqlite variants do not use the DB connections.
+    The toml, file, and sqlite variants do not use the DB connections.
     """
     param = request.param
 
     if param == "toml":
-        yield InMemoryKnowledge()
+        yield InMemoryStore()
+
+    elif param == "file":
+        yield FileStore(tmp_path_factory.mktemp("any_store_file"))
 
     elif param == "sqlite":
         db_path = str(tmp_path_factory.mktemp("any_tel_sqlite") / "tel.db")
-        yield SqliteKnowledge(db_path)
+        yield SqliteStore(db_path)
 
     elif param == "postgres":
-        yield PostgresKnowledge(pg_pool)
+        yield PostgresStore(pg_pool)
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM llmbroker_calls")
 
     elif param == "mongodb":
-        yield MongoKnowledge(mongo_db)
+        yield MongoStore(mongo_db)
         await mongo_db["llmbroker_calls"].delete_many({})
 
 
 @pytest.fixture(
-    params=["sqlite", "postgres", "mongodb"],
-    ids=["sqlite", "postgres", "mongodb"],
+    params=["file", "sqlite", "postgres", "mongodb"],
+    ids=["file", "sqlite", "postgres", "mongodb"],
 )
-async def queryable_knowledge(request, tmp_path_factory, pg_pool, mongo_db):
-    """Queryable knowledge backends only — those that implement metrics() for warm-start seeding."""
+async def queryable_store(request, tmp_path_factory, pg_pool, mongo_db):
+    """Queryable store backends only — those that implement calls() for warm-start seeding."""
     param = request.param
 
-    if param == "sqlite":
+    if param == "file":
+        yield FileStore(tmp_path_factory.mktemp("q_store_file"))
+
+    elif param == "sqlite":
         db_path = str(tmp_path_factory.mktemp("q_tel_sqlite") / "tel.db")
-        yield SqliteKnowledge(db_path)
+        yield SqliteStore(db_path)
 
     elif param == "postgres":
-        yield PostgresKnowledge(pg_pool)
+        yield PostgresStore(pg_pool)
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM llmbroker_calls")
 
     elif param == "mongodb":
-        yield MongoKnowledge(mongo_db)
+        yield MongoStore(mongo_db)
         await mongo_db["llmbroker_calls"].delete_many({})
 
 
@@ -181,7 +187,7 @@ class Stack:
     name: str
     registry: RegistryProtocol
     secrets: SecretsProtocol
-    knowledge: KnowledgeProtocol
+    store: StoreProtocol
     queryable: bool
     persistent: bool
 
@@ -189,7 +195,7 @@ class Stack:
         return AsyncBroker(
             self.registry,
             secrets=self.secrets,
-            knowledge=self.knowledge,
+            store=self.store,
             **kw,
         )
 
@@ -282,7 +288,7 @@ async def _stack_ctx(
             name="all_sqlite",
             registry=SqliteRegistry(f"{base}/llms.db"),
             secrets=SqliteSecrets(f"{base}/llms.db"),
-            knowledge=SqliteKnowledge(f"{base}/llms.db"),
+            store=SqliteStore(f"{base}/llms.db"),
             queryable=True,
             persistent=True,
         )
@@ -292,7 +298,7 @@ async def _stack_ctx(
             name="all_postgres",
             registry=PostgresRegistry(pg_pool),
             secrets=PostgresSecrets(pg_pool),
-            knowledge=PostgresKnowledge(pg_pool),
+            store=PostgresStore(pg_pool),
             queryable=True,
             persistent=True,
         )
@@ -308,7 +314,7 @@ async def _stack_ctx(
             name="all_mongodb",
             registry=MongoRegistry(mongo_db),
             secrets=MongoSecrets(mongo_db),
-            knowledge=MongoKnowledge(mongo_db),
+            store=MongoStore(mongo_db),
             queryable=True,
             persistent=True,
         )
@@ -323,7 +329,7 @@ async def _stack_ctx(
             name="scaled",
             registry=PostgresRegistry(pg_pool),
             secrets=DictSecrets({}),
-            knowledge=PostgresKnowledge(pg_pool),
+            store=PostgresStore(pg_pool),
             queryable=True,
             persistent=True,
         )
@@ -341,7 +347,7 @@ async def _stack_ctx(
             name="minimal",
             registry=TomlRegistry(toml_path),
             secrets=Secrets(),
-            knowledge=InMemoryKnowledge(),
+            store=InMemoryStore(),
             queryable=False,
             persistent=False,
         )
@@ -351,7 +357,7 @@ async def _stack_ctx(
             name="scaled_aws_secrets",
             registry=PostgresRegistry(pg_pool),
             secrets=AwsSecrets(region_name="us-east-1", endpoint_url=localstack_url),
-            knowledge=PostgresKnowledge(pg_pool),
+            store=PostgresStore(pg_pool),
             queryable=True,
             persistent=True,
         )
@@ -369,7 +375,7 @@ async def _stack_ctx(
             name="scaled_vault_secrets",
             registry=PostgresRegistry(pg_pool),
             secrets=VaultSecrets(url=url, token=token),
-            knowledge=PostgresKnowledge(pg_pool),
+            store=PostgresStore(pg_pool),
             queryable=True,
             persistent=True,
         )

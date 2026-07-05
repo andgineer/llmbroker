@@ -12,10 +12,10 @@ from llmbroker.broker.router import Router
 from llmbroker.exceptions import AllLLMsFailedError, NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
-from llmbroker.standalone.knowledge import InMemoryKnowledge
+from llmbroker.standalone.store import InMemoryStore
 
 
-class _NoKnowledge:
+class _NoStore:
     async def record(self, call):
         pass
 
@@ -35,7 +35,7 @@ async def _pool(*cfgs, key="secret") -> LLMPool:
 
 
 def _router(pool: LLMPool) -> Router:
-    return Router(pool, _NoKnowledge(), scope=None)
+    return Router(pool, _NoStore(), scope=None)
 
 
 async def _noop_resync() -> None:
@@ -44,8 +44,8 @@ async def _noop_resync() -> None:
 
 def _router_with_optimizer(pool: LLMPool, opt: Optimizer) -> Router:
     """Wire _LearningHook like AsyncBroker does, so rl_fail_count/dead-key drop drive for real."""
-    knowledge = _LearningHook(opt, InMemoryKnowledge(), pool, _noop_resync)
-    return Router(pool, knowledge, scope=None, optimizer=opt)
+    store = _LearningHook(opt, InMemoryStore(), pool, _noop_resync)
+    return Router(pool, store, scope=None, optimizer=opt)
 
 
 def _spy_cool_down(pool: LLMPool) -> list[float]:
@@ -154,6 +154,25 @@ def test_http_500_fails_over_to_next_llm():
         with patch(
             _PATCH,
             new=AsyncMock(side_effect=[_http_status_error(500), ("ok", None, None)]),
+        ):
+            result = await router.chat([{"role": "user", "content": "hi"}])
+        assert result.text == "ok"
+        assert pool.state("a").phase is LifecyclePhase.COOLING
+
+    asyncio.run(run())
+
+
+def test_http_429_fails_over_to_next_llm():
+    """429 with Retry-After cools the failed slot and tries the next LLM in the same
+    request, with the default wait — the flagship failover path."""
+
+    async def run():
+        a, b = _cfg("a"), _cfg("b")
+        pool = await _pool(a, b)
+        router = _router(pool)
+        with patch(
+            _PATCH,
+            new=AsyncMock(side_effect=[_http_status_error(429, "5"), ("ok", None, None)]),
         ):
             result = await router.chat([{"role": "user", "content": "hi"}])
         assert result.text == "ok"

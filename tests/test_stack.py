@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from llmbroker.backends.ports import StoreKnowledge, StoreRegistry, StoreSecrets
+from llmbroker.backends.ports import DriverStore, DriverRegistry, DriverSecrets
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.source import resolve_source
 from llmbroker.models import LLMConfig
@@ -24,10 +24,10 @@ def _cfg(name: str = "llm1", api_key_ref: str = "KEY") -> LLMConfig:
 
 async def test_sqlite_source_wires_three_ports(tmp_path):
     db_path = str(tmp_path / "broker.db")
-    registry, secrets, knowledge = resolve_source(db_path)
-    assert isinstance(registry, StoreRegistry)
-    assert isinstance(secrets, StoreSecrets)
-    assert isinstance(knowledge, StoreKnowledge)
+    registry, secrets, store = resolve_source(db_path)
+    assert isinstance(registry, DriverRegistry)
+    assert isinstance(secrets, DriverSecrets)
+    assert isinstance(store, DriverStore)
 
     await registry.mirror([_cfg()])
     await secrets.set("KEY", "secret-value")
@@ -39,8 +39,8 @@ async def test_sqlite_source_wires_three_ports(tmp_path):
 
 def test_sqlite_source_dot_sqlite_suffix_and_url_form_both_dispatch(tmp_path):
     for path in (str(tmp_path / "a.sqlite"), f"sqlite://{tmp_path / 'b.db'}"):
-        registry, _secrets, _knowledge = resolve_source(path)
-        assert isinstance(registry, StoreRegistry)
+        registry, _secrets, _store = resolve_source(path)
+        assert isinstance(registry, DriverRegistry)
         assert isinstance(registry._driver, SqliteDriver)  # noqa: SLF001
 
 
@@ -82,19 +82,19 @@ async def test_explicit_secrets_override_wins_over_sqlite_source(tmp_path):
 
 def test_postgres_source_dispatches_to_postgres_ports_lazily():
     """No live connection is touched — pool creation is deferred to first ``ensure_schema()``."""
-    registry, secrets, knowledge = resolve_source("postgresql://localhost/db")
-    assert isinstance(registry, StoreRegistry)
-    assert isinstance(secrets, StoreSecrets)
-    assert isinstance(knowledge, StoreKnowledge)
+    registry, secrets, store = resolve_source("postgresql://localhost/db")
+    assert isinstance(registry, DriverRegistry)
+    assert isinstance(secrets, DriverSecrets)
+    assert isinstance(store, DriverStore)
     assert isinstance(registry._driver, PostgresDriver)  # noqa: SLF001
 
 
 def test_mongodb_source_dispatches_to_mongo_ports_lazily():
     """No live connection is touched — motor connects lazily on first operation."""
-    registry, secrets, knowledge = resolve_source("mongodb://localhost/db")
-    assert isinstance(registry, StoreRegistry)
-    assert isinstance(secrets, StoreSecrets)
-    assert isinstance(knowledge, StoreKnowledge)
+    registry, secrets, store = resolve_source("mongodb://localhost/db")
+    assert isinstance(registry, DriverRegistry)
+    assert isinstance(secrets, DriverSecrets)
+    assert isinstance(store, DriverStore)
     assert isinstance(registry._driver, MongoDriver)  # noqa: SLF001
 
 

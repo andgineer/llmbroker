@@ -10,7 +10,7 @@
 uv pip install llmbroker
 ```
 
-To use a state backend, install the matching extra:
+To use a database backend, install the matching extra:
 
 ```bash
 uv pip install "llmbroker[sqlite]"

@@ -12,7 +12,7 @@ resulting cost estimate. The current behavior rules themselves live in
   cannot overwrite each other, so verdict synchronization is correct by
   construction. Rolling score windows are recomputed from the journal on an
   activity debounce (60s); one's own score applies instantly. Learning
-  durability comes from knowledge (enabled by default, see below); only an
+  durability comes from the store (enabled by default, see below); only an
   explicit in-memory mode leaves learning in the process's memory.
   Forgetting = the journal's automatic retention. No decayed aggregates,
   summaries table, atomic folds, or last-writer-wins snapshots.
@@ -58,33 +58,33 @@ resulting cost estimate. The current behavior rules themselves live in
   cannot be incremented in place — the "aggregate from rows" path has to
   exist anyway, so fold-in-place is not brought back even in its cheap form:
   there is one mechanism — separate rows plus a debounced recompute.
-- **Model knowledge is an internal llmbroker subsystem, not logging**:
+- **The store is an internal llmbroker subsystem, not logging**:
   everything llmbroker knows about models beyond the config is the
   **journal** (append-only experience: calls, scores, cooldown marks) plus
   the **disabled-doc** (manual admin verdicts; a tiny mutable "name → bool"
   document). The application logs through its own normal means; plain-text
   emission into python logging is removed from the package. The default for
-  a TOML source is a `state/` directory next to the TOML (overridable via a
-  parameter): journal at `state/calls/YYYY-MM-DD.jsonl`, verdicts at
-  `state/disabled.yml` — YAML for convenient manual editing (PyYAML is an
+  a TOML source is a `store/` directory next to the TOML (overridable via a
+  parameter): journal at `store/calls/YYYY-MM-DD.jsonl`, verdicts at
+  `store/disabled.yml` — YAML for convenient manual editing (PyYAML is an
   acceptable core dependency). The doc is **pre-populated with model names**
   (missing entries with `disabled: false` are appended on sync, and for a
   file source, at startup), so the admin only edits flag values; llmbroker
   itself never changes them. For a DB source: tables in the same DB
   (journal + disabled-doc); when `registry=` is passed explicitly with no
-  knowledge backend, the default is `state/` in the CWD (not an error). A
+  store backend, the default is `store/` in the CWD (not an error). A
   per-day journal file is a storage layout, not aggregation: rebuild needs
   raw scores, and scores arrive for calls from past days — daily aggregates
   would have to be constantly reopened. Row format: no null fields, with a
   timestamp. The journal cleans itself — default retention 3 months,
   changeable via an init parameter; for jsonl this means deleting whole old
   files; the disabled-doc is not subject to retention; there is no public
-  purge command. Knowledge holds no derived data: the journal is raw
+  purge command. The store holds no derived data: the journal is raw
   material, verdicts are manual input, everything derivable is computed at
   read time.
 - **The preset file alone determines the model list; sync is a total
   mirror.** The registry is a pure projection of the file: nothing but
-  `sync` ever writes to it (admin verdicts live in the knowledge
+  `sync` ever writes to it (admin verdicts live in the store
   disabled-doc). Model CRUD (`add`/`remove`/`update`), the `origin` field,
   merge rules, and `copy_registry` do not exist — admin runtime actions
   (`set_disabled`, editing keys) never touch the registry; a host with its
@@ -100,15 +100,15 @@ resulting cost estimate. The current behavior rules themselves live in
   separately in the secrets store, statistics are derived from the journal,
   the journal does not cascade; a model returning to the preset is simply
   re-added, and its old scores and verdicts are picked back up); sync also
-  appends missing model names to the knowledge disabled-doc (`disabled:
+  appends missing model names to the store disabled-doc (`disabled:
   false`) without touching existing values; refusing to change a model's
   identity is a call error (protecting the binding between statistics and
   the model name), not an alert.
-- **Manual blocking is an admin verdict in knowledge, not a registry
+- **Manual blocking is an admin verdict in the store, not a registry
   field.** Demotion is soft (to the back of the queue; a last resort still
   gets traffic), and that is not enough for a truly useless model: hard
   exclusion is a manual "discarded" verdict. It lives in the disabled-doc of
-  the knowledge subsystem (see above), not in the registry: it survives sync
+  the store subsystem (see above), not in the registry: it survives sync
   by construction (sync only touches the registry) and works identically
   for TOML and DB sources — no overlays next to the config. It changes via
   a single method `set_disabled(name, flag)` (not a disable/enable pair) or
@@ -212,13 +212,13 @@ resulting cost estimate. The current behavior rules themselves live in
   `Broker("config.toml")` / `Broker("llm.db")` / `Broker("postgresql://…")`
   / `Broker("mongodb://…")` — recognized by scheme/extension (`.toml`,
   `.db`/`sqlite://`, otherwise a clear error), the driver is imported
-  lazily. Registry + knowledge + secrets are all derived from the source;
-  `secrets=` / `knowledge=` / `registry=` remain for mixed configurations
+  lazily. Registry + store + secrets are all derived from the source;
+  `secrets=` / `store=` / `registry=` remain for mixed configurations
   (Vault, in-memory, etc.). The `Stack` classes, `BackendStack`, and the
   `stack=` parameter go away. The saving is conceptual, not in lines
   (~zero).
 - **Storage layer**: one narrow per-DB `Driver` protocol plus generic ports
-  (registry, knowledge, secrets), written once. Behavior tests are written
+  (registry, store, secrets), written once. Behavior tests are written
   once; backends are covered via parameterized fixtures and a conformance
   suite, with no test duplication per backend.
 - **Core**: a slot table instead of `asyncio.Queue` (no `call_later` timers
@@ -249,14 +249,14 @@ Line estimates for the design as built (pre-simplification `src` ≈ 6000).
 | Routing, cooldown, failover, parallelism | 1, 8 | slot table + Condition; cooldown = timestamp; backoff by streak; curated priority | 500 (pool+router) | 0 |
 | Broker facade, lifecycle, per-user keys, `sync()` | 2, 4, 6 | AsyncBroker + `_LearningHook`; personal→shared key fallback | 330 | — |
 | Learning per (model, op) + selection order | 2, 3 | score windows, Wilson bound; demoted-for-operation go to the back; verdicts from the journal tail on a 60s debounce | 170 (optimizer) | shared tail read / 60s of activity |
-| Knowledge: journal + disabled-doc | 5, 3 | insert per call; a score is a separate record everywhere (the journal is strictly append-only); verdicts — a tiny "name → bool" doc; automatic 3-month journal retention | in the ports | 1 insert |
+| Store: journal + disabled-doc | 5, 3 | insert per call; a score is a separate record everywhere (the journal is strictly append-only); verdicts — a tiny "name → bool" doc; automatic 3-month journal retention | in the ports | 1 insert |
 | Cluster shared cooldown | 6 | from the journal: a failing row carries `cooldown_until`; same tail read + on one's own failure | ~0 (in rebuild) | 0 extra |
 | Picking up admin/cluster edits | 2, 4 | registry and disabled-doc re-read on the same debounce | ~10 | 1 tiny read / 60s of activity |
 | Explicit `sync(preset)` + secrets bootstrap | 2 | total mirror of the preset: add/update/**delete**; changing `model` identity is an error | 80 (catalog) | on call |
 | Snapshot: raw fields + metrics | 5 | pull via `snapshot()`: `disabled`, `has_key`, `cooldown_until`, `demoted_operations`; metrics from the cached tail; events go to the log | 50 | 0 |
 | Sync wrapper | 6 | background loop thread, direct construction | 200 | — |
 | Models/protocols/exceptions | — | dataclasses + to/from dict | 350 | — |
-| Standalone (TOML/env/`state/`) | 6 | default: per-day journal in `state/calls/`, verdicts in `state/disabled.yml` (pre-populated with names), retention by deleting files | 330 | — |
+| Standalone (TOML/env/`store/`) | 6 | default: per-day journal in `store/calls/`, verdicts in `store/disabled.yml` (pre-populated with names), retention by deleting files | 330 | — |
 | Driver layer: spec + protocol + generic ports + in-memory | 7 | boilerplate (scope, schema, JSON, errors) written once; no `set_field`/`metrics_rows` | 430 | — |
 | Drivers: sqlite, postgres, mongodb | 7 | one file of "plain queries" each, ~150 lines each | 450 | — |
 | AWS / Vault secrets | 4, 7 | SDK glue, as now | 150 | — |
@@ -280,7 +280,7 @@ Line estimates for the design as built (pre-simplification `src` ≈ 6000).
   store, statistics are derived from the journal).
 - **`LLMProfile` as state that llmbroker itself wrote** (a registry profile
   column with learning snapshots, `write_profile`/`read_profiles`) —
-  manual blocking is an admin verdict in the knowledge disabled-doc;
+  manual blocking is an admin verdict in the store disabled-doc;
   learning writes nowhere.
 - **`quality_reset_at` / `reset_quality`** — rehabilitation happens through
   new scores, the window displaces the old ones.
@@ -291,7 +291,7 @@ Line estimates for the design as built (pre-simplification `src` ≈ 6000).
   role was the state store.
 - **Stacks** (`Stack` classes, `BackendStack`, `stack=`) — the data source
   is given by a single parameter.
-- **Plain-text `Telemetry`** — knowledge is not logging; JSON is
+- **Plain-text `Telemetry`** — the store is not logging; JSON is
   preferable, including for CloudWatch.
 - **Public `purge_calls`** — retention is automatic.
 - **The effort/value taxonomies** — passthrough plus section order in the
@@ -331,7 +331,7 @@ wrapper, the set of batteries, snapshot metrics, and slot waiting
 No open questions remain: a string scope instead of a typed `user_id` —
 decided (see the scope point above). A strictly read-only file registry —
 decided: nobody writes the config (including llmbroker itself), admin
-verdicts live in the knowledge disabled-doc, no sibling-JSON overlay
+verdicts live in the store disabled-doc, no sibling-JSON overlay
 exists.
 
 The public signature `ask(prompt, operation=, trace_id=, wait=)` does not

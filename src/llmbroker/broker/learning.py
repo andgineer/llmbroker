@@ -1,4 +1,4 @@
-"""``_LearningHook``: the wrapper around a knowledge backend.
+"""``_LearningHook``: the wrapper around a store backend.
 
 Drives ``Optimizer`` bookkeeping (backoff counters, quality windows) from the
 live event stream, and periodically rebuilds derived state — quality-window
@@ -16,10 +16,10 @@ from datetime import datetime
 from llmbroker.broker.pool import LLMPool
 from llmbroker.models import Call, CallStatus, LLMMetrics, key_hash
 from llmbroker.optimizer import Optimizer
-from llmbroker.protocols.knowledge import (
+from llmbroker.protocols.store import (
     DisabledMapProtocol,
-    KnowledgeProtocol,
-    QueryableKnowledgeProtocol,
+    QueryableStoreProtocol,
+    StoreProtocol,
 )
 
 logger = logging.getLogger("llmbroker.broker")
@@ -30,14 +30,36 @@ _HTTP_UNAUTHORIZED = 401
 _HTTP_FORBIDDEN = 403
 
 
+def metrics_from_calls(rows: list[Call]) -> dict[str, LLMMetrics]:
+    """rows newest-first: the first call row per model is its most recent."""
+    metrics: dict[str, LLMMetrics] = {}
+    for row in rows:
+        if row.kind != "call":
+            continue
+        existing = metrics.get(row.llm_name)
+        if existing is None:
+            metrics[row.llm_name] = LLMMetrics(
+                call_count=1,
+                last_status=row.status,
+                last_at=row.ts,
+            )
+        else:
+            metrics[row.llm_name] = LLMMetrics(
+                call_count=existing.call_count + 1,
+                last_status=existing.last_status,
+                last_at=existing.last_at,
+            )
+    return metrics
+
+
 class _LearningHook:
-    """Knowledge hook: cooldown bookkeeping, dead-key drops, quality windows,
+    """Store hook: cooldown bookkeeping, dead-key drops, quality windows,
     debounced journal rebuild."""
 
     def __init__(
         self,
         optimizer: Optimizer,
-        inner: KnowledgeProtocol,
+        inner: StoreProtocol,
         pool: LLMPool,
         resync_registry: Callable[[], Awaitable[None]],
         *,
@@ -69,7 +91,7 @@ class _LearningHook:
         self._opt.record_quality(llm_name, operation, score)
 
     async def calls(self, *, limit: int, scope: str | None = None) -> list[Call]:
-        if isinstance(self._inner, QueryableKnowledgeProtocol):
+        if isinstance(self._inner, QueryableStoreProtocol):
             return await self._inner.calls(limit=limit, scope=scope)
         return []
 
@@ -110,7 +132,7 @@ class _LearningHook:
         if not force and now < self._next_rebuild:
             return
         self._next_rebuild = now + _REBUILD_TTL
-        if isinstance(self._inner, QueryableKnowledgeProtocol):
+        if isinstance(self._inner, QueryableStoreProtocol):
             rows = await self._inner.calls(limit=self._quality_rebuild_limit)
             self._apply_scores_and_metrics(rows)
             await self._apply_peer_effects(rows)
@@ -125,31 +147,17 @@ class _LearningHook:
 
     def _apply_scores_and_metrics(self, rows: list[Call]) -> None:
         """rows are newest-first: keep the newest ``quality_window`` ratings per
-        bucket, and the first (= most recent) call row per model for metrics."""
+        bucket."""
         scores: dict[tuple[str, str | None], list[float]] = {}
-        metrics: dict[str, LLMMetrics] = {}
         for row in rows:
-            if row.kind == "quality":
-                key = (row.llm_name, row.operation)
-                bucket = scores.setdefault(key, [])
-                if len(bucket) < self._opt.quality_window:
-                    bucket.append(row.quality_score if row.quality_score is not None else 0.0)
+            if row.kind != "quality":
                 continue
-            existing = metrics.get(row.llm_name)
-            if existing is None:
-                metrics[row.llm_name] = LLMMetrics(
-                    call_count=1,
-                    last_status=row.status,
-                    last_at=row.ts,
-                )
-            else:
-                metrics[row.llm_name] = LLMMetrics(
-                    call_count=existing.call_count + 1,
-                    last_status=existing.last_status,
-                    last_at=existing.last_at,
-                )
+            key = (row.llm_name, row.operation)
+            bucket = scores.setdefault(key, [])
+            if len(bucket) < self._opt.quality_window:
+                bucket.append(row.quality_score if row.quality_score is not None else 0.0)
         self._opt.load_scores(scores)
-        self.metrics_cache = metrics
+        self.metrics_cache = metrics_from_calls(rows)
 
     def _cooldown_applies(self, row: Call) -> bool:
         """5xx (``UNAVAILABLE``/other ``ERROR``) applies unconditionally — provider-side,

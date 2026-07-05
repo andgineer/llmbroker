@@ -115,7 +115,24 @@ class Optimizer:
     ) -> None:
         if before == after:
             return
+        bound = self.wilson_bound(llm_name, operation)
         if after:
-            logger.warning("%s: quality-demoted for operation=%r", llm_name, operation)
+            if bound is not None:
+                logger.warning(
+                    "%s: quality-demoted for operation=%r (wilson upper %.3f < floor %.2f)",
+                    llm_name,
+                    operation,
+                    bound,
+                    self.quality_floor,
+                )
+            else:
+                logger.warning("%s: quality-demoted for operation=%r", llm_name, operation)
+        elif bound is not None:
+            logger.info(
+                "%s: quality demotion cleared for operation=%r (wilson upper %.3f)",
+                llm_name,
+                operation,
+                bound,
+            )
         else:
             logger.info("%s: quality demotion cleared for operation=%r", llm_name, operation)

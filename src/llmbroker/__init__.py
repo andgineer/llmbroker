@@ -7,13 +7,12 @@ from llmbroker.exceptions import (
     AllLLMsFailedError,
     LLMRequestError,
     NoLLMAvailableError,
-    SecretsReadOnlyError,
 )
 from llmbroker.models import LifecyclePhase
 from llmbroker.optimizer import Optimizer
-from llmbroker.standalone.knowledge import FileKnowledge, InMemoryKnowledge
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets, Secrets
+from llmbroker.standalone.store import FileStore, InMemoryStore
 from llmbroker.sync import LLM, Broker, Result
 
 __all__ = [
@@ -23,8 +22,8 @@ __all__ = [
     "AsyncResult",
     "Broker",
     "DictSecrets",
-    "FileKnowledge",
-    "InMemoryKnowledge",
+    "FileStore",
+    "InMemoryStore",
     "LLM",
     "LifecyclePhase",
     "LLMRequestError",
@@ -33,7 +32,6 @@ __all__ = [
     "Registry",
     "Result",
     "Secrets",
-    "SecretsReadOnlyError",
     "arun_tool_loop",
     "run_tool_loop",
 ]

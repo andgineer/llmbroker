@@ -1,11 +1,11 @@
-"""File-backed and in-memory knowledge stores — no external backend.
+"""File-backed and in-memory stores — no external backend.
 
-``InMemoryKnowledge()`` implements only the minimal contract and keeps its
+``InMemoryStore()`` implements only the minimal contract and keeps its
 disabled-verdict map in process memory (session-scoped learning). It is
 llmbroker's internal subsystem, not application logging — a host that wants
 logs uses ``logging`` itself.
 
-``FileKnowledge(directory)`` is the default persistent store: a day-split
+``FileStore(directory)`` is the default persistent store: a day-split
 JSON-lines call journal (``<directory>/calls/YYYY-MM-DD.jsonl``, chosen by
 each record's UTC date — pure storage layout, not aggregation, since rebuild
 needs raw per-record scores and a quality record can rate a call from an
@@ -52,7 +52,7 @@ def _new_quality_call(
     )
 
 
-class InMemoryKnowledge:
+class InMemoryStore:
     """Explicit in-memory opt-out — no persistence, session-scoped learning;
     disabled verdicts live only in process memory."""
 
@@ -120,7 +120,7 @@ def _call_from_jsonable(d: dict) -> Call:
     )
 
 
-class FileKnowledge:
+class FileStore:
     """Day-split JSONL call journal plus a YAML disabled-verdict map, under one directory."""
 
     def __init__(self, directory: str | Path, *, retention: timedelta = _DEFAULT_RETENTION) -> None:

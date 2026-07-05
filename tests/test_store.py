@@ -1,4 +1,4 @@
-"""Tests for the standalone knowledge stores: InMemoryKnowledge, FileKnowledge."""
+"""Tests for the standalone stores: InMemoryStore, FileStore."""
 
 import asyncio
 import json
@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from llmbroker.models import Call, CallStatus
-from llmbroker.standalone.knowledge import FileKnowledge, InMemoryKnowledge
+from llmbroker.standalone.store import FileStore, InMemoryStore
 
 _TODAY = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
 _YESTERDAY = _TODAY - timedelta(days=1)
@@ -27,17 +27,17 @@ def _call(call_id="c1", llm_name="p1", ts=None):
     )
 
 
-def test_in_memory_knowledge_record_does_not_raise():
-    asyncio.run(InMemoryKnowledge().record(_call()))
+def test_in_memory_store_record_does_not_raise():
+    asyncio.run(InMemoryStore().record(_call()))
 
 
-def test_in_memory_knowledge_record_quality_does_not_raise():
-    asyncio.run(InMemoryKnowledge().record_quality("p1", "summarize", 1.0, call_id="c1"))
+def test_in_memory_store_record_quality_does_not_raise():
+    asyncio.run(InMemoryStore().record_quality("p1", "summarize", 1.0, call_id="c1"))
 
 
-def test_in_memory_knowledge_disabled_map_is_in_memory_only():
+def test_in_memory_store_disabled_map_is_in_memory_only():
     async def run():
-        k = InMemoryKnowledge()
+        k = InMemoryStore()
         await k.seed_disabled(["p1", "p2"])
         assert await k.disabled_map() == {"p1": False, "p2": False}
         await k.set_disabled("p1", True)
@@ -47,8 +47,8 @@ def test_in_memory_knowledge_disabled_map_is_in_memory_only():
     asyncio.run(run())
 
 
-def test_file_knowledge_record_writes_day_file(tmp_path):
-    asyncio.run(FileKnowledge(tmp_path).record(_call(ts=_TODAY)))
+def test_file_store_record_writes_day_file(tmp_path):
+    asyncio.run(FileStore(tmp_path).record(_call(ts=_TODAY)))
     path = tmp_path / "calls" / f"{_TODAY.date().isoformat()}.jsonl"
     line = json.loads(path.read_text())
     assert line["kind"] == "call"
@@ -58,8 +58,8 @@ def test_file_knowledge_record_writes_day_file(tmp_path):
     assert line["http_status"] == 200
 
 
-def test_file_knowledge_record_quality_writes_line(tmp_path):
-    asyncio.run(FileKnowledge(tmp_path).record_quality("p1", "summarize", 0.8, call_id="c1"))
+def test_file_store_record_quality_writes_line(tmp_path):
+    asyncio.run(FileStore(tmp_path).record_quality("p1", "summarize", 0.8, call_id="c1"))
     day_files = list((tmp_path / "calls").glob("*.jsonl"))
     assert len(day_files) == 1
     line = json.loads(day_files[0].read_text())
@@ -71,8 +71,8 @@ def test_file_knowledge_record_quality_writes_line(tmp_path):
     assert "status" not in line  # None fields are dropped at serialization
 
 
-def test_file_knowledge_record_appends_multiple_same_day(tmp_path):
-    k = FileKnowledge(tmp_path)
+def test_file_store_record_appends_multiple_same_day(tmp_path):
+    k = FileStore(tmp_path)
     asyncio.run(k.record(_call("c1", ts=_TODAY)))
     asyncio.run(k.record(_call("c2", ts=_TODAY)))
     path = tmp_path / "calls" / f"{_TODAY.date().isoformat()}.jsonl"
@@ -82,16 +82,16 @@ def test_file_knowledge_record_appends_multiple_same_day(tmp_path):
     assert lines[1]["id"] == "c2"
 
 
-def test_file_knowledge_splits_by_day(tmp_path):
-    k = FileKnowledge(tmp_path)
+def test_file_store_splits_by_day(tmp_path):
+    k = FileStore(tmp_path)
     asyncio.run(k.record(_call("c1", ts=_YESTERDAY)))
     asyncio.run(k.record(_call("c2", ts=_TODAY)))
     assert (tmp_path / "calls" / f"{_YESTERDAY.date().isoformat()}.jsonl").exists()
     assert (tmp_path / "calls" / f"{_TODAY.date().isoformat()}.jsonl").exists()
 
 
-def test_file_knowledge_calls_reads_newest_first_across_days(tmp_path):
-    k = FileKnowledge(tmp_path)
+def test_file_store_calls_reads_newest_first_across_days(tmp_path):
+    k = FileStore(tmp_path)
 
     async def run():
         await k.record(_call("c1", ts=_YESTERDAY))
@@ -102,8 +102,8 @@ def test_file_knowledge_calls_reads_newest_first_across_days(tmp_path):
     assert [c.id for c in calls] == ["c2", "c1"]
 
 
-def test_file_knowledge_calls_respects_limit(tmp_path):
-    k = FileKnowledge(tmp_path)
+def test_file_store_calls_respects_limit(tmp_path):
+    k = FileStore(tmp_path)
 
     async def run():
         for i in range(5):
@@ -115,8 +115,8 @@ def test_file_knowledge_calls_respects_limit(tmp_path):
     assert [c.id for c in calls] == ["c4", "c3"]
 
 
-def test_file_knowledge_calls_scope_filter(tmp_path):
-    k = FileKnowledge(tmp_path)
+def test_file_store_calls_scope_filter(tmp_path):
+    k = FileStore(tmp_path)
 
     async def run():
         await k.record(replace(_call("ca"), scope="alice"))
@@ -127,21 +127,21 @@ def test_file_knowledge_calls_scope_filter(tmp_path):
     assert [c.id for c in calls] == ["ca"]
 
 
-def test_file_knowledge_disabled_map_persists_to_yaml_file(tmp_path):
+def test_file_store_disabled_map_persists_to_yaml_file(tmp_path):
     async def run():
-        k = FileKnowledge(tmp_path)
+        k = FileStore(tmp_path)
         await k.seed_disabled(["p1"])
         await k.set_disabled("p1", True)
         # A fresh instance reading the same directory sees the persisted verdict.
-        k2 = FileKnowledge(tmp_path)
+        k2 = FileStore(tmp_path)
         return await k2.get_disabled("p1")
 
     assert asyncio.run(run()) is True
     assert (tmp_path / "disabled.yml").exists()
 
 
-def test_file_knowledge_seed_disabled_never_overwrites_existing_value(tmp_path):
-    k = FileKnowledge(tmp_path)
+def test_file_store_seed_disabled_never_overwrites_existing_value(tmp_path):
+    k = FileStore(tmp_path)
 
     async def run():
         await k.set_disabled("p1", True)
@@ -152,10 +152,10 @@ def test_file_knowledge_seed_disabled_never_overwrites_existing_value(tmp_path):
     assert result == {"p1": True, "p2": False}
 
 
-def test_file_knowledge_purges_day_files_older_than_retention(tmp_path):
+def test_file_store_purges_day_files_older_than_retention(tmp_path):
     old_ts = datetime.now(UTC) - timedelta(days=100)
     recent_ts = datetime.now(UTC) - timedelta(days=1)
-    k = FileKnowledge(tmp_path, retention=timedelta(days=90))
+    k = FileStore(tmp_path, retention=timedelta(days=90))
 
     async def run():
         await k.record(_call("old", ts=old_ts))
@@ -166,12 +166,12 @@ def test_file_knowledge_purges_day_files_older_than_retention(tmp_path):
     assert remaining == {"recent"}
 
 
-def test_file_knowledge_retention_purge_is_debounced(tmp_path):
+def test_file_store_retention_purge_is_debounced(tmp_path):
     """A second write within the debounce window does not re-run the purge scan —
     verified indirectly: an old file written after the first purge survives until
     the debounce interval elapses again."""
     old_ts = datetime.now(UTC) - timedelta(days=100)
-    k = FileKnowledge(tmp_path, retention=timedelta(days=90))
+    k = FileStore(tmp_path, retention=timedelta(days=90))
 
     async def run():
         await k.record(_call("triggers-purge", ts=datetime.now(UTC)))  # sets _last_purge

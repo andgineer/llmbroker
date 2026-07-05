@@ -10,14 +10,13 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from llmbroker.backends.driver import Driver, Row
-from llmbroker.models import Call, CallStatus, LLMConfig, LLMMetrics, Usage
+from llmbroker.models import Call, CallStatus, LLMConfig, Usage
 
 _DEFAULT_RETENTION = timedelta(days=90)
 _PURGE_INTERVAL_SECONDS = 3600.0
-_METRICS_SCAN_LIMIT = 1_000_000  # metrics() is unused by the broker; a generous scan is fine
 
 
-class StoreRegistry:
+class DriverRegistry:
     """Registry over any ``Driver`` — a pure preset mirror, globally scoped."""
 
     def __init__(self, driver: Driver) -> None:
@@ -130,7 +129,7 @@ def _row_to_call(row: Row) -> Call:
     )
 
 
-class StoreKnowledge:
+class DriverStore:
     """Journal (append/recent/purge) + admin disabled-map, over any ``Driver``.
 
     Self-purges call rows older than ``retention``, checked at most once per
@@ -176,35 +175,6 @@ class StoreKnowledge:
         rows = await self._driver.recent("calls", limit, match)
         return [_row_to_call(r) for r in rows]
 
-    async def metrics(
-        self,
-        *,
-        since: datetime | None = None,
-        user_id: int | str | None = None,
-    ) -> dict[str, LLMMetrics]:
-        """Unused by the broker (metrics are served from the rebuild's cached tail);
-        kept for hosts that want a direct read."""
-        match: Row = {"scope": user_id, "kind": "call"}
-        rows = await self._driver.recent("calls", _METRICS_SCAN_LIMIT, match)
-        if since is not None:
-            rows = [r for r in rows if (r.get("called_at") or since) >= since]  # type: ignore[operator]
-        counts: dict[str, int] = {}
-        newest: dict[str, Row] = {}
-        for row in rows:  # newest-first: the first hit per name is the most recent
-            name = str(row["llm_name"])
-            counts[name] = counts.get(name, 0) + 1
-            newest.setdefault(name, row)
-        return {
-            name: LLMMetrics(
-                call_count=counts[name],
-                last_status=CallStatus(newest[name]["status"])
-                if newest[name].get("status")
-                else None,  # type: ignore[arg-type]
-                last_at=newest[name].get("called_at"),  # type: ignore[arg-type]
-            )
-            for name in counts
-        }
-
     async def _purge_old_calls(self) -> None:
         cutoff = datetime.now(UTC) - self._retention
         await self._driver.purge("calls", cutoff)
@@ -242,7 +212,7 @@ class StoreKnowledge:
         await self._driver.aclose()
 
 
-class StoreSecrets:
+class DriverSecrets:
     """Flat ``ref -> value`` secrets store over any ``Driver``. Exact-match lookups
     only — the own→shared prefix fallback lives in the broker."""
 

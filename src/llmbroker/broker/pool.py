@@ -14,7 +14,7 @@ model's position in the registry/preset — lower is better). Demotion is soft
 (consulted at acquire time, never withdraws a slot) — only ``disabled`` and a
 missing key make a slot unavailable.
 
-There is no separate state store: cooldowns are local until a peer's failure
+Pool state is not itself persisted: cooldowns are local until a peer's failure
 surfaces through the journal rebuild, which calls ``apply_peer_cooldowns``.
 """
 
@@ -157,7 +157,8 @@ class LLMPool:
         ``None`` when nothing is scheduled (wait solely on notification)."""
         candidates: list[float] = []
         for slot in self._slots.values():
-            if slot.key is None or slot.disabled or slot.in_flight:
+            cap = slot.config.parallel
+            if slot.key is None or slot.disabled or (cap is not None and slot.in_flight >= cap):
                 continue
             if slot.cooldown_until is not None and slot.cooldown_until > now:
                 candidates.append((slot.cooldown_until - now).total_seconds())

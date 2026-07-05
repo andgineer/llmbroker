@@ -58,18 +58,19 @@ import llmbroker
 
 registry = llmbroker.Registry("llms.toml")
 info = asyncio.run(registry.key_info())
-# {"GROQ_API_KEY": KeyInfo(api_key_ref="GROQ_API_KEY", effort=EffortLevel.SIGNUP,
-#                          value=ValueLevel.GOOD, help="Create a free API key at [groq](...) ..."), ...}
+# {"GROQ_API_KEY": KeyInfo(api_key_ref="GROQ_API_KEY", help="Create a free API key at [groq](...) ...",
+#                          extra={"effort": "signup", "value": "good"}), ...}
 ```
 
-`key_info()` returns a `KeyInfo` (markdown `help`, plus `effort`/`value` for onboarding
-sort order) per `api_key_ref`. It is an optional registry capability (`KeyInfoProtocol`
-in `llmbroker.protocols.registry`): registries that carry the metadata expose it, others
-do not — probe with `isinstance(registry, KeyInfoProtocol)` if you accept arbitrary
-registries. It is independent of the broker, so you do not need to wire the registry as
-a `seed=` to read it. Missing a key for some models is the normal way to run
-llmbroker — the pool routes over whatever keys are present; only zero usable models
-is an error.
+`key_info()` returns a `KeyInfo` (markdown `help`, plus a free-form `extra: dict[str, str]`
+passthrough of whatever else the TOML `[keys.REF]` section holds — llmbroker has no
+taxonomy opinion on it) per `api_key_ref`. It is an optional registry capability
+(`KeyInfoProtocol` in `llmbroker.protocols.registry`): registries that carry the
+metadata expose it, others do not — probe with `isinstance(registry, KeyInfoProtocol)`
+if you accept arbitrary registries. It is independent of the broker, so you do not need
+to wire the registry into a broker to read it. Missing a key for some models is the
+normal way to run llmbroker — the pool routes over whatever keys are present; only zero
+usable models is an error.
 
 ## Calling the broker
 
@@ -131,55 +132,89 @@ reply.record_quality(1.0)   # good answer
 reply.record_quality(0.0)   # bad answer
 ```
 
-The score is stored in telemetry (when using the SQLite backend) and, when the
-optimizer is active (the default), folded into that model's learned quality profile —
-see "Operations" and "Learned profile" below.
+The score lands in the journal as its own self-contained record (never joined back onto
+the call it rates) and, when the optimizer is active (the default), feeds that model's
+per-operation quality window — see "Learning & selection" below.
 
 ### Operations
 
-Tag a call with the kind of task it is doing via `operation=`. Everything
-quality-related — the decayed quality aggregate, per-operation demotions, and
-`background_operations` ranking — is keyed by `(llm, operation)`, because a model's
-usefulness is genuinely task-shaped: fine on simple tasks, weak on hard ones. Calls
-made without `operation=` fall into one shared `None` bucket.
+Tag a call with the kind of task it is doing via `operation=`. Quality feedback and
+demotion are keyed by `(llm, operation)`, because a model's usefulness is genuinely
+task-shaped: fine on simple tasks, weak on hard ones. Calls made without `operation=`
+fall into one shared bucket (keyed by `None`).
 
 ```python
 reply = await llms.ask("Summarize this contract clause", operation="summarize")
 reply.record_quality(0.9)  # rated against the "summarize" bucket specifically
-
-# Background (non-interactive) work ranks by quality first, latency second
-reply = await llms.ask("Nightly batch classification", operation="classify")
 ```
 
-Mark an operation as background (batch/offline, not waiting on a human) by listing it
-in `Optimizer(background_operations={"classify", ...})` — the ranking objective then
-becomes `(-usable_rate, latency)` instead of the interactive default
-`(latency, -usable_rate)`.
+## Learning & selection
 
-### Learned profile
+When the optimizer is active (`optimize=True`, the default), every rated call is
+folded into a per-`(model, operation)` sliding window of the last `quality_window`
+ratings (default 30). A bucket is **demoted** once it holds at least
+`quality_min_count` ratings (default 10) and their Wilson-score upper bound sits below
+`quality_floor` (default 0.3).
 
-When the optimizer is active, every rated call and every quality score is folded into
-a durable, per-operation "how good is this model at this kind of task" profile that
-survives restarts, preset updates, and (with a shared state store) is visible to every
-instance in a cluster. A model whose measured quality is consistently poor for an
-operation is **demoted** — moved to the back of the routing queue for that
-operation — never silently excluded, because the quality signal is your own opinion
-and may be miscalibrated. The only thing that actually excludes a model is the manual
-bench below. See [`optimizer.md`](https://github.com/andgineer/llmbroker/blob/main/specs/reference/optimizer.md)
-for the full mechanics (decayed aggregates, the decision band, tiered selection).
+Selection is a single sort: within the requested operation, a demoted model sorts
+after every non-demoted one; among slots with the same demotion verdict, curated
+order wins (each model's position in the registry/preset — lower is better). Demotion
+is always soft — a demoted-only pool still serves the request, since the quality
+signal is your own opinion and may be miscalibrated. There is no global "bad model"
+verdict: the same model can be demoted for `"classify"` and fine for `"summarize"`.
 
-### Manual bench
+Recovery is exactly new ratings displacing the window: once the bound climbs back
+above the floor, the model is no longer demoted. There is no time-based recovery, no
+probation traffic, and no explicit "reset quality" call — the only way to reset a
+model's learned quality is to keep sending it ratings.
+
+This learned state (score windows, shared 429/503 cooldowns, quality-demotion flips)
+is derived from the call journal, re-read on a debounce — see "Production" below for
+where it persists. See
+[`optimizer.md`](https://github.com/andgineer/llmbroker/blob/main/specs/reference/optimizer.md)
+for the full mechanics.
+
+## Administration
+
+`disable_llm` is a manual, hard verdict — separate from (and stronger than) quality
+demotion:
 
 ```python
-await llms.disable_llm("groq-llama", reason="hallucinating on our eval set")
+await llms.disable_llm("groq-llama")
 # ... later ...
 await llms.enable_llm("groq-llama")
 ```
 
-`disable_llm` is the one verdict that actually excludes a model from routing —
-covering every operation including future ones, surviving preset rolls, and never
-overridden by the optimizer. `enable_llm` clears the latch and resets that model's
-learned quality history, giving it a clean trial period.
+`disable_llm` withdraws the model from routing entirely — every operation, including
+future ones — surviving preset syncs, until `enable_llm` clears it. It is stored in the
+store's hand-editable `store/disabled.yml` (or the equivalent DB table), so an admin can
+flip it directly without going through the broker. `enable_llm` does not reset that
+model's learned quality history — it rehabilitates the normal way, through new ratings.
+
+Check the current verdict on a live handle:
+
+```python
+llm = await llms.get("groq-llama")
+print(llm.disabled)
+```
+
+Or read every model's raw facts at once:
+
+```python
+for name, entry in (await llms.snapshot()).items():
+    print(name, entry.disabled, entry.has_key, entry.cooldown_until, entry.demoted_operations)
+```
+
+`snapshot()` returns one `LLMSnapshot` per model — `disabled`, `has_key`,
+`cooldown_until`, `demoted_operations` (a tuple that may contain `None`, the bucket for
+calls made without `operation=`), and `metrics` (call count, last status, last call
+time) — raw facts, no status enum or precedence rule; you choose the presentation.
+
+Read the call journal directly:
+
+```python
+calls = await llms.calls(limit=50)
+```
 
 ## Tools & agents
 
@@ -229,7 +264,7 @@ holds:
 
 - **a long-lived process creates brokers repeatedly** (per request, in a loop) —
   otherwise each instance leaks a background thread;
-- **an external service is wired in (Redis, Postgres)** — it holds a persistent
+- **an external service is wired in (Postgres, MongoDB)** — it holds a persistent
   connection that is only closed reliably on an explicit close.
 
 ```python
@@ -238,7 +273,7 @@ with llmbroker.Broker("llms.toml") as llms:
     reply = llms.ask("...")
 
 # Or manually, when with is inconvenient
-llms = llmbroker.Broker(registry=..., state_store=...)
+llms = llmbroker.Broker("llms.toml")
 try:
     reply = llms.ask("...")
 finally:
@@ -247,136 +282,111 @@ finally:
 
 `AsyncBroker` is the same via `async with` or `await llms.aclose()`.
 
-### SQLite backend: call history and pool management
+### Choosing a data source
+
+The broker's first positional argument dispatches on its form — one parameter picks
+the registry, secrets, and store together:
 
 ```python
-import llmbroker
-import llmbroker.sqlite
-from datetime import UTC, datetime
-
-with llmbroker.Broker(
-    stack=llmbroker.sqlite.Stack("broker.db"),
-    seed="llms.toml",
-    seed_policy=llmbroker.SeedPolicy.SYNC,  # the default — safe to omit
-) as llms:
-    reply = llms.ask("Question")
-
-    # Pool status
-    for name, entry in llms.snapshot().items():
-        print(name, entry.state.phase, entry.metrics)
-
-    # Inspect a single LLM
-    llm = llms.get("groq-llama")
-    print(llm.config, llm.state())
-
-    # Count loaded LLMs
-    print(llms.count())
-
-    # Add / update / remove an LLM at runtime
-    from llmbroker.models import LLMConfig
-    llms.add(LLMConfig(
-        name="new-llm",
-        base_url="https://api.example.com/v1",
-        model="gpt-4o-mini",
-        api_key_ref="EXAMPLE_API_KEY",
-    ))
-    llms.update(LLMConfig(
-        name="new-llm",
-        base_url="https://api.example.com/v1",
-        model="gpt-4o",
-        api_key_ref="EXAMPLE_API_KEY",
-    ))
-    llms.remove("groq-gemma")
-
-    # Call history
-    calls = llms.calls(limit=50)
-    llms.purge_calls(before=datetime(2025, 1, 1, tzinfo=UTC))
+llmbroker.Broker("llms.toml")                    # file registry + env-var secrets + FileStore
+llmbroker.Broker("broker.db")                     # sqlite backing all three ports
+llmbroker.Broker("postgresql://host/db")          # postgres backing all three ports
+llmbroker.Broker("mongodb://host/db")             # mongodb backing all three ports
 ```
 
-`SeedPolicy` values:
-
-| Policy | Behaviour |
-|---|---|
-| `SeedPolicy.SYNC` (default) | curator-managed sync: adds new preset entries, updates their operational fields (`base_url`, `api_key_ref`, `metadata`), deprecates (never deletes) entries the preset has dropped, and never touches an entry you added yourself with `add()`. A preset row that changes an existing entry's `model` is refused with an alert instead of applied — a model bump is meant to be a new entry name, so old learned data is never silently reattributed. Never touches the learned profile. |
-| `SeedPolicy.MIRROR` | DB = source exactly: add new, update changed, remove dropped — including that entry's learned profile. The one policy without a "never delete" guarantee, for callers who explicitly want pruning |
-| `SeedPolicy.IF_EMPTY` | fill only if DB is empty, otherwise no-op |
-| `SeedPolicy.ADD` | only add entries not already present by name |
-
-### Mixing backends
-
-`stack=` wires registry, secrets, telemetry, and state store from one shared
-connection; any of the four can be overridden individually, including
-disabling the state store entirely (`state_store=None`). Available for
-`llmbroker.sqlite.Stack`, `llmbroker.postgres.Stack`, and `llmbroker.mongodb.Stack`
-— the three backends that implement all four ports.
+An unrecognized form raises a clear error naming the accepted ones; a missing extra
+(e.g. sqlite without `pip install llmbroker[sqlite]`) raises an actionable
+`pip install llmbroker[...]` message. Override any port explicitly — an explicit
+`registry=`/`secrets=`/`store=` always wins over whatever the source would have
+supplied:
 
 ```python
 import llmbroker
-import llmbroker.postgres
-import llmbroker.redis
+from llmbroker.postgres.registry import Registry as PostgresRegistry
 
-# Postgres for registry/secrets/telemetry, Redis for cross-node cooldown state
 pool = await asyncpg.create_pool(dsn)
 async with llmbroker.AsyncBroker(
-    stack=llmbroker.postgres.Stack(pool),
-    state_store=llmbroker.redis.StateStore.from_url("redis://localhost"),
+    registry=PostgresRegistry(pool),
+    secrets=llmbroker.Secrets(),   # env vars instead of the DB
 ) as llms:
     reply = await llms.ask("Hello")
 ```
 
-### Multi-user (per-user scoping)
+### Seeding a DB registry
 
-In a multi-user application each end user can have their own API keys and
-optionally their own set of LLM entries, backed by a single shared database.
+A DB-backed registry starts empty; mirror a preset into it explicitly, once:
 
-**Ports are app-lifetime infrastructure; the broker is constructed per request.**
-Construct `registry`, `secrets`, `state_store`, and `telemetry` once at startup
-and share them. Construct a new `AsyncBroker` (or `Broker`) for each request,
-passing the user's id:
+```python
+llms = llmbroker.AsyncBroker(
+    registry=llmbroker.sqlite.registry.Registry("broker.db"),
+    secrets=llmbroker.sqlite.secrets.Secrets("broker.db"),
+)
+await llms.sync(llmbroker.Registry(".deploy/llms.toml"))  # once, e.g. at deploy
+await llms.ensure_pool()   # eager init at startup
+```
+
+`sync(preset)` is a total mirror of the preset file: add new entries, update existing
+ones, delete entries absent from the preset — nothing is lost by a delete, since keys
+live in the secrets store and learned state derives from the journal (a model returning
+to the preset later picks its old ratings and verdict back up). Changing an existing
+entry's `model` under the same name is refused with an error — a model bump is meant to
+be a new entry name, protecting the binding between a model's learned quality and its
+name. Provisioning against an empty registry fails fast, telling you to call
+`sync(preset)` first.
+
+The same mirror is available from the CLI, for DB-init scripts:
+
+```bash
+python -m llmbroker sync llms.toml broker.db
+python -m llmbroker sync llms.toml "postgresql://host/db"
+```
+
+### Journal retention
+
+The call journal self-purges old records; every store backend takes a `retention`
+constructor parameter (default 90 days):
+
+```python
+from datetime import timedelta
+
+store = llmbroker.FileStore("store", retention=timedelta(days=30))
+```
+
+There is no separate purge call — retention is checked automatically on write
+activity, at most once per hour.
+
+A note on finicky providers: pass `parallel=1` on an `LLMConfig` entry to serialize
+calls to one model — useful for providers that reject concurrent requests on the same
+key.
+
+## Multi-user
+
+A multi-user host can give each end user their own API key over one shared registry
+and store, via the opaque `scope: str | None` parameter (`""` is rejected — use `None`
+for unscoped):
 
 ```python
 import llmbroker
-import llmbroker.sqlite
 
-# App startup — shared infrastructure
-stack = llmbroker.sqlite.Stack("broker.db")
-# state_store=<backend>  # override for stateless servers — see note below
-
-# Per-request — cheap, single-tenant view
-async def handle_request(user_id: str, prompt: str) -> str:
-    async with llmbroker.AsyncBroker(
-        stack=stack,
-        # state_store=state_store,
-        user_id=user_id,
-    ) as llms:
+# App startup — shared infrastructure, one shared DB
+async def handle_request(scope: str, prompt: str) -> str:
+    async with llmbroker.AsyncBroker("broker.db", scope=scope) as llms:
         result = await llms.ask(prompt)
         return result.text
 ```
 
-**Stateless servers need a `state_store`.**  In a process-per-request setup
-(multiple workers, a load balancer, restarts) in-process cooldown state is
-lost between requests, so a rate-limited LLM will appear available to the next
-worker.  Pass a shared `state_store=` backend — Redis, Postgres, or any
-implementation of `StateStoreProtocol` — to preserve cooldown state across
-requests.  Backends are available as of the P3 release.
+**The registry and everything the optimizer learns are always global** — one model
+list, one set of quality windows and cooldowns, shared by every scope. There is no
+per-tenant registry partition.
 
-**All batteries** (registry, secrets, telemetry) scope records exactly to the
-`user_id` passed. A broker with `user_id=None` (the default) sees and writes
-only unscoped rows — reproducing today's single-tenant behavior. The same LLM
-name can exist for multiple users independently.
+**Secrets are the one thing that is actually per-scope.** Key resolution tries
+`resolve(f"{scope}/{api_key_ref}")` first, falling back to `resolve(api_key_ref)` — an
+own key if the user set one, the shared key otherwise. The journal also carries `scope`
+as a plain attribution field, filterable via `calls(...)` (learning itself stays
+unscoped — a chatty scope's ratings feed the same shared quality windows as everyone
+else's).
 
-**Optional paranoia guard** — `Secrets(require_user_id=True)` (and the SQLite
-equivalent) raises `UserScopeError` if a broker calls `resolve` with
-`user_id=None`. Use this when auth must always produce a real user id:
-
-```python
-from llmbroker import UserScopeError
-import llmbroker.sqlite
-
-secrets = llmbroker.sqlite.Secrets("broker.db", require_user_id=True)
-```
-
-### AWS Secrets Manager backend
+## AWS Secrets Manager backend
 
 Install the extra first:
 
@@ -386,9 +396,9 @@ uv pip install "llmbroker[aws]"
 
 ```python
 import llmbroker
-import llmbroker.aws
+from llmbroker.aws.secrets import Secrets as AwsSecrets
 
-secrets = llmbroker.aws.Secrets(region_name="us-east-1")
+secrets = AwsSecrets(region_name="us-east-1")
 
 async with llmbroker.AsyncBroker(
     registry=llmbroker.Registry("llms.toml"),
@@ -397,12 +407,11 @@ async with llmbroker.AsyncBroker(
     reply = await llms.ask("Hello")
 ```
 
-Secrets are stored under `llmbroker/{ref}` (single-tenant) or
-`llmbroker/{ref}/{user_id}` (per-user) in AWS Secrets Manager.
-The prefix defaults to `"llmbroker/"` and is configurable.
-Pass `require_user_id=True` for the same paranoia guard.
+Secrets are stored under `{prefix}{ref}` in AWS Secrets Manager — `prefix` defaults to
+`"llmbroker/"` and is configurable. `ref` already carries any `scope` prefix the broker
+added, so no separate per-user path form exists on the backend itself.
 
-### HashiCorp Vault backend
+## HashiCorp Vault backend
 
 Install the extra first:
 
@@ -412,9 +421,9 @@ uv pip install "llmbroker[vault]"
 
 ```python
 import llmbroker
-import llmbroker.vault
+from llmbroker.vault.secrets import Secrets as VaultSecrets
 
-secrets = llmbroker.vault.Secrets(url="https://vault.example.com", token="s.xxx")
+secrets = VaultSecrets(url="https://vault.example.com", token="s.xxx")
 
 async with llmbroker.AsyncBroker(
     registry=llmbroker.Registry("llms.toml"),
@@ -423,9 +432,8 @@ async with llmbroker.AsyncBroker(
     reply = await llms.ask("Hello")
 ```
 
-Secrets are stored at KV v2 paths `llmbroker/{ref}` (single-tenant) or
-`llmbroker/users/{user_id}/{ref}` (per-user). The KV mount defaults to `"secret"`.
-Pass `require_user_id=True` for the same paranoia guard.
+KV v2 engine, path `llmbroker/{ref}`. The KV mount defaults to `"secret"` and is
+configurable via `mount_point=`.
 
 ## Alembic integration
 

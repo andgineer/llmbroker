@@ -58,18 +58,20 @@ import llmbroker
 
 registry = llmbroker.Registry("llms.toml")
 info = asyncio.run(registry.key_info())
-# {"GROQ_API_KEY": KeyInfo(api_key_ref="GROQ_API_KEY", effort=EffortLevel.SIGNUP,
-#                          value=ValueLevel.GOOD, help="Create a free API key at [groq](...) ..."), ...}
+# {"GROQ_API_KEY": KeyInfo(api_key_ref="GROQ_API_KEY", help="Create a free API key at [groq](...) ...",
+#                          extra={"effort": "signup", "value": "good"}), ...}
 ```
 
-`key_info()` возвращает `KeyInfo` (markdown `help`, а также `effort`/`value` для
-сортировки при онбординге) на каждый `api_key_ref`. Это опциональная возможность реестра
-(`KeyInfoProtocol` в `llmbroker.protocols.registry`): реестры с такими данными её
-предоставляют, остальные — нет; проверяйте через `isinstance(registry, KeyInfoProtocol)`,
-если принимаете произвольные реестры. Она не зависит от брокера — реестр не нужно
-передавать как `seed=`, чтобы прочитать подсказки. Отсутствие ключа для части моделей —
-нормальный режим работы llmbroker: пул маршрутизирует по тем ключам, что есть; ошибка —
-только если рабочих моделей не осталось совсем.
+`key_info()` возвращает `KeyInfo` (markdown `help`, а также произвольный проброс
+`extra: dict[str, str]` — всё остальное, что лежит в TOML-секции `[keys.REF]`;
+у llmbroker нет своей таксономии на этот счёт) на каждый `api_key_ref`. Это
+опциональная возможность реестра (`KeyInfoProtocol` в `llmbroker.protocols.registry`):
+реестры с такими данными её предоставляют, остальные — нет; проверяйте через
+`isinstance(registry, KeyInfoProtocol)`, если принимаете произвольные реестры. Она не
+зависит от брокера — реестр не нужно подключать к брокеру, чтобы прочитать подсказки.
+Отсутствие ключа для части моделей — нормальный режим работы llmbroker: пул
+маршрутизирует по тем ключам, что есть; ошибка — только если рабочих моделей не
+осталось совсем.
 
 ## Вызов брокера
 
@@ -132,56 +134,93 @@ reply.record_quality(1.0)   # хороший ответ
 reply.record_quality(0.0)   # неудачный
 ```
 
-Оценка сохраняется в телеметрию (при использовании SQLite-бэкенда) и, если активен
-оптимизатор (по умолчанию так и есть), попадает в накопленный профиль качества этой
-модели — см. «Операции» и «Накопленный профиль» ниже.
+Оценка попадает в журнал как самостоятельная, отдельная запись (никогда не
+привязывается обратно к самому вызову) и, если активен оптимизатор (по умолчанию так
+и есть), питает окно качества этой модели по операции — см. «Обучение и выбор
+модели» ниже.
 
 ### Операции
 
-Пометьте вызов видом задачи через `operation=`. Всё, что связано с качеством —
-затухающая агрегата качества, демоции по операциям и ранжирование
-`background_operations` — привязано к паре `(llm, operation)`, потому что полезность
-модели действительно зависит от задачи: на простых задачах модель может быть хороша,
-на сложных — слаба. Вызовы без `operation=` попадают в общий bucket `None`.
+Пометьте вызов видом задачи через `operation=`. Оценки качества и демоции привязаны
+к паре `(llm, operation)`, потому что полезность модели действительно зависит от
+задачи: на простых задачах модель может быть хороша, на сложных — слаба. Вызовы без
+`operation=` попадают в один общий bucket (ключ `None`).
 
 ```python
 reply = await llms.ask("Кратко перескажи этот пункт договора", operation="summarize")
 reply.record_quality(0.9)  # оценка попадает именно в bucket "summarize"
-
-# Фоновая (не интерактивная) работа ранжируется сначала по качеству, потом по задержке
-reply = await llms.ask("Ночная пакетная классификация", operation="classify")
 ```
 
-Пометьте операцию как фоновую (пакетную/офлайн, не ожидающую человека), перечислив
-её в `Optimizer(background_operations={"classify", ...})` — тогда цель ранжирования
-меняется с интерактивной по умолчанию `(latency, -usable_rate)` на
-`(-usable_rate, latency)`.
+## Обучение и выбор модели
 
-### Накопленный профиль
+Когда оптимизатор активен (`optimize=True`, по умолчанию), каждая оценённая
+метрика попадает в скользящее окно последних `quality_window` (по умолчанию 30)
+оценок для пары `(модель, операция)`. Bucket **демотируется**, как только в нём
+накопится не менее `quality_min_count` оценок (по умолчанию 10), а верхняя граница
+Уилсона по ним опустится ниже `quality_floor` (по умолчанию 0.3).
 
-Когда активен оптимизатор, каждый вызов и каждая оценка качества попадают в
-долговечный, привязанный к операции профиль «насколько хороша эта модель для такого
-рода задач», который переживает перезапуски, обновления пресета и (при общем
-state store) виден всем экземплярам в кластере. Модель, чьё измеренное качество для
-какой-то операции стабильно низкое, **демотируется** — переносится в конец очереди
-маршрутизации для этой операции — но никогда не исключается молча, потому что сигнал
-качества — это ваше собственное мнение и оно может быть неточным. Единственное, что
-реально исключает модель — ручная блокировка ниже. Полная механика (затухающие
-агрегаты, «мёртвая зона» решения, многоуровневый выбор) — в
+Выбор — это одна сортировка: в рамках запрошенной операции демотированная модель
+уходит в конец списка после всех недемотированных; среди слотов с одинаковым
+вердиктом демоции побеждает порядок из реестра/пресета (чем ниже позиция, тем
+лучше). Демоция всегда мягкая — если в пуле остались только демотированные модели,
+запрос всё равно обслуживается, потому что сигнал качества — это ваше собственное
+мнение и оно может быть неточным. Общего вердикта «плохая модель» не существует:
+одна и та же модель может быть демотирована для `"classify"` и в полном порядке для
+`"summarize"`.
+
+Восстановление — это ровно новые оценки, вытесняющие окно: как только граница
+снова поднимается выше порога, демоция снимается. Нет восстановления по времени,
+нет пробного трафика и нет отдельного вызова «сбросить качество» — единственный
+способ обновить накопленное качество модели — продолжать присылать ей оценки.
+
+Это накопленное состояние (окна оценок, общие 429/503 cooldown, флипы демоции)
+выводится из журнала вызовов и перечитывается по debounce — где оно хранится, см.
+«Продакшен» ниже. Полная механика — в
 [`optimizer.md`](https://github.com/andgineer/llmbroker/blob/main/specs/reference/optimizer.md).
 
-### Ручная блокировка модели
+## Администрирование
+
+`disable_llm` — это ручной, жёсткий вердикт, отдельный от (и сильнее, чем) демоция
+по качеству:
 
 ```python
-await llms.disable_llm("groq-llama", reason="галлюцинирует на нашем eval-наборе")
+await llms.disable_llm("groq-llama")
 # ... позже ...
 await llms.enable_llm("groq-llama")
 ```
 
-`disable_llm` — единственный вердикт, который реально исключает модель из
-маршрутизации: покрывает все операции, включая будущие, переживает обновления
-пресета и никогда не переопределяется оптимизатором. `enable_llm` снимает блокировку
-и сбрасывает накопленную историю качества этой модели — чистый пробный период.
+`disable_llm` полностью выводит модель из маршрутизации — по всем операциям,
+включая будущие, — переживает синхронизацию пресета, пока `enable_llm` не снимет
+вердикт. Значение хранится в файле `store/disabled.yml` стора (или в аналогичной
+таблице БД), который можно редактировать вручную, минуя брокер. `enable_llm` не
+сбрасывает накопленную историю качества модели — она восстанавливается обычным
+образом, через новые оценки.
+
+Проверить текущий вердикт через живой хендл:
+
+```python
+llm = await llms.get("groq-llama")
+print(llm.disabled)
+```
+
+Или прочитать сырые факты по всем моделям сразу:
+
+```python
+for name, entry in (await llms.snapshot()).items():
+    print(name, entry.disabled, entry.has_key, entry.cooldown_until, entry.demoted_operations)
+```
+
+`snapshot()` возвращает по одному `LLMSnapshot` на модель — `disabled`, `has_key`,
+`cooldown_until`, `demoted_operations` (кортеж, который может содержать `None` —
+bucket для вызовов без `operation=`) и `metrics` (число вызовов, последний статус,
+время последнего вызова) — сырые факты без статусного enum или правила
+приоритета; представление выбираете вы сами.
+
+Прочитать журнал вызовов напрямую:
+
+```python
+calls = await llms.calls(limit=50)
+```
 
 ## Инструменты и агенты
 
@@ -232,7 +271,7 @@ print(reply.text)
 
 - **долгоживущий процесс создаёт брокеры повторно** (в обработчике запроса,
   в цикле) — иначе на каждый экземпляр утекает фоновый поток;
-- **подключён внешний сервис (Redis, Postgres)** — у него постоянное соединение,
+- **подключён внешний сервис (Postgres, MongoDB)** — у него постоянное соединение,
   которое надёжно закрывается только явно.
 
 ```python
@@ -241,7 +280,7 @@ with llmbroker.Broker("llms.toml") as llms:
     reply = llms.ask("...")
 
 # Или вручную, когда with неудобен
-llms = llmbroker.Broker(registry=..., state_store=...)
+llms = llmbroker.Broker("llms.toml")
 try:
     reply = llms.ask("...")
 finally:
@@ -250,135 +289,111 @@ finally:
 
 `AsyncBroker` — то же самое через `async with` или `await llms.aclose()`.
 
-### SQLite-бэкенд: история вызовов и управление пулом
+### Выбор источника данных
+
+Первый позиционный аргумент брокера определяет диспетчеризацию по своей форме —
+один параметр задаёт сразу реестр, секреты и стор:
 
 ```python
-import llmbroker
-import llmbroker.sqlite
-from datetime import UTC, datetime
-
-with llmbroker.Broker(
-    stack=llmbroker.sqlite.Stack("broker.db"),
-    seed="llms.toml",
-    seed_policy=llmbroker.SeedPolicy.SYNC,  # значение по умолчанию — можно не указывать
-) as llms:
-    reply = llms.ask("Вопрос")
-
-    # Состояние пула
-    for name, entry in llms.snapshot().items():
-        print(name, entry.state.phase, entry.metrics)
-
-    # Получить один LLM
-    llm = llms.get("groq-llama")
-    print(llm.config, llm.state())
-
-    # Количество загруженных LLM
-    print(llms.count())
-
-    # Добавить / обновить / удалить LLM во время работы
-    from llmbroker.models import LLMConfig
-    llms.add(LLMConfig(
-        name="new-llm",
-        base_url="https://api.example.com/v1",
-        model="gpt-4o-mini",
-        api_key_ref="EXAMPLE_API_KEY",
-    ))
-    llms.update(LLMConfig(
-        name="new-llm",
-        base_url="https://api.example.com/v1",
-        model="gpt-4o",
-        api_key_ref="EXAMPLE_API_KEY",
-    ))
-    llms.remove("groq-gemma")
-
-    # История вызовов
-    calls = llms.calls(limit=50)
-    llms.purge_calls(before=datetime(2025, 1, 1, tzinfo=UTC))
+llmbroker.Broker("llms.toml")                    # файловый реестр + секреты из окружения + FileStore
+llmbroker.Broker("broker.db")                     # sqlite для всех трёх портов
+llmbroker.Broker("postgresql://host/db")          # postgres для всех трёх портов
+llmbroker.Broker("mongodb://host/db")             # mongodb для всех трёх портов
 ```
 
-Значения `SeedPolicy`:
-
-| Политика | Поведение |
-|---|---|
-| `SeedPolicy.SYNC` (по умолчанию) | синхронизация под управлением куратора: добавляет новые записи пресета, обновляет их операционные поля (`base_url`, `api_key_ref`, `metadata`), депрекейтит (никогда не удаляет) записи, пропавшие из пресета, и никогда не трогает запись, добавленную вами через `add()`. Если строка пресета меняет `model` у существующей записи — изменение отклоняется с алертом вместо применения: смена модели должна быть новым именем записи, чтобы старые накопленные данные никогда не были молча переприписаны. Накопленный профиль не трогает никогда |
-| `SeedPolicy.MIRROR` | DB = источник точно: добавить новые, обновить изменённые, удалить удалённые — включая накопленный профиль этой записи. Единственная политика без гарантии «никогда не удалять», для тех, кому нужна именно чистка |
-| `SeedPolicy.IF_EMPTY` | заполнить только если DB пуста, иначе ничего |
-| `SeedPolicy.ADD` | только добавить новые по имени, существующие не трогать |
-
-### Смешивание бэкендов
-
-`stack=` собирает реестр, секреты, телеметрию и стор состояния из одного общего
-подключения; любой из четырёх портов можно переопределить отдельно, включая
-полное отключение стора состояния (`state_store=None`). Доступно для
-`llmbroker.sqlite.Stack`, `llmbroker.postgres.Stack` и `llmbroker.mongodb.Stack`
-— трёх бэкендов, реализующих все четыре порта.
+Нераспознанная форма выбрасывает понятную ошибку с перечислением допустимых
+вариантов; отсутствующий extra (например, sqlite без
+`pip install llmbroker[sqlite]`) — понятную ошибку вида
+`pip install llmbroker[...]`. Любой порт можно переопределить явно — явные
+`registry=`/`secrets=`/`store=` всегда побеждают то, что предложил бы источник:
 
 ```python
 import llmbroker
-import llmbroker.postgres
-import llmbroker.redis
+from llmbroker.postgres.registry import Registry as PostgresRegistry
 
-# Postgres для registry/secrets/telemetry, Redis для межнодового cooldown-состояния
 pool = await asyncpg.create_pool(dsn)
 async with llmbroker.AsyncBroker(
-    stack=llmbroker.postgres.Stack(pool),
-    state_store=llmbroker.redis.StateStore.from_url("redis://localhost"),
+    registry=PostgresRegistry(pool),
+    secrets=llmbroker.Secrets(),   # секреты из окружения вместо БД
 ) as llms:
     reply = await llms.ask("Hello")
 ```
 
-### Мультипользовательский режим (per-user scoping)
+### Заполнение БД-реестра
 
-В многопользовательском приложении у каждого пользователя могут быть свои
-API-ключи и свой набор LLM-записей — при этом используется одна общая база данных.
+БД-реестр стартует пустым; синхронизируйте его с пресетом явно, один раз:
 
-**Порты создаются один раз при старте приложения; брокер создаётся на каждый запрос.**
-Создайте `registry`, `secrets`, `state_store` и `telemetry` один раз и
-передавайте их по ссылке. Для каждого запроса создавайте новый `AsyncBroker` (или
-`Broker`) с идентификатором пользователя:
+```python
+llms = llmbroker.AsyncBroker(
+    registry=llmbroker.sqlite.registry.Registry("broker.db"),
+    secrets=llmbroker.sqlite.secrets.Secrets("broker.db"),
+)
+await llms.sync(llmbroker.Registry(".deploy/llms.toml"))  # один раз, например при деплое
+await llms.ensure_pool()   # немедленная инициализация при старте
+```
+
+`sync(preset)` — полная синхронизация с файлом пресета: добавляет новые записи,
+обновляет существующие, удаляет отсутствующие в пресете — при удалении ничего не
+теряется, потому что ключи живут в secrets, а накопленное состояние выводится из
+журнала (если модель позже вернётся в пресет, её старые оценки и вердикт
+подхватятся снова). Изменение `model` у существующей записи с тем же именем
+отклоняется с ошибкой — смена модели должна быть новым именем записи, это защищает
+связь между накопленным качеством модели и её именем. Провижининг над пустым
+реестром сразу завершается ошибкой и просит сначала вызвать `sync(preset)`.
+
+Та же синхронизация доступна из CLI — для скриптов инициализации БД:
+
+```bash
+python -m llmbroker sync llms.toml broker.db
+python -m llmbroker sync llms.toml "postgresql://host/db"
+```
+
+### Хранение журнала
+
+Журнал вызовов самоочищается; каждый бэкенд стора принимает параметр конструктора
+`retention` (по умолчанию 90 дней):
+
+```python
+from datetime import timedelta
+
+store = llmbroker.FileStore("store", retention=timedelta(days=30))
+```
+
+Отдельного вызова для очистки нет — retention проверяется автоматически при
+активности записи, не чаще раза в час.
+
+Замечание про капризных провайдеров: укажите `parallel=1` у записи `LLMConfig`,
+чтобы сериализовать вызовы к одной модели — полезно для провайдеров, не терпящих
+параллельных запросов с одним ключом.
+
+## Мультипользовательский режим
+
+Многопользовательское приложение может дать каждому пользователю свой API-ключ
+поверх одного общего реестра и стора — через непрозрачный параметр
+`scope: str | None` (`""` запрещена — для отсутствия скоупа используйте `None`):
 
 ```python
 import llmbroker
-import llmbroker.sqlite
 
-# Старт приложения — общая инфраструктура
-stack = llmbroker.sqlite.Stack("broker.db")
-# state_store=<backend>  # переопределить для stateless-серверов — см. примечание ниже
-
-# На каждый запрос — дешёвый экземпляр для одного пользователя
-async def handle_request(user_id: str, prompt: str) -> str:
-    async with llmbroker.AsyncBroker(
-        stack=stack,
-        # state_store=state_store,
-        user_id=user_id,
-    ) as llms:
+# Старт приложения — общая инфраструктура, одна общая БД
+async def handle_request(scope: str, prompt: str) -> str:
+    async with llmbroker.AsyncBroker("broker.db", scope=scope) as llms:
         result = await llms.ask(prompt)
         return result.text
 ```
 
-**Stateless-серверам нужен `state_store`.**  В схеме «один процесс на запрос»
-(несколько воркеров, балансировщик, перезапуски) внутрипроцессное состояние
-cooldown теряется между запросами — следующий воркер не знает, что LLM
-заблокирован по rate limit.  Передайте общий `state_store=` (Redis, Postgres
-или любую реализацию `StateStoreProtocol`), чтобы cooldown сохранялся между
-запросами.  Бэкенды доступны начиная с релиза P3.
+**Реестр и всё, чему учится оптимизатор, всегда общие** — один список моделей,
+одни окна качества и cooldown на все скоупы. Партиционирования реестра по
+пользователям не существует.
 
-**Все батареи** (реестр, секреты, телеметрия) привязывают записи точно к
-переданному `user_id`. Брокер с `user_id=None` (по умолчанию) видит и пишет
-только строки без скоупа — воспроизводя текущее однопользовательское поведение.
-Одно и то же имя LLM может существовать у нескольких пользователей независимо.
+**По-настоящему по-скоупово устроены только секреты.** Разрешение ключа сначала
+пробует `resolve(f"{scope}/{api_key_ref}")`, а при неудаче — `resolve(api_key_ref)`:
+свой ключ, если пользователь его завёл, иначе общий. Журнал также несёт `scope`
+как обычное поле атрибуции, доступное для фильтрации через `calls(...)` (само
+обучение остаётся неразделённым по скоупам — оценки болтливого скоупа питают те
+же общие окна качества, что и у всех остальных).
 
-**Опциональная защита** — `Secrets(require_user_id=True)` (и SQLite-аналог)
-выбрасывает `UserScopeError`, если брокер вызывает `resolve` с `user_id=None`:
-
-```python
-from llmbroker import UserScopeError
-import llmbroker.sqlite
-
-secrets = llmbroker.sqlite.Secrets("broker.db", require_user_id=True)
-```
-
-### Бэкенд AWS Secrets Manager
+## Бэкенд AWS Secrets Manager
 
 Сначала установите extra:
 
@@ -388,9 +403,9 @@ uv pip install "llmbroker[aws]"
 
 ```python
 import llmbroker
-import llmbroker.aws
+from llmbroker.aws.secrets import Secrets as AwsSecrets
 
-secrets = llmbroker.aws.Secrets(region_name="us-east-1")
+secrets = AwsSecrets(region_name="us-east-1")
 
 async with llmbroker.AsyncBroker(
     registry=llmbroker.Registry("llms.toml"),
@@ -399,11 +414,12 @@ async with llmbroker.AsyncBroker(
     reply = await llms.ask("Привет")
 ```
 
-Секреты хранятся в AWS Secrets Manager по именам `llmbroker/{ref}` (однопользовательский
-режим) или `llmbroker/{ref}/{user_id}` (мультипользовательский). Префикс по умолчанию
-`"llmbroker/"`, он настраивается. Поддерживает `require_user_id=True`.
+Секреты хранятся в AWS Secrets Manager по именам `{prefix}{ref}` — `prefix` по
+умолчанию `"llmbroker/"` и настраивается. `ref` уже несёт любой префикс скоупа,
+который добавил брокер, поэтому отдельной формы пути «на пользователя» в самом
+бэкенде нет.
 
-### Бэкенд HashiCorp Vault
+## Бэкенд HashiCorp Vault
 
 Сначала установите extra:
 
@@ -413,9 +429,9 @@ uv pip install "llmbroker[vault]"
 
 ```python
 import llmbroker
-import llmbroker.vault
+from llmbroker.vault.secrets import Secrets as VaultSecrets
 
-secrets = llmbroker.vault.Secrets(url="https://vault.example.com", token="s.xxx")
+secrets = VaultSecrets(url="https://vault.example.com", token="s.xxx")
 
 async with llmbroker.AsyncBroker(
     registry=llmbroker.Registry("llms.toml"),
@@ -424,9 +440,8 @@ async with llmbroker.AsyncBroker(
     reply = await llms.ask("Привет")
 ```
 
-Секреты хранятся в KV v2 по путям `llmbroker/{ref}` (однопользовательский режим) или
-`llmbroker/users/{user_id}/{ref}` (мультипользовательский). Точка монтирования KV по
-умолчанию `"secret"`. Поддерживает `require_user_id=True`.
+KV v2, путь `llmbroker/{ref}`. Точка монтирования KV по умолчанию `"secret"` и
+настраивается через `mount_point=`.
 
 ## Интеграция с Alembic
 
