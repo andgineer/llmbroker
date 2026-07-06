@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig, LLMState
 from llmbroker.optimizer import Optimizer
 
@@ -117,15 +118,6 @@ class LLMPool:
     # Slot acquisition
     # ------------------------------------------------------------------
 
-    def _available(self, slot: _Slot, now: datetime) -> bool:
-        cap = slot.config.parallel
-        return (
-            slot.key is not None
-            and not slot.disabled
-            and (cap is None or slot.in_flight < cap)
-            and (slot.cooldown_until is None or slot.cooldown_until <= now)
-        )
-
     def _is_demoted(self, name: str, operation: str | None) -> bool:
         return self._optimizer is not None and self._optimizer.is_demoted(name, operation)
 
@@ -134,26 +126,68 @@ class LLMPool:
             self._optimizer.demoted_operations(name) if self._optimizer is not None else frozenset()
         )
 
-    def _wake_timeout(self, now: datetime, deadline: float | None) -> float | None:
-        """Seconds until the nearest event that could make a slot available, or
+    def _wake_timeout(
+        self,
+        now: datetime,
+        deadline: float | None,
+        candidates: list[_Slot],
+    ) -> float | None:
+        """Seconds until the nearest event that could make a candidate available, or
         ``None`` when nothing is scheduled (wait solely on notification)."""
-        candidates: list[float] = []
-        for slot in self._slots.values():
+        wakeups: list[float] = []
+        for slot in candidates:
             cap = slot.config.parallel
-            if slot.key is None or slot.disabled or (cap is not None and slot.in_flight >= cap):
+            if cap is not None and slot.in_flight >= cap:
                 continue
             if slot.cooldown_until is not None and slot.cooldown_until > now:
-                candidates.append((slot.cooldown_until - now).total_seconds())
+                wakeups.append((slot.cooldown_until - now).total_seconds())
         if deadline is not None:
-            candidates.append(deadline - time.monotonic())
-        return min(candidates) if candidates else None
+            wakeups.append(deadline - time.monotonic())
+        return min(wakeups) if wakeups else None
 
-    async def acquire(self, wait: float | None, *, operation: str | None = None) -> LLMConfig:
-        deadline = None if wait is None else time.monotonic() + wait
+    def _exhaustion_reason(self, exclude: frozenset[str]) -> str:
+        if exclude & self._slots.keys():
+            return "excluded"
+        if not self._slots:
+            return "empty_pool"
+        if not any(slot.key is not None for slot in self._slots.values()):
+            return "no_keys"
+        return "all_disabled"
+
+    def _raise_exhausted(self, exclude: frozenset[str]) -> None:
+        reason = self._exhaustion_reason(exclude)
+        message = {
+            "excluded": "every candidate model was excluded for this request",
+            "empty_pool": "the LLM pool has no slots",
+            "no_keys": (
+                "no LLM has a resolved api_key_ref — set at least one env var or configure"
+                " a secrets backend"
+            ),
+            "all_disabled": "every LLM is administratively disabled",
+        }[reason]
+        raise NoLLMAvailableError(message, reason=reason)
+
+    async def acquire(
+        self,
+        deadline: float | None,
+        *,
+        operation: str | None = None,
+        exclude: frozenset[str] = frozenset(),
+    ) -> LLMConfig:
         async with self._cond:
             while True:
                 now = datetime.now(UTC)
-                avail = [s for s in self._slots.values() if self._available(s, now)]
+                candidates = [
+                    s
+                    for s in self._slots.values()
+                    if s.key is not None and not s.disabled and s.config.name not in exclude
+                ]
+                avail = [
+                    s
+                    for s in candidates
+                    if (s.config.parallel is None or s.in_flight < s.config.parallel)
+                    and (s.cooldown_until is None or s.cooldown_until <= now)
+                ]
                 if avail:
                     slot = min(
                         avail,
@@ -161,11 +195,17 @@ class LLMPool:
                     )
                     slot.in_flight += 1
                     return slot.config
-                if wait == 0:
-                    raise TimeoutError("no LLM slot available and wait=0")
-                timeout = self._wake_timeout(now, deadline)
-                if deadline is not None and timeout is not None and timeout <= 0:
-                    raise TimeoutError("no LLM slot came free within wait")
+                if not candidates:
+                    self._raise_exhausted(exclude)
+                if deadline is not None and time.monotonic() >= deadline:
+                    cooling = [s.cooldown_until for s in candidates if s.cooldown_until is not None]
+                    retry_at = min(cooling) if cooling else None
+                    raise NoLLMAvailableError(
+                        "no LLM slot came free within wait",
+                        reason="timeout",
+                        retry_at=retry_at,
+                    )
+                timeout = self._wake_timeout(now, deadline, candidates)
                 try:
                     await asyncio.wait_for(self._cond.wait(), timeout)
                 except TimeoutError:
@@ -200,11 +240,6 @@ class LLMPool:
                 slot.in_flight = max(0, slot.in_flight - 1)
             self._cond.notify_all()
         logger.warning("LLM %s cooling for %ds", config.name, delay)
-
-    def mark_quality_fail(self, name: str) -> None:
-        slot = self._slots.get(name)
-        if slot is not None:
-            slot.fail_count += 1
 
     def state(self, name: str) -> LLMState:
         slot = self._slots.get(name)

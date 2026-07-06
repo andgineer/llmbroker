@@ -9,7 +9,7 @@ import pytest
 
 from llmbroker.backends.ports import DriverStore
 from llmbroker.broker.broker import AsyncBroker
-from llmbroker.exceptions import AllLLMsFailedError, NoLLMAvailableError
+from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
 from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.sqlite import Secrets as SqliteSecrets
@@ -43,6 +43,7 @@ def _http_ok(content="hello"):
     cm.__aenter__ = AsyncMock(return_value=cm)
     cm.__aexit__ = AsyncMock(return_value=False)
     cm.post = AsyncMock(return_value=resp)
+    cm.aclose = AsyncMock()
     return cm
 
 
@@ -59,6 +60,7 @@ def _http_error(status):
     cm.__aenter__ = AsyncMock(return_value=cm)
     cm.__aexit__ = AsyncMock(return_value=False)
     cm.post = AsyncMock(return_value=resp)
+    cm.aclose = AsyncMock()
     return cm
 
 
@@ -156,11 +158,12 @@ def test_ask_delegates_to_chat(tmp_path):
     asyncio.run(run())
 
 
-def test_chat_missing_key_raises_all_llms_failed(tmp_path):
+def test_chat_missing_key_raises_no_llm_available(tmp_path):
     async def run():
         async with AsyncBroker(registry=_registry(tmp_path), store=InMemoryStore()) as broker:
-            with pytest.raises(AllLLMsFailedError, match="api_key_ref"):
+            with pytest.raises(NoLLMAvailableError, match="api_key_ref") as exc_info:
                 await broker.chat([{"role": "user", "content": "hi"}])
+            assert exc_info.value.reason == "no_keys"
 
     asyncio.run(run())
 
@@ -193,7 +196,7 @@ def test_chat_429_increments_fail_count(tmp_path):
 
 
 def test_chat_500_wait0_raises_no_llm_available(tmp_path):
-    """A generic HTTP error cools the slot and fails over rather than raising AllLLMsFailedError;
+    """A generic HTTP error cools the slot and fails over instead of raising immediately;
     with wait=0 and no other LLM to fail over to, that surfaces as NoLLMAvailableError."""
 
     async def run():

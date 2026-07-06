@@ -47,8 +47,9 @@ except llmbroker.NoLLMAvailableError:
     print("All LLMs are busy")
 ```
 
-`wait=0` fails immediately. Scripts do not need to close the broker; when you do
-need to — see [Servers & clusters](server.md#closing).
+`wait=0` never blocks on a busy or cooling model, but still tries every model
+that is free right now before giving up. Scripts do not need to close the
+broker; when you do need to — see [Servers & clusters](server.md#closing).
 
 ## Quality rating {#quality}
 

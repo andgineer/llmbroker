@@ -163,6 +163,7 @@ class AsyncBroker:
             await self._catalog.resync()
 
     async def aclose(self) -> None:
+        await self._router.aclose()
         for port in (self._registry, self._secrets, self._store):
             if isinstance(port, AsyncResourceProtocol):
                 await port.aclose()
@@ -189,8 +190,8 @@ class AsyncBroker:
         await self.ensure_pool()
         try:
             return await self._router.ask(prompt, operation=operation, trace_id=trace_id, wait=wait)
-        except NoLLMAvailableError:
-            self._maybe_alert_underprov()
+        except NoLLMAvailableError as exc:
+            self._maybe_alert_underprov(exc)
             raise
 
     async def chat(
@@ -211,8 +212,8 @@ class AsyncBroker:
                 trace_id=trace_id,
                 wait=wait,
             )
-        except NoLLMAvailableError:
-            self._maybe_alert_underprov()
+        except NoLLMAvailableError as exc:
+            self._maybe_alert_underprov(exc)
             raise
 
     # ------------------------------------------------------------------
@@ -258,14 +259,18 @@ class AsyncBroker:
     async def calls(self, *, limit: int) -> list[Call]:
         return await self._require_queryable().calls(limit=limit, scope=self._scope)
 
-    def _maybe_alert_underprov(self) -> None:
+    def _maybe_alert_underprov(self, exc: NoLLMAvailableError) -> None:
         """Fire when zero keyed configs are routable — the genuine "no usable models" alarm.
 
         A keyless config is never enqueued/acquired/cooled (see the partial-key framing
         in architecture.md), so it must be excluded here: with even one keyless config
         present, an unfiltered check could never observe "all non-AVAILABLE", masking
-        the real alarm even when every *keyed* config is COOLING.
+        the real alarm even when every *keyed* config is COOLING. Only a ``"timeout"``
+        reason means the pool is merely temporarily exhausted; every other reason
+        (no keys, all disabled, empty pool) already logs its own actionable line.
         """
+        if exc.reason != "timeout":
+            return
         if self._optimizer is None:
             return
         if not self._pool.configs:

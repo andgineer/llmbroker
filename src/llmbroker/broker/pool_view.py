@@ -2,15 +2,11 @@
 
 from collections.abc import Mapping
 
-from llmbroker.broker.learning import (
-    _DEFAULT_QUALITY_REBUILD_LIMIT,
-    _LearningHook,
-    metrics_from_calls,
-)
+from llmbroker.broker.learning import resolve_metrics_map
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.result import AsyncLLM
-from llmbroker.models import LLMMetrics, LLMSnapshot
-from llmbroker.protocols.store import QueryableStoreProtocol, StoreProtocol
+from llmbroker.models import LLMSnapshot
+from llmbroker.protocols.store import StoreProtocol
 
 
 class PoolView:
@@ -28,16 +24,8 @@ class PoolView:
     def count(self) -> int:
         return len(self._pool)
 
-    async def _metrics_map(self) -> dict[str, LLMMetrics]:
-        if isinstance(self._store, _LearningHook):
-            return self._store.metrics_cache
-        if isinstance(self._store, QueryableStoreProtocol):
-            rows = await self._store.calls(limit=_DEFAULT_QUALITY_REBUILD_LIMIT)
-            return metrics_from_calls(rows)
-        return {}
-
     async def snapshot(self) -> Mapping[str, LLMSnapshot]:
-        metrics_map = await self._metrics_map()
+        metrics_map = await resolve_metrics_map(self._store)
         result: dict[str, LLMSnapshot] = {}
         for name, cfg in self._pool.configs.items():
             result[name] = LLMSnapshot(

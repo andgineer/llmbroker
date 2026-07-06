@@ -5,6 +5,23 @@
 cools it down and retries the next available one. The caller gets a result or an
 exception — never silence.
 
+**Error contract.** When no model is available, the broker raises one
+exception (`NoLLMAvailableError`) carrying a machine-readable `reason` and,
+when the pool is only temporarily exhausted, the earliest time a model is
+expected back (`retry_at`). A client-side request error (any 4xx other than
+429/401/403) never cools the model down — it fails over to the next model
+within the same call, excluding the failing one for the rest of that call
+only; if every candidate rejects the request this way, the last provider
+error is re-raised to the caller instead of a generic "no LLM available".
+
+**`wait` is the deadline of the whole call**, not of each internal attempt:
+`wait=0` means non-blocking — try every currently-free model, but never wait
+on a cooldown or a busy slot; `wait=None` (the default) waits as long as at
+least one model can still come back by itself (a cooldown expiring, a capped
+slot releasing), and raises immediately when none ever will (an empty pool,
+every model keyless, every model disabled, or every candidate excluded for
+this call).
+
 ---
 
 ## The three pluggable backends

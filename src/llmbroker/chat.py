@@ -84,18 +84,34 @@ def parse_usage(data: dict) -> Usage | None:
     )
 
 
+def make_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=_HTTP_TIMEOUT)
+
+
 async def call_provider(
     config: LLMConfig,
     api_key: str,
     messages: list[dict],
     tools: list[dict] | None,
+    *,
+    client: httpx.AsyncClient | None = None,
 ) -> tuple[str, list[dict] | None, Usage | None]:
-    """POST an OpenAI-compatible completion and return (content, tool_calls, usage)."""
+    """POST an OpenAI-compatible completion and return (content, tool_calls, usage).
+
+    With ``client`` passed, it is reused as-is (never closed here — the caller
+    owns its lifetime); with ``None``, an ephemeral client is opened and closed
+    for this single call.
+    """
     url, headers, body = build_chat_request(config, api_key, messages, tools)
-    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+    if client is not None:
         resp = await client.post(url, headers=headers, json=body)
         resp.raise_for_status()
         data = resp.json()
+    else:
+        async with make_client() as ephemeral:
+            resp = await ephemeral.post(url, headers=headers, json=body)
+            resp.raise_for_status()
+            data = resp.json()
     message = message_from_response(data)
     content = str(message.get("content") or "")
     return content, parse_tool_calls(message), parse_usage(data)
@@ -135,6 +151,21 @@ def execute_tool_calls(
     return results
 
 
+def _advance_tool_loop(
+    convo: list[dict],
+    result,  # noqa: ANN001 - AsyncResult | Result (avoid import cycle)
+    dispatch: Mapping[str, Callable[..., object]],
+) -> str | None:
+    """Append the assistant turn and tool results; return the final text when done."""
+    if not result.tool_calls:
+        return result.text
+    convo.append(
+        {"role": "assistant", "content": result.text or None, "tool_calls": result.tool_calls},
+    )
+    convo.extend(execute_tool_calls(result.tool_calls, dispatch))
+    return None
+
+
 async def arun_tool_loop(
     llms,  # noqa: ANN001 - AsyncBroker (avoid import cycle)
     messages: list[dict],
@@ -149,12 +180,9 @@ async def arun_tool_loop(
     dispatch = dispatch or {}
     for _ in range(max_steps):
         result = await llms.chat(convo, tools=tools, **chat_kwargs)
-        if not result.tool_calls:
-            return result.text
-        convo.append(
-            {"role": "assistant", "content": result.text or None, "tool_calls": result.tool_calls},
-        )
-        convo.extend(execute_tool_calls(result.tool_calls, dispatch))
+        text = _advance_tool_loop(convo, result, dispatch)
+        if text is not None:
+            return text
     return ""
 
 
@@ -176,12 +204,9 @@ def run_tool_loop(
     dispatch = dispatch or {}
     for _ in range(max_steps):
         result = llms.chat(convo, tools=tools, **chat_kwargs)
-        if not result.tool_calls:
-            return result.text
-        convo.append(
-            {"role": "assistant", "content": result.text or None, "tool_calls": result.tool_calls},
-        )
-        convo.extend(execute_tool_calls(result.tool_calls, dispatch))
+        text = _advance_tool_loop(convo, result, dispatch)
+        if text is not None:
+            return text
     return ""
 
 
@@ -191,6 +216,7 @@ __all__ = [
     "call_provider",
     "execute_tool_calls",
     "is_rate_limit",
+    "make_client",
     "message_from_response",
     "parse_tool_calls",
     "parse_usage",

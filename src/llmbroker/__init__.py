@@ -4,7 +4,6 @@ from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.chat import arun_tool_loop, run_tool_loop
 from llmbroker.exceptions import (
-    AllLLMsFailedError,
     LLMRequestError,
     NoLLMAvailableError,
 )
@@ -16,7 +15,6 @@ from llmbroker.standalone.store import FileStore, InMemoryStore
 from llmbroker.sync import LLM, Broker, Result
 
 __all__ = [
-    "AllLLMsFailedError",
     "AsyncBroker",
     "AsyncLLM",
     "AsyncResult",

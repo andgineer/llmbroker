@@ -52,6 +52,17 @@ def metrics_from_calls(rows: list[Call]) -> dict[str, LLMMetrics]:
     return metrics
 
 
+async def resolve_metrics_map(store: StoreProtocol) -> dict[str, LLMMetrics]:
+    """Derive a per-LLM metrics map from whatever the store can offer:
+    a ``_LearningHook``'s cache, a queryable store's tail, or nothing."""
+    if isinstance(store, _LearningHook):
+        return store.metrics_cache
+    if isinstance(store, QueryableStoreProtocol):
+        rows = await store.calls(limit=_DEFAULT_QUALITY_REBUILD_LIMIT)
+        return metrics_from_calls(rows)
+    return {}
+
+
 class _LearningHook:
     """Store hook: cooldown bookkeeping, dead-key drops, quality windows,
     debounced journal rebuild."""
@@ -132,12 +143,12 @@ class _LearningHook:
         if not force and now < self._next_rebuild:
             return
         self._next_rebuild = now + _REBUILD_TTL
+        if resync_registry:
+            await self._resync_registry()
         if isinstance(self._inner, QueryableStoreProtocol):
             rows = await self._inner.calls(limit=self._quality_rebuild_limit)
             self._apply_scores_and_metrics(rows)
             await self._apply_peer_effects(rows)
-        if resync_registry:
-            await self._resync_registry()
         await self._resync_disabled()
 
     def _own_key_hash(self, name: str) -> str | None:

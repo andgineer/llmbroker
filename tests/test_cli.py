@@ -3,8 +3,9 @@
 import asyncio
 import socket
 import urllib.error
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from llmbroker.broker.broker import AsyncBroker
 from llmbroker.cli import main
 from llmbroker.sqlite import Store as SqliteStore
 
@@ -163,3 +164,40 @@ def test_sync_missing_file_returns_1(tmp_path, capsys):
     rc = main(["sync", str(tmp_path / "nope.toml"), str(tmp_path / "x.db")])
     assert rc == 1
     assert "error" in capsys.readouterr().err
+
+
+# --- env -> sync -> ask round trip (mission #2) ---
+
+
+def test_env_sync_ask_round_trip(tmp_path, capsys, monkeypatch):
+    """A preset's api_key_ref surfaces through `env`, `sync` mirrors it into a DB
+    registry, and a broker built over that DB routes a real call."""
+    f = tmp_path / "preset.toml"
+    f.write_text(
+        '[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n'
+        '[keys.KEY_A]\nhelp="Get it at https://example.com/keys"\n'
+    )
+    preset = str(f)
+    db = str(tmp_path / "x.db")
+
+    rc = main(["env", preset])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "KEY_A" in out
+    assert "Get it at https://example.com/keys" in out
+
+    monkeypatch.setenv("KEY_A", "test-key")
+
+    rc = main(["sync", preset, db])
+    assert rc == 0
+
+    async def run():
+        async with AsyncBroker(db) as broker:
+            with patch(
+                "llmbroker.broker.router.call_provider",
+                new=AsyncMock(return_value=("hi", None, None)),
+            ):
+                result = await broker.ask("hello")
+        assert result.text == "hi"
+
+    asyncio.run(run())

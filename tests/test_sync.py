@@ -31,6 +31,7 @@ def _http_ok(content="hello"):
     cm.__aenter__ = AsyncMock(return_value=cm)
     cm.__aexit__ = AsyncMock(return_value=False)
     cm.post = AsyncMock(return_value=resp)
+    cm.aclose = AsyncMock()
     return cm
 
 
@@ -47,6 +48,7 @@ def _http_error(status):
     cm.__aenter__ = AsyncMock(return_value=cm)
     cm.__aexit__ = AsyncMock(return_value=False)
     cm.post = AsyncMock(return_value=resp)
+    cm.aclose = AsyncMock()
     return cm
 
 
@@ -91,7 +93,7 @@ def test_broker_ask_happy_path(tmp_path):
 
 
 def test_broker_chat_500_wait0_raises_no_llm_available(tmp_path):
-    """A generic HTTP error cools the slot and fails over rather than raising AllLLMsFailedError;
+    """A generic HTTP error cools the slot and fails over instead of raising immediately;
     with wait=0 and no other LLM to fail over to, that surfaces as NoLLMAvailableError."""
     with Broker(registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore()) as broker:
         with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(500)):

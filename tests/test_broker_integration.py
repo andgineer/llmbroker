@@ -29,6 +29,7 @@ def _http_ok(content="hello"):
     cm.__aenter__ = AsyncMock(return_value=cm)
     cm.__aexit__ = AsyncMock(return_value=False)
     cm.post = AsyncMock(return_value=resp)
+    cm.aclose = AsyncMock()
     return cm
 
 
@@ -45,7 +46,19 @@ def _http_error(status):
     cm.__aenter__ = AsyncMock(return_value=cm)
     cm.__aexit__ = AsyncMock(return_value=False)
     cm.post = AsyncMock(return_value=resp)
+    cm.aclose = AsyncMock()
     return cm
+
+
+def _http_status_error(status: int) -> httpx.HTTPStatusError:
+    """A bare ``httpx.HTTPStatusError``, for patching ``call_provider`` directly —
+    needed when a test's side effects must vary across attempts within one broker,
+    since the broker now reuses a single lazily-created HTTP client per call."""
+    resp = MagicMock()
+    resp.status_code = status
+    resp.headers = {}
+    resp.text = f"HTTP {status}"
+    return httpx.HTTPStatusError("err", request=MagicMock(), response=resp)
 
 
 # ---------------------------------------------------------------------------
@@ -126,8 +139,8 @@ async def test_failover_routes_and_journals(stack, monkeypatch):
     await _seed_stack(stack, [_cfg("llm1"), _cfg("llm2")], {"KEY": "test-key"}, monkeypatch)
     async with stack.make_broker() as broker:
         with patch(
-            "llmbroker.chat.httpx.AsyncClient",
-            side_effect=[_http_error(429), _http_ok("ok-response")],
+            "llmbroker.broker.router.call_provider",
+            new=AsyncMock(side_effect=[_http_status_error(429), ("ok-response", None, None)]),
         ):
             result = await broker.chat([{"role": "user", "content": "hi"}])
         assert result.text == "ok-response"
@@ -149,8 +162,8 @@ async def test_all_offline_raises_and_alerts(stack, monkeypatch, caplog):
     async with stack.make_broker() as broker:
         with (
             patch(
-                "llmbroker.chat.httpx.AsyncClient",
-                side_effect=[_http_error(429), _http_error(429)],
+                "llmbroker.broker.router.call_provider",
+                new=AsyncMock(side_effect=[_http_status_error(429), _http_status_error(429)]),
             ),
             caplog.at_level("WARNING", logger="llmbroker.broker"),
         ):

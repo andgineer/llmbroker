@@ -35,7 +35,7 @@ print(llms.ask("Привет, как дела?").text)
 ## Возможности
 
 - **Автоматический failover** — ошибка только когда не осталось совсем никого
-  (`NoLLMAvailableError` / `AllLLMsFailedError`).
+  (`NoLLMAvailableError`).
 - **Chat, инструменты и агенты** — `ask`, многоходовый `chat`, [tool calling](tools.md).
 - **Async-first** — [`AsyncBroker`](async.md); `Broker` — блокирующая обёртка того же движка.
 - **Самообучающийся пул** — [оценивайте ответы](usage.md#quality), слабые модели

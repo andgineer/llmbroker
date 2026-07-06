@@ -185,6 +185,10 @@ def _make_unavailable(broker, name: str) -> None:
     slot.fail_count = 1
 
 
+def _timeout_exc() -> NoLLMAvailableError:
+    return NoLLMAvailableError("test", reason="timeout")
+
+
 def test_underprovisioned_alert_when_all_cooling(tmp_path, caplog):
     """_maybe_alert_underprov fires when all keyed pool members are not AVAILABLE."""
 
@@ -197,7 +201,7 @@ def test_underprovisioned_alert_when_all_cooling(tmp_path, caplog):
         ) as broker:
             _make_unavailable(broker, "p1")
             with caplog.at_level("WARNING", logger="llmbroker.broker"):
-                broker._maybe_alert_underprov()
+                broker._maybe_alert_underprov(_timeout_exc())
             assert any("under-provisioned" in r.message for r in caplog.records)
 
     asyncio.run(run())
@@ -222,7 +226,7 @@ def test_underprov_alert_fires_despite_keyless_config_present(tmp_path, caplog):
             assert not broker._pool.has_key("p2")
             _make_unavailable(broker, "p1")
             with caplog.at_level("WARNING", logger="llmbroker.broker"):
-                broker._maybe_alert_underprov()
+                broker._maybe_alert_underprov(_timeout_exc())
             assert any("under-provisioned" in r.message for r in caplog.records)
 
     asyncio.run(run())
@@ -240,7 +244,7 @@ def test_no_underprov_alert_when_some_available(tmp_path, caplog):
         ) as broker:
             # p1 stays AVAILABLE (default)
             with caplog.at_level("WARNING", logger="llmbroker.broker"):
-                broker._maybe_alert_underprov()
+                broker._maybe_alert_underprov(_timeout_exc())
             assert not any("under-provisioned" in r.message for r in caplog.records)
 
     asyncio.run(run())
@@ -257,7 +261,7 @@ def test_no_underprov_alert_when_optimize_false(tmp_path, caplog):
         ) as broker:
             _make_unavailable(broker, "p1")
             with caplog.at_level("WARNING", logger="llmbroker.broker"):
-                broker._maybe_alert_underprov()
+                broker._maybe_alert_underprov(_timeout_exc())
             assert not any("under-provisioned" in r.message for r in caplog.records)
 
     asyncio.run(run())
@@ -275,8 +279,8 @@ def test_underprov_alert_debounced(tmp_path, caplog):
         ) as broker:
             _make_unavailable(broker, "p1")
             with caplog.at_level("WARNING", logger="llmbroker.broker"):
-                broker._maybe_alert_underprov()
-                broker._maybe_alert_underprov()  # within interval
+                broker._maybe_alert_underprov(_timeout_exc())
+                broker._maybe_alert_underprov(_timeout_exc())  # within interval
             hits = [r for r in caplog.records if "under-provisioned" in r.message]
             assert len(hits) == 1
 

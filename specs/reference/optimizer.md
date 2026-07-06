@@ -24,11 +24,20 @@ On a 429/503, the wait is computed from *that response's own* signal:
   streak-scaling.
 - The final wait is capped at `max_delay` (default `3600s`).
 
-A generic HTTP error or network failure uses the same formula with the flat
-base, since there is no `Retry-After` to read. An HTTP 401/403 (dead key)
-instead drops the LLM from the pool immediately and unconditionally — no
-amount of retrying fixes an invalid key — logged at `logger.error` naming the
-`api_key_ref`.
+A generic 5xx or network failure uses the same formula with the flat base,
+since there is no `Retry-After` to read. A client-side request error (any
+4xx other than 429/401/403) never cools the model down and never counts
+toward its failure streak — it is excluded for the rest of the current call
+only, so a different request may use it again immediately. An HTTP 401/403
+(dead key) instead drops the LLM from the pool immediately and
+unconditionally — no amount of retrying fixes an invalid key — logged at
+`logger.error` naming the `api_key_ref`. The drop holds as long as journal
+rows carrying its key digest remain inside the rebuild tail: a rebuild
+re-reads the registry (which would otherwise re-admit the model with the
+same dead key) before re-applying the drop from those rows, so the model
+stays dropped. Replacing the secret resolves to a different key digest, the
+old 401/403 rows stop matching, and the model revives on a following
+rebuild.
 
 **Sharing across instances.** There is no state store: every failed call
 journals `cooldown_until` and `key_hash` (a short digest of the resolved key

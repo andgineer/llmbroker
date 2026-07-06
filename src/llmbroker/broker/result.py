@@ -2,14 +2,10 @@
 
 import logging
 
-from llmbroker.broker.learning import (
-    _DEFAULT_QUALITY_REBUILD_LIMIT,
-    _LearningHook,
-    metrics_from_calls,
-)
+from llmbroker.broker.learning import resolve_metrics_map
 from llmbroker.broker.pool import LLMPool
 from llmbroker.models import LLMConfig, LLMMetrics, LLMState, Usage
-from llmbroker.protocols.store import QueryableStoreProtocol, StoreProtocol
+from llmbroker.protocols.store import StoreProtocol
 
 logger = logging.getLogger("llmbroker.broker")
 
@@ -27,7 +23,6 @@ class AsyncResult:
         llm_name: str,
         operation: str | None = None,
         store: StoreProtocol,
-        pool: LLMPool,
     ) -> None:
         self.text = text
         self.tool_calls = tool_calls
@@ -36,11 +31,8 @@ class AsyncResult:
         self._llm_name = llm_name
         self._operation = operation
         self._store = store
-        self._pool = pool
 
     async def record_quality(self, score: float) -> None:
-        if score == 0.0:
-            self._pool.mark_quality_fail(self._llm_name)
         await self._store.record_quality(
             self._llm_name,
             self._operation,
@@ -76,10 +68,5 @@ class AsyncLLM:
         return self._pool.state(self._name)
 
     async def metrics(self) -> LLMMetrics:
-        if isinstance(self._store, _LearningHook):
-            return self._store.metrics_cache.get(self._name, LLMMetrics(0, None, None))
-        if isinstance(self._store, QueryableStoreProtocol):
-            rows = await self._store.calls(limit=_DEFAULT_QUALITY_REBUILD_LIMIT)
-            all_metrics = metrics_from_calls(rows)
-            return all_metrics.get(self._name, LLMMetrics(0, None, None))
-        return LLMMetrics(0, None, None)
+        all_metrics = await resolve_metrics_map(self._store)
+        return all_metrics.get(self._name, LLMMetrics(0, None, None))

@@ -34,7 +34,7 @@ to the next one — you get an answer, not an error, as long as any model is up.
 ## Features
 
 - **Automatic failover** — an error only when no one is left at all
-  (`NoLLMAvailableError` / `AllLLMsFailedError`).
+  (`NoLLMAvailableError`).
 - **Chat, tools & agents** — `ask`, multi-turn `chat`, [tool calling](tools.md).
 - **Async-first** — [`AsyncBroker`](async.md); `Broker` is a blocking wrapper
   around the same engine.

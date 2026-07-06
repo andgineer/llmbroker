@@ -1,11 +1,13 @@
 """Unit tests for LLMPool: slot invariants, key-resolution handling, and selection."""
 
 import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from llmbroker.broker.pool import LLMPool
+from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
 
@@ -55,18 +57,18 @@ async def test_add_keyless_is_never_available():
     pool = LLMPool()
     await pool.add(_cfg(), None)
     assert "p1" in pool
-    with pytest.raises(TimeoutError):
-        await pool.acquire(0)
+    with pytest.raises(NoLLMAvailableError):
+        await pool.acquire(time.monotonic())
 
 
 async def test_add_keyless_then_keyed_becomes_acquirable():
     """The keyless→keyed transition of an existing entry makes the slot acquirable."""
     pool = LLMPool()
     await pool.add(_cfg(), None)
-    with pytest.raises(TimeoutError):
-        await pool.acquire(0)
+    with pytest.raises(NoLLMAvailableError):
+        await pool.acquire(time.monotonic())
     await pool.add(_cfg(), "key")
-    picked = await pool.acquire(0)
+    picked = await pool.acquire(time.monotonic())
     assert picked.name == "p1"
 
 
@@ -93,7 +95,7 @@ async def test_drop_clears_disabled_so_a_readded_config_is_routable():
 
     await pool.add(_cfg(), "key")
     assert not pool.is_disabled("p1")
-    picked = await pool.acquire(0)
+    picked = await pool.acquire(time.monotonic())
     assert picked.name == "p1"
 
 
@@ -152,14 +154,6 @@ async def test_clear_cooling_resets_to_available():
     assert pool.state("p1").phase is LifecyclePhase.AVAILABLE
 
 
-async def test_mark_quality_fail_increments():
-    pool = LLMPool()
-    await pool.add(_cfg(), "k")
-    pool.mark_quality_fail("p1")
-    pool.mark_quality_fail("p1")
-    assert pool.state("p1").fail_count == 2
-
-
 # ---------------------------------------------------------------------------
 # apply_peer_cooldowns — fed by the journal rebuild, never touches in_flight
 # ---------------------------------------------------------------------------
@@ -200,8 +194,8 @@ async def test_apply_peer_cooldowns_never_touches_in_flight():
     pool = LLMPool()
     cfg = _cfg(parallel=2)
     await pool.add(cfg, "k")
-    await pool.acquire(0)
-    await pool.acquire(0)
+    await pool.acquire(time.monotonic())
+    await pool.acquire(time.monotonic())
 
     await pool.apply_peer_cooldowns({"p1": datetime.now(UTC) + timedelta(seconds=60)})
 
@@ -230,8 +224,8 @@ async def test_set_disabled_excludes_slot_immediately():
     await pool.add(_cfg(), "k")
     pool.set_disabled("p1")
     assert pool.is_disabled("p1")
-    with pytest.raises(TimeoutError):
-        await pool.acquire(0)
+    with pytest.raises(NoLLMAvailableError):
+        await pool.acquire(time.monotonic())
 
 
 async def test_disabled_config_in_configs_but_never_acquired_even_as_only_candidate():
@@ -239,8 +233,8 @@ async def test_disabled_config_in_configs_but_never_acquired_even_as_only_candid
     await pool.add(_cfg(), "k")
     pool.set_disabled("p1")
     assert "p1" in pool.configs
-    with pytest.raises(TimeoutError):
-        await pool.acquire(0)
+    with pytest.raises(NoLLMAvailableError):
+        await pool.acquire(time.monotonic())
 
 
 async def test_clear_disabled_readmits_slot():
@@ -248,7 +242,7 @@ async def test_clear_disabled_readmits_slot():
     await pool.add(_cfg(), "k")
     pool.set_disabled("p1")
     await pool.clear_disabled("p1")
-    picked = await pool.acquire(0)
+    picked = await pool.acquire(time.monotonic())
     assert picked.name == "p1"
 
 
@@ -257,8 +251,8 @@ async def test_clear_disabled_without_key_does_not_make_it_acquirable():
     await pool.add(_cfg(), None)  # keyless, never routable in the first place
     pool.set_disabled("p1")
     await pool.clear_disabled("p1")
-    with pytest.raises(TimeoutError):
-        await pool.acquire(0)
+    with pytest.raises(NoLLMAvailableError):
+        await pool.acquire(time.monotonic())
 
 
 async def test_add_while_disabled_does_not_make_it_acquirable():
@@ -266,8 +260,8 @@ async def test_add_while_disabled_does_not_make_it_acquirable():
     await pool.add(_cfg(), None)
     pool.set_disabled("p1")
     await pool.add(_cfg(), "k")  # keyless -> keyed transition, but disabled
-    with pytest.raises(TimeoutError):
-        await pool.acquire(0)
+    with pytest.raises(NoLLMAvailableError):
+        await pool.acquire(time.monotonic())
 
 
 async def test_disabled_mid_cooldown_stays_excluded_after_cooldown_expires():
@@ -276,32 +270,32 @@ async def test_disabled_mid_cooldown_stays_excluded_after_cooldown_expires():
     pool = LLMPool()
     cfg = _cfg()
     await pool.add(cfg, "k")
-    acquired = await pool.acquire(0)
+    acquired = await pool.acquire(time.monotonic())
 
     await pool.cool_down(acquired, 30)
     pool.set_disabled("p1")
     pool._slots["p1"].cooldown_until = datetime.now(UTC) - timedelta(seconds=1)  # expire it
 
-    with pytest.raises(TimeoutError):
-        await pool.acquire(0)
+    with pytest.raises(NoLLMAvailableError):
+        await pool.acquire(time.monotonic())
 
 
 async def test_release_of_disabled_config_leaves_it_excluded():
     pool = LLMPool()
     cfg = _cfg()
     await pool.add(cfg, "k")
-    acquired = await pool.acquire(0)
+    acquired = await pool.acquire(time.monotonic())
     pool.set_disabled("p1")
     await pool.release(acquired)
-    with pytest.raises(TimeoutError):
-        await pool.acquire(0)
+    with pytest.raises(NoLLMAvailableError):
+        await pool.acquire(time.monotonic())
 
 
 async def test_release_of_dropped_config_is_a_noop():
     pool = LLMPool()
     cfg = _cfg()
     await pool.add(cfg, "k")
-    acquired = await pool.acquire(0)
+    acquired = await pool.acquire(time.monotonic())
     await pool.drop("p1")
     await pool.release(acquired)  # must not raise
 
@@ -313,23 +307,23 @@ async def test_release_of_dropped_config_is_a_noop():
 
 async def test_acquire_wait_zero_raises_immediately_when_empty():
     pool = LLMPool()
-    with pytest.raises(TimeoutError):
-        await pool.acquire(0)
+    with pytest.raises(NoLLMAvailableError):
+        await pool.acquire(time.monotonic())
 
 
 async def test_acquire_finite_wait_times_out_at_deadline():
     pool = LLMPool()
     await pool.add(_cfg(parallel=1), "k")
-    await pool.acquire(0)  # occupy the only slot
-    with pytest.raises(TimeoutError):
-        await pool.acquire(0.05)
+    await pool.acquire(time.monotonic())  # occupy the only slot
+    with pytest.raises(NoLLMAvailableError):
+        await pool.acquire(time.monotonic() + 0.05)
 
 
 async def test_acquire_wait_none_wakes_when_cooldown_expires_without_a_timer():
     pool = LLMPool()
     cfg = _cfg()
     await pool.add(cfg, "k")
-    acquired = await pool.acquire(0)
+    acquired = await pool.acquire(time.monotonic())
     await pool.cool_down(acquired, 0.05)
 
     picked = await asyncio.wait_for(pool.acquire(None), timeout=2.0)
@@ -340,7 +334,7 @@ async def test_acquire_waiter_wakes_on_release():
     pool = LLMPool()
     cfg = _cfg(parallel=1)
     await pool.add(cfg, "k")
-    acquired = await pool.acquire(0)
+    acquired = await pool.acquire(time.monotonic())
 
     waiter = asyncio.ensure_future(pool.acquire(None))
     await asyncio.sleep(0.01)
@@ -371,8 +365,8 @@ async def test_cooldown_expiry_alone_does_not_admit_a_slot_at_capacity():
     await pool.acquire(None)
     await pool.cool_down(cfg, 0.1)
     pool._slots["a"].in_flight = 1  # emulate a sibling call still running, at capacity
-    with pytest.raises(TimeoutError):
-        await pool.acquire(0.3)
+    with pytest.raises(NoLLMAvailableError):
+        await pool.acquire(time.monotonic() + 0.3)
 
 
 async def test_curated_order_preferred_best_available_takes_all_traffic():
@@ -385,7 +379,7 @@ async def test_curated_order_preferred_best_available_takes_all_traffic():
 
     picked_names = []
     for _ in range(4):
-        picked = await pool.acquire(0)
+        picked = await pool.acquire(time.monotonic())
         picked_names.append(picked.name)
         await pool.release(picked)
 
@@ -398,10 +392,10 @@ async def test_curated_order_falls_back_to_next_when_best_is_cooling():
     await pool.add(cfg_a, "k", order=0)
     await pool.add(_cfg("b"), "k", order=1)
 
-    acquired_a = await pool.acquire(0)
+    acquired_a = await pool.acquire(time.monotonic())
     await pool.cool_down(acquired_a, 60)
 
-    picked = await pool.acquire(0)
+    picked = await pool.acquire(time.monotonic())
     assert picked.name == "b"
 
 
@@ -409,7 +403,7 @@ async def test_add_reasserts_curated_order_on_refresh():
     pool = LLMPool()
     await pool.add(_cfg("a"), "k", order=5)
     await pool.add(_cfg("b"), "k", order=1)
-    picked = await pool.acquire(0)
+    picked = await pool.acquire(time.monotonic())
     assert picked.name == "b"
 
 
@@ -417,7 +411,7 @@ async def test_pool_acquire_returns_only_available_slot():
     pool = LLMPool()
     a = _cfg("a")
     await pool.add(a, "k")
-    result = await pool.acquire(0)
+    result = await pool.acquire(time.monotonic())
     assert result is a
 
 
@@ -434,7 +428,7 @@ async def test_demoted_for_operation_sorts_last_while_alternative_exists():
     await pool.add(_cfg("bad"), "k", order=0)
     await pool.add(_cfg("good"), "k", order=1)
 
-    picked = await pool.acquire(0, operation="summarize")
+    picked = await pool.acquire(time.monotonic(), operation="summarize")
     assert picked.name == "good"
 
 
@@ -445,7 +439,7 @@ async def test_demoted_model_still_serves_when_no_alternative():
     pool = LLMPool(optimizer=opt)
     await pool.add(_cfg("bad"), "k")
 
-    picked = await pool.acquire(0, operation="summarize")
+    picked = await pool.acquire(time.monotonic(), operation="summarize")
     assert picked.name == "bad"
 
 
@@ -456,7 +450,7 @@ async def test_demotion_is_per_operation_not_global():
     pool = LLMPool(optimizer=opt)
     await pool.add(_cfg("bad"), "k")
 
-    picked = await pool.acquire(0, operation="translate")
+    picked = await pool.acquire(time.monotonic(), operation="translate")
     assert picked.name == "bad"
 
 
@@ -471,14 +465,14 @@ async def test_every_model_demoted_pool_still_serves():
     await pool.add(_cfg("a"), "k")
     await pool.add(_cfg("b"), "k")
 
-    picked = await pool.acquire(0, operation=None)
+    picked = await pool.acquire(time.monotonic(), operation=None)
     assert picked.name in ("a", "b")
 
 
 async def test_no_optimizer_never_demotes():
     pool = LLMPool()
     await pool.add(_cfg("a"), "k", order=0)
-    picked = await pool.acquire(0, operation="summarize")
+    picked = await pool.acquire(time.monotonic(), operation="summarize")
     assert picked.name == "a"
 
 
@@ -492,8 +486,8 @@ async def test_two_concurrent_acquires_of_one_llm_both_succeed_by_default():
     cfg = _cfg()
     await pool.add(cfg, "k")
 
-    first = await pool.acquire(0)
-    second = await pool.acquire(0)
+    first = await pool.acquire(time.monotonic())
+    second = await pool.acquire(time.monotonic())
     assert first.name == "p1"
     assert second.name == "p1"
     assert pool._slots["p1"].in_flight == 2
@@ -505,9 +499,9 @@ async def test_parallel_one_serializes_like_today():
     cfg = _cfg(parallel=1)
     await pool.add(cfg, "k")
 
-    await pool.acquire(0)
-    with pytest.raises(TimeoutError):
-        await pool.acquire(0)
+    await pool.acquire(time.monotonic())
+    with pytest.raises(NoLLMAvailableError):
+        await pool.acquire(time.monotonic())
 
 
 async def test_release_of_one_parallel_call_frees_exactly_one_slot():
@@ -515,13 +509,13 @@ async def test_release_of_one_parallel_call_frees_exactly_one_slot():
     cfg = _cfg(parallel=2)
     await pool.add(cfg, "k")
 
-    first = await pool.acquire(0)
-    await pool.acquire(0)
-    with pytest.raises(TimeoutError):
-        await pool.acquire(0)
+    first = await pool.acquire(time.monotonic())
+    await pool.acquire(time.monotonic())
+    with pytest.raises(NoLLMAvailableError):
+        await pool.acquire(time.monotonic())
 
     await pool.release(first)
-    picked = await pool.acquire(0)
+    picked = await pool.acquire(time.monotonic())
     assert picked.name == "p1"
 
 
@@ -532,12 +526,12 @@ async def test_cooldown_from_one_of_two_parallel_calls_blocks_a_third():
     cfg = _cfg(parallel=2)
     await pool.add(cfg, "k")
 
-    first = await pool.acquire(0)
-    second = await pool.acquire(0)
+    first = await pool.acquire(time.monotonic())
+    second = await pool.acquire(time.monotonic())
 
     await pool.cool_down(first, 60)
-    with pytest.raises(TimeoutError):
-        await pool.acquire(0)
+    with pytest.raises(NoLLMAvailableError):
+        await pool.acquire(time.monotonic())
 
     # The second call completes independently and records normally.
     await pool.release(second)

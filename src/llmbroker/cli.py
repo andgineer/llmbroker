@@ -22,32 +22,24 @@ _PRESET_URL = "https://raw.githubusercontent.com/andgineer/llmbroker/main/preset
 _PRESET_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
-def _api_key_refs(data: dict) -> list[str]:
-    refs: list[str] = []
-    for entry in data.get("llms", []):
-        ref = entry.get("api_key_ref")
-        if ref and ref not in refs:
-            refs.append(ref)
-    return refs
-
-
 def _cmd_env(args: argparse.Namespace) -> int:
     toml_path = Path(args.config)
     if not toml_path.exists():
         print(f"error: no such file: {toml_path}", file=sys.stderr)
         return 1
-    with toml_path.open("rb") as fh:
-        data = tomllib.load(fh)
-    raw_keys = data.get("keys", {})
-    if not isinstance(raw_keys, dict):
-        raw_keys = {}
 
-    refs = _api_key_refs(data)  # file order — no onboarding taxonomy to sort by
-    infos = {ref: key_info_from_entry(ref, raw_keys.get(ref)) for ref in refs}
+    reg = Registry(toml_path)
+    configs = asyncio.run(reg.load())  # llms in file order
+    infos = asyncio.run(reg.key_info())  # ref -> KeyInfo, only for refs with a [keys] entry
+
+    refs: list[str] = []
+    for cfg in configs:
+        if cfg.api_key_ref and cfg.api_key_ref not in refs:
+            refs.append(cfg.api_key_ref)
 
     lines: list[str] = []
     for ref in refs:
-        info = infos[ref]
+        info = infos.get(ref) or key_info_from_entry(ref, None)
         if info.help.strip():
             for i, line in enumerate(info.help.splitlines()):
                 lines.append(f"# {ref} — {line}" if i == 0 else f"# {line}")

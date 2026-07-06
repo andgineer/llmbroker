@@ -1,6 +1,7 @@
 """Unit tests for Router: routing logic, backoff/cooldown formula, and failover."""
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -9,7 +10,7 @@ import pytest
 from llmbroker.broker.learning import _LearningHook
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.router import Router
-from llmbroker.exceptions import AllLLMsFailedError, NoLLMAvailableError
+from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
 from llmbroker.standalone.store import InMemoryStore
@@ -18,6 +19,19 @@ from llmbroker.standalone.store import InMemoryStore
 class _NoStore:
     async def record(self, call):
         pass
+
+    async def record_quality(self, llm_name, operation, score, *, call_id=None):
+        pass
+
+
+class _RecordingStore:
+    """Captures every journaled ``Call`` row, for asserting cooldown/status fields."""
+
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    async def record(self, call):
+        self.calls.append(call)
 
     async def record_quality(self, llm_name, operation, score, *, call_id=None):
         pass
@@ -82,11 +96,12 @@ def test_happy_path_returns_result():
     asyncio.run(run())
 
 
-def test_missing_api_key_raises_all_llms_failed():
+def test_missing_api_key_raises_no_llm_available():
     async def run():
         router = _router(await _pool(_cfg(), key=None))
-        with pytest.raises(AllLLMsFailedError, match="api_key_ref"):
+        with pytest.raises(NoLLMAvailableError, match="api_key_ref") as exc_info:
             await router.chat([{"role": "user", "content": "hi"}], wait=0)
+        assert exc_info.value.reason == "no_keys"
 
     asyncio.run(run())
 
@@ -100,8 +115,9 @@ def test_zero_keyed_configs_raises_immediately_with_default_wait():
         pool = LLMPool()
         await pool.add(_cfg(), None)  # keyless — never acquirable
         router = _router(pool)
-        with pytest.raises(AllLLMsFailedError, match="api_key_ref"):
+        with pytest.raises(NoLLMAvailableError, match="api_key_ref") as exc_info:
             await router.chat([{"role": "user", "content": "hi"}])
+        assert exc_info.value.reason == "no_keys"
 
     asyncio.run(run())
 
@@ -128,8 +144,9 @@ def test_http_429_wait0_raises_no_llm_available():
     async def run():
         router = _router(await _pool(_cfg()))
         with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(429))):
-            with pytest.raises(NoLLMAvailableError):
+            with pytest.raises(NoLLMAvailableError) as exc_info:
                 await router.chat([{"role": "user", "content": "hi"}], wait=0)
+        assert exc_info.value.reason == "timeout"
 
     asyncio.run(run())
 
@@ -138,8 +155,46 @@ def test_http_503_wait0_raises_no_llm_available():
     async def run():
         router = _router(await _pool(_cfg()))
         with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(503))):
-            with pytest.raises(NoLLMAvailableError):
+            with pytest.raises(NoLLMAvailableError) as exc_info:
                 await router.chat([{"role": "user", "content": "hi"}], wait=0)
+        assert exc_info.value.reason == "timeout"
+
+    asyncio.run(run())
+
+
+def test_http_429_wait0_fails_over_when_second_model_free():
+    """With wait=0 and a second model instantly available, failover now happens
+    within the same call — wait=0 only bounds the whole request, not each attempt."""
+
+    async def run():
+        a, b = _cfg("a"), _cfg("b")
+        pool = await _pool(a, b)
+        router = _router(pool)
+        with patch(
+            _PATCH,
+            new=AsyncMock(side_effect=[_http_status_error(429), ("ok", None, None)]),
+        ):
+            result = await router.chat([{"role": "user", "content": "hi"}], wait=0)
+        assert result.text == "ok"
+        assert pool.state("a").phase is LifecyclePhase.COOLING
+
+    asyncio.run(run())
+
+
+def test_wait_bounds_whole_request():
+    """A model that cools well past the deadline must not let wait=0.5 block past ~1s,
+    even though ``_attempt`` itself never checks ``wait`` anymore."""
+
+    async def run():
+        cfg = _cfg()
+        pool = await _pool(cfg)
+        router = _router(pool)
+        start = time.monotonic()
+        with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(429, "30"))):
+            with pytest.raises(NoLLMAvailableError) as exc_info:
+                await router.chat([{"role": "user", "content": "hi"}], wait=0.5)
+        assert time.monotonic() - start < 1.0
+        assert exc_info.value.reason == "timeout"
 
     asyncio.run(run())
 
@@ -224,7 +279,7 @@ def test_dropped_slot_mid_flight_is_skipped_by_release():
         cfg = _cfg()
         pool = await _pool(cfg)
         router = _router(pool)
-        acquired = await pool.acquire(0)
+        acquired = await pool.acquire(time.monotonic())
         await pool.drop(cfg.name)  # removed while in flight
         await pool.release(acquired)  # must not raise
         with pytest.raises(NoLLMAvailableError):
@@ -236,8 +291,93 @@ def test_dropped_slot_mid_flight_is_skipped_by_release():
 def test_empty_pool_wait0_raises_no_llm_available():
     async def run():
         router = _router(LLMPool())
-        with pytest.raises(NoLLMAvailableError):
+        with pytest.raises(NoLLMAvailableError) as exc_info:
             await router.chat([{"role": "user", "content": "hi"}], wait=0)
+        assert exc_info.value.reason == "empty_pool"
+
+    asyncio.run(run())
+
+
+def test_all_disabled_raises_with_all_disabled_reason():
+    async def run():
+        pool = await _pool(_cfg())
+        pool.set_disabled("p1")
+        router = _router(pool)
+        with pytest.raises(NoLLMAvailableError) as exc_info:
+            await router.chat([{"role": "user", "content": "hi"}], wait=0)
+        assert exc_info.value.reason == "all_disabled"
+
+    asyncio.run(run())
+
+
+def test_timeout_reason_carries_retry_at_of_earliest_cooldown():
+    async def run():
+        router = _router(await _pool(_cfg()))
+        with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(429, "30"))):
+            with pytest.raises(NoLLMAvailableError) as exc_info:
+                await router.chat([{"role": "user", "content": "hi"}], wait=0)
+        assert exc_info.value.reason == "timeout"
+        assert exc_info.value.retry_at is not None
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Client-side 4xx failover — never cools, excluded for the rest of the request only
+# ---------------------------------------------------------------------------
+
+
+def test_400_fails_over_without_cooling_and_leaves_no_cooldown_on_the_row():
+    async def run():
+        a, b = _cfg("a"), _cfg("b")
+        pool = await _pool(a, b)
+        store = _RecordingStore()
+        router = Router(pool, store, scope=None)
+        with patch(
+            _PATCH,
+            new=AsyncMock(side_effect=[_http_status_error(400), ("ok", None, None)]),
+        ):
+            result = await router.chat([{"role": "user", "content": "hi"}])
+        assert result.text == "ok"
+        assert pool.state("a").phase is LifecyclePhase.AVAILABLE  # never cooled
+        row_a = next(c for c in store.calls if c.llm_name == "a")
+        assert row_a.cooldown_until is None
+        assert row_a.http_status == 400  # noqa: PLR2004
+
+    asyncio.run(run())
+
+
+def test_both_models_400_propagates_the_second_http_error():
+    async def run():
+        a, b = _cfg("a"), _cfg("b")
+        pool = await _pool(a, b)
+        router = _router(pool)
+        err_a, err_b = _http_status_error(400), _http_status_error(400)
+        with patch(_PATCH, new=AsyncMock(side_effect=[err_a, err_b])):
+            with pytest.raises(httpx.HTTPStatusError) as exc_info:
+                await router.chat([{"role": "user", "content": "hi"}])
+        assert exc_info.value is err_b
+
+    asyncio.run(run())
+
+
+def test_client_error_exclusion_is_per_request_not_persistent():
+    """A model excluded by a 400 in one request is fair game again on the next."""
+
+    async def run():
+        a, b = _cfg("a"), _cfg("b")
+        pool = await _pool(a, b)
+        router = _router(pool)
+        with patch(
+            _PATCH,
+            new=AsyncMock(side_effect=[_http_status_error(400), ("ok", None, None)]),
+        ):
+            first = await router.chat([{"role": "user", "content": "hi"}])
+        assert first.text == "ok"
+
+        with patch(_PATCH, new=AsyncMock(return_value=("still fine", None, None))):
+            second = await router.chat([{"role": "user", "content": "hi"}])
+        assert second.text == "still fine"
 
     asyncio.run(run())
 
@@ -262,7 +402,6 @@ def test_first_429_in_streak_trusts_provider_number_verbatim():
                 None,
                 operation=None,
                 trace_id=None,
-                wait=None,
             )
 
         assert result is None
@@ -288,7 +427,6 @@ def test_second_consecutive_429_scales_its_own_number_not_the_first():
                 None,
                 operation=None,
                 trace_id=None,
-                wait=None,
             )
         with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(429, "200"))):
             await router._attempt(
@@ -297,7 +435,6 @@ def test_second_consecutive_429_scales_its_own_number_not_the_first():
                 None,
                 operation=None,
                 trace_id=None,
-                wait=None,
             )
 
         assert captured == [86400, 200 * 2]
@@ -312,7 +449,7 @@ def test_success_resets_streak_so_later_429_trusted_verbatim_again():
         opt = Optimizer(backoff_factor=2.0, max_delay=999_999)
         router = _router_with_optimizer(pool, opt)
         captured = _spy_cool_down(pool)
-        kwargs = {"operation": None, "trace_id": None, "wait": None}
+        kwargs = {"operation": None, "trace_id": None}
 
         with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(429, "100"))):
             await router._attempt(cfg, [{"role": "user", "content": "hi"}], None, **kwargs)
@@ -343,7 +480,6 @@ def test_429_without_retry_after_falls_back_to_default_before_scaling():
                 None,
                 operation=None,
                 trace_id=None,
-                wait=None,
             )
 
         assert captured == [60]
@@ -366,7 +502,6 @@ def test_wait_time_capped_at_max_delay():
                 None,
                 operation=None,
                 trace_id=None,
-                wait=None,
             )
 
         assert captured == [500.0]

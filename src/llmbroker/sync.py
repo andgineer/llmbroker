@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from llmbroker.broker.broker import AsyncBroker
-from llmbroker.broker.result import AsyncResult
+from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.models import Call, LLMConfig, LLMMetrics, LLMSnapshot, LLMState
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.registry import RegistryProtocol
@@ -57,23 +57,23 @@ class Result:
 class LLM:
     """Synchronous analogue of AsyncLLM."""
 
-    def __init__(self, broker: "Broker", name: str) -> None:
-        self._broker = broker
-        self._name = name
+    def __init__(self, run_fn: "Callable[[Any], Any]", async_llm: AsyncLLM) -> None:
+        self._run = run_fn
+        self._async = async_llm
 
     @property
     def config(self) -> LLMConfig:
-        return self._broker.config_of(self._name)
+        return self._async.config
 
     @property
     def disabled(self) -> bool:
-        return self._broker.disabled_of(self._name)
+        return self._async.disabled
 
     def state(self) -> LLMState:
-        return self._broker.state_of(self._name)
+        return self._run(self._async.state())
 
     def metrics(self) -> LLMMetrics:
-        return self._broker.metrics_of(self._name)
+        return self._run(self._async.metrics())
 
 
 class Broker:
@@ -116,26 +116,10 @@ class Broker:
 
     # ── Accessors ──
     def get(self, name: str) -> LLM:
-        self._run(self._async.get(name))  # raises KeyError if absent
-        return LLM(self, name)
+        return LLM(self._run, self._run(self._async.get(name)))
 
     def count(self) -> int:
         return self._run(self._async.count())
-
-    # ── LLM accessors (used by LLM companion class) ──
-    def config_of(self, name: str) -> LLMConfig:
-        return self._run(self._async.get(name)).config
-
-    def disabled_of(self, name: str) -> bool:
-        return self._run(self._async.get(name)).disabled
-
-    def state_of(self, name: str) -> LLMState:
-        llm = self._run(self._async.get(name))
-        return self._run(llm.state())
-
-    def metrics_of(self, name: str) -> LLMMetrics:
-        llm = self._run(self._async.get(name))
-        return self._run(llm.metrics())
 
     # ── calls ──
     def ask(
