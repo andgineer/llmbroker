@@ -32,12 +32,9 @@ only, so a different request may use it again immediately. An HTTP 401/403
 (dead key) instead drops the LLM from the pool immediately and
 unconditionally — no amount of retrying fixes an invalid key — logged at
 `logger.error` naming the `api_key_ref`. The drop holds as long as journal
-rows carrying its key digest remain inside the rebuild tail: a rebuild
-re-reads the registry (which would otherwise re-admit the model with the
-same dead key) before re-applying the drop from those rows, so the model
-stays dropped. Replacing the secret resolves to a different key digest, the
-old 401/403 rows stop matching, and the model revives on a following
-rebuild.
+rows carrying that key digest remain inside the rebuild tail; replacing the
+secret resolves to a different digest, the old 401/403 rows stop matching, and
+the model revives on a following rebuild.
 
 **Sharing across instances.** There is no state store: every failed call
 journals `cooldown_until` and `key_hash` (a short digest of the resolved key

@@ -122,6 +122,28 @@ resulting cost estimate. The current behavior rules themselves live in
   latency ranking, auto-retirement. A chronically failing model is
   effectively disabled by exponential cooldown (up to 1 hour); the only
   thing auto-removed is a dead key (401/403), logged with an error line.
+- **A client request error is the caller's fault, not the model's — it never
+  cools anything.** Cooldown exists to stop hammering a model that is
+  unavailable (quota, auth, provider 5xx/timeout); a 4xx that is not
+  429/401/403 means the request itself was rejected, so the same call fails
+  over to the next model and excludes the offender for the rest of that call
+  only — a later request may use it again immediately, and its failure never
+  counts toward a cooldown streak. When every candidate rejects the request
+  this way, the caller gets the provider's own error rather than a generic
+  "no model available": the fault is in the request and only the provider
+  error is actionable.
+- **"No model available" is one error carrying a machine-readable reason, and
+  `wait` is taken literally.** A single error class distinguishes its causes
+  (empty pool, no resolved key, all disabled, every candidate excluded for
+  the call, or a genuine timeout) and, when the pool is only temporarily
+  exhausted, carries the earliest time a model is expected back. `wait` bounds
+  the whole call, not each internal acquire: `wait=0` is non-blocking yet
+  still spills across models free right now; the default `wait=None` waits
+  exactly as long as some model can still return by itself (a cooldown
+  expiring, a busy slot releasing) and raises the instant nothing ever can —
+  when the pool is empty, keyless, fully disabled, or fully excluded there is
+  no event that would ever wake a waiter, so blocking there would be a silent
+  hang rather than "wait as long as needed."
 - **There is no alerts/events API**: the UI works by pulling — current state
   is visible from `snapshot()`'s raw fields (`disabled`, `has_key`,
   `cooldown_until`, `demoted_operations`); there is no status enum or
@@ -320,8 +342,9 @@ decided: nobody writes the config (including llmbroker itself), admin
 verdicts live in the store disabled-doc, no sibling-JSON overlay
 exists.
 
-The public signature `ask(prompt, operation=, trace_id=, wait=)` does not
-change — `operation` is optional (decided): scores for calls without a
-label accumulate in a separate (model, None) bucket; `trace_id`/`wait` stay
-as they are. `record_quality` accepts (model, operation, score) and an
-optional `call_id` — a pass-through reference for the host UI's journal.
+The public signature `ask(prompt, operation=, trace_id=, wait=)` keeps its
+shape — `operation` is optional (decided): scores for calls without a
+label accumulate in a separate (model, None) bucket; `trace_id` is unchanged
+and `wait` carries the whole-call-deadline meaning described above.
+`record_quality` accepts (model, operation, score) and an optional `call_id` —
+a pass-through reference for the host UI's journal.

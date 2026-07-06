@@ -23,14 +23,18 @@ def _registry(tmp_path, parallel: int | None):
 
 
 async def _fire_three_concurrent_asks(tmp_path, parallel: int | None) -> int:
+    expected = 3 if parallel is None else min(parallel, 3)
     in_flight = 0
     max_in_flight = 0
     release = asyncio.Event()
+    reached = asyncio.Event()  # every concurrently-admissible call has hit its blocking point
 
     async def fake_call_provider(config, api_key, messages, tools, *, client=None):
         nonlocal in_flight, max_in_flight
         in_flight += 1
         max_in_flight = max(max_in_flight, in_flight)
+        if in_flight >= expected:
+            reached.set()
         await release.wait()
         in_flight -= 1
         return "ok", None, None
@@ -42,7 +46,7 @@ async def _fire_three_concurrent_asks(tmp_path, parallel: int | None) -> int:
     ) as broker:
         with patch(_PATCH, new=fake_call_provider):
             tasks = [asyncio.ensure_future(broker.ask("hi")) for _ in range(3)]
-            await asyncio.sleep(0.05)  # let every task reach its blocking point
+            await reached.wait()
             release.set()
             results = await asyncio.gather(*tasks)
 

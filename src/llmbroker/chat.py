@@ -7,7 +7,8 @@ reply; ``run_tool_loop`` is its sync wrapper.
 """
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -88,6 +89,18 @@ def make_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=_HTTP_TIMEOUT)
 
 
+@asynccontextmanager
+async def _resolve_client(
+    client: httpx.AsyncClient | None,
+) -> AsyncIterator[httpx.AsyncClient]:
+    """Yield the caller's shared client untouched, or an ephemeral one closed on exit."""
+    if client is not None:
+        yield client
+    else:
+        async with make_client() as ephemeral:
+            yield ephemeral
+
+
 async def call_provider(
     config: LLMConfig,
     api_key: str,
@@ -103,15 +116,10 @@ async def call_provider(
     for this single call.
     """
     url, headers, body = build_chat_request(config, api_key, messages, tools)
-    if client is not None:
-        resp = await client.post(url, headers=headers, json=body)
+    async with _resolve_client(client) as active:
+        resp = await active.post(url, headers=headers, json=body)
         resp.raise_for_status()
         data = resp.json()
-    else:
-        async with make_client() as ephemeral:
-            resp = await ephemeral.post(url, headers=headers, json=body)
-            resp.raise_for_status()
-            data = resp.json()
     message = message_from_response(data)
     content = str(message.get("content") or "")
     return content, parse_tool_calls(message), parse_usage(data)

@@ -16,10 +16,15 @@ from http import HTTPStatus
 from pathlib import Path
 
 from llmbroker.broker.broker import AsyncBroker
+from llmbroker.models import KeyInfo, LLMConfig
 from llmbroker.standalone.registry import Registry, key_info_from_entry
 
 _PRESET_URL = "https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/{name}.toml"
 _PRESET_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+async def _env_data(reg: Registry) -> tuple[list[LLMConfig], dict[str, KeyInfo]]:
+    return await reg.load(), await reg.key_info()
 
 
 def _cmd_env(args: argparse.Namespace) -> int:
@@ -28,9 +33,8 @@ def _cmd_env(args: argparse.Namespace) -> int:
         print(f"error: no such file: {toml_path}", file=sys.stderr)
         return 1
 
-    reg = Registry(toml_path)
-    configs = asyncio.run(reg.load())  # llms in file order
-    infos = asyncio.run(reg.key_info())  # ref -> KeyInfo, only for refs with a [keys] entry
+    # llms in file order; infos maps ref -> KeyInfo only for refs with a [keys] entry.
+    configs, infos = asyncio.run(_env_data(Registry(toml_path)))
 
     refs: list[str] = []
     for cfg in configs:
