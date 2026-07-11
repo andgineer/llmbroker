@@ -303,6 +303,55 @@ def test_broker_record_quality_drives_demotion(tmp_path):
     asyncio.run(run())
 
 
+def test_broker_record_quality_survives_journal_rebuild(tmp_path):
+    """A delayed rating is persisted, so demotion is re-derived from the journal on the
+    next rebuild — not merely held in the in-memory window."""
+
+    async def run():
+        db = str(tmp_path / "b.db")
+        opt = Optimizer(quality_min_count=10, quality_floor=0.3)
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            secrets=_secrets(),
+            store=SqliteStore(db),
+            optimize=opt,
+        ) as broker:
+            for _ in range(10):
+                await broker.record_quality("p1", "summarize", 0.0)
+            # Drop the in-memory window so only the persisted journal rows remain.
+            opt.load_scores({})
+            assert opt.is_demoted("p1", "summarize") is False
+            # The forced rebuild re-derives the verdict purely from the quality rows.
+            await broker._learning_hook.maybe_rebuild(force=True)
+            assert opt.is_demoted("p1", "summarize") is True
+
+    asyncio.run(run())
+
+
+def test_broker_record_quality_stamps_scope(tmp_path):
+    """A scoped broker stamps its scope on the delayed quality row, so the host-facing
+    calls(scope=...) filter surfaces it."""
+
+    async def run():
+        db = str(tmp_path / "b.db")
+        await SqliteRegistry(db).mirror(
+            [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")],
+        )
+        async with AsyncBroker(
+            registry=SqliteRegistry(db),
+            secrets=DictSecrets({"K": "test"}),
+            store=SqliteStore(db),
+            scope="alice",
+        ) as broker:
+            await broker.record_quality("p1", "summarize", 0.0)
+            rows = await broker._store.calls(limit=10, scope="alice")
+            quality_rows = [r for r in rows if r.kind == "quality"]
+            assert len(quality_rows) == 1
+            assert quality_rows[0].scope == "alice"
+
+    asyncio.run(run())
+
+
 def test_broker_record_quality_with_optimizer_off_does_not_raise(tmp_path):
     """optimize=False: record_quality still appends to the journal and does not raise."""
 

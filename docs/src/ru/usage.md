@@ -72,7 +72,7 @@ reply.record_quality(0.9)   # 1.0 — хороший ответ, 0.0 — неу�
 
 ```python
 # во время вызова сохраняем нужное
-llm_name, operation = reply.llm_name, "summarize"
+llm_name, operation = reply.llm_name, reply.operation
 
 # ...через день, когда приходит отзыв пользователя
 llms.record_quality(llm_name, operation, 0.0)

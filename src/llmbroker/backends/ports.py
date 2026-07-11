@@ -152,6 +152,7 @@ class DriverStore:
         score: float,
         *,
         call_id: str | None = None,
+        scope: str | None = None,
     ) -> None:
         """Append a self-contained quality record — never updates the call row."""
         await self.record(
@@ -165,6 +166,7 @@ class DriverStore:
                 ts=datetime.now(UTC),
                 quality_score=score,
                 call_id=call_id,
+                scope=scope,
             ),
         )
 

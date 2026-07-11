@@ -232,6 +232,7 @@ class Router:
             llm_name=config.name,
             operation=operation,
             store=self._store,
+            scope=self._scope,
         )
 
     async def _log_call(self, call: Call) -> None:

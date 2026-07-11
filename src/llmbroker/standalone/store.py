@@ -38,6 +38,7 @@ def _new_quality_call(
     operation: str | None,
     score: float,
     call_id: str | None,
+    scope: str | None,
 ) -> Call:
     return Call(
         id=str(uuid.uuid4()),
@@ -49,6 +50,7 @@ def _new_quality_call(
         ts=datetime.now(UTC),
         quality_score=score,
         call_id=call_id,
+        scope=scope,
     )
 
 
@@ -69,6 +71,7 @@ class InMemoryStore:
         _score: float,
         *,
         call_id: str | None = None,  # noqa: ARG002
+        scope: str | None = None,  # noqa: ARG002
     ) -> None:
         return
 
@@ -152,8 +155,9 @@ class FileStore:
         score: float,
         *,
         call_id: str | None = None,
+        scope: str | None = None,
     ) -> None:
-        await self.record(_new_quality_call(llm_name, operation, score, call_id))
+        await self.record(_new_quality_call(llm_name, operation, score, call_id, scope))
 
     def _day_files_newest_first(self) -> list[Path]:
         if not self._calls_dir.exists():

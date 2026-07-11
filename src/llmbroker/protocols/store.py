@@ -18,6 +18,7 @@ class StoreProtocol(Protocol):
         score: float,
         *,
         call_id: str | None = None,
+        scope: str | None = None,
     ) -> None: ...
 
 
