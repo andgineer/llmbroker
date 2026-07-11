@@ -216,6 +216,20 @@ class AsyncBroker:
             self._maybe_alert_underprov(exc)
             raise
 
+    async def record_quality(
+        self,
+        llm_name: str,
+        operation: str | None,
+        score: float,
+        *,
+        call_id: str | None = None,
+    ) -> None:
+        """Record a quality score for a past call — the delayed counterpart of
+        ``result.record_quality``. The host supplies the rating identity, so the
+        rated call need not still be in the journal."""
+        await self.ensure_pool()
+        await self._store.record_quality(llm_name, operation, score, call_id=call_id)
+
     # ------------------------------------------------------------------
     # Inspection
     # ------------------------------------------------------------------

@@ -65,5 +65,20 @@ given operation sinks to the back of the queue. Demotion is soft — if no other
 models are left, it still answers — and it lifts with new good ratings; there is
 no separate "reset". Calls without `operation=` share one common bucket.
 
+**Rate it later.** The verdict often arrives long after the call — a user reviews
+an LLM-produced artifact a day later. Persist `reply.llm_name` and the operation
+you passed at call time, then record the rating whenever it arrives:
+
+```python
+# at call time, persist what you need
+llm_name, operation = reply.llm_name, "summarize"
+
+# ...a day later, when the user's review comes in
+llms.record_quality(llm_name, operation, 0.0)
+```
+
+This folds into the same `(model, operation)` bucket as `reply.record_quality`;
+the original call need not still exist — the rating is self-contained.
+
 Thresholds and the rating window are configurable — see
 [`Optimizer`](reference.md#llmbroker.Optimizer).
