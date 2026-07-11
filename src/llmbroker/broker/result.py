@@ -23,6 +23,7 @@ class AsyncResult:
         llm_name: str,
         operation: str | None = None,
         store: StoreProtocol,
+        scope: str | None = None,
     ) -> None:
         self.text = text
         self.tool_calls = tool_calls
@@ -31,6 +32,7 @@ class AsyncResult:
         self._llm_name = llm_name
         self._operation = operation
         self._store = store
+        self._scope = scope
 
     @property
     def llm_name(self) -> str:
@@ -53,6 +55,7 @@ class AsyncResult:
             self._operation,
             score,
             call_id=self._call_id,
+            scope=self._scope,
         )
 
 

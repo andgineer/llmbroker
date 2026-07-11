@@ -228,7 +228,13 @@ class AsyncBroker:
         ``result.record_quality``. The host supplies the rating identity, so the
         rated call need not still be in the journal."""
         await self.ensure_pool()
-        await self._store.record_quality(llm_name, operation, score, call_id=call_id)
+        await self._store.record_quality(
+            llm_name,
+            operation,
+            score,
+            call_id=call_id,
+            scope=self._scope,
+        )
 
     # ------------------------------------------------------------------
     # Inspection

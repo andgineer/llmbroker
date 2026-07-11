@@ -71,7 +71,7 @@ you passed at call time, then record the rating whenever it arrives:
 
 ```python
 # at call time, persist what you need
-llm_name, operation = reply.llm_name, "summarize"
+llm_name, operation = reply.llm_name, reply.operation
 
 # ...a day later, when the user's review comes in
 llms.record_quality(llm_name, operation, 0.0)

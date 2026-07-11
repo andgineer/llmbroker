@@ -97,8 +97,9 @@ class _LearningHook:
         score: float,
         *,
         call_id: str | None = None,
+        scope: str | None = None,
     ) -> None:
-        await self._inner.record_quality(llm_name, operation, score, call_id=call_id)
+        await self._inner.record_quality(llm_name, operation, score, call_id=call_id, scope=scope)
         self._opt.record_quality(llm_name, operation, score)
 
     async def calls(self, *, limit: int, scope: str | None = None) -> list[Call]:
