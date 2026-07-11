@@ -108,6 +108,30 @@ def test_result_record_quality_does_not_raise(tmp_path):
             result.record_quality(1.0)
 
 
+def test_result_exposes_rating_identity(tmp_path):
+    """The sync result mirrors the async identity properties."""
+    with Broker(registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore()) as broker:
+        with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
+            result = broker.ask("x", operation="summarize")
+        assert result.llm_name == "p1"
+        assert result.operation == "summarize"
+        assert isinstance(result.call_id, str) and result.call_id
+
+
+def test_broker_record_quality_delayed(tmp_path):
+    """Sync Broker.record_quality records a delayed rating from persisted identity alone —
+    no live result object required."""
+    db = str(tmp_path / "b.db")
+    with Broker(registry=_registry(tmp_path), secrets=_secrets(), store=SqliteStore(db)) as broker:
+        with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
+            result = broker.ask("x", operation="summarize")
+        broker.record_quality(result.llm_name, "summarize", 0.9, call_id=result.call_id)
+        quality_rows = [r for r in broker.calls(limit=10) if r.kind == "quality"]
+        assert len(quality_rows) == 1
+        assert quality_rows[0].llm_name == "p1"
+        assert quality_rows[0].call_id == result.call_id
+
+
 def test_llm_state_is_available(tmp_path):
     with Broker(registry=_registry(tmp_path), store=InMemoryStore()) as broker:
         llm = broker.get("p1")

@@ -32,6 +32,21 @@ class AsyncResult:
         self._operation = operation
         self._store = store
 
+    @property
+    def llm_name(self) -> str:
+        """Name of the model that answered — persist it to rate the call later."""
+        return self._llm_name
+
+    @property
+    def operation(self) -> str | None:
+        """Operation label passed to ask()/chat(), or None."""
+        return self._operation
+
+    @property
+    def call_id(self) -> str:
+        """Opaque id of this call; an optional passthrough for host analytics."""
+        return self._call_id
+
     async def record_quality(self, score: float) -> None:
         await self._store.record_quality(
             self._llm_name,

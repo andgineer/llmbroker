@@ -50,6 +50,18 @@ class Result:
         self.tool_calls = async_result.tool_calls
         self.usage = async_result.usage
 
+    @property
+    def llm_name(self) -> str:
+        return self._async.llm_name
+
+    @property
+    def operation(self) -> str | None:
+        return self._async.operation
+
+    @property
+    def call_id(self) -> str:
+        return self._async.call_id
+
     def record_quality(self, score: float) -> None:
         self._run(self._async.record_quality(score))
 
@@ -156,6 +168,16 @@ class Broker:
                 ),
             ),
         )
+
+    def record_quality(
+        self,
+        llm_name: str,
+        operation: str | None,
+        score: float,
+        *,
+        call_id: str | None = None,
+    ) -> None:
+        self._run(self._async.record_quality(llm_name, operation, score, call_id=call_id))
 
     def snapshot(self) -> Mapping[str, LLMSnapshot]:
         return self._run(self._async.snapshot())

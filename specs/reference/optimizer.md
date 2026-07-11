@@ -73,6 +73,13 @@ reply = await llms.ask("Summarize this contract clause", operation="summarize")
 reply.record_quality(0.9)  # rated on the "summarize" bucket specifically
 ```
 
+A rating may arrive at any time after the call, not only through the live
+result while the host still holds it: the host that persists the rating
+identity can record the verdict days or months later, and it lands on the same
+`(model, operation)` bucket. Self-contained quality records — never joined
+against the call they rate — are what makes an arbitrarily late rating safe,
+since retention may already have purged the original call row.
+
 There is no global verdict — demotion is always per `(model, operation)`.
 Recovery is exactly: new ratings that push the window's bound back above the
 floor, or last-resort traffic when nothing else is available — there is no

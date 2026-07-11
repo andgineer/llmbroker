@@ -25,7 +25,7 @@ Fill in whichever keys are easy — models without keys just stay inactive.
 | **Chat, tools & agents** | `llms.chat(messages, tools=...)`, `run_tool_loop(...)` |
 | **Async-first** | `AsyncBroker` — same engine, for FastAPI / agents / workers |
 | **Scale out** | `Broker("postgresql://…")` — sqlite / Postgres / MongoDB, calling code unchanged |
-| **Self-regulating pool** | `reply.record_quality(0.3)` — weak models sink per task kind |
+| **Self-regulating pool** | `reply.record_quality(0.3)` — weak models sink per task kind; rate later with `llms.record_quality(...)` |
 | **Pluggable secrets** | env vars, DB, AWS, Vault, or your own backend |
 | **Multi-user mode** | per-user API keys on top of one shared pool |
 
