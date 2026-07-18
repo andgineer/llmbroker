@@ -146,7 +146,12 @@ verdicts, seeded with model names at `sync`), and **calls** (the journal). There
 is no state or summaries table — shared cooldowns and learned quality derive
 entirely from the calls journal (see [`optimizer.md`](optimizer.md)).
 
-- **SQLite** tracks version via `PRAGMA user_version`.
+- **SQLite** tracks version via `PRAGMA user_version`. The driver deliberately
+  does not manage `journal_mode` (it never enables WAL) or `busy_timeout`:
+  journal mode is a persistent, file-level property owned by whoever owns the
+  database file, so on a database shared with the host the host owns it and on a
+  broker-only file the operator sets it once, out of band — see
+  [`decisions.md`](decisions.md).
 - **Postgres** tracks version via a single-row `llmbroker_schema_version` table
   (no PRAGMA in Postgres). Passing an existing `asyncpg.Pool` means the caller
   owns its lifecycle and `aclose()` is a no-op; passing a `postgresql://…` source

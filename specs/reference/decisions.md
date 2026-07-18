@@ -175,6 +175,20 @@ resulting cost estimate. The current behavior rules themselves live in
 - **No DB migrations**: a single installation (0.0.12), upgraded manually;
   `ensure_schema` creates from scratch, and on a version mismatch, fails
   fast with instructions.
+- **The broker never manages SQLite's `journal_mode`; WAL is the file owner's
+  responsibility.** The SQLite driver only reads and writes `user_version` for
+  schema versioning — it does not enable WAL and does not set `busy_timeout`
+  (sqlite3's 5 s default stands, and it is not exposed as a knob). Journal mode
+  is a persistent, file-level property belonging to whoever owns the database
+  file: on a database shared with the host application (the normal setup) the
+  host owns it; on a file given to the broker alone the operator sets it once,
+  out of band. The driver receives only a path and cannot tell the two apart, so
+  enabling WAL unconditionally during schema setup would silently flip a shared
+  file's mode — which is why it does not. **Future edits must not add a `PRAGMA
+  journal_mode=WAL` or a configurable `busy_timeout` to the SQLite driver.**
+  Cross-process schema DDL already serializes via `BEGIN IMMEDIATE`, covered by
+  the default busy timeout; users are pointed at the shared-vs-separate-file
+  choice in the server/cluster guide.
 - **Scopes: the registry and learning are always shared, per-user applies
   only to keys and their quotas.** Scope does not touch the registry (one
   model list, one `sync`; the user parameter leaves the registry protocol)
