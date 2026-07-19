@@ -37,6 +37,13 @@ The review found one correctness hole and a set of smaller gaps:
 8. Integration-test gaps: degraded-transport behavior, cluster cooldown on
    postgres/mongodb, sync-`Broker` thread concurrency, the CLI `sync`
    round-trip, and one no-mock real-socket test.
+9. **`wait` does not bound the in-flight HTTP attempt.** architecture.md calls
+   `wait` "the deadline of the whole call", but `deadline` is consulted only in
+   `LLMPool.acquire` (slot acquisition). Once a slot is acquired, `_attempt`
+   POSTs through the shared client whose only bound is the hardcoded
+   `_HTTP_TIMEOUT = 60.0` (`src/llmbroker/chat.py`); the deadline is never
+   passed down. A provider that accepts the connection and then hangs makes a
+   `wait=5` caller block up to ~60s — a contract violation, not a tuning issue.
 
 ## Design decisions
 
@@ -87,10 +94,35 @@ implementation.
 9. **`chat.py.__all__` shrinks to `["arun_tool_loop", "run_tool_loop"]`.** The
    transport helpers remain importable for the router but stop being declared
    public surface.
-10. **No behavior knob for the HTTP timeout in this plan.** A per-LLM `timeout`
-    (following the `parallel` metadata pattern) is deliberately deferred — it
-    adds config surface without a concrete demand; revisit when a provider
-    actually needs it.
+10. **A per-LLM HTTP timeout is rejected outright — not deferred.** Latency
+    budget is a property of the *call*, not the *model*: a failover pool's
+    caller thinks "answer within X", which is exactly `wait`, the whole-call
+    deadline. A per-model knob does not compose with failover — if model A were
+    granted 30s while the call must finish in 5s, one of the two numbers is
+    simply ignored — and it would re-introduce the mislearning it claims to
+    prevent (a wrongly-short per-model timeout cools a healthy model). The
+    correct fix is decision 11: make `wait` actually bound the attempt. The
+    single global `_HTTP_TIMEOUT` stays the ceiling for the `wait=None` case;
+    should a broker-wide default ever be wanted it is one constructor
+    parameter, still never per-LLM. This closes the question: `parallel` earns
+    its per-LLM slot because it encodes a hard provider constraint (the
+    endpoint rejects concurrency); a timeout is a soft threshold with a sane
+    default and no per-model truth to encode.
+11. **`wait` bounds the in-flight attempt, and budget exhaustion never cools a
+    model.** `Router.chat` passes the computed `deadline` into `_attempt`,
+    which sets the per-attempt httpx timeout to `min(remaining, _HTTP_TIMEOUT)`
+    when a deadline exists, else `_HTTP_TIMEOUT`, and passes it to the `post`.
+    The two timeout causes are distinguished, because they mean opposite
+    things:
+    - **Ceiling-bound** (`_HTTP_TIMEOUT` was the smaller limit) — the model is
+      genuinely too slow → the existing 5xx-style path: cool down, journal,
+      fail over.
+    - **Deadline-bound** (the remaining budget was smaller) — the caller's own
+      `wait` ran out, not a model fault → do **not** cool down, do **not**
+      count toward the failure streak; release the slot, journal a benign
+      timeout row (no `cooldown_until`), and let the loop's next `acquire`
+      raise `NoLLMAvailableError(reason="timeout")`. This is what keeps a tight
+      `wait` from mislearning healthy-but-unlucky models as failing.
 
 ## Phase 1 — router failover hardening (the correctness fix)
 
@@ -119,11 +151,13 @@ and malformed-response failures use the flat base).
      raising `RuntimeError`) propagates to the caller *and* leaves
      `in_flight == 0`.
 
-## Phase 2 — small functioning fixes
+## Phase 2 — small functioning fixes and the `wait` contract fix
 
 Files: `src/llmbroker/broker/result.py`, `src/llmbroker/broker/broker.py`,
-`src/llmbroker/chat.py`, `src/llmbroker/exceptions.py`,
-`specs/reference/architecture.md`.
+`src/llmbroker/broker/router.py`, `src/llmbroker/chat.py`,
+`src/llmbroker/exceptions.py`, `specs/reference/architecture.md` (the `wait`
+paragraph: state that the deadline now bounds the attempt and that budget
+exhaustion does not cool a model).
 
 1. Score validation per decision 4; tests for both entry points (async + sync)
    covering `-0.1`, `1.1`, and the boundaries `0.0`/`1.0`.
@@ -131,6 +165,21 @@ Files: `src/llmbroker/broker/result.py`, `src/llmbroker/broker/broker.py`,
    tool calls exhausts `max_steps=2` and raises, message names the limit.
 3. `ensure_pool()` in `AsyncBroker.calls()`; test: `calls()` on a fresh broker
    over a seeded registry does not raise and returns rows after one `ask`.
+4. **`wait` bounds the attempt** (decisions 10-11). Thread `deadline` from
+   `Router.chat` into `_attempt`; derive the per-attempt timeout and pass it to
+   `call_provider` → `httpx post(timeout=...)`. On a fired timeout, branch on
+   whether the deadline or `_HTTP_TIMEOUT` was binding: deadline-bound releases
+   the slot and returns a benign no-cooldown outcome; ceiling-bound keeps the
+   current cool-down/failover path. Tests (inject the timeout / assert the
+   passed value — do not use real multi-second sleeps):
+   - `wait` small, provider slower than the budget → caller returns within the
+     budget with `NoLLMAvailableError(reason="timeout")`; the model is **not**
+     COOLING (`state().phase is AVAILABLE`, `fail_count == 0`), and no
+     `cooldown_until` row was journaled for it.
+   - `wait=None`, provider slower than `_HTTP_TIMEOUT` (patch it low) → model
+     cools down and, with a sibling present, failover occurs.
+   - Assert the timeout value handed to the provider call equals
+     `min(remaining, _HTTP_TIMEOUT)` for a mid-range `wait`.
 
 ## Phase 3 — onboarding UX
 
@@ -184,5 +233,15 @@ New/changed test files only; no production code expected.
 
 - LLM-as-judge (mission #2 autonomy) — already planned in
   [`llm-judge.md`](llm-judge.md), lands after Phase 1.
-- Per-LLM HTTP timeout (decision 10).
 - Any storage-schema change: nothing here touches table shapes.
+
+## Settled non-goals
+
+Recorded so they are not re-opened:
+
+- **Per-LLM HTTP timeout: rejected permanently** (decision 10). The `wait`
+  contract fix (decision 11, Phase 2) delivers the only real requirement —
+  a caller-controlled ceiling on how long a call may take — on the right axis
+  (per call, not per model). The global `_HTTP_TIMEOUT` remains the `wait=None`
+  default; a broker-wide override, if ever needed, is one constructor
+  parameter and still not per-LLM.
