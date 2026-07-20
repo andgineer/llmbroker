@@ -1,0 +1,27 @@
+# Template: add a paid, directly-called model alongside the free pool.
+#
+# The free pool (`freetier.toml`) gives failover across many free models. A paid
+# frontier model is different: you want *that* model, not routing — so mark it
+# `pool = false` and reach it with `broker.direct("<name>")`. It stays in the
+# registry (one catalog) but is never a failover target.
+#
+# 1. Copy the `[[llms]]` block below and set base_url / model to your provider's
+#    OpenAI-compatible endpoint and model id.
+# 2. `python -m llmbroker env presets/paid.toml >> .env`  # fills the key line
+# 3. Put your key in .env, then `broker.sync("presets/paid.toml")`.
+#
+# `sync` mirrors only the config (base_url / model / api_key_ref) into the DB —
+# never the key value. The key is read from the env var / secrets backend at
+# call time.
+
+[[llms]]
+name        = "frontier"
+base_url    = "https://api.anthropic.com/v1"   # any OpenAI-compatible endpoint
+model       = "claude-opus-4-8"
+api_key_ref = "ANTHROPIC_API_KEY"
+pool        = false                            # excluded from failover; directable by name
+
+[keys.ANTHROPIC_API_KEY]
+effort = "signup"
+value  = "high"
+help   = "Create a key at [Anthropic Console](https://console.anthropic.com/) (paid)."

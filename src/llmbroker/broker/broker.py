@@ -26,18 +26,23 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
-from llmbroker.broker.catalog import Catalog
+import httpx
+
+from llmbroker.broker.catalog import Catalog, resolve_key
 from llmbroker.broker.learning import _LearningHook
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.pool_view import PoolView
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.broker.router import Router
 from llmbroker.broker.source import resolve_source
-from llmbroker.exceptions import NoLLMAvailableError
+from llmbroker.chat import make_client
+from llmbroker.direct import AsyncDirectClient
+from llmbroker.exceptions import MissingKeyError, NoLLMAvailableError, UnknownModelError
 from llmbroker.models import (
     AsyncResourceProtocol,
     Call,
     LifecyclePhase,
+    LLMConfig,
     LLMSnapshot,
 )
 from llmbroker.optimizer import Optimizer
@@ -126,6 +131,7 @@ class AsyncBroker:
         self._provision_lock = asyncio.Lock()
         self._last_underprov_alert: float = float("-inf")
         self._underprov_alert_interval: float = 60.0
+        self._direct_http: httpx.AsyncClient | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -164,6 +170,9 @@ class AsyncBroker:
 
     async def aclose(self) -> None:
         await self._router.aclose()
+        if self._direct_http is not None:
+            await self._direct_http.aclose()
+            self._direct_http = None
         for port in (self._registry, self._secrets, self._store):
             if isinstance(port, AsyncResourceProtocol):
                 await port.aclose()
@@ -215,6 +224,41 @@ class AsyncBroker:
         except NoLLMAvailableError as exc:
             self._maybe_alert_underprov(exc)
             raise
+
+    # ------------------------------------------------------------------
+    # Direct single-model access (no pool, no failover)
+    # ------------------------------------------------------------------
+
+    async def direct(self, name: str) -> AsyncDirectClient:
+        """Return a direct client for any registry model, pooled or not.
+
+        Bypasses the pool and its failover entirely: the returned client calls
+        exactly this model and can stream. Raises ``UnknownModelError`` if no
+        entry matches ``name``, or ``MissingKeyError`` if its key is unset.
+        """
+        cfg, key = await self._resolve_direct(name)
+        if self._direct_http is None:
+            self._direct_http = make_client()
+        return AsyncDirectClient(
+            base_url=cfg.base_url,
+            model=cfg.model,
+            api_key=key,
+            client=self._direct_http,
+        )
+
+    async def _resolve_direct(self, name: str) -> tuple[LLMConfig, str]:
+        """Load ``name`` from the registry and resolve its key (shared by the sync façade)."""
+        configs = {c.name: c for c in await self._registry.load()}
+        cfg = configs.get(name)
+        if cfg is None:
+            raise UnknownModelError(f"no model named {name!r} in the registry")
+        key = await resolve_key(self._secrets, cfg.api_key_ref, self._scope)
+        if key is None:
+            raise MissingKeyError(
+                f"api_key_ref {cfg.api_key_ref!r} for model {name!r} could not be resolved"
+                " — set the env var or configure a secrets backend",
+            )
+        return cfg, key
 
     async def record_quality(
         self,

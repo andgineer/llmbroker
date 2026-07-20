@@ -16,12 +16,14 @@ def _config_from_entry(entry: dict) -> LLMConfig | None:
     base_url = entry.get("base_url")
     if not name or not base_url:
         return None
+    raw_pool = entry.get("pool", True)
     return LLMConfig(
         name=str(name),
         base_url=str(base_url),
         model=str(entry.get("model", "")),
         api_key_ref=str(entry.get("api_key_ref", "")),
         parallel=_int_or_none(entry.get("parallel")),
+        pooled=raw_pool if isinstance(raw_pool, bool) else True,
     )
 
 

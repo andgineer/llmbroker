@@ -16,6 +16,23 @@ from llmbroker.standalone.secrets import Secrets
 logger = logging.getLogger("llmbroker.broker")
 
 
+async def resolve_key(
+    secrets: SecretsProtocol,
+    api_key_ref: str,
+    scope: str | None,
+) -> str | None:
+    """Resolve ``api_key_ref`` to a key: scope-prefixed (own) ref first, then shared."""
+    if scope is not None:
+        try:
+            return await secrets.resolve(f"{scope}/{api_key_ref}")
+        except KeyError:
+            pass
+    try:
+        return await secrets.resolve(api_key_ref)
+    except KeyError:
+        return None
+
+
 class Catalog:
     """Reconciles the persistent registry into the live pool, and mirrors presets into it."""
 
@@ -53,11 +70,15 @@ class Catalog:
         await self._reconcile(configs)
 
     async def _reconcile(self, configs: list[LLMConfig]) -> None:
-        names = {c.name for c in configs}
+        """Reconcile only the pooled entries into the live pool. ``pooled=False``
+        entries stay in the registry (reachable via ``broker.direct``) but never
+        join the routed pool."""
+        pooled = [c for c in configs if c.pooled]
+        names = {c.name for c in pooled}
         for name in list(self._pool.configs):
             if name not in names:
                 await self._pool.drop(name)
-        for order, cfg in enumerate(configs):
+        for order, cfg in enumerate(pooled):
             await self._pool.add(cfg, await self._resolve_key(cfg), order=order)
 
     async def sync(self, preset: RegistryProtocol) -> None:
@@ -82,22 +103,15 @@ class Catalog:
         await self._seed_secrets(source_configs)
 
     async def _resolve_key(self, cfg: LLMConfig) -> str | None:
-        """Try the scope-prefixed (own) ref first, falling back to the shared ref."""
-        if self._scope is not None:
-            try:
-                return await self._secrets.resolve(f"{self._scope}/{cfg.api_key_ref}")
-            except KeyError:
-                pass
-        try:
-            return await self._secrets.resolve(cfg.api_key_ref)
-        except KeyError:
+        key = await resolve_key(self._secrets, cfg.api_key_ref, self._scope)
+        if key is None:
             logger.info(
                 "LLM %s: api_key_ref %r not resolved — inactive until the env var /"
                 " secret is set; this is normal, the pool routes over whatever keys are present",
                 cfg.name,
                 cfg.api_key_ref,
             )
-            return None
+        return key
 
     async def _seed_secrets(self, configs: list[LLMConfig]) -> None:
         """Copy any env-resolvable keys into a mutable secrets backend, preserving existing."""

@@ -32,6 +32,19 @@ class NoLLMAvailableError(LLMRequestError):
         self.retry_at = retry_at
 
 
+class UnknownModelError(LLMRequestError):
+    """No registry entry matched the requested model name."""
+
+
+class MissingKeyError(LLMRequestError):
+    """The model's ``api_key_ref`` could not be resolved before the call.
+
+    Distinct from ``AuthError``: nothing was sent to the provider — the key is
+    simply not configured (set the env var or secrets backend). ``AuthError``
+    means a key *was* sent and the provider rejected it.
+    """
+
+
 class LLMTimeoutError(LLMRequestError):
     """The request did not complete within its timeout."""
 

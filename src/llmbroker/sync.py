@@ -14,6 +14,7 @@ from typing import Any
 
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.result import AsyncLLM, AsyncResult
+from llmbroker.direct import DirectClient
 from llmbroker.models import Call, LLMConfig, LLMMetrics, LLMSnapshot, LLMState
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.registry import RegistryProtocol
@@ -168,6 +169,15 @@ class Broker:
                 ),
             ),
         )
+
+    def direct(self, name: str) -> DirectClient:
+        """Return a synchronous direct client (``ask()`` only) for any registry model.
+
+        Streaming is async-only; use ``AsyncBroker.direct`` for deltas. Raises
+        ``UnknownModelError`` / ``MissingKeyError`` like the async counterpart.
+        """
+        cfg, key = self._run(self._async._resolve_direct(name))  # noqa: SLF001
+        return DirectClient(base_url=cfg.base_url, model=cfg.model, api_key=key)
 
     def record_quality(
         self,

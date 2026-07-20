@@ -44,6 +44,10 @@ class LLMConfig:
 
     The registry is a pure mirror of the preset (see ``sync``): nothing else
     writes it, so there is no provenance/curation marker to carry here.
+
+    ``pooled`` controls pool membership only: a ``pooled=False`` entry is left
+    out of the routed pool (no failover onto it) yet stays a first-class registry
+    entry reachable directly by name — a paid model is the usual case.
     """
 
     name: str
@@ -51,16 +55,24 @@ class LLMConfig:
     model: str
     api_key_ref: str
     parallel: int | None = None
+    pooled: bool = True
 
     def to_metadata(self) -> dict[str, object]:
         """Structured optional config, serialized for the registry's JSON column.
 
+        Only non-default values are stored, so a plain pooled config stays empty.
+
         >>> LLMConfig(name="g", base_url="https://x/v1", model="m", api_key_ref="K").to_metadata()
         {}
+        >>> paid = LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", pooled=False)
+        >>> paid.to_metadata()
+        {'pool': False}
         """
         metadata: dict[str, object] = {}
         if self.parallel is not None:
             metadata["parallel"] = self.parallel
+        if not self.pooled:
+            metadata["pool"] = False
         return metadata
 
     @classmethod
@@ -77,12 +89,15 @@ class LLMConfig:
         metadata = metadata or {}
         raw_parallel = metadata.get("parallel")
         parallel = raw_parallel if isinstance(raw_parallel, int) else None
+        raw_pool = metadata.get("pool")
+        pooled = raw_pool if isinstance(raw_pool, bool) else True
         return cls(
             name=name,
             base_url=base_url,
             model=model,
             api_key_ref=api_key_ref,
             parallel=parallel,
+            pooled=pooled,
         )
 
 

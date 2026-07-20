@@ -8,9 +8,11 @@ from llmbroker.exceptions import (
     AuthError,
     LLMRequestError,
     LLMTimeoutError,
+    MissingKeyError,
     NoLLMAvailableError,
     ProviderError,
     RateLimitError,
+    UnknownModelError,
 )
 from llmbroker.models import LifecyclePhase
 from llmbroker.optimizer import Optimizer
@@ -35,10 +37,12 @@ __all__ = [
     "LifecyclePhase",
     "LLMRequestError",
     "LLMTimeoutError",
+    "MissingKeyError",
     "NoLLMAvailableError",
     "Optimizer",
     "ProviderError",
     "RateLimitError",
+    "UnknownModelError",
     "Registry",
     "Result",
     "Secrets",

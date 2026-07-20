@@ -46,6 +46,7 @@ nav:
   - usage.md
   - tools.md
   - async.md
+  - direct.md
   - secrets.md
   - server.md
   - disable.md
