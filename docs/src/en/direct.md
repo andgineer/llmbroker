@@ -23,7 +23,20 @@ direct-only (`pool = false`). `broker.direct(name)` works for **any** entry.
 
 Put models you add under a `[[custom]]` array — the same fields as `[[llms]]`,
 parsed by the same code, saved into the same registry, but flagged `custom`.
-Start from the template:
+
+The quickest way is `add-model`, which picks from a curated catalog of paid
+providers and appends the `[[custom]]` block for you:
+
+```bash
+llmbroker add-model --into llms.toml            # interactive: pick provider, then model
+# or non-interactive:
+llmbroker add-model --into llms.toml --provider anthropic --model claude-opus-4-8
+```
+
+It defaults to `pool = false` (direct-only); pass `--pool` to add it to the
+pool instead. Then set the key it prints (`llmbroker env llms.toml >> .env`).
+
+Or write the block by hand, starting from the template:
 
 ```bash
 llmbroker preset paid >> llms.toml   # appends a `[[custom]]` example

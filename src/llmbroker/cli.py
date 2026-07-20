@@ -1,6 +1,7 @@
 """python -m llmbroker <command>.
 
-Subcommands: env (emit .env skeleton), preset (download curated preset TOML),
+Subcommands: env (emit .env skeleton), preset (download curated preset TOML,
+or --merge it into a file), add-model (append a paid model from the catalog),
 sync (mirror a preset TOML into a DB registry — DB-init workflow).
 """
 
@@ -57,16 +58,16 @@ def _cmd_env(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_preset(args: argparse.Namespace) -> int:  # noqa: PLR0911
-    name = args.name
+def _fetch_preset_file(name: str) -> str | None:
+    """Download ``presets/<name>.toml`` from the repo; ``None`` (with a message on
+    stderr) on any failure. Shared by ``preset`` and ``add-model``."""
     if not _PRESET_NAME_RE.match(name):
         print(
             f"error: invalid preset name '{name}' (use letters, digits, hyphens, underscores)",
             file=sys.stderr,
         )
-        return 1
+        return None
     url = _PRESET_URL.format(name=name)
-
     try:
         with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310 - name validated above
             content = resp.read()
@@ -75,25 +76,29 @@ def _cmd_preset(args: argparse.Namespace) -> int:  # noqa: PLR0911
             print(f"error: preset '{name}' not found in catalog", file=sys.stderr)
         else:
             print(f"error: HTTP {exc.code} fetching {url}", file=sys.stderr)
-        return 1
+        return None
     except urllib.error.URLError as exc:
         print(f"error: {exc.reason}", file=sys.stderr)
-        return 1
-
+        return None
     try:
         text = content.decode()
     except UnicodeDecodeError:
         print(f"error: downloaded content for '{name}' is not valid UTF-8", file=sys.stderr)
-        return 1
+        return None
     try:
         tomllib.loads(text)
     except tomllib.TOMLDecodeError:
         print(f"error: downloaded content for '{name}' is not valid TOML", file=sys.stderr)
+        return None
+    return text
+
+
+def _cmd_preset(args: argparse.Namespace) -> int:
+    text = _fetch_preset_file(args.name)
+    if text is None:
         return 1
-
     if args.merge is not None:
-        return _merge_preset(text, name, Path(args.merge))
-
+        return _merge_preset(text, args.name, Path(args.merge))
     sys.stdout.write(text)
     return 0
 
@@ -133,6 +138,143 @@ def _merge_preset(preset_text: str, name: str, target: Path) -> int:
     target.write_text("\n\n".join(parts) + "\n", encoding="utf-8")
     print(f"merged preset '{name}' into {target} (kept {len(custom_entries)} [[custom]] entries)")
     return 0
+
+
+def _prompt_choice(label: str, items: list[dict], key: str) -> dict | None:
+    """Print a numbered menu of ``items`` (shown by ``key`` or its own name) and read a pick."""
+    for i, item in enumerate(items, 1):
+        print(f"  {i}. {item.get(key) or item.get('model') or item.get('id')}")
+    raw = input(f"{label} [1-{len(items)}]: ").strip()
+    try:
+        idx = int(raw)
+    except ValueError:
+        print(f"error: not a number: {raw!r}", file=sys.stderr)
+        return None
+    if not 1 <= idx <= len(items):
+        print(f"error: choice out of range: {idx}", file=sys.stderr)
+        return None
+    return items[idx - 1]
+
+
+def _select_from_flags(
+    providers: list[dict],
+    provider_id: str | None,
+    model_id: str | None,
+) -> tuple[dict, str] | None:
+    if provider_id is None or model_id is None:
+        print("error: --provider and --model must be given together", file=sys.stderr)
+        return None
+    prov = next((p for p in providers if p.get("id") == provider_id), None)
+    if prov is None:
+        have = ", ".join(str(p.get("id")) for p in providers)
+        print(f"error: unknown provider '{provider_id}' (have: {have})", file=sys.stderr)
+        return None
+    models = [str(m.get("model")) for m in prov.get("models", [])]
+    if model_id not in models:
+        have = ", ".join(models)
+        print(f"error: unknown model '{model_id}' (have: {have})", file=sys.stderr)
+        return None
+    return prov, model_id
+
+
+def _select_interactive(providers: list[dict]) -> tuple[dict, str] | None:
+    prov = _prompt_choice("Pick a provider", providers, "label")
+    if prov is None:
+        return None
+    models = prov.get("models", [])
+    if not models:
+        print(f"error: provider '{prov.get('id')}' has no models", file=sys.stderr)
+        return None
+    model = _prompt_choice("Pick a model", models, "label")
+    if model is None:
+        return None
+    return prov, str(model.get("model"))
+
+
+def _select_provider_model(
+    providers: list[dict],
+    provider_id: str | None,
+    model_id: str | None,
+) -> tuple[dict, str] | None:
+    """Resolve (provider, model id) from flags, or interactively. ``None`` on error."""
+    if provider_id is not None or model_id is not None:
+        return _select_from_flags(providers, provider_id, model_id)
+    return _select_interactive(providers)
+
+
+def _cmd_add_model(args: argparse.Namespace) -> int:  # noqa: PLR0911
+    target = Path(args.into)
+    if target.suffix.lower() != ".toml":
+        print(f"error: --into target must be a .toml file, got {target}", file=sys.stderr)
+        return 1
+    text = _fetch_preset_file("paid-catalog")
+    if text is None:
+        return 1
+    providers = [p for p in tomllib.loads(text).get("provider", []) if isinstance(p, dict)]
+    if not providers:
+        print("error: paid catalog has no providers", file=sys.stderr)
+        return 1
+
+    interactive = args.provider is None and args.model is None
+    selection = _select_provider_model(providers, args.provider, args.model)
+    if selection is None:
+        return 1
+    prov, model_id = selection
+
+    name = (_prompt_name(prov["id"]) if interactive else (args.name or prov["id"])).strip()
+    pooled = _prompt_yes_no("Add to the pool (failover)?") if interactive else bool(args.pool)
+
+    try:
+        existing = tomllib.loads(target.read_text(encoding="utf-8")) if target.exists() else {}
+    except (tomllib.TOMLDecodeError, OSError) as exc:
+        print(f"error: cannot read existing {target}: {exc}", file=sys.stderr)
+        return 1
+    taken = {
+        str(e["name"])
+        for section in ("llms", "custom")
+        for e in existing.get(section, [])
+        if isinstance(e, dict) and e.get("name")
+    }
+    if name in taken:
+        print(
+            f"error: an entry named '{name}' already exists in {target} — use --name",
+            file=sys.stderr,
+        )
+        return 1
+
+    ref = str(prov["api_key_ref"])
+    block: dict = {
+        "custom": [
+            {
+                "name": name,
+                "base_url": str(prov["base_url"]),
+                "model": model_id,
+                "api_key_ref": ref,
+                "pool": pooled,
+            },
+        ],
+    }
+    if ref not in existing.get("keys", {}) and prov.get("key_help"):
+        block["keys"] = {ref: {"help": str(prov["key_help"])}}
+
+    rendered = tomli_w.dumps(block).rstrip("\n")
+    if target.exists():
+        with target.open("a", encoding="utf-8") as fh:
+            fh.write("\n" + rendered + "\n")
+    else:
+        target.write_text(rendered + "\n", encoding="utf-8")
+
+    print(f"added [[custom]] '{name}' ({model_id}) to {target}")
+    print(f"next: set {ref} (e.g. `llmbroker env {target} >> .env`) and sync your config")
+    return 0
+
+
+def _prompt_name(default: str) -> str:
+    return input(f"Entry name [{default}]: ").strip() or default
+
+
+def _prompt_yes_no(label: str) -> bool:
+    return input(f"{label} [y/N]: ").strip().lower() in ("y", "yes")
 
 
 def _cmd_sync(args: argparse.Namespace) -> int:
@@ -181,6 +323,39 @@ def main(argv: list[str] | None = None) -> int:
         help="merge into FILE: refresh [[llms]]/[keys], keep [[custom]] (instead of stdout)",
     )
     preset_p.set_defaults(func=_cmd_preset)
+
+    addm_p = sub.add_parser(
+        "add-model",
+        help="pick a paid provider/model from the catalog and append it as [[custom]]",
+        description=(
+            "Pick a paid provider and model from the curated catalog and append a [[custom]]"
+            " entry to your config file. Interactive by default; pass --provider and --model"
+            " to run non-interactively."
+        ),
+    )
+    addm_p.add_argument(
+        "--into",
+        required=True,
+        metavar="FILE",
+        help="the .toml config to append to",
+    )
+    addm_p.add_argument(
+        "--provider",
+        metavar="ID",
+        help="provider id (with --model, non-interactive)",
+    )
+    addm_p.add_argument(
+        "--model",
+        metavar="ID",
+        help="model id (with --provider, non-interactive)",
+    )
+    addm_p.add_argument("--name", metavar="NAME", help="entry name (default: provider id)")
+    addm_p.add_argument(
+        "--pool",
+        action="store_true",
+        help="add to the routed pool (default: direct-only, reached via broker.direct)",
+    )
+    addm_p.set_defaults(func=_cmd_add_model)
 
     sync_p = sub.add_parser(
         "sync",

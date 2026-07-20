@@ -181,6 +181,147 @@ def test_preset_merge_rejects_non_toml(tmp_path, capsys):
     assert ".toml" in capsys.readouterr().err
 
 
+# --- add-model command ---
+
+_CATALOG = (
+    b'[[provider]]\nid="anthropic"\nlabel="Anthropic"\n'
+    b'base_url="https://api.anthropic.com/v1"\napi_key_ref="ANTHROPIC_API_KEY"\n'
+    b'key_help="console.anthropic.com"\n'
+    b'  [[provider.models]]\n  model="claude-opus-4-8"\n  label="Opus"\n  verified="u"\n'
+    b'  [[provider.models]]\n  model="claude-sonnet-5"\n  label="Sonnet"\n  verified="u"\n'
+)
+
+
+def _base_file(tmp_path):
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[llms]]\nname="pool"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="POOL_KEY"\n'
+    )
+    return f
+
+
+def test_add_model_flags_appends_custom(tmp_path):
+    f = _base_file(tmp_path)
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
+        rc = main(
+            ["add-model", "--into", str(f), "--provider", "anthropic", "--model", "claude-opus-4-8"]
+        )
+    assert rc == 0
+    data = tomllib.loads(f.read_text())
+    assert [e["name"] for e in data["llms"]] == ["pool"]  # existing entry preserved
+    (entry,) = data["custom"]
+    assert entry["name"] == "anthropic"
+    assert entry["model"] == "claude-opus-4-8"
+    assert entry["base_url"] == "https://api.anthropic.com/v1"
+    assert entry["api_key_ref"] == "ANTHROPIC_API_KEY"
+    assert entry["pool"] is False  # paid default: direct-only
+    assert data["keys"]["ANTHROPIC_API_KEY"]["help"] == "console.anthropic.com"
+
+
+def test_add_model_pool_and_name_flags(tmp_path):
+    f = _base_file(tmp_path)
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
+        rc = main(
+            [
+                "add-model",
+                "--into",
+                str(f),
+                "--provider",
+                "anthropic",
+                "--model",
+                "claude-sonnet-5",
+                "--name",
+                "frontier",
+                "--pool",
+            ]
+        )
+    assert rc == 0
+    (entry,) = tomllib.loads(f.read_text())["custom"]
+    assert entry["name"] == "frontier"
+    assert entry["pool"] is True
+
+
+def test_add_model_unknown_provider(tmp_path, capsys):
+    f = _base_file(tmp_path)
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
+        rc = main(["add-model", "--into", str(f), "--provider", "nope", "--model", "x"])
+    assert rc == 1
+    assert "unknown provider" in capsys.readouterr().err
+
+
+def test_add_model_unknown_model(tmp_path, capsys):
+    f = _base_file(tmp_path)
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
+        rc = main(["add-model", "--into", str(f), "--provider", "anthropic", "--model", "ghost"])
+    assert rc == 1
+    assert "unknown model" in capsys.readouterr().err
+
+
+def test_add_model_name_collision(tmp_path, capsys):
+    f = _base_file(tmp_path)
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
+        rc = main(
+            [
+                "add-model",
+                "--into",
+                str(f),
+                "--provider",
+                "anthropic",
+                "--model",
+                "claude-opus-4-8",
+                "--name",
+                "pool",
+            ]  # collides with the [[llms]] entry
+        )
+    assert rc == 1
+    assert "already exists" in capsys.readouterr().err
+
+
+def test_add_model_does_not_duplicate_existing_key(tmp_path):
+    f = tmp_path / "llms.toml"
+    f.write_text('[keys.ANTHROPIC_API_KEY]\nhelp = "existing help"\n')
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
+        rc = main(
+            ["add-model", "--into", str(f), "--provider", "anthropic", "--model", "claude-opus-4-8"]
+        )
+    assert rc == 0
+    data = tomllib.loads(f.read_text())  # still valid TOML, key kept once
+    assert data["keys"]["ANTHROPIC_API_KEY"]["help"] == "existing help"
+
+
+def test_add_model_interactive(tmp_path):
+    f = _base_file(tmp_path)
+    with (
+        patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)),
+        patch(
+            "builtins.input", side_effect=["1", "2", "", "n"]
+        ),  # provider, model, name(default), pool=no
+    ):
+        rc = main(["add-model", "--into", str(f)])
+    assert rc == 0
+    (entry,) = tomllib.loads(f.read_text())["custom"]
+    assert entry["name"] == "anthropic"  # default = provider id
+    assert entry["model"] == "claude-sonnet-5"  # picked #2
+    assert entry["pool"] is False
+
+
+def test_add_model_catalog_fetch_fails(tmp_path, capsys):
+    f = _base_file(tmp_path)
+    exc = urllib.error.URLError(reason="offline")
+    with patch("urllib.request.urlopen", side_effect=exc):
+        rc = main(
+            ["add-model", "--into", str(f), "--provider", "anthropic", "--model", "claude-opus-4-8"]
+        )
+    assert rc == 1
+    assert "offline" in capsys.readouterr().err
+
+
+def test_add_model_rejects_non_toml_into(tmp_path, capsys):
+    rc = main(["add-model", "--into", str(tmp_path / "x.json"), "--provider", "a", "--model", "m"])
+    assert rc == 1
+    assert ".toml" in capsys.readouterr().err
+
+
 def test_preset_invalid_toml_returns_1(capsys):
     with patch("urllib.request.urlopen", return_value=_mock_urlopen(b"not toml ]][")):
         rc = main(["preset", "freetier"])

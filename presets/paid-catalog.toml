@@ -1,0 +1,24 @@
+# Curated paid providers and their current flagship models.
+# Consumed by `llmbroker add-model`.
+#
+# Hand-seeded starter — only providers whose model ids could be verified are
+# listed. Run `presets/paid-catalog-refresh-prompt.md` (LLM + web verification)
+# to re-verify these and add OpenAI, Google, and other providers.
+# refreshed = "2026-07-20"
+
+[[provider]]
+id          = "anthropic"
+label       = "Anthropic"
+base_url    = "https://api.anthropic.com/v1"       # OpenAI-compatible endpoint
+api_key_ref = "ANTHROPIC_API_KEY"
+key_help    = "Create a key at https://console.anthropic.com/ (paid)."
+
+  [[provider.models]]
+  model    = "claude-opus-4-8"
+  label    = "Claude Opus 4.8 — highest-quality reasoning"
+  verified = "https://docs.anthropic.com/en/docs/about-claude/models (seeded 2026-07-20)"
+
+  [[provider.models]]
+  model    = "claude-sonnet-5"
+  label    = "Claude Sonnet 5 — strong, lower cost"
+  verified = "https://docs.anthropic.com/en/docs/about-claude/models (seeded 2026-07-20)"
