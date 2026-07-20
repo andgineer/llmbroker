@@ -1,24 +1,63 @@
 # Curated paid providers and their current flagship models.
 # Consumed by `llmbroker add-model`.
 #
-# Hand-seeded starter — only providers whose model ids could be verified are
-# listed. Run `presets/paid-catalog-refresh-prompt.md` (LLM + web verification)
-# to re-verify these and add OpenAI, Google, and other providers.
+# Model ids below were read from each provider's own authoritative docs on the
+# `verified` date. Re-run `presets/paid-catalog-refresh-prompt.md` to refresh
+# them and add more providers (xAI, Mistral, DeepSeek, ...).
 # refreshed = "2026-07-20"
 
 [[provider]]
 id          = "anthropic"
-label       = "Anthropic"
-base_url    = "https://api.anthropic.com/v1"       # OpenAI-compatible endpoint
+label       = "Anthropic (Claude)"
+base_url    = "https://api.anthropic.com/v1"                 # OpenAI-compatible endpoint
 api_key_ref = "ANTHROPIC_API_KEY"
 key_help    = "Create a key at https://console.anthropic.com/ (paid)."
 
   [[provider.models]]
   model    = "claude-opus-4-8"
-  label    = "Claude Opus 4.8 — highest-quality reasoning"
-  verified = "https://docs.anthropic.com/en/docs/about-claude/models (seeded 2026-07-20)"
+  label    = "Claude Opus 4.8 — recommended default for complex agentic/enterprise work"
+  verified = "https://platform.claude.com/docs/en/docs/about-claude/models/overview (2026-07-20)"
+
+  [[provider.models]]
+  model    = "claude-fable-5"
+  label    = "Claude Fable 5 — most capable, for long-running agents"
+  verified = "https://platform.claude.com/docs/en/docs/about-claude/models/overview (2026-07-20)"
 
   [[provider.models]]
   model    = "claude-sonnet-5"
-  label    = "Claude Sonnet 5 — strong, lower cost"
-  verified = "https://docs.anthropic.com/en/docs/about-claude/models (seeded 2026-07-20)"
+  label    = "Claude Sonnet 5 — best speed/intelligence balance, lower cost"
+  verified = "https://platform.claude.com/docs/en/docs/about-claude/models/overview (2026-07-20)"
+
+[[provider]]
+id          = "openai"
+label       = "OpenAI"
+base_url    = "https://api.openai.com/v1"
+api_key_ref = "OPENAI_API_KEY"
+key_help    = "Create a key at https://platform.openai.com/api-keys (paid)."
+
+  [[provider.models]]
+  model    = "gpt-5.6-sol"
+  label    = "GPT-5.6 Sol — frontier model for complex professional work"
+  verified = "https://developers.openai.com/api/docs/models (2026-07-20)"
+
+  [[provider.models]]
+  model    = "gpt-5.6-terra"
+  label    = "GPT-5.6 Terra — balances intelligence and cost"
+  verified = "https://developers.openai.com/api/docs/models (2026-07-20)"
+
+[[provider]]
+id          = "google"
+label       = "Google (Gemini)"
+base_url    = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key_ref = "GEMINI_API_KEY"
+key_help    = "Create a key at https://aistudio.google.com/apikey (paid tier)."
+
+  [[provider.models]]
+  model    = "gemini-3.5-flash"
+  label    = "Gemini 3.5 Flash — most intelligent, agentic and coding"
+  verified = "https://ai.google.dev/gemini-api/docs/models (2026-07-20)"
+
+  [[provider.models]]
+  model    = "gemini-2.5-flash"
+  label    = "Gemini 2.5 Flash — best price-performance"
+  verified = "https://ai.google.dev/gemini-api/docs/models (2026-07-20)"
