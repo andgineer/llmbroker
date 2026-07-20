@@ -11,7 +11,7 @@ def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) else None
 
 
-def _config_from_entry(entry: dict) -> LLMConfig | None:
+def _config_from_entry(entry: dict, *, custom: bool) -> LLMConfig | None:
     name = entry.get("name")
     base_url = entry.get("base_url")
     if not name or not base_url:
@@ -24,6 +24,7 @@ def _config_from_entry(entry: dict) -> LLMConfig | None:
         api_key_ref=str(entry.get("api_key_ref", "")),
         parallel=_int_or_none(entry.get("parallel")),
         pooled=raw_pool if isinstance(raw_pool, bool) else True,
+        custom=custom,
     )
 
 
@@ -68,10 +69,20 @@ class Registry:
         return self._path
 
     async def load(self) -> list[LLMConfig]:
+        """Load ``[[llms]]`` (preset-managed) and ``[[custom]]`` (user-owned) entries.
+
+        The two arrays are parsed identically; ``[[custom]]`` entries are flagged
+        ``custom=True`` so ``sync`` never prunes them. Both honor a per-entry
+        ``pool`` flag, so a custom model can join the pool or stay direct-only.
+        """
         data = _read_data(self._path)
         result: list[LLMConfig] = []
         for entry in data.get("llms", []):
-            cfg = _config_from_entry(entry)
+            cfg = _config_from_entry(entry, custom=False)
+            if cfg is not None:
+                result.append(cfg)
+        for entry in data.get("custom", []):
+            cfg = _config_from_entry(entry, custom=True)
             if cfg is not None:
                 result.append(cfg)
         return result

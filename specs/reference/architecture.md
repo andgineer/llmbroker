@@ -286,11 +286,16 @@ await llms.sync(llmbroker.Registry(".deploy/llms.toml"))  # once, e.g. at deploy
 await llms.ensure_pool()   # eager init at startup
 ```
 
-`sync(preset)` is a total mirror: add new entries, update existing ones, delete
-entries absent from the preset — nothing is lost by a delete, since keys live in
-the secrets store, learned state derives from the journal, and admin verdicts
-live in the store disabled map (a model returning to the preset is simply
-re-added, and its old ratings and verdict resurface). Refusing a `model`-identity
+`sync(preset)` is a total mirror of the preset-managed entries: add new entries,
+update existing ones, delete managed entries absent from the preset — nothing is
+lost by a delete, since keys live in the secrets store, learned state derives
+from the journal, and admin verdicts live in the store disabled map (a model
+returning to the preset is simply re-added, and its old ratings and verdict
+resurface). User-owned `custom` entries (the `[[custom]]` array, flagged
+`custom` in the registry) sit in the same catalog but are outside the mirror:
+`sync` never prunes them, so refreshing the curated pool preset leaves a user's
+own models intact. A `custom` entry is orthogonal to pool membership — it may be
+pooled or direct-only. Refusing a `model`-identity
 change under an existing entry name is a synchronous error — entry identity is
 immutable, a model bump must be a new entry name; this protects the binding
 between a model's learned quality stats and its name. There is no other model

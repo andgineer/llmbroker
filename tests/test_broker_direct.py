@@ -21,12 +21,18 @@ base_url="https://pool/v1"
 model="m"
 api_key_ref="K"
 
-[[llms]]
+[[custom]]
 name="frontier"
 base_url="https://paid/v1"
 model="big"
 api_key_ref="K"
 pool=false
+
+[[custom]]
+name="extra"
+base_url="https://extra/v1"
+model="m"
+api_key_ref="K"
 """
 
 _SSE = (
@@ -65,18 +71,20 @@ def test_pooled_default_and_metadata_roundtrip():
     assert back.pooled is False
 
 
-def test_file_registry_parses_pool_false(tmp_path):
+def test_file_registry_parses_custom_and_pool(tmp_path):
     configs = {c.name: c for c in asyncio.run(_registry(tmp_path).load())}
-    assert configs["pooled-a"].pooled is True
-    assert configs["frontier"].pooled is False
+    assert (configs["pooled-a"].custom, configs["pooled-a"].pooled) == (False, True)
+    assert (configs["frontier"].custom, configs["frontier"].pooled) == (True, False)
+    assert (configs["extra"].custom, configs["extra"].pooled) == (True, True)
 
 
-def test_pool_false_excluded_from_pool(tmp_path):
+def test_pool_membership_ignores_custom_but_honors_pool_flag(tmp_path):
     async def run():
         async with _broker(tmp_path) as broker:
-            return await broker.count()
+            return set(await broker.snapshot())
 
-    assert asyncio.run(run()) == 1  # only pooled-a joins the routed pool
+    # pooled-a (managed) and extra (custom, pool=true) join; frontier (pool=false) does not
+    assert asyncio.run(run()) == {"pooled-a", "extra"}
 
 
 # --------------------------------------------------------------------------- #

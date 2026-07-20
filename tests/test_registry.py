@@ -78,6 +78,19 @@ def test_load_empty_llms_section(tmp_path):
     assert asyncio.run(Registry(f).load()) == []
 
 
+def test_load_custom_array_flags_and_pool(tmp_path):
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[llms]]\nname="m"\nbase_url="https://x/v1"\nmodel="a"\napi_key_ref="K"\n'
+        '[[custom]]\nname="c-pooled"\nbase_url="https://y/v1"\nmodel="b"\napi_key_ref="K"\n'
+        '[[custom]]\nname="c-direct"\nbase_url="https://z/v1"\nmodel="c"\napi_key_ref="K"\npool=false\n'
+    )
+    configs = {c.name: c for c in asyncio.run(Registry(f).load())}
+    assert (configs["m"].custom, configs["m"].pooled) == (False, True)
+    assert (configs["c-pooled"].custom, configs["c-pooled"].pooled) == (True, True)
+    assert (configs["c-direct"].custom, configs["c-direct"].pooled) == (True, False)
+
+
 # ── SQLite registry tests ─────────────────────────────────────────────────────
 
 
@@ -107,6 +120,24 @@ def test_sqlite_registry_mirror_deletes_absent(tmp_path):
         await reg.mirror([_cfg("p1")])
         result = {c.name: c for c in await reg.load()}
         assert set(result) == {"p1"}
+
+    asyncio.run(run())
+
+
+def test_sqlite_registry_mirror_preserves_custom_row(tmp_path):
+    db = str(tmp_path / "b.db")
+    reg = SqliteRegistry(db)
+    custom = LLMConfig(
+        name="mine", base_url="https://x/v1", model="m", api_key_ref="K", custom=True
+    )
+
+    async def run():
+        await reg.mirror([custom, _cfg("p1")])
+        # refreshing the curated pool preset (custom entry absent) must not prune it
+        await reg.mirror([_cfg("p1")])
+        result = {c.name: c for c in await reg.load()}
+        assert set(result) == {"mine", "p1"}
+        assert result["mine"].custom is True
 
     asyncio.run(run())
 
@@ -176,6 +207,15 @@ def test_llmconfig_metadata_round_trip_with_parallel():
         model=cfg.model,
         api_key_ref=cfg.api_key_ref,
         metadata=metadata,
+    )
+    assert restored == cfg
+
+
+def test_llmconfig_custom_metadata_round_trip():
+    cfg = LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", pooled=False, custom=True)
+    assert cfg.to_metadata() == {"pool": False, "custom": True}
+    restored = LLMConfig.from_metadata(
+        name="g", base_url="u", model="m", api_key_ref="K", metadata={"pool": False, "custom": True}
     )
     assert restored == cfg
 

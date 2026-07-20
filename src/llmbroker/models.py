@@ -45,9 +45,14 @@ class LLMConfig:
     The registry is a pure mirror of the preset (see ``sync``): nothing else
     writes it, so there is no provenance/curation marker to carry here.
 
-    ``pooled`` controls pool membership only: a ``pooled=False`` entry is left
-    out of the routed pool (no failover onto it) yet stays a first-class registry
-    entry reachable directly by name — a paid model is the usual case.
+    Two orthogonal flags carry the entry's role:
+
+    * ``pooled`` — pool membership: a ``pooled=False`` entry is left out of the
+      routed pool (no failover onto it) yet stays reachable directly by name.
+    * ``custom`` — provenance: a ``custom=True`` entry is user-owned, not part of
+      the curated preset, so ``sync`` never prunes it. Independent of ``pooled``
+      — a custom entry may be pooled (a user's own extra pool model) or not (a
+      direct-only model such as a paid one).
     """
 
     name: str
@@ -56,6 +61,7 @@ class LLMConfig:
     api_key_ref: str
     parallel: int | None = None
     pooled: bool = True
+    custom: bool = False
 
     def to_metadata(self) -> dict[str, object]:
         """Structured optional config, serialized for the registry's JSON column.
@@ -73,6 +79,8 @@ class LLMConfig:
             metadata["parallel"] = self.parallel
         if not self.pooled:
             metadata["pool"] = False
+        if self.custom:
+            metadata["custom"] = True
         return metadata
 
     @classmethod
@@ -91,6 +99,8 @@ class LLMConfig:
         parallel = raw_parallel if isinstance(raw_parallel, int) else None
         raw_pool = metadata.get("pool")
         pooled = raw_pool if isinstance(raw_pool, bool) else True
+        raw_custom = metadata.get("custom")
+        custom = raw_custom if isinstance(raw_custom, bool) else False
         return cls(
             name=name,
             base_url=base_url,
@@ -98,6 +108,7 @@ class LLMConfig:
             api_key_ref=api_key_ref,
             parallel=parallel,
             pooled=pooled,
+            custom=custom,
         )
 
 

@@ -6,40 +6,45 @@ quality task, or a single pool model you want to stream. That is what
 `broker.direct(name)` gives you: a client for exactly that model, with **no
 pool, no failover**, and — for the async client — **streaming**.
 
-## Pooled vs direct
+## Two orthogonal flags
 
-Every model lives in one registry. A per-entry `pool` flag (default `true`)
-controls pool membership only:
+Every model lives in one registry. Two independent per-entry flags carry its
+role:
 
-- `pool = true` — part of the routed pool; a failover target for `ask`/`chat`.
-- `pool = false` — kept in the registry but never routed. Reach it by name with
-  `direct(...)`.
+- `pool` (default `true`) — pool membership. `pool = false` keeps the entry in
+  the registry but out of routing; reach it by name with `direct(...)`.
+- `custom` (default `false`) — provenance. Custom entries are yours, not part of
+  the broker's curated preset, so `sync` never prunes them.
 
-`broker.direct(name)` works for **any** entry — pooled or not. A paid model is
-simply `pool = false`, so the pool never fails over onto it, yet it stays a
-first-class model you can call directly.
+They are independent: a custom model may join the pool (`pool = true`) or stay
+direct-only (`pool = false`). `broker.direct(name)` works for **any** entry.
 
-## Configure a paid model
+## Add your own models
 
+Put models you add under a `[[custom]]` array — the same fields as `[[llms]]`,
+parsed by the same code, saved into the same registry, but flagged `custom`.
 Start from the template:
 
 ```bash
-llmbroker preset paid >> llms.toml   # appends a `pool = false` example
+llmbroker preset paid >> llms.toml   # appends a `[[custom]]` example
 llmbroker env llms.toml >> .env      # adds the key line with a hint
 ```
 
 ```toml
-[[llms]]
+[[custom]]
 name        = "frontier"
 base_url    = "https://api.anthropic.com/v1"   # any OpenAI-compatible endpoint
 model       = "claude-opus-4-8"
 api_key_ref = "ANTHROPIC_API_KEY"
-pool        = false                            # excluded from failover; directable
+pool        = false                            # direct-only; reach via direct("frontier")
 ```
 
-`sync` mirrors only the config (`base_url` / `model` / `api_key_ref`) into the
-DB — **never the key value**. The key is read from the env var or secrets
-backend at call time, so updating a preset never touches your secret.
+Because it is `custom`, refreshing the broker's pool preset never removes it:
+`sync` total-mirrors only the `[[llms]]` (preset-managed) entries and leaves
+`[[custom]]` rows untouched. And `sync` mirrors only the config
+(`base_url` / `model` / `api_key_ref`) — **never the key value**; the key is read
+from the env var or secrets backend at call time, so updating a preset never
+touches your secret.
 
 ## Stream and ask (async)
 

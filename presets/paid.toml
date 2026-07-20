@@ -1,25 +1,34 @@
-# Template: add a paid, directly-called model alongside the free pool.
+# Template: your own models, kept separate from the broker's curated pool.
 #
-# The free pool (`freetier.toml`) gives failover across many free models. A paid
-# frontier model is different: you want *that* model, not routing — so mark it
-# `pool = false` and reach it with `broker.direct("<name>")`. It stays in the
-# registry (one catalog) but is never a failover target.
+# Put models YOU add under `[[custom]]` (not `[[llms]]`). They are saved into the
+# same registry but flagged `custom`, so refreshing the broker's pool preset with
+# `sync` never prunes them. A custom model can join the pool (`pool = true`, the
+# default) or stay direct-only (`pool = false`, e.g. a paid model you reach with
+# `broker.direct("<name>")`).
 #
-# 1. Copy the `[[llms]]` block below and set base_url / model to your provider's
+# 1. Copy a block below and set base_url / model to your provider's
 #    OpenAI-compatible endpoint and model id.
-# 2. `python -m llmbroker env presets/paid.toml >> .env`  # fills the key line
-# 3. Put your key in .env, then `broker.sync("presets/paid.toml")`.
+# 2. `python -m llmbroker env presets/paid.toml >> .env`  # fills the key lines
+# 3. Put your key(s) in .env, then `broker.sync("presets/paid.toml")`.
 #
-# `sync` mirrors only the config (base_url / model / api_key_ref) into the DB —
-# never the key value. The key is read from the env var / secrets backend at
-# call time.
+# `sync` mirrors only the config (base_url / model / api_key_ref) — never the key
+# value. The key is read from the env var / secrets backend at call time.
 
-[[llms]]
+# A paid, direct-only model (excluded from failover, reached by name):
+[[custom]]
 name        = "frontier"
 base_url    = "https://api.anthropic.com/v1"   # any OpenAI-compatible endpoint
 model       = "claude-opus-4-8"
 api_key_ref = "ANTHROPIC_API_KEY"
-pool        = false                            # excluded from failover; directable by name
+pool        = false                            # direct-only; call via broker.direct("frontier")
+
+# A free model you want in the pool, on top of the broker's preset:
+# [[custom]]
+# name        = "my-endpoint"
+# base_url    = "https://my-host/v1"
+# model       = "my-model"
+# api_key_ref = "MY_API_KEY"
+#                                              # pool defaults to true -> joins the pool
 
 [keys.ANTHROPIC_API_KEY]
 effort = "signup"
