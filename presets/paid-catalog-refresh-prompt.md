@@ -32,18 +32,31 @@ beats a longer one with one hallucinated id that silently 404s at call time.
 
 ## 1. Providers and their authoritative pages
 
-For each provider below, open its **own** pages (domain allowlist — do not trust
-third-party lists, blogs, or aggregators for ids or endpoints) and confirm two
-things live: (a) the **OpenAI-compatible base_url**, and (b) the current
-**flagship model API id(s)**.
+For each provider, open its **own official docs** (do not trust third-party
+lists, blogs, or aggregators for ids or endpoints) and confirm two things live:
+(a) the **flagship model API id(s)** on the models/reference page, and (b) the
+**OpenAI-compatible base_url** — the host serving `/chat/completions`. Note two
+realities the "one domain" instinct gets wrong:
+
+- **Provider docs move across official domains and 301-redirect.** Follow the
+  redirect to the provider's current canonical domain — do not reject it. Seen
+  in practice: `docs.anthropic.com` → `platform.claude.com`,
+  `platform.openai.com` → `developers.openai.com`. "Official domain(s)" is the
+  rule, not one fixed host.
+- **The base_url host usually differs from the docs host, and that is correct**
+  (e.g. ids verified on `ai.google.dev`, endpoint `generativelanguage.googleapis.com`).
+  The models page may not print the base_url at all; take it from the provider's
+  API-reference / OpenAI-compatibility page. For OpenAI specifically, you need
+  the OpenAI-compatible **Chat Completions** endpoint (`https://api.openai.com/v1`),
+  **not** the Responses API the docs may foreground.
 
 Seed providers (extend only with providers that genuinely expose an
-OpenAI-compatible endpoint):
+OpenAI-compatible endpoint) — entry points, re-follow redirects each pass:
 
-- **Anthropic** — models: `https://docs.anthropic.com/en/docs/about-claude/models`;
-  OpenAI-compat: `https://docs.anthropic.com/en/api/openai-sdk`
+- **Anthropic** — models:
+  `https://platform.claude.com/docs/en/docs/about-claude/models/overview`
   (base_url `https://api.anthropic.com/v1`).
-- **OpenAI** — models: `https://platform.openai.com/docs/models`
+- **OpenAI** — models: `https://developers.openai.com/api/docs/models`
   (base_url `https://api.openai.com/v1`).
 - **Google (Gemini)** — models: `https://ai.google.dev/gemini-api/docs/models`;
   OpenAI-compat: `https://ai.google.dev/gemini-api/docs/openai`
@@ -53,17 +66,20 @@ OpenAI-compatible endpoint):
   (base_url `https://api.mistral.ai/v1`).
 - **DeepSeek** — `https://api-docs.deepseek.com/` (base_url `https://api.deepseek.com`).
 
-The URLs above are entry points, not gospel — they move. If one 404s, navigate
-from the provider's docs root **on the same domain** to the current models
-reference. Never carry an id or base_url over from memory or from this file
-without re-reading it live this pass.
+If a docs page is JS-only and unreadable, or a link 404s, navigate from the
+provider's docs root on the same official domain, or read the ids from the
+provider's models-list API endpoint. If the docs never state a base_url, use the
+provider's well-known OpenAI-compatible host and flag it in the diff for the
+human to confirm — never invent a novel host. Never carry an id or base_url over
+from memory or from this file without re-reading it live this pass.
 
 ## 2. Curate the flagship model(s)
 
-Per provider, pick **one or two** models a user would pay for on quality — the
-current top-tier reasoning/general model, and at most one cheaper-but-strong
-sibling if it is meaningfully distinct. This is a curation, not a dump: do not
-list every snapshot, dated alias, or legacy id.
+Per provider, pick **one to three** models a user would pay for on quality, as
+distinct tiers — the top-capability flagship, the provider's recommended default
+if different, and at most one cheaper-but-strong sibling. Skip a tier that is not
+meaningfully distinct. This is a curation, not a dump: do not list every
+snapshot, dated alias, or legacy id.
 
 Prefer the **stable/latest** id the provider recommends for production over a
 dated snapshot, unless only dated snapshots exist.
@@ -113,10 +129,11 @@ Rules:
 
 ## Guardrails
 
-- **Ids only from the provider's own authoritative page, verbatim.** Never a
-  marketing name, never a third-party list, never memory. Cite every id.
+- **Ids only from the provider's own official docs, verbatim.** Official domains
+  reached via redirects count; third-party lists, marketing names, and memory do
+  not. Cite every id with the URL you actually read.
 - **Fail closed.** Unverifiable id → omit the model.
-- **OpenAI-compatible only.** No OpenAI-compatible endpoint → the provider is
-  out of scope for this catalog.
-- **Curation, not accumulation.** One or two flagships per provider.
+- **OpenAI-compatible only.** No OpenAI-compatible `/chat/completions` endpoint →
+  the provider is out of scope for this catalog.
+- **Curation, not accumulation.** One to three distinct tiers per provider.
 - **Human-in-the-loop.** Output a reviewed diff, never an unattended commit.
