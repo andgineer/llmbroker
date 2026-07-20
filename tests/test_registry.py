@@ -124,24 +124,6 @@ def test_sqlite_registry_mirror_deletes_absent(tmp_path):
     asyncio.run(run())
 
 
-def test_sqlite_registry_mirror_preserves_custom_row(tmp_path):
-    db = str(tmp_path / "b.db")
-    reg = SqliteRegistry(db)
-    custom = LLMConfig(
-        name="mine", base_url="https://x/v1", model="m", api_key_ref="K", custom=True
-    )
-
-    async def run():
-        await reg.mirror([custom, _cfg("p1")])
-        # refreshing the curated pool preset (custom entry absent) must not prune it
-        await reg.mirror([_cfg("p1")])
-        result = {c.name: c for c in await reg.load()}
-        assert set(result) == {"mine", "p1"}
-        assert result["mine"].custom is True
-
-    asyncio.run(run())
-
-
 # ── Parametrized backend tests for the MutableRegistryProtocol ───────────────
 
 

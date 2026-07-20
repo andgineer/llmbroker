@@ -39,12 +39,23 @@ api_key_ref = "ANTHROPIC_API_KEY"
 pool        = false                            # direct-only; reach via direct("frontier")
 ```
 
-Because it is `custom`, refreshing the broker's pool preset never removes it:
-`sync` total-mirrors only the `[[llms]]` (preset-managed) entries and leaves
-`[[custom]]` rows untouched. And `sync` mirrors only the config
-(`base_url` / `model` / `api_key_ref`) — **never the key value**; the key is read
-from the env var or secrets backend at call time, so updating a preset never
-touches your secret.
+The file is the single source of truth: add a `[[custom]]` block to add a model,
+remove it to remove one, then `sync` mirrors the whole file into the DB. `sync`
+mirrors only the config (`base_url` / `model` / `api_key_ref`) — **never the key
+value**; the key is read from the env var or secrets backend at call time.
+
+## Refresh the pool without losing your models
+
+Do **not** overwrite the file with `preset freetier > llms.toml` — that would
+drop your `[[custom]]` block. Use `--merge` instead:
+
+```bash
+llmbroker preset freetier --merge llms.toml   # refresh [[llms]], keep [[custom]]
+```
+
+`--merge` rewrites the `[[llms]]` (preset-managed) entries and their `[keys]`
+from the fresh preset while preserving your `[[custom]]` models and their keys.
+Then `sync` as usual.
 
 ## Stream and ask (async)
 

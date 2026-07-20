@@ -2,6 +2,7 @@
 
 import asyncio
 import socket
+import tomllib
 import urllib.error
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -118,6 +119,50 @@ def test_preset_invalid_name_returns_1(capsys):
     rc = main(["preset", "../secrets"])
     assert rc == 1
     assert "invalid preset name" in capsys.readouterr().err
+
+
+# --- preset --merge ---
+
+_FRESH_PRESET = (
+    b'[[llms]]\nname="groq-new"\nbase_url="https://groq/v1"\nmodel="new"\napi_key_ref="GROQ_API_KEY"\n'
+    b'\n[keys.GROQ_API_KEY]\nhelp = "groq help"\n'
+)
+
+
+def test_preset_merge_refreshes_llms_and_keeps_custom(tmp_path):
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[llms]]\nname="groq-old"\nbase_url="https://old/v1"\nmodel="old"\napi_key_ref="GROQ_API_KEY"\n'
+        '[[custom]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="big"\napi_key_ref="MY_KEY"\npool=false\n'
+        '[keys.MY_KEY]\nhelp = "my custom key"\n'
+    )
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_FRESH_PRESET)):
+        rc = main(["preset", "freetier", "--merge", str(f)])
+    assert rc == 0
+    data = tomllib.loads(f.read_text())
+    assert [e["name"] for e in data["llms"]] == ["groq-new"]  # old managed entry gone
+    assert [e["name"] for e in data["custom"]] == ["mine"]  # custom preserved
+    assert data["custom"][0]["pool"] is False
+    assert data["keys"]["GROQ_API_KEY"]["help"] == "groq help"  # refreshed from preset
+    assert data["keys"]["MY_KEY"]["help"] == "my custom key"  # custom key preserved
+
+
+def test_preset_merge_creates_file_when_absent(tmp_path):
+    f = tmp_path / "new.toml"
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_FAKE_TOML)):
+        rc = main(["preset", "freetier", "--merge", str(f)])
+    assert rc == 0
+    data = tomllib.loads(f.read_text())
+    assert [e["name"] for e in data["llms"]] == ["x"]
+    assert "custom" not in data
+
+
+def test_preset_merge_rejects_non_toml(tmp_path, capsys):
+    f = tmp_path / "llms.json"
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_FAKE_TOML)):
+        rc = main(["preset", "freetier", "--merge", str(f)])
+    assert rc == 1
+    assert ".toml" in capsys.readouterr().err
 
 
 def test_preset_invalid_toml_returns_1(capsys):

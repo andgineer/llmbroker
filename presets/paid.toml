@@ -1,10 +1,13 @@
 # Template: your own models, kept separate from the broker's curated pool.
 #
 # Put models YOU add under `[[custom]]` (not `[[llms]]`). They are saved into the
-# same registry but flagged `custom`, so refreshing the broker's pool preset with
-# `sync` never prunes them. A custom model can join the pool (`pool = true`, the
-# default) or stay direct-only (`pool = false`, e.g. a paid model you reach with
-# `broker.direct("<name>")`).
+# same registry but flagged `custom`. A custom model can join the pool
+# (`pool = true`, the default) or stay direct-only (`pool = false`, e.g. a paid
+# model you reach with `broker.direct("<name>")`).
+#
+# The file is the source of truth: to refresh the broker's curated pool without
+# losing these, use `llmbroker preset freetier --merge <file>` (it keeps the
+# `[[custom]]` block) — do NOT overwrite the file with `preset freetier > file`.
 #
 # 1. Copy a block below and set base_url / model to your provider's
 #    OpenAI-compatible endpoint and model id.

@@ -16,12 +16,6 @@ _DEFAULT_RETENTION = timedelta(days=90)
 _PURGE_INTERVAL_SECONDS = 3600.0
 
 
-def _row_is_custom(row: Row) -> bool:
-    """Whether a stored registry row is a user-owned (``custom``) entry."""
-    metadata = row.get("metadata")
-    return isinstance(metadata, dict) and metadata.get("custom") is True
-
-
 class DriverRegistry:
     """Registry over any ``Driver`` — a pure preset mirror, globally scoped."""
 
@@ -42,17 +36,13 @@ class DriverRegistry:
         ]
 
     async def mirror(self, configs: list[LLMConfig]) -> None:
-        """Total mirror of preset-managed entries: add new, update existing, delete
-        stored entries absent from ``configs`` — the only registry write path.
-
-        User-owned ``custom`` rows are never pruned here: syncing a curated preset
-        must not wipe models the user added. A custom row is removed only when it
-        is explicitly overwritten as non-custom, or deleted out of band."""
+        """Total mirror: add new, update existing, delete stored entries absent
+        from ``configs`` — the only registry write path. The synced file is the
+        whole truth (``[[llms]]`` and ``[[custom]]`` alike); user models survive a
+        pool refresh because ``preset --merge`` keeps ``[[custom]]`` in the file."""
         source_names = {c.name for c in configs}
-        for row in await self._driver.fetch("registry"):
-            name = str(row["name"])
-            if name in source_names or _row_is_custom(row):
-                continue
+        existing = {str(row["name"]) for row in await self._driver.fetch("registry")}
+        for name in existing - source_names:
             await self._driver.delete("registry", (name,))
         for cfg in configs:
             await self._driver.upsert(

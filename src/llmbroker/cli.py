@@ -15,6 +15,8 @@ import urllib.request
 from http import HTTPStatus
 from pathlib import Path
 
+import tomli_w
+
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.models import KeyInfo, LLMConfig
 from llmbroker.standalone.registry import Registry, key_info_from_entry
@@ -55,7 +57,7 @@ def _cmd_env(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_preset(args: argparse.Namespace) -> int:
+def _cmd_preset(args: argparse.Namespace) -> int:  # noqa: PLR0911
     name = args.name
     if not _PRESET_NAME_RE.match(name):
         print(
@@ -89,7 +91,47 @@ def _cmd_preset(args: argparse.Namespace) -> int:
         print(f"error: downloaded content for '{name}' is not valid TOML", file=sys.stderr)
         return 1
 
+    if args.merge is not None:
+        return _merge_preset(text, name, Path(args.merge))
+
     sys.stdout.write(text)
+    return 0
+
+
+def _merge_preset(preset_text: str, name: str, target: Path) -> int:
+    """Refresh the managed ``[[llms]]`` + ``[keys]`` in ``target`` from a fresh preset,
+    keeping the user's ``[[custom]]`` models and their keys. Managed comments come from
+    the preset verbatim; the re-emitted ``[[custom]]`` tail loses inline comments."""
+    if target.suffix.lower() != ".toml":
+        print(f"error: --merge target must be a .toml file, got {target}", file=sys.stderr)
+        return 1
+    try:
+        existing = tomllib.loads(target.read_text(encoding="utf-8")) if target.exists() else {}
+    except (tomllib.TOMLDecodeError, OSError) as exc:
+        print(f"error: cannot read existing {target}: {exc}", file=sys.stderr)
+        return 1
+
+    preset_key_refs = set(tomllib.loads(preset_text).get("keys", {}))
+    custom_entries = [e for e in existing.get("custom", []) if isinstance(e, dict)]
+    custom_refs = {e["api_key_ref"] for e in custom_entries if e.get("api_key_ref")}
+    existing_keys = existing.get("keys", {})
+    custom_keys = {
+        ref: existing_keys[ref]
+        for ref in custom_refs
+        if ref in existing_keys and ref not in preset_key_refs
+    }
+
+    tail: dict = {}
+    if custom_entries:
+        tail["custom"] = custom_entries
+    if custom_keys:
+        tail["keys"] = custom_keys
+
+    parts = [preset_text.rstrip("\n")]
+    if tail:
+        parts.append(tomli_w.dumps(tail).rstrip("\n"))
+    target.write_text("\n\n".join(parts) + "\n", encoding="utf-8")
+    print(f"merged preset '{name}' into {target} (kept {len(custom_entries)} [[custom]] entries)")
     return 0
 
 
@@ -127,10 +169,17 @@ def main(argv: list[str] | None = None) -> int:
         "preset",
         help="print a curated preset TOML to stdout",
         description=(
-            "Print a curated preset TOML to stdout. To save: preset freetier > freetier.toml"
+            "Print a curated preset TOML to stdout. To save: preset freetier > freetier.toml."
+            " With --merge FILE, refresh the [[llms]] and [keys] in FILE from the preset while"
+            " keeping your [[custom]] models and their keys."
         ),
     )
     preset_p.add_argument("name", help="preset name (e.g. freetier)")
+    preset_p.add_argument(
+        "--merge",
+        metavar="FILE",
+        help="merge into FILE: refresh [[llms]]/[keys], keep [[custom]] (instead of stdout)",
+    )
     preset_p.set_defaults(func=_cmd_preset)
 
     sync_p = sub.add_parser(
