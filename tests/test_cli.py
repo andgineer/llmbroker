@@ -322,6 +322,45 @@ def test_add_model_rejects_non_toml_into(tmp_path, capsys):
     assert ".toml" in capsys.readouterr().err
 
 
+def test_add_model_incomplete_catalog_entry_errors_cleanly(tmp_path, capsys):
+    # provider missing base_url/api_key_ref — must be a clean error, not a traceback
+    bad = (
+        b'[[provider]]\nid="x"\nlabel="X"\n'
+        b'  [[provider.models]]\n  model="m1"\n  label="M1"\n  verified="u"\n'
+    )
+    f = _base_file(tmp_path)
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(bad)):
+        rc = main(["add-model", "--into", str(f), "--provider", "x", "--model", "m1"])
+    assert rc == 1
+    assert "incomplete" in capsys.readouterr().err
+
+
+def test_add_model_interactive_honors_pool_and_name_flags(tmp_path):
+    f = _base_file(tmp_path)
+    with (
+        patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)),
+        patch(
+            "builtins.input", side_effect=["1", "1", "", ""]
+        ),  # provider, model, name/pool = defaults
+    ):
+        rc = main(["add-model", "--into", str(f), "--name", "myclaude", "--pool"])
+    assert rc == 0
+    (entry,) = tomllib.loads(f.read_text())["custom"]
+    assert entry["name"] == "myclaude"  # --name used as the prompt default, accepted blank
+    assert entry["pool"] is True  # --pool used as the prompt default, accepted blank
+
+
+def test_add_model_eof_aborts_cleanly(tmp_path, capsys):
+    f = _base_file(tmp_path)
+    with (
+        patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)),
+        patch("builtins.input", side_effect=EOFError),
+    ):
+        rc = main(["add-model", "--into", str(f)])
+    assert rc == 1
+    assert "aborted" in capsys.readouterr().err
+
+
 def test_preset_invalid_toml_returns_1(capsys):
     with patch("urllib.request.urlopen", return_value=_mock_urlopen(b"not toml ]][")):
         rc = main(["preset", "freetier"])

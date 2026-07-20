@@ -169,7 +169,9 @@ def _select_from_flags(
         have = ", ".join(str(p.get("id")) for p in providers)
         print(f"error: unknown provider '{provider_id}' (have: {have})", file=sys.stderr)
         return None
-    models = [str(m.get("model")) for m in prov.get("models", [])]
+    models = [
+        str(m["model"]) for m in prov.get("models", []) if isinstance(m, dict) and m.get("model")
+    ]
     if model_id not in models:
         have = ", ".join(models)
         print(f"error: unknown model '{model_id}' (have: {have})", file=sys.stderr)
@@ -181,14 +183,14 @@ def _select_interactive(providers: list[dict]) -> tuple[dict, str] | None:
     prov = _prompt_choice("Pick a provider", providers, "label")
     if prov is None:
         return None
-    models = prov.get("models", [])
+    models = [m for m in prov.get("models", []) if isinstance(m, dict) and m.get("model")]
     if not models:
-        print(f"error: provider '{prov.get('id')}' has no models", file=sys.stderr)
+        print(f"error: provider '{prov.get('id')}' has no usable models", file=sys.stderr)
         return None
     model = _prompt_choice("Pick a model", models, "label")
     if model is None:
         return None
-    return prov, str(model.get("model"))
+    return prov, str(model["model"])
 
 
 def _select_provider_model(
@@ -220,10 +222,34 @@ def _cmd_add_model(args: argparse.Namespace) -> int:  # noqa: PLR0911
     if selection is None:
         return 1
     prov, model_id = selection
+    if not (prov.get("base_url") and prov.get("api_key_ref")):
+        print(
+            f"error: catalog entry for '{prov.get('id')}' is incomplete"
+            " (needs base_url and api_key_ref)",
+            file=sys.stderr,
+        )
+        return 1
 
-    name = (_prompt_name(prov["id"]) if interactive else (args.name or prov["id"])).strip()
-    pooled = _prompt_yes_no("Add to the pool (failover)?") if interactive else bool(args.pool)
+    if interactive:
+        name = _prompt_name(args.name or str(prov["id"]))
+        pooled = _prompt_yes_no("Add to the pool (failover)?", default=bool(args.pool))
+    else:
+        name = (args.name or str(prov["id"])).strip()
+        pooled = bool(args.pool)
 
+    return _append_custom_entry(target, prov, model_id, name, pooled=pooled)
+
+
+def _append_custom_entry(
+    target: Path,
+    prov: dict,
+    model_id: str,
+    name: str,
+    *,
+    pooled: bool,
+) -> int:
+    """Append one ``[[custom]]`` block (plus its ``[keys]`` help if the ref is new)
+    to ``target``, preserving the rest of the file. Refuses a name collision."""
     try:
         existing = tomllib.loads(target.read_text(encoding="utf-8")) if target.exists() else {}
     except (tomllib.TOMLDecodeError, OSError) as exc:
@@ -273,8 +299,9 @@ def _prompt_name(default: str) -> str:
     return input(f"Entry name [{default}]: ").strip() or default
 
 
-def _prompt_yes_no(label: str) -> bool:
-    return input(f"{label} [y/N]: ").strip().lower() in ("y", "yes")
+def _prompt_yes_no(label: str, *, default: bool = False) -> bool:
+    raw = input(f"{label} [{'Y/n' if default else 'y/N'}]: ").strip().lower()
+    return default if not raw else raw in ("y", "yes")
 
 
 def _cmd_sync(args: argparse.Namespace) -> int:
@@ -370,4 +397,8 @@ def main(argv: list[str] | None = None) -> int:
     sync_p.set_defaults(func=_cmd_sync)
 
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except (EOFError, KeyboardInterrupt):
+        print("\naborted", file=sys.stderr)
+        return 1
