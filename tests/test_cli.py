@@ -71,6 +71,22 @@ def test_env_without_key_help_has_no_comments(tmp_path, capsys):
     assert "KEY_A=" in out
 
 
+def test_env_includes_custom_entries(tmp_path, capsys):
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[llms]]\nname="pool"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="POOL_KEY"\n'
+        '[[custom]]\nname="frontier"\nbase_url="https://y/v1"\nmodel="big"'
+        '\napi_key_ref="PAID_KEY"\npool=false\n'
+        '[keys.PAID_KEY]\nhelp = "paid key help"\n'
+    )
+    rc = main(["env", str(f)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "POOL_KEY=" in out
+    assert "PAID_KEY=" in out  # the [[custom]] entry's key is emitted too
+    assert "paid key help" in out  # its help comes from the shared [keys] table
+
+
 # --- preset command ---
 
 _FAKE_TOML = b'[[llms]]\nname="x"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
