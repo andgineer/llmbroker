@@ -43,19 +43,32 @@ def retry_after_seconds(headers: Mapping[str, str], default_sec: int) -> int:
     return max(0, int((when - datetime.now(UTC)).total_seconds()))
 
 
-def build_chat_request(
-    config: LLMConfig,
+def build_chat_request(  # noqa: PLR0913
+    base_url: str,
+    model: str,
     api_key: str,
     messages: list[dict],
     tools: list[dict] | None = None,
+    *,
+    stream: bool = False,
 ) -> tuple[str, dict[str, str], dict[str, Any]]:
-    """Return (url, headers, json_body) for an OpenAI-compatible chat completion."""
-    body: dict[str, Any] = {"model": config.model, "messages": messages}
+    """Return (url, headers, json_body) for an OpenAI-compatible chat completion.
+
+    >>> url, headers, body = build_chat_request("https://x/v1", "m", "k", [], stream=True)
+    >>> url
+    'https://x/v1/chat/completions'
+    >>> body["stream"], body["stream_options"]
+    (True, {'include_usage': True})
+    """
+    body: dict[str, Any] = {"model": model, "messages": messages}
     if tools:
         body["tools"] = tools
         body["tool_choice"] = "auto"
+    if stream:
+        body["stream"] = True
+        body["stream_options"] = {"include_usage": True}
     return (
-        f"{config.base_url}{_CHAT_PATH}",
+        f"{base_url}{_CHAT_PATH}",
         {"Authorization": f"Bearer {api_key}"},
         body,
     )
@@ -85,8 +98,8 @@ def parse_usage(data: dict) -> Usage | None:
     )
 
 
-def make_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=_HTTP_TIMEOUT)
+def make_client(timeout: float = _HTTP_TIMEOUT) -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=timeout)
 
 
 @asynccontextmanager
@@ -115,7 +128,7 @@ async def call_provider(
     owns its lifetime); with ``None``, an ephemeral client is opened and closed
     for this single call.
     """
-    url, headers, body = build_chat_request(config, api_key, messages, tools)
+    url, headers, body = build_chat_request(config.base_url, config.model, api_key, messages, tools)
     async with _resolve_client(client) as active:
         resp = await active.post(url, headers=headers, json=body)
         resp.raise_for_status()
@@ -131,6 +144,42 @@ def parse_tool_calls(message: dict) -> list[dict] | None:
     if not tool_calls:
         return None
     return tool_calls
+
+
+_SSE_DATA_PREFIX = "data:"
+_SSE_DONE = "[DONE]"
+
+
+async def aiter_sse_chunks(response: httpx.Response) -> AsyncIterator[dict]:
+    """Yield decoded JSON objects from an OpenAI-compatible SSE stream body.
+
+    ``data: [DONE]`` ends the stream; unparseable payloads are skipped.
+    """
+    async for raw in response.aiter_lines():
+        line = raw.strip()
+        if not line.startswith(_SSE_DATA_PREFIX):
+            continue
+        payload = line[len(_SSE_DATA_PREFIX) :].strip()
+        if payload == _SSE_DONE:
+            return
+        try:
+            yield json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+
+
+def stream_delta(chunk: dict) -> str:
+    """Text delta carried by one OpenAI-compatible stream chunk (``""`` when none).
+
+    >>> stream_delta({"choices": [{"delta": {"content": "Hi"}}]})
+    'Hi'
+    >>> stream_delta({"choices": [], "usage": {"total_tokens": 3}})
+    ''
+    """
+    choices = chunk.get("choices") or []
+    if not choices:
+        return ""
+    return str(choices[0].get("delta", {}).get("content") or "")
 
 
 def execute_tool_calls(
@@ -219,6 +268,7 @@ def run_tool_loop(
 
 
 __all__ = [
+    "aiter_sse_chunks",
     "arun_tool_loop",
     "build_chat_request",
     "call_provider",
@@ -230,4 +280,5 @@ __all__ = [
     "parse_usage",
     "retry_after_seconds",
     "run_tool_loop",
+    "stream_delta",
 ]

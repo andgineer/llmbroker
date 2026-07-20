@@ -66,19 +66,28 @@ def test_retry_after_seconds_http_date_in_past_floors_at_zero():
 
 
 def test_build_chat_request_basic():
-    url, headers, body = build_chat_request(_CONFIG, "the-key", [{"role": "user", "content": "hi"}])
+    url, headers, body = build_chat_request(
+        _CONFIG.base_url, _CONFIG.model, "the-key", [{"role": "user", "content": "hi"}]
+    )
     assert url == "https://api.example.com/v1/chat/completions"
     assert headers["Authorization"] == "Bearer the-key"
     assert body["model"] == "gpt-4o"
     assert body["messages"] == [{"role": "user", "content": "hi"}]
     assert "tools" not in body
+    assert "stream" not in body
 
 
 def test_build_chat_request_with_tools():
     tools = [{"type": "function", "function": {"name": "f"}}]
-    _, _, body = build_chat_request(_CONFIG, "k", [], tools=tools)
+    _, _, body = build_chat_request(_CONFIG.base_url, _CONFIG.model, "k", [], tools=tools)
     assert body["tools"] == tools
     assert body["tool_choice"] == "auto"
+
+
+def test_build_chat_request_stream_flag():
+    _, _, body = build_chat_request(_CONFIG.base_url, _CONFIG.model, "k", [], stream=True)
+    assert body["stream"] is True
+    assert body["stream_options"] == {"include_usage": True}
 
 
 def test_message_from_response():

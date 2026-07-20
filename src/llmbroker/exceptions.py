@@ -30,3 +30,44 @@ class NoLLMAvailableError(LLMRequestError):
         super().__init__(message)
         self.reason = reason
         self.retry_at = retry_at
+
+
+class LLMTimeoutError(LLMRequestError):
+    """The request did not complete within its timeout."""
+
+
+class ProviderError(LLMRequestError):
+    """The provider returned an error response.
+
+    ``status`` is the HTTP status code; ``detail`` is a short snippet of the
+    response body, when available. Catch this to handle any provider failure
+    coarsely, or one of its subclasses to react to a specific class of failure.
+    """
+
+    def __init__(self, message: str, *, status: int, detail: str | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+        self.detail = detail
+
+
+class AuthError(ProviderError):
+    """The key was missing, malformed, or rejected (HTTP 401/403)."""
+
+
+class RateLimitError(ProviderError):
+    """The provider rate-limited or was temporarily unavailable (HTTP 429/503).
+
+    ``retry_after`` is the server-advised wait in seconds, when the response
+    carried a parseable ``Retry-After`` header.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int,
+        detail: str | None = None,
+        retry_after: int | None = None,
+    ) -> None:
+        super().__init__(message, status=status, detail=detail)
+        self.retry_after = retry_after
