@@ -28,6 +28,39 @@ Zero-administration routing over a pool of 4-5 free-tier LLMs:
    to the same LLM are allowed by default (`parallel` restricts this for
    finicky providers).
 
+## Positioning: what keeps llmbroker unique
+
+Multi-provider failover routing by itself is a commodity — LiteLLM's router,
+LangChain's `with_fallbacks`, or a hand-rolled retry loop all offer some form
+of it. llmbroker's identity is the *combination* below; no existing solution
+covers it, and a change that erodes any one of these erodes the mission:
+
+1. **A library over the caller's own keys — never a hosted middleman.**
+   Hosted gateways (OpenRouter, Portkey, Cloudflare AI Gateway, Helicone)
+   proxy traffic through their servers under their account: a single point
+   of failure, their billing/markup, their data path, and one shared
+   rate-limit bucket. llmbroker pools the providers' *own* free tiers via
+   direct keys — strictly more free capacity than any one gateway account —
+   and no third party ever sees the traffic. llmbroker must never require a
+   dedicated running service of its own.
+2. **No heavy dependencies.** The closest library, LiteLLM, is a large,
+   fast-churning dependency surface whose cluster features push toward
+   running its proxy server. llmbroker's core has zero mandatory
+   dependencies; cluster-shared state derives from a journal in a database
+   the host already runs (sqlite/postgres/mongodb as optional extras).
+3. **Learned quality per (model, operation).** Existing routers balance on
+   health, latency, or cost. Only llmbroker demotes a model per task kind
+   from accumulated `record_quality` scores — a self-regulating pool, not a
+   static priority list.
+4. **Zero administration as a feature, not a tutorial.** A curated free-tier
+   preset mirrored by `sync(preset)`, dead keys that disable themselves,
+   cooldowns that honor `Retry-After` — competitors leave all of this as
+   configuration for the operator.
+5. **Per-user keys over one shared, learned pool.** Multi-user hosts get
+   per-scope keys with shared-key fallback, while the model list and
+   learning stay shared — a mode hosted gateways price as an enterprise
+   feature and libraries do not model at all.
+
 The decisions taken to satisfy these requirements and their cost estimate are
 recorded in [`decisions.md`](decisions.md); the current behavior rules live in
 [`architecture.md`](architecture.md) and [`optimizer.md`](optimizer.md).
