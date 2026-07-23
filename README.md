@@ -19,6 +19,11 @@ print(reply.text)   # groq rate-limited? gemini answers instead
 
 Fill in whichever keys are easy — models without keys just stay inactive.
 
+**Why another router?** LiteLLM or OpenRouter forward your request and hand back the error;
+llmbroker *runs* the pool for you: backs off on rate limits and retries with the next model
+inside the same call, disables dead keys on its own, and learns which models are weak at which
+tasks. Set it up once, never administer it.
+
 | | |
 |---|---|
 | **Automatic failover** | `llms.ask(...)` — next model answers when one is down |
