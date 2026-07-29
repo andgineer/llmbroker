@@ -4,6 +4,7 @@
 ``name -> disabled`` document a backend may additionally implement.
 """
 
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from llmbroker.models import Call
@@ -24,7 +25,18 @@ class StoreProtocol(Protocol):
 
 @runtime_checkable
 class QueryableStoreProtocol(StoreProtocol, Protocol):
-    async def calls(self, *, limit: int, scope: str | None = None) -> list[Call]: ...
+    """``since`` must be timezone-aware and bounds the journal inclusively;
+    ``limit`` must be >= 1."""
+
+    async def calls(
+        self,
+        *,
+        limit: int,
+        scope: str | None = None,
+        since: datetime | None = None,
+        kind: str | None = None,
+        operation: str | None = None,
+    ) -> list[Call]: ...
 
 
 @runtime_checkable

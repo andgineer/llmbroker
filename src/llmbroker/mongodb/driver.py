@@ -11,6 +11,7 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from llmbroker.backends.driver import Key, Row
 from llmbroker.backends.spec import SCHEMA_VERSION, TABLES, TableSpec
+from llmbroker.exceptions import SchemaVersionError
 
 
 def _ensure_utc(dt: datetime | None) -> datetime | None:
@@ -63,10 +64,12 @@ class MongoDriver:
             version_doc = await self._db["llmbroker_schema_version"].find_one({})
             current = int(version_doc["version"]) if version_doc else 0
             if current not in (0, SCHEMA_VERSION):
-                raise RuntimeError(
+                raise SchemaVersionError(
                     f"llmbroker schema version {current} found, this release expects"
                     f" {SCHEMA_VERSION} — drop the llmbroker_* collections and restart"
                     " (export registry/secrets/calls first if you need them)",
+                    found=current,
+                    expected=SCHEMA_VERSION,
                 )
             for spec in TABLES.values():
                 if spec.key:
@@ -124,10 +127,18 @@ class MongoDriver:
         await self.ensure_schema()
         await self._db[spec.name].insert_one(dict(row))
 
-    async def recent(self, table: str, limit: int, match: Row | None = None) -> list[Row]:
+    async def recent(
+        self,
+        table: str,
+        limit: int,
+        match: Row | None = None,
+        since: datetime | None = None,
+    ) -> list[Row]:
         spec = TABLES[table]
         await self.ensure_schema()
         query: dict[str, object] = dict(match) if match else {}
+        if since is not None:
+            query["called_at"] = {"$gte": since}
         cursor = self._db[spec.name].find(query).sort("called_at", -1).limit(limit)
         docs = await cursor.to_list(length=None)
         return [_decode_doc(d, spec) for d in docs]

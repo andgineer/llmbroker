@@ -6,6 +6,8 @@ from llmbroker.chat import arun_tool_loop, run_tool_loop
 from llmbroker.direct import AsyncDirectClient, DirectClient, DirectResult
 from llmbroker.exceptions import (
     AuthError,
+    EmptyRegistryError,
+    LLMBrokerError,
     LLMRequestError,
     LLMTimeoutError,
     MissingKeyError,
@@ -31,10 +33,12 @@ __all__ = [
     "DictSecrets",
     "DirectClient",
     "DirectResult",
+    "EmptyRegistryError",
     "FileStore",
     "InMemoryStore",
     "LLM",
     "LifecyclePhase",
+    "LLMBrokerError",
     "LLMRequestError",
     "LLMTimeoutError",
     "MissingKeyError",

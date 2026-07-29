@@ -23,6 +23,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import cast
 
@@ -35,6 +36,7 @@ from llmbroker.broker.pool_view import PoolView
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.broker.router import Router
 from llmbroker.broker.source import resolve_source
+from llmbroker.broker.stats import stats_from_calls
 from llmbroker.chat import make_client
 from llmbroker.direct import AsyncDirectClient
 from llmbroker.exceptions import MissingKeyError, NoLLMAvailableError, UnknownModelError
@@ -44,6 +46,9 @@ from llmbroker.models import (
     LifecyclePhase,
     LLMConfig,
     LLMSnapshot,
+    LLMStats,
+    check_limit,
+    to_utc,
 )
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.registry import RegistryProtocol
@@ -58,6 +63,8 @@ from llmbroker.standalone.secrets import Secrets, as_secrets
 from llmbroker.standalone.store import FileStore
 
 logger = logging.getLogger("llmbroker.broker")
+
+_DEFAULT_STATS_LIMIT = 1000
 
 
 def _default_store(registry: RegistryProtocol) -> StoreProtocol:
@@ -320,8 +327,44 @@ class AsyncBroker:
     # Call journal
     # ------------------------------------------------------------------
 
-    async def calls(self, *, limit: int) -> list[Call]:
-        return await self._require_queryable().calls(limit=limit, scope=self._scope)
+    async def calls(
+        self,
+        *,
+        limit: int,
+        since: datetime | None = None,
+        kind: str | None = None,
+        operation: str | None = None,
+    ) -> list[Call]:
+        """Newest-first journal tail, narrowed by any of ``since`` (inclusive
+        ``called_at`` bound), ``kind`` (``"call"`` or ``"quality"``) and ``operation``.
+
+        Never provisions the pool — see ``stats``.
+        """
+        check_limit(limit)
+        return await self._require_queryable().calls(
+            limit=limit,
+            scope=self._scope,
+            since=to_utc(since, "since") if since is not None else None,
+            kind=kind,
+            operation=operation,
+        )
+
+    async def stats(
+        self,
+        *,
+        since: datetime | None = None,
+        limit: int = _DEFAULT_STATS_LIMIT,
+        operation: str | None = None,
+    ) -> Mapping[str, LLMStats]:
+        """Per-model counts of call records over a window, keyed by model name.
+
+        ``limit`` caps rows read, guarding against an anomalous window (a retry
+        storm); it is not the window itself. When the totals sum to ``limit`` the
+        window may be truncated, and ``first_at`` is then the oldest row *read*
+        rather than the oldest in the window. Never provisions the pool.
+        """
+        rows = await self.calls(limit=limit, since=since, kind="call", operation=operation)
+        return stats_from_calls(rows)
 
     def _maybe_alert_underprov(self, exc: NoLLMAvailableError) -> None:
         """Fire when zero keyed configs are routable — the genuine "no usable models" alarm.

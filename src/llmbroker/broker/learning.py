@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 from llmbroker.broker.pool import LLMPool
+from llmbroker.broker.stats import stats_from_calls
 from llmbroker.models import Call, CallStatus, LLMMetrics, key_hash
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.store import (
@@ -32,24 +33,14 @@ _HTTP_FORBIDDEN = 403
 
 def metrics_from_calls(rows: list[Call]) -> dict[str, LLMMetrics]:
     """rows newest-first: the first call row per model is its most recent."""
-    metrics: dict[str, LLMMetrics] = {}
-    for row in rows:
-        if row.kind != "call":
-            continue
-        existing = metrics.get(row.llm_name)
-        if existing is None:
-            metrics[row.llm_name] = LLMMetrics(
-                call_count=1,
-                last_status=row.status,
-                last_at=row.ts,
-            )
-        else:
-            metrics[row.llm_name] = LLMMetrics(
-                call_count=existing.call_count + 1,
-                last_status=existing.last_status,
-                last_at=existing.last_at,
-            )
-    return metrics
+    return {
+        name: LLMMetrics(
+            call_count=stats.total,
+            last_status=stats.last_status,
+            last_at=stats.last_at,
+        )
+        for name, stats in stats_from_calls(rows).items()
+    }
 
 
 async def resolve_metrics_map(store: StoreProtocol) -> dict[str, LLMMetrics]:
@@ -102,9 +93,23 @@ class _LearningHook:
         await self._inner.record_quality(llm_name, operation, score, call_id=call_id, scope=scope)
         self._opt.record_quality(llm_name, operation, score)
 
-    async def calls(self, *, limit: int, scope: str | None = None) -> list[Call]:
+    async def calls(
+        self,
+        *,
+        limit: int,
+        scope: str | None = None,
+        since: datetime | None = None,
+        kind: str | None = None,
+        operation: str | None = None,
+    ) -> list[Call]:
         if isinstance(self._inner, QueryableStoreProtocol):
-            return await self._inner.calls(limit=limit, scope=scope)
+            return await self._inner.calls(
+                limit=limit,
+                scope=scope,
+                since=since,
+                kind=kind,
+                operation=operation,
+            )
         return []
 
     def __getattr__(self, name: str) -> object:

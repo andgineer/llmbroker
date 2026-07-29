@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -9,15 +10,15 @@ import pytest
 
 from llmbroker.backends.ports import DriverStore
 from llmbroker.broker.broker import AsyncBroker
-from llmbroker.exceptions import NoLLMAvailableError
-from llmbroker.models import LifecyclePhase, LLMConfig
+from llmbroker.exceptions import EmptyRegistryError, NoLLMAvailableError
+from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
 from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.sqlite import Secrets as SqliteSecrets
 from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
-from llmbroker.standalone.store import InMemoryStore
+from llmbroker.standalone.store import FileStore, InMemoryStore
 
 
 def _registry(tmp_path, entries=None):
@@ -222,8 +223,171 @@ def test_chat_empty_pool_wait0_raises_no_llm_available(tmp_path):
             with pytest.raises(NoLLMAvailableError):
                 await broker.chat([{"role": "user", "content": "hi"}], wait=0)
 
-    with pytest.raises(RuntimeError, match="sync"):
+    with pytest.raises(EmptyRegistryError, match="sync"):
         asyncio.run(run())
+
+
+def test_empty_registry_error_propagates_out_of_host_entry_points(tmp_path):
+    """The host boundary must be able to catch it: both inspection entry points
+    provision lazily, so both surface the typed error rather than a bare one."""
+
+    async def run():
+        f = tmp_path / "empty.toml"
+        f.write_text("")
+        broker = AsyncBroker(registry=FileRegistry(f), store=InMemoryStore())
+        with pytest.raises(EmptyRegistryError):
+            await broker.count()
+        with pytest.raises(EmptyRegistryError):
+            await broker.snapshot()
+        await broker.aclose()
+
+    asyncio.run(run())
+
+
+def test_stats_on_empty_registry_returns_empty_mapping_without_provisioning(tmp_path):
+    """Journal reads never provision: a visibility call must survive an install whose
+    registry is empty or stale — precisely the state a host UI most needs to render."""
+
+    async def run():
+        f = tmp_path / "empty.toml"
+        f.write_text("")
+        broker = AsyncBroker(registry=FileRegistry(f), store=SqliteStore(str(tmp_path / "s.db")))
+        assert await broker.stats() == {}
+        assert await broker.calls(limit=10) == []
+        assert broker._provisioned is False
+        await broker.aclose()
+
+    asyncio.run(run())
+
+
+def test_stats_aggregates_recorded_calls_per_model(tmp_path):
+    async def run():
+        db = str(tmp_path / "b.db")
+        async with AsyncBroker(
+            registry=_registry(tmp_path), secrets=_secrets(), store=SqliteStore(db)
+        ) as broker:
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
+                await broker.chat([{"role": "user", "content": "x"}], operation="summarize")
+                await broker.chat([{"role": "user", "content": "y"}], operation="summarize")
+            stats = await broker.stats()
+            entry = next(iter(stats.values()))
+            assert entry.total == 2
+            assert entry.by_status == {CallStatus.OK: 2}
+            assert entry.last_status is CallStatus.OK
+            assert entry.first_at is not None
+            assert entry.last_at is not None
+
+    asyncio.run(run())
+
+
+def test_stats_ignores_quality_records(tmp_path):
+    """A quality record carries status=None by construction; counting it would put a
+    row with no status in the host's denominator."""
+
+    async def run():
+        db = str(tmp_path / "b.db")
+        async with AsyncBroker(
+            registry=_registry(tmp_path), secrets=_secrets(), store=SqliteStore(db)
+        ) as broker:
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
+                result = await broker.chat([{"role": "user", "content": "x"}])
+                await result.record_quality(1.0)
+            assert next(iter((await broker.stats()).values())).total == 1
+
+    asyncio.run(run())
+
+
+def test_stats_since_bounds_the_window(tmp_path):
+    async def run():
+        db = str(tmp_path / "b.db")
+        async with AsyncBroker(
+            registry=_registry(tmp_path), secrets=_secrets(), store=SqliteStore(db)
+        ) as broker:
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
+                await broker.chat([{"role": "user", "content": "x"}])
+            assert await broker.stats(since=datetime.now(UTC) + timedelta(days=1)) == {}
+            assert await broker.stats(since=datetime.now(UTC) - timedelta(days=7)) != {}
+
+    asyncio.run(run())
+
+
+def test_stats_operation_filter_excludes_other_operations(tmp_path):
+    async def run():
+        db = str(tmp_path / "b.db")
+        async with AsyncBroker(
+            registry=_registry(tmp_path), secrets=_secrets(), store=SqliteStore(db)
+        ) as broker:
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
+                await broker.chat([{"role": "user", "content": "x"}], operation="summarize")
+                await broker.chat([{"role": "user", "content": "y"}], operation="translate")
+            assert next(iter((await broker.stats()).values())).total == 2
+            summarize = await broker.stats(operation="summarize")
+            assert next(iter(summarize.values())).total == 1
+
+    asyncio.run(run())
+
+
+def test_stats_on_the_default_file_store(tmp_path):
+    """The default store for a TOML registry is FileStore, whose day-file journal is
+    a separate read path from the SQL backends the other stats tests cover."""
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            secrets=_secrets(),
+            store=FileStore(tmp_path / "store"),
+        ) as broker:
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
+                await broker.ask("x", operation="summarize")
+                await broker.ask("y", operation="summarize")
+            stats = await broker.stats(since=datetime.now(UTC) - timedelta(days=1))
+            assert stats["p1"].total == 2
+            assert stats["p1"].by_status == {CallStatus.OK: 2}
+            assert await broker.stats(operation="translate") == {}
+
+    asyncio.run(run())
+
+
+def test_stats_rejects_naive_since(tmp_path):
+    async def run():
+        broker = AsyncBroker(registry=_registry(tmp_path), store=FileStore(tmp_path / "store"))
+        with pytest.raises(ValueError, match="timezone-aware"):
+            await broker.stats(since=datetime(2030, 1, 1))  # noqa: DTZ001
+        await broker.aclose()
+
+    asyncio.run(run())
+
+
+def test_journal_read_contract_holds_for_a_third_party_store(tmp_path):
+    """The bound/limit contract is a promise of the public API, so it must not
+    depend on the store backend upholding it — a host's own QueryableStoreProtocol
+    implementation must never be handed a naive bound or a non-positive limit."""
+
+    class _RecordingStore:
+        def __init__(self):
+            self.seen: list[dict] = []
+
+        async def record(self, call):
+            return
+
+        async def record_quality(self, *a, **kw):
+            return
+
+        async def calls(self, **kw):
+            self.seen.append(kw)
+            return []
+
+    async def run():
+        store = _RecordingStore()
+        broker = AsyncBroker(registry=_registry(tmp_path), store=store)
+        with pytest.raises(ValueError, match="limit must be"):
+            await broker.calls(limit=0)
+        with pytest.raises(ValueError, match="timezone-aware"):
+            await broker.stats(since=datetime(2030, 1, 1))  # noqa: DTZ001
+        assert store.seen == []
+        await broker.aclose()
+
+    asyncio.run(run())
 
 
 def test_result_record_quality_does_not_raise(tmp_path):

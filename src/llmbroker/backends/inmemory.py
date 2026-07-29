@@ -34,10 +34,18 @@ class InMemoryDriver:
     async def append(self, table: str, row: Row) -> None:
         self._journals.setdefault(table, []).append(dict(row))
 
-    async def recent(self, table: str, limit: int, match: Row | None = None) -> list[Row]:
+    async def recent(
+        self,
+        table: str,
+        limit: int,
+        match: Row | None = None,
+        since: datetime | None = None,
+    ) -> list[Row]:
         rows = self._journals.get(table, [])
         if match:
             rows = [r for r in rows if all(r.get(k) == v for k, v in match.items())]
+        if since is not None:
+            rows = [r for r in rows if (r.get("called_at") or _EPOCH) >= since]
         ordered = sorted(rows, key=lambda r: r.get("called_at") or _EPOCH, reverse=True)
         return [dict(r) for r in ordered[:limit]]
 

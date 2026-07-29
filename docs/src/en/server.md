@@ -69,6 +69,59 @@ with llmbroker.Broker("broker.db") as llms:
 The journal cleans itself up; the retention depth is the journal backend's
 `retention` parameter (90 days by default). To read it: `llms.calls(limit=50)`.
 
+The journal holds two kinds of record — calls and quality ratings — interleaved
+in one stream. Narrow the read by kind, by time, or by operation:
+
+```python
+from datetime import UTC, datetime, timedelta
+
+week_ago = datetime.now(UTC) - timedelta(days=7)
+llms.calls(limit=50, kind="call", since=week_ago, operation="summarize")
+```
+
+`since` is inclusive. On MongoDB it is inclusive to the millisecond — BSON dates
+carry no finer precision, so both stored timestamps and the bound are rounded
+down to whole milliseconds.
+
+### Statistics over a window
+
+`stats()` counts call records per model over a time window — how many calls each
+model made and how they ended:
+
+```python
+from llmbroker.models import CallStatus
+
+for name, s in llms.stats(since=week_ago).items():
+    failed = s.total - s.by_status.get(CallStatus.OK, 0)
+    print(name, s.total, failed, s.last_status, s.last_at)
+```
+
+Fields — in [`LLMStats`](reference.md#llmbroker.models.LLMStats).
+
+`by_status` holds only the statuses actually seen in the window, so count the
+failures by subtracting from `total` rather than by adding up the other statuses.
+Quality ratings are never counted — they are not calls. Pass `operation=` to
+count one operation only.
+
+What counts as a failure, how long the window should be, and how a model with no
+calls in the window should read are yours to decide; llmbroker returns the counts
+and no policy.
+
+`limit` (1000 by default) caps how many records are read — a guard against an
+anomalous window such as a retry storm, not the window itself. It must be at
+least 1. If the totals add up to exactly `limit`, the window may have been
+truncated: raise the limit or shorten the window.
+
+`since` must be timezone-aware (`datetime.now(UTC)`, not `datetime.now()`) — a
+naive bound is refused rather than guessed at, since guessing would shift the
+window by your machine's offset.
+
+`calls()` and `stats()` read the journal only: unlike `snapshot()`, neither
+initializes the model pool, so an admin screen still renders on an installation
+whose registry was never synced. Construct the broker directly for that —
+entering it as a context manager (`with Broker(...) as llms`) initializes the
+pool up front and will raise `EmptyRegistryError` on such an installation.
+
 ## A key per user {#multiuser}
 
 `scope=` gives every user their own API key on top of one shared pool:

@@ -8,6 +8,7 @@ pure mirror of a preset (see ``sync``) — nothing else writes it.
 import logging
 
 from llmbroker.broker.pool import LLMPool
+from llmbroker.exceptions import EmptyRegistryError
 from llmbroker.models import LLMConfig
 from llmbroker.protocols.registry import MutableRegistryProtocol, RegistryProtocol
 from llmbroker.protocols.secrets import MutableSecretsProtocol, SecretsProtocol
@@ -54,7 +55,7 @@ class Catalog:
         one-time init; it is not re-entrant. Raises if the registry is empty."""
         configs = await self._registry.load()
         if not configs:
-            raise RuntimeError(
+            raise EmptyRegistryError(
                 "registry is empty — call sync(preset) to mirror a preset into it before"
                 " provisioning (e.g. `await broker.sync(preset)` or `python -m llmbroker sync`)",
             )

@@ -40,8 +40,18 @@ re-decide them during implementation:
 3. **Dedicated operation constant** — `"llmbroker.judge"` — the dotted namespace avoids
    collision with host operation names. Judge calls are journaled by the router like any other
    call under this operation (dogfooding: failover, cooldowns, metrics, `calls()` visibility
-   all apply). A host that wants its own numbers without this traffic filters by operation —
-   `journal-stats-window.md` carries that filter on `calls()` and `stats()` for this reason.
+   all apply). A host that wants its own numbers without this traffic filters by operation:
+   `calls()` and `stats()` already take an `operation` filter, added for this reason.
+
+   **Prerequisite this plan must close.** That filter selects a *named* operation only —
+   passing nothing means "do not filter", so there is currently no way to ask for the
+   unlabelled bucket. Today that is harmless because the broker journals no traffic of its
+   own. The moment judge rows land under `llmbroker.judge`, a host that calls `ask()`/`chat()`
+   without an `operation=` label can no longer isolate its own numbers: it can read everything
+   (now polluted with judge traffic) or one named operation, but not "mine". Give the filter a
+   way to select the unlabelled bucket as part of this work — the drivers already match a
+   `None` value as `IS NULL` internally, so the capability exists and is simply unreachable
+   from the public API. See the journal read path in `specs/reference/architecture.md`.
 4. **Sampling is a deterministic per-bucket accumulator**, not RNG: per `(model, operation)`
    key, `acc += judge_fraction; if acc >= 1.0: acc -= 1.0; sample`. Exact fraction per bucket,
    trivially testable, no seeding. The accumulator is in-memory per broker instance —

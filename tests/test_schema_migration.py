@@ -9,6 +9,7 @@ import aiosqlite
 import pytest
 
 from llmbroker.backends.spec import SCHEMA_VERSION
+from llmbroker.exceptions import SchemaVersionError
 from llmbroker.mongodb.driver import MongoDriver
 from llmbroker.postgres.driver import PostgresDriver
 from llmbroker.sqlite.driver import SqliteDriver
@@ -51,7 +52,20 @@ async def test_sqlite_ensure_schema_raises_on_version_mismatch(tmp_path):
         await db.execute("PRAGMA user_version = 1")
         await db.commit()
 
-    with pytest.raises(RuntimeError, match="schema version 1"):
+    with pytest.raises(SchemaVersionError, match="schema version 1") as excinfo:
+        await SqliteDriver(db_path).ensure_schema()
+    assert (excinfo.value.found, excinfo.value.expected) == (1, SCHEMA_VERSION)
+
+
+async def test_schema_version_error_is_still_a_runtime_error(tmp_path):
+    """Hosts written against the untyped raise keep working — the property that
+    makes the typed exception an additive change."""
+    db_path = str(tmp_path / "stale-compat.db")
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA user_version = 1")
+        await db.commit()
+
+    with pytest.raises(RuntimeError):
         await SqliteDriver(db_path).ensure_schema()
 
 
@@ -83,8 +97,9 @@ async def test_postgres_ensure_schema_raises_on_version_mismatch(pg_pool):
         )
 
     try:
-        with pytest.raises(RuntimeError, match="schema version 1"):
+        with pytest.raises(SchemaVersionError, match="schema version 1") as excinfo:
             await PostgresDriver(pg_pool).ensure_schema()
+        assert (excinfo.value.found, excinfo.value.expected) == (1, SCHEMA_VERSION)
     finally:
         # Restore a clean, current-version marker so later tests sharing this
         # session-scoped pool don't inherit the deliberately-broken state.
@@ -112,8 +127,9 @@ async def test_mongodb_ensure_schema_raises_on_version_mismatch(mongo_db):
     await mongo_db["llmbroker_schema_version"].replace_one({}, {"version": 1}, upsert=True)
 
     try:
-        with pytest.raises(RuntimeError, match="schema version 1"):
+        with pytest.raises(SchemaVersionError, match="schema version 1") as excinfo:
             await MongoDriver(mongo_db).ensure_schema()
+        assert (excinfo.value.found, excinfo.value.expected) == (1, SCHEMA_VERSION)
     finally:
         # Restore a clean, current-version marker so later tests sharing this
         # session-scoped database don't inherit the deliberately-broken state.

@@ -261,6 +261,45 @@ resulting cost estimate. The current behavior rules themselves live in
   are not tracked anywhere. The per-LLM concurrency cap `parallel` is a
   plain field of `LLMConfig` (TOML: `parallel = 1`) that serializes calls
   to one model rather than throttling by rate.
+- **Journal aggregates are derived per request, never accumulated.** A sliding
+  window ("the last 7 days") cannot be served by a monotonic counter: old calls
+  must fall out of the aggregate on their own. Doing it with counters means day
+  buckets plus rotation and subtraction — a second piece of stored state, its own
+  ageing logic, and an atomic UPDATE on the hot path of every model call — while
+  a time-bounded read over the indexed `called_at` is one cheap query. It would
+  also contradict the rule above that everything llmbroker learns beyond config
+  is re-derived from the journal: stored counters are exactly that second
+  subsystem, and they must eventually disagree with the journal — on restart,
+  after retention purges, and across nodes writing to one journal. If read volume
+  ever justifies it the answer is a TTL cache over the aggregate, not counters:
+  the same saving with an honest expiry. The filter belongs in the store (it is
+  what makes the window exact and keeps the row count proportional to the window
+  rather than to the row limit); the aggregation stays in shared Python, so one
+  implementation serves all backends instead of a `GROUP BY` primitive
+  reimplemented in each driver for an input the window has already bounded.
+- **The library returns per-status counts; failure policy belongs to the host.**
+  llmbroker does not decide what counts as a failure, how long a window should
+  be, or how a model with no calls in the window should read. Baking a
+  "failure rate" in would repeat the `call_count` mistake: a number whose meaning
+  is fixed by the library and wrong for the next consumer. The aggregate carries
+  only statuses actually observed, so "how many were not OK" is a subtraction
+  rather than an assumption about the status enum's shape.
+- **Every failure state a host is expected to handle has its own exception
+  type.** A host that must tell two conditions apart by matching on message
+  text has no contract at all — and the two lifecycle failures raised on the
+  same call paths (an empty registry, benign and expected; a schema version
+  this release cannot use, fatal and operator-actionable) are exactly that
+  case: catching them together means reporting "not configured yet" when the
+  store is unusable. Lifecycle failures form their own tree rooted at
+  `RuntimeError`, separate from the request-error tree rooted at `Exception`:
+  the two are different axes, and rooting lifecycle errors at `RuntimeError`
+  keeps hosts that catch it around provisioning working unchanged. A fatal
+  condition carries the facts a host would otherwise parse out of the message
+  as attributes. The top-level package exports the lifecycle base and the
+  benign, application-handled member of the tree; an operator-actionable
+  deployment failure stays reachable through `llmbroker.exceptions` without
+  being promoted onto the package surface, which is reserved for what an
+  application is expected to catch in normal operation.
 
 ## Function → mechanism → cost
 

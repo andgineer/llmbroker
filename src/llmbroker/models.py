@@ -5,8 +5,9 @@ imports — safe to import from anywhere in the package.
 """
 
 import hashlib
-from dataclasses import dataclass
-from datetime import datetime
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
@@ -170,6 +171,42 @@ def key_hash(secret: str) -> str:
     return hashlib.sha256(secret.encode()).hexdigest()[:12]
 
 
+def to_utc(value: datetime, field: str) -> datetime:
+    """Pin an instant to UTC; refuse a naive one rather than guess its zone.
+
+    >>> from datetime import timedelta, timezone
+    >>> to_utc(datetime(2030, 1, 1, 5, tzinfo=timezone(timedelta(hours=5))), "since")
+    datetime.datetime(2030, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)
+    """
+    if not isinstance(value, datetime):
+        raise TypeError(f"{field} must be a datetime, got {type(value).__name__}")
+    if value.tzinfo is None:
+        raise ValueError(f"{field} must be timezone-aware, e.g. datetime.now(UTC)")
+    return value.astimezone(UTC)
+
+
+def with_utc_timestamps(call: "Call") -> "Call":
+    """Stamp an unset ``ts`` and pin both journal instants to UTC.
+
+    The write side of the same rule the read bound follows: these two fields are
+    what the journal orders, windows, and expires by.
+    """
+    ts = to_utc(call.ts, "Call.ts") if call.ts is not None else datetime.now(UTC)
+    cooldown = (
+        to_utc(call.cooldown_until, "Call.cooldown_until")
+        if call.cooldown_until is not None
+        else None
+    )
+    return replace(call, ts=ts, cooldown_until=cooldown)
+
+
+def check_limit(limit: int) -> None:
+    """Reject a non-positive journal read limit — backends disagree on what one
+    means, and pymongo reads ``limit=0`` as *no limit*."""
+    if limit < 1:
+        raise ValueError(f"limit must be >= 1, got {limit}")
+
+
 @dataclass(frozen=True, slots=True)
 class LLMMetrics:
     """Per-LLM admin read-model derived from Call rows."""
@@ -177,6 +214,21 @@ class LLMMetrics:
     call_count: int
     last_status: CallStatus | None
     last_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class LLMStats:
+    """Per-LLM aggregate of call records over a time window.
+
+    ``by_status`` holds only statuses actually seen, so "how many were not OK" is
+    a subtraction from ``total``, not an assumption about the enum's shape.
+    """
+
+    total: int
+    by_status: Mapping[CallStatus, int]
+    first_at: datetime | None
+    last_at: datetime | None
+    last_status: CallStatus | None
 
 
 @dataclass(frozen=True, slots=True)

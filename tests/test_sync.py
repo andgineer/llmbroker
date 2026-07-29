@@ -2,6 +2,7 @@
 
 import asyncio
 import gc
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -130,6 +131,27 @@ def test_broker_record_quality_delayed(tmp_path):
         assert len(quality_rows) == 1
         assert quality_rows[0].llm_name == "p1"
         assert quality_rows[0].call_id == result.call_id
+
+
+def test_broker_stats_mirrors_the_async_aggregate(tmp_path):
+    db = str(tmp_path / "b.db")
+    with Broker(registry=_registry(tmp_path), secrets=_secrets(), store=SqliteStore(db)) as broker:
+        with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
+            broker.ask("x", operation="summarize")
+            broker.ask("y", operation="summarize")
+        assert broker.stats()["p1"].total == 2
+        assert broker.stats(operation="translate") == {}
+
+
+def test_broker_calls_accepts_the_narrowing_filters(tmp_path):
+    db = str(tmp_path / "b.db")
+    with Broker(registry=_registry(tmp_path), secrets=_secrets(), store=SqliteStore(db)) as broker:
+        with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
+            result = broker.ask("x", operation="summarize")
+        broker.record_quality(result.llm_name, "summarize", 0.9)
+        assert [r.kind for r in broker.calls(limit=10, kind="quality")] == ["quality"]
+        assert [r.kind for r in broker.calls(limit=10, kind="call")] == ["call"]
+        assert broker.calls(limit=10, since=datetime.now(UTC) + timedelta(days=1)) == []
 
 
 def test_llm_state_is_available(tmp_path):

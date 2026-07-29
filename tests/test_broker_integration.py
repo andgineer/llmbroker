@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from llmbroker.exceptions import NoLLMAvailableError
+from llmbroker.exceptions import EmptyRegistryError, NoLLMAvailableError
 from llmbroker.models import CallStatus, LLMConfig, LifecyclePhase
 from llmbroker.protocols.registry import MutableRegistryProtocol
 from llmbroker.protocols.secrets import MutableSecretsProtocol
@@ -194,6 +194,6 @@ async def test_catalog_mutation_persists(stack, monkeypatch):
             assert await broker2.count() == 1
             assert (await broker2.get("llm1")).config.name == "llm1"
     else:
-        with pytest.raises(RuntimeError, match="sync"):
+        with pytest.raises(EmptyRegistryError, match="sync"):
             async with stack.make_broker():
                 pass

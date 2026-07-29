@@ -10,7 +10,15 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from llmbroker.backends.driver import Driver, Row
-from llmbroker.models import Call, CallStatus, LLMConfig, Usage
+from llmbroker.models import (
+    Call,
+    CallStatus,
+    LLMConfig,
+    Usage,
+    check_limit,
+    to_utc,
+    with_utc_timestamps,
+)
 
 _DEFAULT_RETENTION = timedelta(days=90)
 _PURGE_INTERVAL_SECONDS = 3600.0
@@ -90,7 +98,7 @@ def _call_to_row(call: Call) -> Row:
         "error_detail": call.error_detail,
         "quality_score": call.quality_score,
         "call_id": call.call_id,
-        "called_at": call.ts or datetime.now(UTC),
+        "called_at": call.ts,
         "scope": call.scope,
         "cooldown_until": call.cooldown_until,
         "key_hash": call.key_hash,
@@ -144,7 +152,7 @@ class DriverStore:
         self._last_purge = float("-inf")
 
     async def record(self, call: Call) -> None:
-        await self._driver.append("calls", _call_to_row(call))
+        await self._driver.append("calls", _call_to_row(with_utc_timestamps(call)))
         await self._maybe_purge()
 
     async def record_quality(
@@ -172,11 +180,28 @@ class DriverStore:
             ),
         )
 
-    async def calls(self, *, limit: int, scope: str | None = None) -> list[Call]:
-        """Newest-first tail of the journal, both kinds interleaved — unfiltered by scope
-        (learning is global); ``scope`` is accepted for the host-facing filter only."""
-        match = {"scope": scope} if scope is not None else None
-        rows = await self._driver.recent("calls", limit, match)
+    async def calls(
+        self,
+        *,
+        limit: int,
+        scope: str | None = None,
+        since: datetime | None = None,
+        kind: str | None = None,
+        operation: str | None = None,
+    ) -> list[Call]:
+        """Newest-first tail of the journal, both kinds interleaved unless ``kind``
+        narrows them — unfiltered by scope (learning is global); ``scope`` is accepted
+        for the host-facing filter only. ``since`` bounds ``called_at`` inclusively."""
+        check_limit(limit)
+        match: Row = {}
+        if scope is not None:
+            match["scope"] = scope
+        if kind is not None:
+            match["kind"] = kind
+        if operation is not None:
+            match["operation"] = operation
+        bound = to_utc(since, "since") if since is not None else None
+        rows = await self._driver.recent("calls", limit, match or None, bound)
         return [_row_to_call(r) for r in rows]
 
     async def _purge_old_calls(self) -> None:

@@ -26,7 +26,7 @@ from pathlib import Path
 
 import yaml
 
-from llmbroker.models import Call, CallStatus, Usage
+from llmbroker.models import Call, CallStatus, Usage, check_limit, to_utc, with_utc_timestamps
 
 _DEFAULT_RETENTION = timedelta(days=90)
 _PURGE_INTERVAL_SECONDS = 3600.0
@@ -134,18 +134,19 @@ class FileStore:
         self._last_purge = float("-inf")
 
     def _day_path(self, ts: datetime) -> Path:
-        return self._calls_dir / f"{ts.date().isoformat()}.jsonl"
+        """UTC date, not the record's own offset: the ``since`` bound skips whole
+        files by name, so a file must never hold a row outside its named UTC day."""
+        return self._calls_dir / f"{ts.astimezone(UTC).date().isoformat()}.jsonl"
 
     def _append(self, call: Call) -> None:
-        ts = call.ts or datetime.now(UTC)
-        path = self._day_path(ts)
+        path = self._day_path(call.ts)
         path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(_call_to_jsonable(call))
         with path.open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
 
     async def record(self, call: Call) -> None:
-        await asyncio.to_thread(self._append, call)
+        await asyncio.to_thread(self._append, with_utc_timestamps(call))
         await self._maybe_purge()
 
     async def record_quality(
@@ -164,9 +165,19 @@ class FileStore:
             return []
         return sorted(self._calls_dir.glob("*.jsonl"), reverse=True)
 
-    def _read_tail(self, limit: int, scope: str | None) -> list[Call]:
+    def _read_tail(
+        self,
+        limit: int,
+        *,
+        scope: str | None,
+        since: datetime | None,
+        kind: str | None,
+        operation: str | None,
+    ) -> list[Call]:
         result: list[Call] = []
         for path in self._day_files_newest_first():
+            if since is not None and self._file_is_wholly_before(path, since):
+                continue
             lines = path.read_text(encoding="utf-8").splitlines()
             for raw_line in reversed(lines):
                 stripped = raw_line.strip()
@@ -175,15 +186,50 @@ class FileStore:
                 call = _call_from_jsonable(json.loads(stripped))
                 if scope is not None and call.scope != scope:
                     continue
+                if kind is not None and call.kind != kind:
+                    continue
+                if operation is not None and call.operation != operation:
+                    continue
+                if since is not None and (call.ts is None or call.ts < since):
+                    continue
                 result.append(call)
                 if len(result) >= limit:
                     return result
         return result
 
-    async def calls(self, *, limit: int, scope: str | None = None) -> list[Call]:
-        """Newest-first tail of the journal, both kinds interleaved — unfiltered by scope
-        (learning is global); ``scope`` is accepted for the host-facing filter only."""
-        return await asyncio.to_thread(self._read_tail, limit, scope)
+    @staticmethod
+    def _file_is_wholly_before(path: Path, since: datetime) -> bool:
+        """A day file's newest possible record is the last instant of its UTC date, so
+        a file whose whole day precedes ``since`` is skipped without being read."""
+        try:
+            file_date = date.fromisoformat(path.stem)
+        except ValueError:
+            return False
+        return file_date < since.date()
+
+    async def calls(
+        self,
+        *,
+        limit: int,
+        scope: str | None = None,
+        since: datetime | None = None,
+        kind: str | None = None,
+        operation: str | None = None,
+    ) -> list[Call]:
+        """Newest-first tail of the journal, both kinds interleaved unless ``kind``
+        narrows them — unfiltered by scope (learning is global); ``scope`` is accepted
+        for the host-facing filter only. ``since`` must be timezone-aware and bounds
+        the timestamp inclusively."""
+        check_limit(limit)
+        bound = to_utc(since, "since") if since is not None else None
+        return await asyncio.to_thread(
+            self._read_tail,
+            limit,
+            scope=scope,
+            since=bound,
+            kind=kind,
+            operation=operation,
+        )
 
     def _purge_old_day_files(self) -> None:
         cutoff = (datetime.now(UTC) - self._retention).date()

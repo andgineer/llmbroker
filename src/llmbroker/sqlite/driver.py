@@ -8,13 +8,14 @@ database the schema is created and stamped; on a version-marker mismatch
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import aiosqlite
 
 from llmbroker.backends.driver import Key, Row
 from llmbroker.backends.spec import SCHEMA_VERSION, TABLES, TableSpec
+from llmbroker.exceptions import SchemaVersionError
 
 _SQL_TYPES = {"text": "TEXT", "int": "INTEGER", "real": "REAL", "json": "TEXT", "timestamp": "TEXT"}
 
@@ -23,13 +24,20 @@ _SQL_TYPES = {"text": "TEXT", "int": "INTEGER", "real": "REAL", "json": "TEXT", 
 _schema_ready: dict[str, int] = {}
 
 
+def _iso(value: datetime) -> str:
+    """Timestamps are TEXT and compared lexicographically, so a stored instant must
+    always print in the same offset — otherwise ordering and range bounds compare
+    printed wall clocks instead of instants."""
+    return (value.astimezone(UTC) if value.tzinfo is not None else value).isoformat()
+
+
 def _encode(value: object, col_type: str) -> object:
     if value is None:
         return None
     if col_type == "json":
         return json.dumps(value)
     if col_type == "timestamp":
-        return value.isoformat() if isinstance(value, datetime) else value
+        return _iso(value) if isinstance(value, datetime) else value
     return value
 
 
@@ -61,10 +69,12 @@ async def _apply_ddl(db: aiosqlite.Connection) -> None:
     row = await cursor.fetchone()
     current = int(row[0]) if row else 0
     if current not in (0, SCHEMA_VERSION):
-        raise RuntimeError(
+        raise SchemaVersionError(
             f"llmbroker schema version {current} found, this release expects"
             f" {SCHEMA_VERSION} — drop the llmbroker_* tables and restart"
             " (export registry/secrets/calls first if you need them)",
+            found=current,
+            expected=SCHEMA_VERSION,
         )
     for spec in TABLES.values():
         await db.execute(_create_table_sql(spec))
@@ -183,22 +193,30 @@ class SqliteDriver:
             await db.execute(query, [encoded[c] for c in cols])
             await db.commit()
 
-    async def recent(self, table: str, limit: int, match: Row | None = None) -> list[Row]:
+    async def recent(
+        self,
+        table: str,
+        limit: int,
+        match: Row | None = None,
+        since: datetime | None = None,
+    ) -> list[Row]:
         spec = TABLES[table]
         await self.ensure_schema()
         cols = ", ".join(spec.columns)
         params: list[object] = []
-        where = ""
+        conditions: list[str] = []
         if match:
             # "=" never matches NULL in SQL; a None filter value means "IS NULL".
-            conditions = []
             for k, v in match.items():
                 if v is None:
                     conditions.append(f"{k} IS NULL")
                 else:
                     conditions.append(f"{k} = ?")
                     params.append(v)
-            where = " WHERE " + " AND ".join(conditions)
+        if since is not None:
+            conditions.append("called_at >= ?")
+            params.append(_iso(since))
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
         params.append(limit)
         async with self._connection() as db:
             rows = await (
@@ -215,7 +233,7 @@ class SqliteDriver:
         async with self._connection() as db:
             cursor = await db.execute(
                 f"DELETE FROM {spec.name} WHERE called_at < ?",  # noqa: S608
-                [before.isoformat()],
+                [_iso(before)],
             )
             await db.commit()
             return cursor.rowcount

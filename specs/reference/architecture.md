@@ -130,7 +130,8 @@ once per driver instance before any operation, version-aware. Every
 table/collection is `llmbroker_`-prefixed so the host's migration tool can ignore
 them by prefix. Single-known-installation policy: `ensure_schema` creates the
 current shape fresh when no version marker exists, and raises an actionable
-`RuntimeError`/error on any other version mismatch — there is no in-place
+typed schema-version error carrying the found and expected versions on any other
+version mismatch — there is no in-place
 `ALTER`-based migration path; upgrading means dropping the `llmbroker_*`
 tables/collections and restarting (export registry/secrets/calls first if needed).
 
@@ -140,6 +141,46 @@ change between releases without notice. The supported read surface is
 `snapshot()` (raw per-model facts + metrics); hosts that need more should read
 through a `QueryableStoreProtocol`/`DisabledMapProtocol` backend, not the
 raw table.
+
+### Journal read path
+
+The journal has two read forms, both newest-first and both over the same store
+port: a tail of raw records, and a per-model aggregate of call records over a
+time window. Both narrow by an inclusive lower time bound, by record kind, and by
+operation — the kind filter matters because the two record kinds interleave in
+one stream and a quality record carries no status, so a host aggregating call
+outcomes without it gets a silently wrong denominator; the operation filter
+matters because the journal is shared by everything the broker calls, including
+broker-internal traffic a host never issued.
+
+The operation filter matches a named operation only: an unset filter means "do
+not filter", so calls journaled without an operation label cannot currently be
+isolated as a group. A host that labels none of its calls therefore has two
+readings — everything, or one named operation — and neither is "mine". This is
+sound while the broker journals no traffic of its own; it stops being sound the
+moment the broker writes rows under its own operation name, which is the point at
+which the filter needs a way to select the unlabelled bucket.
+
+**Journal reads never provision the pool.** The journal's rows do not depend on
+the registry, so a visibility call must keep working on an install whose registry
+is empty, stale, or gone — precisely the state a host UI most needs to render.
+This separates them from `snapshot()`, which is a view of the *live pool* and so
+does provision.
+
+Window aggregates are derived per request from the journal, never accumulated
+into stored counters — see [`decisions.md`](decisions.md).
+
+**Every instant crossing the store boundary is UTC, in both directions.** A
+journal record's timestamps are pinned on write and a caller's time bound is
+pinned on read; a naive value is refused at either boundary rather than guessed
+at, because guessing shifts it by the writer's or caller's offset on some
+backends and not others — silently, and in the one API whose purpose is an exact
+window. The rule has to be symmetric: a naive value admitted on write resurfaces
+as a mis-filed record or a failed comparison on every read that follows. The row
+limit must be at least 1: backends disagree on what zero means (one reads it as
+"no limit"), so a caller's shrinking budget must not decay into a full scan.
+Both are enforced at the public API as well as in the shipped backends, so the
+guarantee does not depend on a host's own store implementation upholding it.
 
 Four tables/collections exist: **registry**, **secrets**, **disabled** (admin
 verdicts, seeded with model names at `sync`), and **calls** (the journal). There
@@ -175,7 +216,8 @@ Per table:
   `called_at`, `kind` (`call`/`quality`), `scope`, `status` are queried/indexed
   columns; open-ended provider extras live in the `usage_extra` JSON column;
   `cooldown_until`/`key_hash` ride on failed rows for the shared-cooldown rebuild
-  (see [`optimizer.md`](optimizer.md)).
+  (see [`optimizer.md`](optimizer.md)). `called_at` is indexed, so a time-bounded
+  read is an indexed scan on every SQL backend.
 - **Registry** (`llmbroker_registry`) — hybrid: `name`, `base_url`, `model`,
   `api_key_ref` stay columns (identity, plus stable human-meaningful config);
   nested/open-ended per-LLM config (e.g. `parallel`) lives in the `metadata`

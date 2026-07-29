@@ -5,7 +5,7 @@ Behavior is tested once here — keyed-op round-trips, fetch ordering, and
 journal ops (append/recent/purge) — rather than duplicated per backend.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -194,6 +194,100 @@ async def test_journal_recent_with_none_match_value_matches_null(driver):
     )
     rows = await driver.recent("calls", 10, match={"scope": None})
     assert [r["id"] for r in rows] == ["c1"]
+
+
+async def test_journal_recent_since_excludes_older_rows(driver):
+    base = datetime(2030, 1, 1, tzinfo=UTC)
+    await driver.append("calls", _call_row("old", llm_name="x", called_at=base))
+    await driver.append(
+        "calls",
+        _call_row("new", llm_name="x", called_at=base + timedelta(days=2)),
+    )
+    rows = await driver.recent("calls", 10, since=base + timedelta(days=1))
+    assert [r["id"] for r in rows] == ["new"]
+
+
+async def test_journal_recent_since_is_inclusive_at_the_bound(driver):
+    """The bound is inclusive: a row stamped exactly at ``since`` is in the window."""
+    base = datetime(2030, 1, 1, tzinfo=UTC)
+    await driver.append("calls", _call_row("exactly-at", llm_name="x", called_at=base))
+    rows = await driver.recent("calls", 10, since=base)
+    assert [r["id"] for r in rows] == ["exactly-at"]
+
+
+async def test_journal_recent_since_none_returns_everything(driver):
+    base = datetime(2030, 1, 1, tzinfo=UTC)
+    await driver.append("calls", _call_row("c1", llm_name="x", called_at=base))
+    await driver.append(
+        "calls",
+        _call_row("c2", llm_name="x", called_at=base + timedelta(days=400)),
+    )
+    rows = await driver.recent("calls", 10, since=None)
+    assert [r["id"] for r in rows] == ["c2", "c1"]
+
+
+async def test_journal_recent_since_compares_instants_not_wall_clocks(driver):
+    """A bound expressed in another offset must select by the instant it denotes.
+
+    SQLite stores ``called_at`` as ISO text and compares it lexicographically, so an
+    un-normalized offset silently compares printed wall clocks: a Moscow-time bound
+    equal to the row's instant would sort above it and drop the row.
+    """
+    row_at = datetime(2030, 1, 1, tzinfo=UTC)
+    await driver.append("calls", _call_row("c1", llm_name="x", called_at=row_at))
+
+    east = timezone(timedelta(hours=5))
+    same_instant = row_at.astimezone(east)
+    assert same_instant.hour == 5  # guards the fixture, not the driver
+    rows = await driver.recent("calls", 10, since=same_instant)
+    assert [r["id"] for r in rows] == ["c1"]
+
+    west = timezone(timedelta(hours=-5))
+    an_hour_later = (row_at + timedelta(hours=1)).astimezone(west)
+    assert await driver.recent("calls", 10, since=an_hour_later) == []
+
+
+async def test_journal_stores_instants_not_wall_clocks(driver):
+    """An appended row is ordered, windowed and expired by the instant it denotes,
+    whatever offset it was written in.
+
+    SQLite keeps ``called_at`` as ISO text and compares it lexicographically, so a
+    row stored in its author's offset sorts by printed wall clock: the eastern row
+    below is the *older* instant but the *later* string.
+    """
+    eastern = datetime(2030, 1, 1, 13, tzinfo=timezone(timedelta(hours=5)))  # 08:00Z
+    utc = datetime(2030, 1, 1, 12, tzinfo=UTC)
+    await driver.append("calls", _call_row("older-eastern", llm_name="x", called_at=eastern))
+    await driver.append("calls", _call_row("newer-utc", llm_name="x", called_at=utc))
+
+    rows = await driver.recent("calls", 10)
+    assert [r["id"] for r in rows] == ["newer-utc", "older-eastern"]
+
+    bound = datetime(2030, 1, 1, 10, tzinfo=UTC)
+    assert [r["id"] for r in await driver.recent("calls", 10, since=bound)] == ["newer-utc"]
+    assert await driver.purge("calls", bound) == 1
+
+
+async def test_journal_recent_combines_since_with_match(driver):
+    base = datetime(2030, 1, 1, tzinfo=UTC)
+    await driver.append(
+        "calls", _call_row("old-alice", llm_name="x", called_at=base, scope="alice")
+    )
+    await driver.append(
+        "calls",
+        _call_row("new-bob", llm_name="x", called_at=base + timedelta(days=2), scope="bob"),
+    )
+    await driver.append(
+        "calls",
+        _call_row("new-alice", llm_name="x", called_at=base + timedelta(days=2), scope="alice"),
+    )
+    rows = await driver.recent(
+        "calls",
+        10,
+        match={"scope": "alice"},
+        since=base + timedelta(days=1),
+    )
+    assert [r["id"] for r in rows] == ["new-alice"]
 
 
 async def test_journal_purge_removes_rows_before_cutoff(driver):

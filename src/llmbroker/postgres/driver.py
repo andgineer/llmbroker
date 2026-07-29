@@ -14,6 +14,7 @@ import asyncpg
 
 from llmbroker.backends.driver import Key, Row
 from llmbroker.backends.spec import SCHEMA_VERSION, TABLES, TableSpec
+from llmbroker.exceptions import SchemaVersionError
 
 _SQL_TYPES = {
     "text": "TEXT",
@@ -76,10 +77,12 @@ async def _apply_ddl(conn: asyncpg.pool.PoolConnectionProxy) -> None:
     row = await conn.fetchrow("SELECT version FROM llmbroker_schema_version WHERE id = 1")
     current = int(row["version"]) if row else 0
     if current not in (0, SCHEMA_VERSION):
-        raise RuntimeError(
+        raise SchemaVersionError(
             f"llmbroker schema version {current} found, this release expects"
             f" {SCHEMA_VERSION} — drop the llmbroker_* tables and restart"
             " (export registry/secrets/calls first if you need them)",
+            found=current,
+            expected=SCHEMA_VERSION,
         )
     for spec in TABLES.values():
         await conn.execute(_create_table_sql(spec))
@@ -183,21 +186,29 @@ class PostgresDriver:
         async with self._pool.acquire() as conn:
             await conn.execute(query, *(encoded[c] for c in cols))
 
-    async def recent(self, table: str, limit: int, match: Row | None = None) -> list[Row]:
+    async def recent(
+        self,
+        table: str,
+        limit: int,
+        match: Row | None = None,
+        since: datetime | None = None,
+    ) -> list[Row]:
         spec = TABLES[table]
         await self.ensure_schema()
         cols = ", ".join(spec.columns)
         params: list[object] = []
-        where = ""
+        conditions: list[str] = []
         if match:
-            conditions = []
             for k, v in match.items():
                 if v is None:
                     conditions.append(f"{k} IS NULL")
                 else:
                     params.append(v)
                     conditions.append(f"{k} = ${len(params)}")
-            where = " WHERE " + " AND ".join(conditions)
+        if since is not None:
+            params.append(since)
+            conditions.append(f"called_at >= ${len(params)}")
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
         params.append(limit)
         async with self._pool.acquire() as conn:
             records = await conn.fetch(

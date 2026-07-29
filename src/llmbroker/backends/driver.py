@@ -37,8 +37,20 @@ class Driver(Protocol):
 
     async def append(self, table: str, row: Row) -> None: ...
 
-    async def recent(self, table: str, limit: int, match: Row | None = None) -> list[Row]:
-        """Newest-first tail; ``match`` is an optional equality filter."""
+    async def recent(
+        self,
+        table: str,
+        limit: int,
+        match: Row | None = None,
+        since: datetime | None = None,
+    ) -> list[Row]:
+        """Newest-first tail; ``match`` is an optional equality filter.
+
+        ``since`` bounds the journal's ``called_at`` inclusively (rows at or
+        after it are returned) — meaningful only for the append-only journal.
+        Callers pass UTC; mongo floors both stored values and the bound to whole
+        milliseconds, since BSON dates carry no finer precision.
+        """
         ...
 
     async def purge(self, table: str, before: datetime) -> int:

@@ -3,9 +3,12 @@
 import asyncio
 import logging
 
+import pytest
+
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.catalog import Catalog
 from llmbroker.broker.pool import LLMPool
+from llmbroker.exceptions import EmptyRegistryError
 from llmbroker.models import LLMConfig
 from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.sqlite import Registry as SqliteRegistry
@@ -137,10 +140,22 @@ def test_provision_raises_on_empty_registry():
         catalog = Catalog(registry, _NoSecrets(), pool, scope=None)
         try:
             await catalog.provision()
-        except RuntimeError as exc:
+        except EmptyRegistryError as exc:
             assert "sync(preset)" in str(exc)
         else:
-            raise AssertionError("expected RuntimeError")
+            raise AssertionError("expected EmptyRegistryError")
+
+    asyncio.run(run())
+
+
+def test_empty_registry_error_is_still_a_runtime_error():
+    """Hosts written against the untyped raise keep working — the property that
+    makes the typed exception an additive change."""
+
+    async def run():
+        catalog = Catalog(_MutableRegistry(), _NoSecrets(), LLMPool(), scope=None)
+        with pytest.raises(RuntimeError):
+            await catalog.provision()
 
     asyncio.run(run())
 
@@ -230,10 +245,10 @@ async def test_broker_provision_without_sync_raises(tmp_path):
     )
     try:
         await broker.count()
-    except RuntimeError as exc:
+    except EmptyRegistryError as exc:
         assert "sync(preset)" in str(exc)
     else:
-        raise AssertionError("expected RuntimeError")
+        raise AssertionError("expected EmptyRegistryError")
 
 
 async def test_broker_sync_then_provision_succeeds(tmp_path):

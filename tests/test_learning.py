@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 
-from llmbroker.broker.learning import _LearningHook
+from llmbroker.broker.learning import _LearningHook, metrics_from_calls
 from llmbroker.broker.pool import LLMPool
 from llmbroker.models import Call, CallStatus, LLMConfig, key_hash
 from llmbroker.optimizer import Optimizer
@@ -25,7 +25,7 @@ def _call(name: str, status: CallStatus, **kw) -> Call:
         operation=kw.pop("operation", None),
         trace_id=None,
         status=status,
-        ts=datetime.now(UTC),
+        ts=kw.pop("ts", None) or datetime.now(UTC),
         **kw,
     )
 
@@ -330,3 +330,55 @@ async def test_maybe_rebuild_skips_resync_registry_when_disabled(tmp_path):
     await hook.maybe_rebuild(force=True, resync_registry=False)
 
     assert calls == []
+
+
+# ── metrics_from_calls, now a projection of stats_from_calls ─────────────────
+
+
+def test_metrics_from_calls_counts_only_call_rows():
+    """Regression: rebuilding this on stats_from_calls must not change LLMMetrics."""
+    rows = [
+        _call("a", CallStatus.ERROR),
+        Call(
+            id=str(uuid.uuid4()),
+            llm_name="a",
+            operation=None,
+            trace_id=None,
+            status=None,
+            kind="quality",
+            ts=datetime.now(UTC),
+            quality_score=1.0,
+        ),
+        _call("a", CallStatus.OK),
+        _call("b", CallStatus.OK),
+    ]
+    metrics = metrics_from_calls(rows)
+    assert metrics["a"].call_count == 2
+    assert metrics["b"].call_count == 1
+
+
+def test_metrics_from_calls_takes_last_status_from_the_newest_row():
+    newest = datetime(2030, 1, 2, tzinfo=UTC)
+    rows = [
+        _call("a", CallStatus.RATE_LIMITED, ts=newest),
+        _call("a", CallStatus.OK, ts=datetime(2030, 1, 1, tzinfo=UTC)),
+    ]
+    metrics = metrics_from_calls(rows)
+    assert metrics["a"].last_status is CallStatus.RATE_LIMITED
+    assert metrics["a"].last_at == newest
+
+
+def test_metrics_from_calls_on_only_quality_rows_is_empty():
+    rows = [
+        Call(
+            id=str(uuid.uuid4()),
+            llm_name="a",
+            operation=None,
+            trace_id=None,
+            status=None,
+            kind="quality",
+            ts=datetime.now(UTC),
+            quality_score=1.0,
+        ),
+    ]
+    assert metrics_from_calls(rows) == {}

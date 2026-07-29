@@ -82,8 +82,8 @@ implementation.
    do not depend on the registry — coupling a read to provisioning would make a visibility call
    fail on an install whose registry is empty, stale, or gone, which is exactly when a host UI
    needs to render. Consistency with the routing methods is the weaker argument: they provision
-   because they route, and a read does not. `journal-stats-window.md` builds `stats()` on this
-   rule.
+   because they route, and a read does not. `stats()` already ships on this rule, and
+   architecture.md records it — `calls()` must not diverge from it here.
 7. **`.env` support is explicit, dependency-free, and file-source-scoped.**
    `standalone.Secrets` gains an optional `env_file: str | Path | None`
    parameter: when set, the file is parsed lazily (stdlib only — `KEY=VALUE`

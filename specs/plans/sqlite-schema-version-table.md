@@ -59,10 +59,9 @@ resolution above runs inside the same guarded section, once per database path.
 
 ## 3. Error type
 
-The mismatch in case 2 raises `SchemaVersionError` from `specs/plans/typed-exceptions.md`, with
-the found and expected versions attached. If that plan has not landed yet, keep the current bare
-`RuntimeError` and its message, and convert it as part of the exceptions plan — do not invent a
-second type here.
+The mismatch in case 2 raises `SchemaVersionError` (`llmbroker.exceptions`), with the found and
+expected versions attached — the type already exists and every driver already raises it. Reuse it;
+do not invent a second type here.
 
 ## 4. Tests (`tests/test_schema_migration.py`)
 

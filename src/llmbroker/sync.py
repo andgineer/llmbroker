@@ -9,13 +9,14 @@ import asyncio
 import threading
 import weakref
 from collections.abc import Callable, Coroutine, Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from llmbroker.broker.broker import AsyncBroker
+from llmbroker.broker.broker import _DEFAULT_STATS_LIMIT, AsyncBroker
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.direct import DirectClient
-from llmbroker.models import Call, LLMConfig, LLMMetrics, LLMSnapshot, LLMState
+from llmbroker.models import Call, LLMConfig, LLMMetrics, LLMSnapshot, LLMState, LLMStats
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.registry import RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
@@ -201,8 +202,26 @@ class Broker:
     def enable_llm(self, name: str) -> None:
         self._run(self._async.enable_llm(name))
 
-    def calls(self, *, limit: int) -> list[Call]:
-        return self._run(self._async.calls(limit=limit))
+    def calls(
+        self,
+        *,
+        limit: int,
+        since: datetime | None = None,
+        kind: str | None = None,
+        operation: str | None = None,
+    ) -> list[Call]:
+        return self._run(
+            self._async.calls(limit=limit, since=since, kind=kind, operation=operation),
+        )
+
+    def stats(
+        self,
+        *,
+        since: datetime | None = None,
+        limit: int = _DEFAULT_STATS_LIMIT,
+        operation: str | None = None,
+    ) -> Mapping[str, LLMStats]:
+        return self._run(self._async.stats(since=since, limit=limit, operation=operation))
 
     # ── lifecycle ──
     def close(self) -> None:

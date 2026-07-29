@@ -3,6 +3,31 @@
 from datetime import datetime
 
 
+class LLMBrokerError(RuntimeError):
+    """Base: a lifecycle failure — provisioning or storage, not one request.
+
+    Subclasses ``RuntimeError`` so a host that already catches ``RuntimeError``
+    around provisioning keeps working.
+    """
+
+
+class EmptyRegistryError(LLMBrokerError):
+    """The registry holds no configs — nothing has been synced into it yet.
+
+    The request-time sibling is ``NoLLMAvailableError(reason="empty_pool")``:
+    this one says nothing is configured, that one says nothing is usable now.
+    """
+
+
+class SchemaVersionError(LLMBrokerError):
+    """The store holds a schema version this release cannot use."""
+
+    def __init__(self, message: str, *, found: int, expected: int) -> None:
+        super().__init__(message)
+        self.found = found
+        self.expected = expected
+
+
 class LLMRequestError(Exception):
     """Base: this request could not be completed."""
 
