@@ -79,13 +79,19 @@ number whose meaning is fixed by the library and wrong for the next consumer.
 ## 2. Store: expose the window and the kind filter
 
 - `protocols/store.py` — `QueryableStoreProtocol.calls(*, limit, scope=None, since=None,
-  kind=None)`. Both new parameters default to `None`, so every existing caller and every
-  third-party implementation keeps working.
-- `backends/ports.py` (`calls`, :175) — pass `since` through and fold `kind` into the existing
-  `match` dict, which already does equality matching. No new driver primitive for `kind`.
+  kind=None, operation=None)`. All three new parameters default to `None`, so every existing
+  caller and every third-party implementation keeps working.
+- `backends/ports.py` (`calls`, :175) — pass `since` through and fold `kind` and `operation` into
+  the existing `match` dict, which already does equality matching. No new driver primitive for
+  either.
+- **Why `operation` belongs here:** the journal is shared by everything the broker calls, and
+  `llm-judge.md` adds internal traffic under its own operation (`llmbroker.judge`) journaled like
+  any other call. Without an operation filter a host's per-model counts silently include broker
+  traffic the host never issued, and its failures read as host-visible failures. The filter is one
+  more key in a dict that already exists, so the plans compose at no cost.
 - `standalone/store.py` (`calls`, :183) — the same two parameters in `_read_tail`. Day files make
   the time bound natural: skip whole files older than `since` before reading rows.
-- `broker/broker.py` (`AsyncBroker.calls`, :279) and `sync.py` (:204) — forward both parameters.
+- `broker/broker.py` (`AsyncBroker.calls`, :323) and `sync.py` (:204) — forward both parameters.
 
 ## 3. The aggregate
 
@@ -100,10 +106,13 @@ number whose meaning is fixed by the library and wrong for the next consumer.
 
 ## 4. Public API
 
-- `AsyncBroker.stats(*, since=None, limit=1000) -> Mapping[str, LLMStats]` — reads the journal
+- `AsyncBroker.stats(*, since=None, limit=1000, operation=None) -> Mapping[str, LLMStats]` — reads the journal
   through `_require_queryable()` (same `TypeError` contract as `calls`) and returns the aggregate.
-  Like `calls`, it must not call `ensure_pool()`: statistics on an unprovisioned or empty pool are
-  a legitimate read.
+  It must not call `ensure_pool()`, and neither must `calls()`: **journal reads never provision.**
+  The journal is written by the router and read by the host; its rows do not depend on the
+  registry, so a visibility call must keep working on an install whose registry is empty, stale,
+  or gone — precisely the state a host UI most needs to render. `mission-conformance-fixes.md`
+  states the same rule; the two plans must not diverge on it.
 - `SyncBroker.stats` — the mirror wrapper, next to `calls` (:204).
 - `snapshot()` and `LLMSnapshot.metrics` are untouched. Their cached-tail semantics stay as
   documented in `specs/reference/decisions.md`; hosts that need a window now have an API that
@@ -126,7 +135,10 @@ number whose meaning is fixed by the library and wrong for the next consumer.
   journal-ops suite: rows before the bound excluded, rows at the bound included (document the
   boundary as inclusive and test it), `since=None` unchanged, `since` combined with `match`.
 - `tests/test_store.py` / `tests/test_store_backends.py` — `calls(kind="call")` drops quality
-  records; `calls(since=…)` bounds the window; both together.
+  records; `calls(since=…)` bounds the window; `calls(operation=…)` keeps only that operation;
+  all three together.
+- `stats(operation=…)` counts only that operation's rows — the property that keeps a host's
+  numbers free of the judge traffic `llm-judge.md` will add.
 - `tests/test_file_learning.py` (or the standalone store's own test module) — the day-file store
   honours `since`, including that it skips whole files rather than reading and discarding.
 - New `tests/test_stats.py` — `stats_from_calls`: per-status counts, quality rows ignored,

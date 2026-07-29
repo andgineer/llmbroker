@@ -27,7 +27,8 @@ The review found one correctness hole and a set of smaller gaps:
 2. Quality scores are not validated; the Wilson bound assumes `[0, 1]`.
 3. `run_tool_loop`/`arun_tool_loop` return `""` when `max_steps` is exhausted —
    silence, which the error contract forbids.
-4. `AsyncBroker.calls()` is the only public method that skips `ensure_pool()`.
+4. `AsyncBroker.calls()` is the only public method that skips `ensure_pool()`, and no spec says
+   whether that is deliberate — so the next journal-read API has no rule to follow.
 5. The documented quickstart writes a `.env` file that nothing in the package
    reads (`Secrets` resolves from `os.environ` only).
 6. `llmbroker env` requires a local file; onboarding takes two commands where
@@ -75,8 +76,14 @@ implementation.
 5. **Tool-loop exhaustion raises `ToolLoopLimitError(LLMRequestError)`**,
    message naming `max_steps`. Callers that want the old lenient behavior catch
    it; silence is not an option per the error contract.
-6. **`calls()` calls `ensure_pool()`** like every other public method;
-   architecture.md's method list is updated accordingly.
+6. **Journal reads never provision.** `calls()` keeps skipping `ensure_pool()`, and every future
+   journal-read API does the same; architecture.md states it as a rule instead of leaving it an
+   undocumented exception. The journal is written by the router and read by the host, and its rows
+   do not depend on the registry — coupling a read to provisioning would make a visibility call
+   fail on an install whose registry is empty, stale, or gone, which is exactly when a host UI
+   needs to render. Consistency with the routing methods is the weaker argument: they provision
+   because they route, and a read does not. `journal-stats-window.md` builds `stats()` on this
+   rule.
 7. **`.env` support is explicit, dependency-free, and file-source-scoped.**
    `standalone.Secrets` gains an optional `env_file: str | Path | None`
    parameter: when set, the file is parsed lazily (stdlib only — `KEY=VALUE`
@@ -163,8 +170,8 @@ exhaustion does not cool a model).
    covering `-0.1`, `1.1`, and the boundaries `0.0`/`1.0`.
 2. `ToolLoopLimitError` per decision 5; test: dispatch that always returns
    tool calls exhausts `max_steps=2` and raises, message names the limit.
-3. `ensure_pool()` in `AsyncBroker.calls()`; test: `calls()` on a fresh broker
-   over a seeded registry does not raise and returns rows after one `ask`.
+3. Write the journal-read rule (decision 6) into architecture.md's method list; test: `calls()` on
+   a broker with an empty registry returns `[]` instead of raising, and provisions nothing.
 4. **`wait` bounds the attempt** (decisions 10-11). Thread `deadline` from
    `Router.chat` into `_attempt`; derive the per-attempt timeout and pass it to
    `call_provider` → `httpx post(timeout=...)`. On a fired timeout, branch on

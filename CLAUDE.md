@@ -8,6 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 . ./activate.sh   # creates .venv and installs deps via uv; re-run after pulling
 ```
 
+**Activate before every `invoke` or `pytest` run.** A shell without the venv picks up a global
+`pyrefly`/`invoke` from `~/.local/bin` whose version and strictness differ from the pinned ones,
+so the gate reports errors that do not exist. If untouched files suddenly go red, check
+`which pyrefly` before believing the output.
+
 ## Common commands
 
 | Task | Command |
@@ -31,6 +36,35 @@ Before claiming anything is done, both must be green:
 2. `python -m pytest` → `N passed` with zero failures or errors
 
 Run `invoke pre` after each discrete batch of changes, not only at the end.
+
+## Executing a plan
+
+Any request to implement a plan — "выполни очередной план", "выполни следующий план",
+"выполни план X", "implement the next plan" — means all of the following, without being asked:
+
+1. **No plan named is the normal case.** Open `specs/plans/README.md`, take the first row of its
+   queue, and start. Do not ask which one. That file also states which plans must ship in one
+   release together — honor it, implementing both before reporting done.
+2. The plan is the suggested route, the code is the truth. Where they disagree, follow the code
+   and say so; do not implement something the code has already made obsolete.
+3. Run `. ./activate.sh` first. Every `invoke`/`pytest` call needs it.
+4. Work in batches, and after each batch both must be green: `invoke pre` and `python -m pytest`
+   (`N passed`, zero skips, zero errors). Docker must be running for testcontainer tests.
+5. **Never bump the version.** Plans list `invoke ver-*` in their work order; skip that step —
+   the maintainer bumps by hand.
+6. **Never commit** unless explicitly asked.
+7. **Spec-worthy content moves into `specs/reference/` as part of the work**, in the same batch as
+   the behavior it describes — never as a final sweep. Spec-worthy means a rule that outlives this
+   change: an architectural decision, a business requirement, an invariant a future reader must
+   not break. Implementation detail (signatures, field names, line numbers) is not spec-worthy and
+   is not copied anywhere: the code is its source of truth. Each plan names what to write and
+   where; if it names nothing, nothing needs moving.
+8. **Never delete the plan file.** It is the review artifact: the reviewer reads the diff against
+   it. Deletion happens only after review and merge, when the maintainer asks — then the file and
+   its row in `specs/plans/README.md` go together.
+9. **Close with a review handover**, in the final message: which plan sections are done, what was
+   done differently from the plan and why (stale plan, code disagreed, a better route), anything
+   deliberately left out, and the gate results. This is what the reviewer reads first.
 
 ## Testing quirks
 
@@ -82,6 +116,11 @@ Run `invoke pre` after each discrete batch of changes, not only at the end.
 All storage backends (sqlite, redis, postgres, mongodb) are `[project.optional-dependencies]` in `pyproject.toml`. **Never add backend packages to the dev group** — they are installed in dev and CI via `uv sync --frozen --all-extras`. The dev group is for dev tooling only (pytest, invoke, pre-commit, etc.). `fakeredis` is the exception: it is a test-only mock with no corresponding optional extra, so it stays in dev.
 
 ## Architecture notes
+
+- **No published users yet — backward compatibility is not a constraint.** Prefer the clean API
+  over a compatibility shim: rename, change a signature, or delete a command outright rather than
+  keeping a deprecated path alive. This says nothing about load: llmbroker is a general-purpose
+  library and must hold up at the pool's throughput limit.
 
 - Python 3.11+ required: uses `tomllib` (stdlib) and `from datetime import UTC`
 - Secrets are pluggable via `src/llmbroker/secrets.py` (env vars, AWS, Vault)

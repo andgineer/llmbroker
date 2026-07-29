@@ -35,12 +35,7 @@ llmbroker add-model --into llms.toml --provider anthropic --model claude-opus-4-
 По умолчанию `pool = false` (direct-only); флаг `--pool` добавит модель в пул.
 Затем задайте ключ, который он подскажет (`llmbroker env llms.toml >> .env`).
 
-Либо впишите блок руками, начав с шаблона:
-
-```bash
-llmbroker preset paid >> llms.toml   # добавит пример `[[custom]]`
-llmbroker env llms.toml >> .env      # добавит строку ключа с подсказкой
-```
+Либо впишите блок руками:
 
 ```toml
 [[custom]]
@@ -50,6 +45,8 @@ model       = "claude-opus-4-8"
 api_key_ref = "ANTHROPIC_API_KEY"
 pool        = false                            # direct-only; вызов через direct("frontier")
 ```
+
+В обоих случаях `llmbroker env llms.toml >> .env` добавит строку ключа с подсказкой.
 
 Файл — единственный источник правды: добавил `[[custom]]`-блок — добавил модель,
 убрал — удалил, затем `sync` зеркалит весь файл в БД. `sync` зеркалит только

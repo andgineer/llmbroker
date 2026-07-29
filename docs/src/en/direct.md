@@ -36,12 +36,7 @@ llmbroker add-model --into llms.toml --provider anthropic --model claude-opus-4-
 It defaults to `pool = false` (direct-only); pass `--pool` to add it to the
 pool instead. Then set the key it prints (`llmbroker env llms.toml >> .env`).
 
-Or write the block by hand, starting from the template:
-
-```bash
-llmbroker preset paid >> llms.toml   # appends a `[[custom]]` example
-llmbroker env llms.toml >> .env      # adds the key line with a hint
-```
+Or write the block by hand:
 
 ```toml
 [[custom]]
@@ -51,6 +46,8 @@ model       = "claude-opus-4-8"
 api_key_ref = "ANTHROPIC_API_KEY"
 pool        = false                            # direct-only; reach via direct("frontier")
 ```
+
+Either way, `llmbroker env llms.toml >> .env` adds the key line with a hint.
 
 The file is the single source of truth: add a `[[custom]]` block to add a model,
 remove it to remove one, then `sync` mirrors the whole file into the DB. `sync`

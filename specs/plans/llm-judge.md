@@ -40,7 +40,8 @@ re-decide them during implementation:
 3. **Dedicated operation constant** — `"llmbroker.judge"` — the dotted namespace avoids
    collision with host operation names. Judge calls are journaled by the router like any other
    call under this operation (dogfooding: failover, cooldowns, metrics, `calls()` visibility
-   all apply).
+   all apply). A host that wants its own numbers without this traffic filters by operation —
+   `journal-stats-window.md` carries that filter on `calls()` and `stats()` for this reason.
 4. **Sampling is a deterministic per-bucket accumulator**, not RNG: per `(model, operation)`
    key, `acc += judge_fraction; if acc >= 1.0: acc -= 1.0; sample`. Exact fraction per bucket,
    trivially testable, no seeding. The accumulator is in-memory per broker instance —

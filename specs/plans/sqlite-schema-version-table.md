@@ -13,7 +13,7 @@ usage — `sqlite://<the host's own db>` — llmbroker claims a slot that belong
 collides with any host or library that also uses it.
 
 The other two backends already keep the marker in their own namespace: `postgres/driver.py` uses
-an `llmbroker_schema_version` table (DDL :27, upsert :35, read :76), `mongodb/driver.py` an
+an `llmbroker_schema_version` table (DDL :26, upsert :34, read :76), `mongodb/driver.py` an
 `llmbroker_schema_version` document (:63, :84). SQLite is the outlier.
 
 The concrete failure (issue #12): a host that drops the `llmbroker_*` tables to recover from a
@@ -54,7 +54,7 @@ that may belong to the host:
 Case 3 is what fixes the reported breakage: after `DROP TABLE llmbroker_*` the next start sees no
 llmbroker tables, ignores the stale header entirely, and self-heals.
 
-`_schema_ready` (the per-path memo in `ensure_schema`, :105-123) keeps its current role; the
+`_schema_ready` (the per-path memo in `ensure_schema`, :105-124) keeps its current role; the
 resolution above runs inside the same guarded section, once per database path.
 
 ## 3. Error type
