@@ -14,7 +14,7 @@
 | src/llmbroker/broker/broker.py        |      182 |        3 |     98% |101, 169, 398 |
 | src/llmbroker/broker/catalog.py       |       74 |        0 |    100% |           |
 | src/llmbroker/broker/learning.py      |      121 |        7 |     94% |51-54, 113, 116, 170 |
-| src/llmbroker/broker/pool.py          |      184 |        2 |     99% |   70, 139 |
+| src/llmbroker/broker/pool.py          |      187 |        2 |     99% |   70, 139 |
 | src/llmbroker/broker/pool\_view.py    |       22 |        0 |    100% |           |
 | src/llmbroker/broker/result.py        |       45 |        0 |    100% |           |
 | src/llmbroker/broker/router.py        |      144 |        2 |     99% |   330-331 |
@@ -47,7 +47,7 @@
 | src/llmbroker/standalone/store.py     |      143 |        5 |     97% |185, 206-207, 239-240 |
 | src/llmbroker/sync.py                 |      100 |        1 |     99% |        90 |
 | src/llmbroker/vault/secrets.py        |       19 |        0 |    100% |           |
-| **TOTAL**                             | **2575** |   **86** | **97%** |           |
+| **TOTAL**                             | **2578** |   **86** | **97%** |           |
 
 
 ## Setup coverage badge
