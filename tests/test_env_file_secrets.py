@@ -73,7 +73,7 @@ def test_malformed_lines_are_skipped_not_fatal(tmp_path):
 def test_unfilled_skeleton_line_is_not_a_key(tmp_path):
     """`llmbroker env` writes `K=`; an unfilled one must leave the model keyless
     rather than resolve to an empty credential the provider will 401."""
-    (tmp_path / ".env").write_text("# K — get it at https://example\nK=\n")
+    (tmp_path / ".env").write_text("# K — get it at https://example\nK=\n", encoding="utf-8")
     with pytest.raises(KeyError, match="K"):
         asyncio.run(Secrets(tmp_path / ".env").resolve("K"))
 
@@ -102,7 +102,7 @@ def test_quickstart_skeleton_leaves_the_model_inactive(tmp_path, monkeypatch):
     """The whole generated skeleton, nothing filled in: the pool must be empty of
     keys, not full of models routing with an empty credential."""
     config = _write_config(tmp_path)
-    (tmp_path / ".env").write_text("# K — get it at https://example\nK=\n")
+    (tmp_path / ".env").write_text("# K — get it at https://example\nK=\n", encoding="utf-8")
     monkeypatch.delenv("K", raising=False)
 
     async def run():
