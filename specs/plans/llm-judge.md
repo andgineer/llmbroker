@@ -37,6 +37,12 @@ re-decide them during implementation:
    deadline: it takes a currently-free slot or nothing, never waits on a cooldown or a busy
    slot, and a `NoLLMAvailableError` (or a provider error surfaced by the router) skips the
    sample silently (`logger.debug` at most). Host traffic never queues behind judge traffic.
+
+   Note what `wait=0` does *not* bound: it means "do not queue", not "answer instantly", so each
+   attempt still runs under the global HTTP ceiling and a judge task can live for minutes against
+   hung endpoints (`architecture.md`). The host call never waits on it — the task is
+   fire-and-forget — but `aclose()` must cancel such a task rather than await it, and a slow pool
+   must not let judge tasks accumulate without bound. Decide whether the task set needs a cap.
 3. **Dedicated operation constant** — `"llmbroker.judge"` — the dotted namespace avoids
    collision with host operation names. Judge calls are journaled by the router like any other
    call under this operation (dogfooding: failover, cooldowns, metrics, `calls()` visibility
@@ -157,7 +163,10 @@ def parse_judge_score(text: str) -> float | None:
 ```
 
 Implementation: `re.search(r"\d+(?:\.\d+)?", text)`; no match → `None`; otherwise
-`min(float(match) / 10, 1.0)`. No lower clamp needed — the regex matches no minus sign.
+`min(float(match) / 10, 1.0)`. No lower clamp needed — the regex matches no minus sign. Keep the
+clamp load-bearing: `record_quality` now rejects anything outside `[0, 1]` with a `ValueError`, so
+an unclamped parse would turn one odd judge reply into a raised exception inside a background
+task.
 
 **The `_Judge` class** (leading underscore mirrors `_LearningHook`):
 
@@ -328,7 +337,8 @@ Cover:
   is in Russian.
 - `README.md`: optional single-line mention in the self-regulating-pool row; skip if it
   doesn't fit naturally.
-- Delete this plan file in the final commit of the implementation, per repo convention.
+- Leave this plan file in place — it is the review artifact. The maintainer deletes it, together
+  with its row in `specs/plans/README.md`, after review and merge (CLAUDE.md, "Executing a plan").
 
 ### 6. Done gate
 

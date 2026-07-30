@@ -217,6 +217,34 @@ def test_the_window_lapses():
     asyncio.run(run())
 
 
+def test_a_lapsed_window_retires_the_bound_it_recorded():
+    """Evidence the window already retired must not come back: a later, much smaller
+    expiry records what it actually observed, not the stale larger number."""
+
+    async def run():
+        router, pool, _ = await _router("a", "b")
+        hangs = {"a"}
+        with (
+            patch.object(pool_module, "_UNMET_SLACK_SEC", 0.05),
+            patch(_PATCH, new=_provider(hangs)),
+        ):
+            with patch.object(pool_module, "_UNMET_WINDOW_SEC", 0.05):
+                with pytest.raises(NoLLMAvailableError):
+                    await _ask(router, wait=0.5)
+                await asyncio.sleep(0.06)  # the big miss goes stale, never answered
+
+            with pytest.raises(NoLLMAvailableError):
+                await _ask(router, wait=0.1)
+            assert pool._slots["a"].unmet_budget < 0.2
+
+            hangs.clear()
+            result = await _ask(router, wait=0.3)
+
+        assert result.llm_name == "a"  # 0.3s clears the only bound still standing
+
+    asyncio.run(run())
+
+
 def test_the_bound_survives_a_config_refresh():
     """A registry resync re-adds the same slot; live routing state must not reset,
     or a resync every 60s would erase everything the pool learned."""

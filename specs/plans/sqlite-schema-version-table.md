@@ -7,14 +7,14 @@ the plan assumes, the issue wins.
 ## Context
 
 `sqlite/driver.py` stamps and reads its schema version in `PRAGMA user_version` (`_apply_ddl`,
-:59-81). That value lives in the SQLite file header: one 32-bit integer for the whole database,
+:65-90). That value lives in the SQLite file header: one 32-bit integer for the whole database,
 outside any table and outside llmbroker's `llmbroker_*` namespace. In the documented embedded
 usage — `sqlite://<the host's own db>` — llmbroker claims a slot that belongs to the file, so it
 collides with any host or library that also uses it.
 
 The other two backends already keep the marker in their own namespace: `postgres/driver.py` uses
-an `llmbroker_schema_version` table (DDL :26, upsert :34, read :76), `mongodb/driver.py` an
-`llmbroker_schema_version` document (:63, :84). SQLite is the outlier.
+an `llmbroker_schema_version` table (DDL :28, upsert :36, read :77), `mongodb/driver.py` an
+`llmbroker_schema_version` document (:64, :87). SQLite is the outlier.
 
 The concrete failure (issue #12): a host that drops the `llmbroker_*` tables to recover from a
 version mismatch cannot drop the header value, so the mismatch survives the only remedy the error
@@ -54,8 +54,10 @@ that may belong to the host:
 Case 3 is what fixes the reported breakage: after `DROP TABLE llmbroker_*` the next start sees no
 llmbroker tables, ignores the stale header entirely, and self-heals.
 
-`_schema_ready` (the per-path memo in `ensure_schema`, :105-124) keeps its current role; the
-resolution above runs inside the same guarded section, once per database path.
+`_schema_ready` (the per-path memo in `ensure_schema`, :115-131) keeps its current role; the
+resolution above runs inside the same guarded section, once per database path — inside the
+existing `BEGIN IMMEDIATE` transaction, so the header read, the marker write and the header reset
+either all land or none do.
 
 ## 3. Error type
 
@@ -98,9 +100,9 @@ Existing cases stay; new ones, all SQLite-specific:
 3. Tests (§4) — write the regression and host-collision cases first; they are the reason for the
    change.
 4. Specs and docs (§5).
-5. `invoke ver-feature` — behaviour change for existing SQLite installs, no API break.
-6. Gate after every batch: `invoke pre` → no ruff/pyrefly errors, `python -m pytest` → `N passed`
-   with zero skips.
+5. Gate after every batch: `invoke pre` → no ruff/pyrefly errors, `python -m pytest` → `N passed`
+   with zero skips. The version bump is the maintainer's (behaviour change for existing SQLite
+   installs, no API break) — do not run `invoke ver-*`.
 
 ## Consumer follow-up (not part of this plan)
 

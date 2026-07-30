@@ -44,19 +44,29 @@ cool down every model in the pool in turn and end in `NoLLMAvailableError` — a
 far worse failure than the empty reply itself. A model that answers emptily too
 often is the quality score's business, not the failover path's.
 
-**`wait` is the deadline of the whole call.** It bounds both halves of a call:
-how long the broker may queue for a slot, and how long the model it picked may
-take to answer — a provider that accepts the connection and then hangs cannot
-outlive the caller's budget. `wait=None` (the default) waits as long as at
+**`wait` is the caller's budget for the routing path.** It bounds both halves of
+a call: how long the broker may queue for a slot, and how long the model it
+picked may take to answer — a provider that accepts the connection and then
+hangs cannot outlive the caller's budget. What it does not bound is the broker's
+own bookkeeping between attempts: each failed attempt is journaled before the
+next one starts, so a call that fails over across several models overruns `wait`
+by the store's write latency. That write stays on the call path deliberately —
+the journal is the shared state a sibling node reads a cooldown from, and a
+caller released before the row lands would let the next one repeat the failure.
+`wait=None` (the default) waits as long as at
 least one model can still come back by itself (a cooldown expiring, a capped
 slot releasing), and raises immediately when none ever will (an empty pool,
 every model keyless, every model disabled, or every candidate excluded for
 this call); the in-flight attempt then falls back to a single global HTTP
 ceiling. `wait=0` is the one asymmetric case: it means "do not queue", not
 "answer instantly" — every currently-free model is tried, no cooldown or busy
-slot is waited on, and each attempt runs under the global ceiling. There is no
-per-model timeout knob and will not be one: a latency budget belongs to the
-call, not to the model, and a per-model number could not compose with failover.
+slot is waited on, and each attempt runs under the global ceiling. A negative
+`wait` is legal and means "the budget is already spent": both slot acquisition
+and the attempt short-circuit, and the call raises without opening a request. It
+needs no validation of its own — `wait=0` is the boundary that carries the
+special meaning. There is no per-model timeout knob and will not be one: a
+latency budget belongs to the call, not to the model, and a per-model number
+could not compose with failover.
 
 **A spent budget is never a model's fault.** When the caller's `wait` runs out
 while a model is answering, that model is not cooled down and its failure
@@ -76,9 +86,11 @@ bound — "this one did not answer within X seconds" — and that is enough to s
 handing it to the next caller whose budget is no larger, so that a hung endpoint
 costs one caller rather than all of them. The model is not cooled and not
 counted as failing; it simply stops being the *first* choice for equally tight
-budgets, for a bounded window that each fresh expiry extends, and its next
-successful answer erases the bound. Three properties keep this from becoming a
-penalty in disguise:
+budgets, for a bounded window. A fresh expiry extends that window and may raise
+the bound; a window allowed to lapse retires the bound with it, so stale
+evidence is never the floor a later, smaller miss builds on; and a successful
+answer erases it outright. Three properties keep this from becoming a penalty in
+disguise:
 
 - **It is budget-relative.** A caller with a larger budget, or none at all,
   ignores the bound entirely. So the signal can reorder a pool but never

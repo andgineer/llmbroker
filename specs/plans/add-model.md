@@ -68,7 +68,8 @@ Commit to these; do not re-decide during implementation.
 ### 2. Registry and model
 
 - `src/llmbroker/models.py` — `LLMConfig` gains `alias: str | None = None`; round-trip it
-  through `metadata` exactly like `custom` (`to_record`/`from_record`, :82-111).
+  through `metadata` exactly like `custom` (`to_metadata`/`from_metadata`, :67-111). `to_metadata`
+  carries a doctest that runs under `--doctest-modules` — extend it, do not break it.
 - `src/llmbroker/standalone/registry.py` — `_config_from_entry` (:14) reads `alias` for
   `[[custom]]` entries; an `alias` key on a `[[llms]]` entry is a config error. Aliases must be
   unique among aliases, names among names (the latter is already enforced).
@@ -79,7 +80,7 @@ Commit to these; do not re-decide during implementation.
   pointed at a preset-managed entry. Message teaches the contract: pool models are anonymous,
   use `ask`/`chat`/`stream`, add a `[[custom]]` entry for direct access. Export from the
   top-level `__init__.py`.
-- `src/llmbroker/broker/broker.py` (`direct`, :232) and `src/llmbroker/sync.py` — new signature
+- `src/llmbroker/broker/broker.py` (`direct`, :252) and `src/llmbroker/sync.py` — new signature
   `direct(alias: str | None = None, *, name: str | None = None)`; exactly one argument or
   `ValueError`. `alias=` searches custom entries by alias; `name=` searches custom entries by
   name; `name=` matching a non-custom entry raises `PoolModelError`; no match raises
@@ -91,8 +92,11 @@ Commit to these; do not re-decide during implementation.
 
 ### 4. Pool stream()
 
-Blocked by `mission-conformance-fixes.md` (see README order): streaming failover must sit on the
-corrected transport-error surface, not re-invent it.
+Unblocked: the router's failure surface now exists and this must reuse it rather than grow a
+second one. `Router._attempt` classifies every failed attempt through one helper into a verdict
+(cool down / fail over without cooling / hand back the caller's expired `wait`) and disposes of
+the slot on every path including cancellation. A streaming attempt must go through that same
+classification, not its own `except` chain.
 
 - `src/llmbroker/broker/router.py` — a streaming counterpart to `chat`: identical candidate
   selection and journaling; each attempt opens a streaming request (reuse the transport streaming
@@ -100,13 +104,23 @@ corrected transport-error surface, not re-invent it.
   fails over exactly like a `chat` attempt; after the first delta, errors are wrapped and raised.
   Journal one row per attempt (OK with latency to stream end and usage if the provider sends a
   final usage chunk; ERROR otherwise).
+- **`wait` applies to a stream too, and needs a decision this plan does not make.** For `chat`,
+  `wait` bounds slot acquisition *and* the whole attempt; expiry mid-attempt neither cools the
+  model nor advances its streak, and records a latency lower bound that deprioritises it for
+  equally tight callers (`architecture.md`). A stream has no single "the attempt finished"
+  moment, so decide and record what the budget bounds — time to first delta, or the whole
+  stream — before writing the loop. Do not leave a stream running unbounded while `chat` is
+  bounded; do not cool a model for a slow *consumer*.
+- The slot must be released when the consumer abandons the iterator (`break`, an exception, a
+  cancelled task), not only on normal exhaustion — the `chat` path's cancellation guard has no
+  equivalent inside a generator, so this needs its own `finally`.
 - `src/llmbroker/broker/broker.py` — `AsyncBroker.stream(...)` with the same parameters as
   `ask`, returning an async iterator of text deltas. Async-only, like the direct client's
   streaming; the sync `Broker` gets no counterpart.
 
 ### 5. Merge-refresh in the CLI
 
-- `src/llmbroker/cli.py`, `_merge_preset` (:106) — when the target file has any alias entries,
+- `src/llmbroker/cli.py`, `_merge_preset` (:126) — when the target file has any alias entries,
   fetch the catalog via `_fetch_preset_file("paid-catalog")` and, while re-emitting the custom
   tail, replace each alias entry's `model`, `name`, `base_url`, `api_key_ref` from its catalog
   line (add the `[keys.REF]` help if the ref is new to the file). Print one diff line per
@@ -155,8 +169,8 @@ corrected transport-error surface, not re-invent it.
 1. Catalog + refresh prompt (§1), registry/model alias (§2) — additive, land first.
 2. Exceptions + `direct()` signature (§3).
 3. Merge-refresh (§5), add-model rework (§6).
-4. Pool `stream()` (§4) — after mission-conformance-fixes; release together with §3's
-   restriction.
+4. Pool `stream()` (§4) — release together with §3's restriction, since §3 removes the only
+   other streaming path for pool models.
 5. Docs (§8) with the batch they describe; tests (§7) with every batch.
 6. Gate after every batch: `invoke pre` → no ruff/pyrefly errors, `python -m pytest` →
    `N passed` with zero skips. Version bump is the maintainer's call (breaking: see §3).

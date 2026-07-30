@@ -9,53 +9,45 @@ over a stale plan, gate on `invoke pre` + `pytest` after every batch, never bump
 never commit unasked, and leave the plan file in place for review. Nothing needs to be restated in
 the request. The plan and its row here are removed only after review and merge, on request.
 
-Statuses verified against the code on 2026-07-29: none of the four plans below is implemented.
-(`add-model.md` originally described the `add-model` command, which shipped; the file now carries
-the model-aliases rework that supersedes it.)
+Statuses as of 2026-07-30: none of the three plans below is started. (`add-model.md` originally
+described the `add-model` command, which shipped; the file now carries the model-aliases rework
+that supersedes it.)
 
 ## Order
 
 | # | Plan | Issue | Blocked by | Notes |
 |---|---|---|---|---|
-| 1 | `mission-conformance-fixes.md` | — | — | Correctness holes (failover surface, `in_flight` slot leak, unbounded `wait`) that bite at pool-limit load; its router fixes are the base for #4's streaming |
-| 2 | `budget-expiry-ordering.md` | — | #1 | Closes the open question #1 leaves behind: a hung model burns every tight caller's budget. Small, and touches `router.py`/`pool.py` while they are fresh |
-| 3 | `sqlite-schema-version-table.md` | #12 | — | Small; kills a live footgun that currently needs a host-side workaround |
-| 4 | `add-model.md` (model aliases) | — | #1 | Waiting consumer: echo-words (paid backend + streaming); pool `stream()` builds on #1's transport-error surface |
-| 5 | `llm-judge.md` | #8 | — | Largest new feature, no waiting consumer; last |
+| 1 | `sqlite-schema-version-table.md` | #12 | — | Small; kills a live footgun that currently needs a host-side workaround |
+| 2 | `add-model.md` (model aliases) | — | — | Waiting consumer: echo-words (paid backend + streaming); pool `stream()` now has the transport-error surface it needed |
+| 3 | `llm-judge.md` | #8 | — | Largest new feature, no waiting consumer; last |
 
 ## Why this order
 
-**#1 first.** Its top findings are correctness bugs, not polish: transport-failure classes that
-bypass failover, a leaked in-flight slot that permanently shrinks a model's capacity under
-`parallel`, and a `wait` deadline that does not bound the HTTP attempt. llmbroker is a
-general-purpose library that may run at the pool's throughput limit, so these rank above new
-features. It also rebuilds the router's error surface that #4's pool `stream()` must sit on —
-doing #4 first would build streaming failover on the broken surface and redo it.
+**#1 first because it is cheap and independent.** It shares no files with the other two, its
+breakage is latent (it bites on the next schema-version change), and the one affected host carries
+a workaround — so nothing degrades while it waits, and nothing waits on it either. Taking it first
+costs a short batch and clears the queue's only issue-backed footgun.
 
-**#2 right behind it.** It closes the hole #1 documents but deliberately leaves open: because a
-budget expiry never cools a model, a hung endpoint stays first in curated order and burns every
-subsequent caller's whole budget. It is small, it builds directly on #1's `_BudgetExpired`
-outcome, and it edits the same two files — cheapest while they are still fresh, and it must not
-run concurrently with #4, which also touches `router.py`.
+**#2 has the only waiting consumer.** The alias design (version-proof `direct()`, catalog-managed
+custom entries, pool streaming) is what echo-words needs for its paid backend. Its one former
+blocker is gone: the router's transport-error surface — every failure below the status line cools
+and fails over, a malformed 200 included — now exists, so `stream()` can sit on it instead of
+re-inventing it. Its `direct()` restriction and `stream()` must still ship in the same release as
+each other.
 
-**#3 is unblocked and independent.** It wanted the typed `SchemaVersionError`, which now exists,
-so it can be taken whenever convenient — it shares no files with #1 or #2. Its breakage is latent
-(it bites on the next schema-version change) and the one affected host carries a workaround, so
-nothing degrades while it waits.
+**#3 last.** The judge is the largest purely-new feature and nothing external waits for it. It
+also carries one prerequisite of its own: the `operation` filter can select a named operation but
+not the unlabelled bucket, which stops being harmless as soon as the judge journals traffic under
+`llmbroker.judge`. The plan states what must close.
 
-**#4 after #1.** The alias design (version-proof `direct()`, catalog-managed custom entries, pool
-streaming) has a waiting consumer in echo-words, but its `stream()` depends on #1's transport-error
-rework, and its `direct()` restriction must ship in the same release as `stream()`.
+Shared files to mind: #2 and #3 both touch `broker/router.py` and `broker/broker.py`, so they must
+not run concurrently. #1 touches only `sqlite/` and `tests/test_schema_migration.py`.
 
-**#5 last.** The judge is the largest purely-new feature and nothing external waits for it. It
-also inherits one prerequisite from the shipped journal work: the `operation` filter can select a
-named operation but not the unlabelled bucket, which stops being harmless as soon as the judge
-journals traffic under `llmbroker.judge`. The plan states what must close.
+Two rules established by shipped work and binding on what follows:
 
-Shared files to mind: #1, #2 and #4 all touch `broker/router.py` (the reason #4 queues behind #1,
-and the reason #2 and #4 must not run in parallel); #1 and #4 also share `chat.py` and `cli.py`'s
-preset fetching (#1 lets `env` take a preset name, #4 makes `--merge` refresh the catalog).
-
-A rule established by the shipped journal work and binding on #1: **journal reads never
-provision** — the journal does not depend on the registry, and a visibility call must survive an
-empty or stale one. #1 keeps `calls()` as it is; the rule is recorded in `architecture.md`.
+- **Journal reads never provision.** The journal does not depend on the registry, and a visibility
+  call must survive an empty or stale one. Recorded in `architecture.md`; #3 adds a journal-read
+  capability and must not diverge from it.
+- **A latency budget is per call, never per model.** `wait` bounds slot acquisition and the
+  in-flight attempt; there is no per-LLM timeout knob and will not be one. #2's pool `stream()`
+  inherits this — see `architecture.md`.

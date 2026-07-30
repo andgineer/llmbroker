@@ -137,8 +137,14 @@ class LLMPool:
         slot = self._slots.get(config.name)
         if slot is None:
             return
-        slot.unmet_budget = max(slot.unmet_budget or 0.0, budget)
-        slot.unmet_until = datetime.now(UTC) + timedelta(seconds=_UNMET_WINDOW_SEC)
+        now = datetime.now(UTC)
+        # A lapsed window is spent evidence, not a floor to build on: carrying the
+        # old number over would let one small expiry re-arm a far larger bound the
+        # window had already retired, for budgets nobody is offering any more.
+        fresh = slot.unmet_until is not None and slot.unmet_until > now
+        previous = slot.unmet_budget if fresh and slot.unmet_budget is not None else 0.0
+        slot.unmet_budget = max(previous, budget)
+        slot.unmet_until = now + timedelta(seconds=_UNMET_WINDOW_SEC)
 
     def clear_unmet_budget(self, name: str) -> None:
         slot = self._slots.get(name)
