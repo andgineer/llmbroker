@@ -11,21 +11,21 @@
 | src/llmbroker/backends/inmemory.py    |       36 |        2 |     94% |    19, 60 |
 | src/llmbroker/backends/ports.py       |       96 |        0 |    100% |           |
 | src/llmbroker/backends/spec.py        |        7 |        0 |    100% |           |
-| src/llmbroker/broker/broker.py        |      177 |        3 |     98% |92, 156, 384 |
+| src/llmbroker/broker/broker.py        |      182 |        3 |     98% |101, 169, 398 |
 | src/llmbroker/broker/catalog.py       |       74 |        0 |    100% |           |
-| src/llmbroker/broker/learning.py      |      118 |        7 |     94% |51-54, 113, 116, 162 |
-| src/llmbroker/broker/pool.py          |      162 |        1 |     99% |        62 |
+| src/llmbroker/broker/learning.py      |      121 |        7 |     94% |51-54, 113, 116, 170 |
+| src/llmbroker/broker/pool.py          |      184 |        2 |     99% |   70, 139 |
 | src/llmbroker/broker/pool\_view.py    |       22 |        0 |    100% |           |
-| src/llmbroker/broker/result.py        |       44 |        0 |    100% |           |
-| src/llmbroker/broker/router.py        |      107 |        2 |     98% |   241-242 |
-| src/llmbroker/broker/source.py        |       38 |        2 |     95% |     39-40 |
+| src/llmbroker/broker/result.py        |       45 |        0 |    100% |           |
+| src/llmbroker/broker/router.py        |      144 |        2 |     99% |   330-331 |
+| src/llmbroker/broker/source.py        |       38 |        2 |     95% |     42-43 |
 | src/llmbroker/broker/stats.py         |       17 |        0 |    100% |           |
-| src/llmbroker/chat.py                 |      130 |       14 |     89% |42, 113-114, 167-168, 198, 260-267 |
-| src/llmbroker/cli.py                  |      240 |       23 |     90% |115-117, 150-152, 154-155, 165-166, 185, 188-189, 192, 217-218, 255-257, 291, 322-324 |
-| src/llmbroker/direct.py               |      112 |        8 |     93% |102, 163, 167-168, 171, 174, 233-234 |
-| src/llmbroker/exceptions.py           |       27 |        0 |    100% |           |
+| src/llmbroker/chat.py                 |      155 |        7 |     95% |50, 136-137, 233-234, 264, 332 |
+| src/llmbroker/cli.py                  |      254 |       23 |     91% |135-137, 170-172, 174-175, 185-186, 205, 208-209, 212, 237-238, 275-277, 311, 342-344 |
+| src/llmbroker/direct.py               |      106 |        8 |     92% |102, 163, 167-168, 171, 174, 233-234 |
+| src/llmbroker/exceptions.py           |       33 |        0 |    100% |           |
 | src/llmbroker/integrations/alembic.py |        2 |        0 |    100% |           |
-| src/llmbroker/models.py               |       87 |        0 |    100% |           |
+| src/llmbroker/models.py               |       90 |        0 |    100% |           |
 | src/llmbroker/mongodb/driver.py       |       87 |        4 |     95% |21, 63, 154-155 |
 | src/llmbroker/mongodb/registry.py     |        6 |        0 |    100% |           |
 | src/llmbroker/mongodb/secrets.py      |        6 |        0 |    100% |           |
@@ -43,11 +43,11 @@
 | src/llmbroker/sqlite/secrets.py       |        6 |        0 |    100% |           |
 | src/llmbroker/sqlite/store.py         |        8 |        0 |    100% |           |
 | src/llmbroker/standalone/registry.py  |       54 |        1 |     98% |        94 |
-| src/llmbroker/standalone/secrets.py   |       34 |        3 |     91% |46, 53, 58 |
+| src/llmbroker/standalone/secrets.py   |       74 |        4 |     95% |32, 110, 117, 122 |
 | src/llmbroker/standalone/store.py     |      143 |        5 |     97% |185, 206-207, 239-240 |
-| src/llmbroker/sync.py                 |      100 |        2 |     98% |   90, 229 |
+| src/llmbroker/sync.py                 |      100 |        1 |     99% |        90 |
 | src/llmbroker/vault/secrets.py        |       19 |        0 |    100% |           |
-| **TOTAL**                             | **2425** |   **92** | **96%** |           |
+| **TOTAL**                             | **2575** |   **86** | **97%** |           |
 
 
 ## Setup coverage badge
