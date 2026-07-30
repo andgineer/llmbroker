@@ -74,6 +74,15 @@ class LLMTimeoutError(LLMRequestError):
     """The request did not complete within its timeout."""
 
 
+class ToolLoopLimitError(LLMRequestError):
+    """The tool loop hit ``max_steps`` without a tool-call-free reply.
+
+    Raised rather than returning an empty string: the error contract admits a
+    result or an exception, never silence. A caller that prefers the partial
+    conversation catches this.
+    """
+
+
 class ProviderError(LLMRequestError):
     """The provider returned an error response.
 
@@ -85,6 +94,20 @@ class ProviderError(LLMRequestError):
     def __init__(self, message: str, *, status: int, detail: str | None = None) -> None:
         super().__init__(message)
         self.status = status
+        self.detail = detail
+
+
+class InvalidProviderResponseError(LLMRequestError):
+    """The provider answered 200 with a body that is not a chat completion.
+
+    A 200 carrying garbage is a provider-side failure like a 5xx: the router
+    cools the model down and fails over. ``model`` names it; ``detail`` is a
+    truncated snippet of the body.
+    """
+
+    def __init__(self, message: str, *, model: str, detail: str | None = None) -> None:
+        super().__init__(message)
+        self.model = model
         self.detail = detail
 
 

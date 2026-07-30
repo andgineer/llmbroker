@@ -24,11 +24,14 @@ On a 429/503, the wait is computed from *that response's own* signal:
   streak-scaling.
 - The final wait is capped at `max_delay` (default `3600s`).
 
-A generic 5xx or network failure uses the same formula with the flat base,
-since there is no `Retry-After` to read. A client-side request error (any
+A generic 5xx, a transport failure of any kind, or an HTTP 200 whose body is
+not a chat completion uses the same formula with the flat base, since there is
+no `Retry-After` to read. A client-side request error (any
 4xx other than 429/401/403) never cools the model down and never counts
 toward its failure streak — it is excluded for the rest of the current call
-only, so a different request may use it again immediately. An HTTP 401/403
+only, so a different request may use it again immediately. The streak follows
+the cooldown exactly: a failure that did not cool the model does not advance
+its backoff exponent either. An HTTP 401/403
 (dead key) instead drops the LLM from the pool immediately and
 unconditionally — no amount of retrying fixes an invalid key — logged at
 `logger.error` naming the `api_key_ref`. The drop holds as long as journal

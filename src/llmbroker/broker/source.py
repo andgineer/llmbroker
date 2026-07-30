@@ -1,7 +1,8 @@
 """Dispatch a plain string/``Path`` source to a registry/secrets/store triple.
 
 Dispatch is dumb and explicit: ``.toml``/``.json`` -> file registry + env
-secrets (``AsyncBroker`` falls back to the ``store/`` sibling default); ``sqlite://``
+secrets with the config file's sibling ``.env`` as fallback (``AsyncBroker``
+falls back to the ``store/`` sibling default); ``sqlite://``
 / ``.db`` / ``.sqlite`` -> sqlite, one file backing all three ports;
 ``postgresql://`` / ``mongodb://`` -> by scheme, one driver shared by all three
 ports. Anything else raises a clear error naming the accepted forms.
@@ -30,7 +31,9 @@ def resolve_source(
     "use the caller's own default" (the file-registry ``store/`` sibling)."""
     source = str(source)
     if source.endswith(_FILE_SUFFIXES):
-        return FileRegistry(source), EnvSecrets(), None
+        # The config file's own directory is where the quickstart's
+        # `llmbroker env llms.toml > .env` puts the keys.
+        return FileRegistry(source), EnvSecrets(Path(source).parent / ".env"), None
 
     sqlite_path = source.removeprefix("sqlite://")
     if source.startswith("sqlite://") or source.endswith(_SQLITE_SUFFIXES):

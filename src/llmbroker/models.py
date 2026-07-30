@@ -207,6 +207,13 @@ def check_limit(limit: int) -> None:
         raise ValueError(f"limit must be >= 1, got {limit}")
 
 
+def check_score(score: float) -> None:
+    """Reject a quality score outside ``[0, 1]`` — the Wilson bound the optimizer
+    derives from the window is only defined on that interval."""
+    if not 0.0 <= score <= 1.0:
+        raise ValueError(f"quality score must be within [0.0, 1.0], got {score}")
+
+
 @dataclass(frozen=True, slots=True)
 class LLMMetrics:
     """Per-LLM admin read-model derived from Call rows."""

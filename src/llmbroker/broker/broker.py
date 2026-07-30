@@ -25,7 +25,6 @@ import time
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import cast
 
 import httpx
 
@@ -48,6 +47,7 @@ from llmbroker.models import (
     LLMSnapshot,
     LLMStats,
     check_limit,
+    check_score,
     to_utc,
 )
 from llmbroker.optimizer import Optimizer
@@ -65,6 +65,15 @@ from llmbroker.standalone.store import FileStore
 logger = logging.getLogger("llmbroker.broker")
 
 _DEFAULT_STATS_LIMIT = 1000
+
+
+def _default_secrets(registry: RegistryProtocol) -> SecretsProtocol:
+    """A file/TOML registry resolves keys from the environment with its own
+    sibling ``.env`` as fallback — the file ``llmbroker env`` writes. Any other
+    registry gets the plain environment resolver."""
+    if isinstance(registry, Registry):
+        return Secrets(registry.path.parent / ".env")
+    return Secrets()
 
 
 def _default_store(registry: RegistryProtocol) -> StoreProtocol:
@@ -98,7 +107,11 @@ class AsyncBroker:
         if isinstance(registry, (str, Path)):
             registry, source_secrets, source_store = resolve_source(registry)
 
-        secrets = as_secrets(secrets) if secrets is not None else (source_secrets or Secrets())
+        secrets = (
+            as_secrets(secrets)
+            if secrets is not None
+            else (source_secrets or _default_secrets(registry))
+        )
         store = store if store is not None else (source_store or _default_store(registry))
 
         if isinstance(optimize, Optimizer):
@@ -278,6 +291,7 @@ class AsyncBroker:
         """Record a quality score for a past call — the delayed counterpart of
         ``result.record_quality``. The host supplies the rating identity, so the
         rated call need not still be in the journal."""
+        check_score(score)
         await self.ensure_pool()
         await self._store.record_quality(
             llm_name,
@@ -396,9 +410,13 @@ class AsyncBroker:
             )
 
     def _require_queryable(self) -> QueryableStoreProtocol:
-        if not isinstance(self._base_store, QueryableStoreProtocol):
+        # The learning hook satisfies the protocol structurally whatever it wraps,
+        # so the question can only be put to the backend itself — which is then also
+        # what answers the read: the hook adds nothing to it but pass-through.
+        store = self._base_store
+        if not isinstance(store, QueryableStoreProtocol):
             raise TypeError(
                 "this store backend is not queryable — use a queryable backend"
                 " (e.g. llmbroker.sqlite.Store) for calls()",
             )
-        return cast(QueryableStoreProtocol, self._store)
+        return store

@@ -27,7 +27,7 @@ def _http_status_error(status: int) -> httpx.HTTPStatusError:
     return httpx.HTTPStatusError("err", request=MagicMock(), response=resp)
 
 
-async def _fake_call_provider(config, api_key, messages, tools, *, client=None):  # noqa: ARG001
+async def _fake_call_provider(config, api_key, messages, tools, *, client=None, timeout=None):  # noqa: ARG001
     if api_key == "dead-key":
         raise _http_status_error(401)
     return "ok", None, None

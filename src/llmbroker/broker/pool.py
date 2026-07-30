@@ -12,6 +12,12 @@ from llmbroker.optimizer import Optimizer
 
 logger = logging.getLogger("llmbroker.broker")
 
+_UNMET_WINDOW_SEC = 600.0
+# A recorded bound and a caller's remaining budget both carry sub-millisecond noise,
+# so "the same wait twice" would otherwise be a coin flip. One second is a physical
+# statement, not a ratio: at LLM latencies, smaller budget differences are noise.
+_UNMET_SLACK_SEC = 1.0
+
 
 @dataclass
 class _Slot:
@@ -24,6 +30,8 @@ class _Slot:
     fail_count: int = 0
     disabled: bool = False  # manual admin verdict
     order: int = 0  # curated priority: registry/preset position, lower is better
+    unmet_budget: float | None = None  # largest answer budget recently missed, seconds
+    unmet_until: datetime | None = None  # aware UTC; while set, the bound above is fresh
 
 
 class LLMPool:
@@ -121,6 +129,32 @@ class LLMPool:
     def _is_demoted(self, name: str, operation: str | None) -> bool:
         return self._optimizer is not None and self._optimizer.is_demoted(name, operation)
 
+    def note_unmet_budget(self, config: LLMConfig, budget: float) -> None:
+        """Record that this LLM did not answer within ``budget`` seconds.
+
+        A missing name is legal (removed mid-flight) — no-op.
+        """
+        slot = self._slots.get(config.name)
+        if slot is None:
+            return
+        slot.unmet_budget = max(slot.unmet_budget or 0.0, budget)
+        slot.unmet_until = datetime.now(UTC) + timedelta(seconds=_UNMET_WINDOW_SEC)
+
+    def clear_unmet_budget(self, name: str) -> None:
+        slot = self._slots.get(name)
+        if slot is not None:
+            slot.unmet_budget = None
+            slot.unmet_until = None
+
+    def _over_budget(self, slot: _Slot, remaining: float | None, now: datetime) -> bool:
+        """Whether this LLM has recently failed to answer within a budget as small as
+        the one on offer — a reason to prefer a sibling, never to exclude it."""
+        if remaining is None or slot.unmet_budget is None:
+            return False
+        if slot.unmet_until is None or slot.unmet_until <= now:
+            return False
+        return remaining < slot.unmet_budget + _UNMET_SLACK_SEC
+
     def demoted_operations(self, name: str) -> frozenset[str | None]:
         return (
             self._optimizer.demoted_operations(name) if self._optimizer is not None else frozenset()
@@ -129,7 +163,7 @@ class LLMPool:
     def _wake_timeout(
         self,
         now: datetime,
-        deadline: float | None,
+        queue_deadline: float | None,
         candidates: list[_Slot],
     ) -> float | None:
         """Seconds until the nearest event that could make a candidate available, or
@@ -141,8 +175,8 @@ class LLMPool:
                 continue
             if slot.cooldown_until is not None and slot.cooldown_until > now:
                 wakeups.append((slot.cooldown_until - now).total_seconds())
-        if deadline is not None:
-            wakeups.append(deadline - time.monotonic())
+        if queue_deadline is not None:
+            wakeups.append(queue_deadline - time.monotonic())
         return min(wakeups) if wakeups else None
 
     def _exhaustion_reason(self, exclude: frozenset[str]) -> str:
@@ -169,14 +203,18 @@ class LLMPool:
 
     async def acquire(
         self,
-        deadline: float | None,
+        queue_deadline: float | None,
         *,
         operation: str | None = None,
         exclude: frozenset[str] = frozenset(),
+        answer_deadline: float | None = None,
     ) -> LLMConfig:
         async with self._cond:
             while True:
                 now = datetime.now(UTC)
+                # Recomputed per iteration: the longer the queue wait, the less budget is
+                # left for the answer, and the stricter the choice below becomes.
+                remaining = None if answer_deadline is None else answer_deadline - time.monotonic()
                 candidates = [
                     s
                     for s in self._slots.values()
@@ -191,13 +229,17 @@ class LLMPool:
                 if avail:
                     slot = min(
                         avail,
-                        key=lambda s: (self._is_demoted(s.config.name, operation), s.order),
+                        key=lambda s: (
+                            self._over_budget(s, remaining, now),
+                            self._is_demoted(s.config.name, operation),
+                            s.order,
+                        ),
                     )
                     slot.in_flight += 1
                     return slot.config
                 if not candidates:
                     self._raise_exhausted(exclude)
-                if deadline is not None and time.monotonic() >= deadline:
+                if queue_deadline is not None and time.monotonic() >= queue_deadline:
                     cooling = [s.cooldown_until for s in candidates if s.cooldown_until is not None]
                     retry_at = min(cooling) if cooling else None
                     raise NoLLMAvailableError(
@@ -205,7 +247,7 @@ class LLMPool:
                         reason="timeout",
                         retry_at=retry_at,
                     )
-                timeout = self._wake_timeout(now, deadline, candidates)
+                timeout = self._wake_timeout(now, queue_deadline, candidates)
                 try:
                     await asyncio.wait_for(self._cond.wait(), timeout)
                 except TimeoutError:

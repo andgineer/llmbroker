@@ -30,6 +30,10 @@ def _call(name: str, status: CallStatus, **kw) -> Call:
     )
 
 
+def _soon() -> datetime:
+    return datetime.now(UTC) + timedelta(seconds=60)
+
+
 async def _noop_resync() -> None:
     return
 
@@ -75,10 +79,47 @@ async def test_generic_error_does_not_drop_llm():
     hook = _hook(opt, InMemoryStore(), pool)
 
     for _ in range(3):
-        await hook.record(_call("x", CallStatus.ERROR))
+        await hook.record(_call("x", CallStatus.ERROR, cooldown_until=_soon()))
 
     assert "x" in pool
     assert opt.rl_fail_count("x") == 3
+
+
+async def test_error_row_without_cooldown_does_not_advance_the_streak():
+    """A failure that did not cool the model — a client-side 4xx, a spent wait
+    budget — is not the model's fault and must not raise its backoff exponent."""
+    pool = LLMPool()
+    await pool.add(_cfg(), "key")
+    opt = Optimizer()
+    hook = _hook(opt, InMemoryStore(), pool)
+
+    for _ in range(3):
+        await hook.record(_call("x", CallStatus.ERROR, http_status=400))
+
+    assert "x" in pool
+    assert opt.rl_fail_count("x") == 0
+
+
+async def test_error_row_without_cooldown_does_not_force_a_rebuild():
+    """Nothing was cooled or dropped, so there is no shared state to propagate —
+    a spent wait budget must not buy a journal re-read on every call."""
+    pool = LLMPool()
+    await pool.add(_cfg(), "key")
+    resyncs = 0
+
+    async def counting_resync() -> None:
+        nonlocal resyncs
+        resyncs += 1
+
+    hook = _LearningHook(Optimizer(), InMemoryStore(), pool, counting_resync)
+
+    await hook.record(_call("x", CallStatus.ERROR, error_detail="wait budget exhausted"))
+    assert resyncs == 1  # the first call is never debounced
+    await hook.record(_call("x", CallStatus.ERROR, error_detail="wait budget exhausted"))
+    assert resyncs == 1
+
+    await hook.record(_call("x", CallStatus.ERROR, cooldown_until=_soon()))
+    assert resyncs == 2
 
 
 async def test_ok_calls_reset_rl_fail_count():

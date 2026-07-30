@@ -14,7 +14,8 @@ llmbroker env llms.toml > .env
 
 `llmbroker env` prints a skeleton with a hint above each key — where to get it.
 Fill in whichever keys are easy to get: a model without a key simply stays
-inactive, it is not an error.
+inactive, it is not an error. The broker reads the `.env` sitting next to
+`llms.toml` on its own; an exported variable wins over it.
 
 `llms.toml` is a plain TOML list of models; feel free to edit it and add your
 own endpoints. For a provider that cannot handle parallel requests on one key,
@@ -38,18 +39,30 @@ reply = llms.chat([
 ])
 ```
 
-Limit how long to wait for a free model:
+Limit how long the whole call may take:
 
 ```python
 try:
-    reply = llms.ask("Question", wait=5.0)   # at most 5 seconds
+    reply = llms.ask("Question", wait=5.0)   # at most 5 seconds, start to finish
 except llmbroker.NoLLMAvailableError:
-    print("All LLMs are busy")
+    print("No LLM answered within the budget")
 ```
 
-`wait=0` never blocks on a busy or cooling model, but still tries every model
-that is free right now before giving up. Scripts do not need to close the
-broker; when you do need to — see [Servers & clusters](server.md#closing).
+`wait` covers both halves of the call: waiting for a free model *and* the answer
+itself. A provider still thinking when the budget runs out is abandoned — and is
+not penalised for it, because the deadline was yours, not its fault. Without
+`wait` a single attempt is bounded only by an internal 60-second ceiling.
+
+A model that misses your budget does stop being the first choice for equally
+tight budgets, so the next caller is handed a sibling instead of the same trap —
+one call pays for the discovery, not all of them. Nothing is switched off:
+callers with a roomier budget still get that model first, it is still used when
+it is the only one left, and its next successful answer clears the mark.
+
+`wait=0` is the one exception: it means "do not queue", not "answer instantly" —
+every model that is free right now is tried, with no deadline of yours on the
+answer. Scripts do not need to close the broker; when you do need to — see
+[Servers & clusters](server.md#closing).
 
 ## Quality rating {#quality}
 
@@ -57,7 +70,7 @@ Rate the replies and the broker learns which models are good at which tasks:
 
 ```python
 reply = llms.ask("Summarize this contract clause", operation="summarize")
-reply.record_quality(0.9)   # 1.0 — good reply, 0.0 — bad
+reply.record_quality(0.9)   # 1.0 — good reply, 0.0 — bad; outside [0, 1] is a ValueError
 ```
 
 Ratings accumulate per `(model, operation)` pair: a model consistently weak at a

@@ -242,13 +242,83 @@ New/changed test files only; no production code expected.
   [`llm-judge.md`](llm-judge.md), lands after Phase 1.
 - Any storage-schema change: nothing here touches table shapes.
 
+## Open question for the maintainer
+
+Not a defect in this plan's execution — a consequence of decision 11 that is
+larger than the decision assumed, and re-deciding it is not the implementer's
+call.
+
+**Budget-bound is the common case, not the rare one.** The attempt counts as
+budget-bound whenever the remaining `wait` is under the global ceiling — i.e.
+for *any* `wait` below 60s. A host that always passes `wait=10` therefore never
+cools anything on a timeout, so a genuinely hung model stays first in curated
+order and burns every subsequent caller's whole budget. Per call the behavior is
+right (the caller said 10s, the model took 10s, no sibling could have answered
+in the time left); across calls nothing is ever learned. Decision 11's rationale
+— not mislearning healthy-but-slow models — argues against the obvious fixes:
+splitting the budget across candidates makes a legitimately slow model fail
+spuriously, and cooling on expiry is what the decision forbids. If this is worth
+closing, it wants a signal decision 11 did not consider (e.g. a consecutive
+expiry count that is not the cooldown streak), which is a plan of its own.
+
 ## Settled non-goals
 
 Recorded so they are not re-opened:
 
+- **A budget expiry stays an `ERROR` journal row.** Giving it a `CallStatus` of
+  its own would read better in `stats()`/`last_status`, and is out of scope:
+  this plan changes no stored shapes. The row is deliberately unclassified, and
+  the raised `NoLLMAvailableError` deliberately carries no `retry_at` — nothing
+  is cooling, so no later moment is better than now. Recorded in
+  `architecture.md`.
+- **A negative `wait` is legal** and means "the budget is already spent": slot
+  acquisition and the attempt both short-circuit. It needs no validation of its
+  own; `wait=0` is the boundary that carries the special meaning.
 - **Per-LLM HTTP timeout: rejected permanently** (decision 10). The `wait`
   contract fix (decision 11, Phase 2) delivers the only real requirement —
   a caller-controlled ceiling on how long a call may take — on the right axis
   (per call, not per model). The global `_HTTP_TIMEOUT` remains the `wait=None`
   default; a broker-wide override, if ever needed, is one constructor
   parameter and still not per-LLM.
+
+## Handover
+
+All five phases are implemented. Gate at hand-off: `invoke pre` clean, `pytest`
+green with zero skips.
+
+**Decisions taken during implementation that this plan did not make:**
+
+- **`wait=0` is exempt from the new attempt bound.** It bounds slot acquisition
+  only, leaving the attempt on the global ceiling — otherwise a non-blocking
+  call could never be answered by anyone. Recorded in `architecture.md`.
+- **A budget expiry raises from `chat()` directly** rather than falling through
+  to the next `acquire`, which would only re-derive the same exhausted budget.
+- **A client-side 4xx already seen outranks a later budget expiry.** An error the
+  caller can act on beats "the clock ran out"; this extends the preference the
+  exhausted-candidates path already applied.
+- **An empty assistant turn is an answer, not a provider failure.** A body with
+  no text and no tool calls returns an empty string. Failing it over would let a
+  single prompt cool every model in the pool in turn. Recorded in
+  `architecture.md`.
+- **`_HTTP_TIMEOUT` became public `HTTP_TIMEOUT`**: the router reads it across
+  module boundaries, where an underscore name would be worse.
+
+**Work beyond the plan's scope** (flagged as such — this is where both defects
+found in review lived):
+
+- `parse_usage` hardening (`_token_count`): a token count no 64-bit column can
+  hold is discarded instead of poisoning the journal insert. Discovered while
+  implementing the malformed-200 work; recorded in `architecture.md`.
+- `learning.py`: a client-side 4xx no longer advances the optimizer's streak, and
+  a failure that cooled nothing no longer forces a journal rebuild. Unplanned but
+  spec-conformant — `optimizer.md` already stated the rule the code was breaking.
+- `direct.py`: a garbage 200 raises the new `InvalidProviderResponseError`
+  instead of a raw `JSONDecodeError`/`KeyError`, reusing `chat.py`'s parsing.
+  Same class of hole in the sibling path; no failover there by design.
+
+**Added to this plan file by the implementer**, not part of the approved text:
+the "Open question for the maintainer" and two of the "Settled non-goals".
+
+**Open for the maintainer:** the open question above is answered by
+[`budget-expiry-ordering.md`](budget-expiry-ordering.md), which must ship with
+this plan or right behind it.

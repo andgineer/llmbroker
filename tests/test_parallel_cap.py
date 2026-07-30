@@ -29,7 +29,7 @@ async def _fire_three_concurrent_asks(tmp_path, parallel: int | None) -> int:
     release = asyncio.Event()
     reached = asyncio.Event()  # every concurrently-admissible call has hit its blocking point
 
-    async def fake_call_provider(config, api_key, messages, tools, *, client=None):
+    async def fake_call_provider(config, api_key, messages, tools, *, client=None, timeout=None):
         nonlocal in_flight, max_in_flight
         in_flight += 1
         max_in_flight = max(max_in_flight, in_flight)

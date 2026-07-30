@@ -226,8 +226,10 @@ resulting cost estimate. The current behavior rules themselves live in
   (`cooldown_until`) over recent failing rows in one's own scope (5xx — all
   rows, 429 — matching key hash, see the scope point above), and they are
   read by **the same** journal-tail read as the score windows (60s
-  debounce), plus an out-of-turn read on one's own failure — coordination
-  is only needed around failures. There is no separate TTL/2s cache in the
+  debounce), plus an out-of-turn read on one's own failure that cooled the
+  model or dropped it — coordination is only needed around failures that
+  changed shared state, and a failure that changed none (a client-side 4xx,
+  a spent `wait` budget) waits for the debounce like everything else. There is no separate TTL/2s cache in the
   system. Coordination is advisory: correctness is provided by failover,
   the cost of staleness is one wasted roundtrip with a transparent
   spillover; a stateless process starts informed (first journal read). The

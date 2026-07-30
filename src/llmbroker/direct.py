@@ -14,9 +14,8 @@ import httpx
 from llmbroker.chat import (
     aiter_sse_chunks,
     build_chat_request,
+    completion_from_response,
     make_client,
-    message_from_response,
-    parse_usage,
     retry_after_seconds,
     stream_delta,
 )
@@ -29,6 +28,7 @@ _HTTP_403 = 403
 _HTTP_429 = 429
 _HTTP_503 = 503
 _DEFAULT_TIMEOUT = 60.0
+_DETAIL_SNIPPET = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,12 +65,12 @@ def _provider_error(status: int, detail: str, headers: Mapping[str, str]) -> Pro
     return ProviderError(f"provider returned HTTP {status}", status=status, detail=detail)
 
 
-def _result(status: int, headers: Mapping[str, str], detail: str, data: dict) -> DirectResult:
+def _result(resp: httpx.Response, model: str) -> DirectResult:
     """Build a ``DirectResult`` from a completed response, raising on error status."""
-    if status >= _HTTP_ERROR_FLOOR:
-        raise _provider_error(status, detail, headers)
-    message = message_from_response(data)
-    return DirectResult(text=str(message.get("content") or ""), usage=parse_usage(data))
+    if resp.status_code >= _HTTP_ERROR_FLOOR:
+        raise _provider_error(resp.status_code, resp.text[:_DETAIL_SNIPPET], resp.headers)
+    text, _tool_calls, usage = completion_from_response(resp, model)
+    return DirectResult(text=text, usage=usage)
 
 
 class AsyncDirectClient:
@@ -134,7 +134,7 @@ class AsyncDirectClient:
             )
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError("direct call timed out") from exc
-        return _result(resp.status_code, resp.headers, resp.text[:300], _safe_json(resp))
+        return _result(resp, self._model)
 
     async def stream(
         self,
@@ -153,7 +153,7 @@ class AsyncDirectClient:
                 timeout=timeout or self._timeout,
             ) as resp:
                 if resp.status_code >= _HTTP_ERROR_FLOOR:
-                    detail = (await resp.aread()).decode(errors="replace")[:300]
+                    detail = (await resp.aread()).decode(errors="replace")[:_DETAIL_SNIPPET]
                     raise _provider_error(resp.status_code, detail, resp.headers)
                 async for chunk in aiter_sse_chunks(resp):
                     delta = stream_delta(chunk)
@@ -226,7 +226,7 @@ class DirectClient:
             )
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError("direct call timed out") from exc
-        return _result(resp.status_code, resp.headers, resp.text[:300], _safe_json(resp))
+        return _result(resp, self._model)
 
     def close(self) -> None:
         if self._owns_http and self._http is not None:
@@ -238,16 +238,6 @@ class DirectClient:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
-
-
-def _safe_json(resp: httpx.Response) -> dict:
-    """Decode a JSON body, or ``{}`` on an error response that carried none."""
-    if resp.status_code >= _HTTP_ERROR_FLOOR:
-        try:
-            return resp.json()
-        except ValueError:
-            return {}
-    return resp.json()
 
 
 __all__ = [

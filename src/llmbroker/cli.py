@@ -10,6 +10,7 @@ import asyncio
 import os
 import re
 import sys
+import tempfile
 import tomllib
 import urllib.error
 import urllib.request
@@ -30,14 +31,33 @@ async def _env_data(reg: Registry) -> tuple[list[LLMConfig], dict[str, KeyInfo]]
     return await reg.load(), await reg.key_info()
 
 
-def _cmd_env(args: argparse.Namespace) -> int:
-    toml_path = Path(args.config)
-    if not toml_path.exists():
-        print(f"error: no such file: {toml_path}", file=sys.stderr)
-        return 1
+def _env_source_data(source: str) -> tuple[list[LLMConfig], dict[str, KeyInfo]] | None:
+    """Load the ``env`` argument as an existing config file, or as a preset name
+    fetched from the catalog — so onboarding needs no local file at all."""
+    path = Path(source)
+    if path.exists():
+        return asyncio.run(_env_data(Registry(path)))
+    if not _PRESET_NAME_RE.match(source):
+        print(
+            f"error: no such file: {path} (and {source!r} is not a valid preset name)",
+            file=sys.stderr,
+        )
+        return None
+    text = _fetch_preset_file(source)
+    if text is None:
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        staged = Path(tmp) / f"{source}.toml"
+        staged.write_text(text, encoding="utf-8")
+        return asyncio.run(_env_data(Registry(staged)))
 
+
+def _cmd_env(args: argparse.Namespace) -> int:
     # llms in file order; infos maps ref -> KeyInfo only for refs with a [keys] entry.
-    configs, infos = asyncio.run(_env_data(Registry(toml_path)))
+    data = _env_source_data(args.config)
+    if data is None:
+        return 1
+    configs, infos = data
 
     refs: list[str] = []
     for cfg in configs:
@@ -330,8 +350,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m llmbroker")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    env_p = sub.add_parser("env", help="emit a .env skeleton of api_key_ref names")
-    env_p.add_argument("config", help="path to a .toml config file")
+    env_p = sub.add_parser(
+        "env",
+        help="emit a .env skeleton of api_key_ref names",
+        description=(
+            "Emit a .env skeleton of the api_key_ref names a config needs, in file order,"
+            " each with its help text. The argument is a local .toml/.json config file or,"
+            " when no such file exists, a curated preset name fetched from the catalog —"
+            " so `llmbroker env freetier > .env` onboards without any local file."
+        ),
+    )
+    env_p.add_argument("config", help="path to a .toml/.json config file, or a preset name")
     env_p.set_defaults(func=_cmd_env)
 
     preset_p = sub.add_parser(

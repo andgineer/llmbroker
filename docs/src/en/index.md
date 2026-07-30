@@ -9,7 +9,7 @@ subscription, no single point of failure. No heavy dependencies like LangChain.
 
 ```bash
 llmbroker preset freetier > llms.toml   # ready-made pool of free models
-llmbroker env llms.toml > .env          # which keys you need, and where to get them
+llmbroker env freetier > .env           # which keys you need, and where to get them
 ```
 
 ```python

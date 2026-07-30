@@ -111,4 +111,8 @@ with llmbroker.Broker("llms.toml") as llms:
 - `ProviderError` — провайдер вернул ошибку, с `.status` и `.detail`. Ловите
   грубо либо наследников `AuthError` (401/403) и `RateLimitError` (429/503, с
   `.retry_after`) для точечной обработки.
+- `InvalidProviderResponseError` — HTTP 200 с телом, которое не является chat
+  completion (не разбирается или в нём нет ответа ассистента), с `.model` и
+  фрагментом в `.detail`. Прятать это за failover здесь нечем: названная вами
+  модель ответила мусором.
 - `LLMTimeoutError` — вызов не уложился в таймаут.

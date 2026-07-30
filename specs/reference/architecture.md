@@ -12,15 +12,91 @@ expected back (`retry_at`). A client-side request error (any 4xx other than
 429/401/403) never cools the model down — it fails over to the next model
 within the same call, excluding the failing one for the rest of that call
 only; if every candidate rejects the request this way, the last provider
-error is re-raised to the caller instead of a generic "no LLM available".
+error is re-raised to the caller instead of a generic "no LLM available". It
+also outranks a `wait` budget that expires later in the same call: an error the
+caller can act on beats "the clock ran out".
 
-**`wait` is the deadline of the whole call**, not of each internal attempt:
-`wait=0` means non-blocking — try every currently-free model, but never wait
-on a cooldown or a busy slot; `wait=None` (the default) waits as long as at
+**Every failure below the status line fails over too.** A transport failure of
+any kind (connect, read, write, protocol, proxy, timeout, or a plain OS socket
+error) is treated as a provider-side failure: cool down, journal, next model.
+So is an HTTP 200 whose body is not an OpenAI-compatible chat completion —
+undecodable JSON, or a shape with no assistant message — which surfaces as
+`InvalidProviderResponseError` carrying the model name and a truncated body
+snippet; an endpoint answering 200 with garbage is misbehaving no less than one
+answering 503. The caller therefore never receives a raw transport or parsing
+error from a pool call while another model could still answer. An unexpected
+exception is a bug and does reach the caller, and a cancelled call propagates
+untouched, but the acquired slot is released on both paths — nothing can
+permanently shrink a model's `parallel` capacity.
+
+Malformed means malformed *in the answer*. A reported token count that no
+64-bit integer column can hold is discarded and the answer is returned: the
+reply is what the caller asked for, so failing the call and cooling the model
+over an unusable accounting field would trade a good answer for none. Discarding
+it is not cosmetic — a count the journal cannot store loses the whole row, and
+with it the call the pool needs to learn from.
+
+**An empty answer is an answer.** A well-shaped completion whose assistant
+message carries no text and no tool calls is returned as an empty string, not
+raised as a provider failure. Empty output is a legitimate outcome (a filtered
+or refused generation), and one prompt that reliably produces it would otherwise
+cool down every model in the pool in turn and end in `NoLLMAvailableError` — a
+far worse failure than the empty reply itself. A model that answers emptily too
+often is the quality score's business, not the failover path's.
+
+**`wait` is the deadline of the whole call.** It bounds both halves of a call:
+how long the broker may queue for a slot, and how long the model it picked may
+take to answer — a provider that accepts the connection and then hangs cannot
+outlive the caller's budget. `wait=None` (the default) waits as long as at
 least one model can still come back by itself (a cooldown expiring, a capped
 slot releasing), and raises immediately when none ever will (an empty pool,
 every model keyless, every model disabled, or every candidate excluded for
-this call).
+this call); the in-flight attempt then falls back to a single global HTTP
+ceiling. `wait=0` is the one asymmetric case: it means "do not queue", not
+"answer instantly" — every currently-free model is tried, no cooldown or busy
+slot is waited on, and each attempt runs under the global ceiling. There is no
+per-model timeout knob and will not be one: a latency budget belongs to the
+call, not to the model, and a per-model number could not compose with failover.
+
+**A spent budget is never a model's fault.** When the caller's `wait` runs out
+while a model is answering, that model is not cooled down and its failure
+streak does not advance — the call raises `NoLLMAvailableError(reason="timeout")`
+and the journal row carries no `cooldown_until`. Only the global ceiling firing
+means the model is genuinely too slow, and that cools it like a 5xx. Without
+the distinction a tight `wait` would teach the broker that healthy models are
+failing. The row is a plain `ERROR` one: an expiry is journaled for visibility,
+not classified, so there is no status of its own to read it back by. Nothing is
+cooling either, so the raised error carries no `retry_at` — there is no moment
+at which retrying would be better than now.
+
+**But an expiry still teaches ordering.** It is evidence, and the only evidence
+obtainable: a model that never answers produces no successful rows, so its
+latency cannot be measured any other way. What the expiry proves is a lower
+bound — "this one did not answer within X seconds" — and that is enough to stop
+handing it to the next caller whose budget is no larger, so that a hung endpoint
+costs one caller rather than all of them. The model is not cooled and not
+counted as failing; it simply stops being the *first* choice for equally tight
+budgets, for a bounded window that each fresh expiry extends, and its next
+successful answer erases the bound. Three properties keep this from becoming a
+penalty in disguise:
+
+- **It is budget-relative.** A caller with a larger budget, or none at all,
+  ignores the bound entirely. So the signal can reorder a pool but never
+  overturn one: when nobody can meet a budget, every candidate carries a bound,
+  the term is equal for all, and curated order stands. It can only ever express
+  "this one is slower than its siblings".
+- **It never withdraws a model.** Ordering only — a bounded model is still
+  selected when it is the last candidate standing, which is exactly when a
+  caller would rather have a slow answer than none.
+- **It is node-local, by the nature of the thing and not to save work.**
+  Latency is a property of the *path* — this node's egress, region, resolver —
+  so one node's failure to reach a model in time is weak evidence for another's.
+  A cooldown is shared precisely because the thing it describes, a quota, is a
+  property of the *key*, which genuinely is shared.
+
+An expiry that fired before the attempt reached the provider — the budget was
+already spent when the slot was taken — teaches nothing: the model never got a
+chance, and recording that would blame it for the caller's clock.
 
 ---
 
@@ -31,12 +107,26 @@ Every host plugs in up to three backends; only the registry is required:
 | Backend | Contract | Default (zero-dependency) | What it is |
 |---|---|---|---|
 | **config** | `RegistryProtocol` | `Registry(path)` (file: `.toml`/`.json`) | where LLM configurations are stored — a pure mirror of a preset, see "Provider seeding" |
-| **secrets** | `SecretsProtocol` | `Secrets()` (env vars) | how `api_key_ref` names resolve to real keys |
+| **secrets** | `SecretsProtocol` | `Secrets()` (env vars, optional `.env` fallback) | how `api_key_ref` names resolve to real keys |
 | **store** | `StoreProtocol` | `FileStore(path)` (`store/` dir) | append-only call journal plus the admin disabled-verdict map; see [`optimizer.md`](optimizer.md) |
 
 The store is the only storage llmbroker owns and writes: the append-only call
 journal, the admin disabled-verdict map, and any future operational data
 (aggregates, per-user settings).
+
+**The default secrets backend reads a `.env` file, without a dependency.** A
+broker whose config source is a file (a `.toml`/`.json` path, or a file
+`Registry` object) defaults to that file's sibling `.env` as a fallback
+consulted only when the real environment has no such variable — the exported
+value always wins, and a missing file is simply an empty fallback. The parser is
+stdlib-only (`KEY=VALUE` lines, `#` comments, no interpolation) and a malformed
+line is skipped rather than fatal. An unfilled `KEY=` line counts as absent, not
+as an empty key: the skeleton `llmbroker env` prints is all unfilled lines, and
+each must leave its model inactive rather than route to it with no credential.
+The file is re-read when it changes, so a key filled in while the broker runs
+takes effect on the next resync exactly as an exported one would. This is what
+makes the documented quickstart (`llmbroker env … > .env`) work as written; a DB
+source or an explicit `secrets=` object is unaffected.
 
 **Where each kind lives:**
 - **Contracts** (`RegistryProtocol`, `SecretsProtocol`, `StoreProtocol`, …) live in
@@ -92,8 +182,10 @@ object as the first argument (instead of a string) skips dispatch entirely.
   spec.
 - `ensure_pool()` — lazy idempotent pool initializer with double-checked locking;
   loads the registry into the pool, raising if it is empty (call `sync(preset)`
-  first). Called automatically by `chat`, `snapshot`, `get`, `count`, and
-  `__aenter__`; call explicitly for eager fail-fast startup.
+  first). Called automatically by every method that routes or views the live pool
+  (`ask`/`chat`, `snapshot`, `get`, `count`, `disable_llm`/`enable_llm`,
+  `record_quality`, `__aenter__`) and by no journal read — see "Journal read
+  path". Call it explicitly for eager fail-fast startup.
 - `sync(preset)` — mirrors a preset into the registry: add new entries, update
   existing ones, delete entries absent from the preset. The only registry write
   path; there is no `add`/`update`/`remove`. See "Provider seeding" below.
@@ -113,10 +205,13 @@ object as the first argument (instead of a string) skips dispatch entirely.
 
 ### CLI
 
-- `python -m llmbroker env <config>` — emit a `.env` skeleton of `api_key_ref` names,
-  in file (`llms` declaration) order, with each one's `help` text
-  (see "Key acquisition help" above). Onboarding is folded into this command rather
-  than a separate `setup`/`status` command, to keep the CLI surface small.
+- `python -m llmbroker env <config-or-preset>` — emit a `.env` skeleton of
+  `api_key_ref` names, in file (`llms` declaration) order, with each one's `help` text
+  (see "Key acquisition help" above). The argument is a local config file when one
+  exists at that path, otherwise a preset name fetched the same way `preset` fetches
+  it — so a first-time user needs no local file at all. Onboarding is folded into
+  this command rather than a separate `setup`/`status` command, to keep the CLI
+  surface small.
 - `python -m llmbroker preset <name>` — print a curated preset TOML to stdout (redirect to save: `preset freetier > freetier.toml`)
 - `python -m llmbroker sync <preset> <db>` — mirror a preset TOML into a DB
   registry, `<db>` accepting any source dispatch form (sqlite path/URL,
@@ -161,11 +256,13 @@ sound while the broker journals no traffic of its own; it stops being sound the
 moment the broker writes rows under its own operation name, which is the point at
 which the filter needs a way to select the unlabelled bucket.
 
-**Journal reads never provision the pool.** The journal's rows do not depend on
-the registry, so a visibility call must keep working on an install whose registry
-is empty, stale, or gone — precisely the state a host UI most needs to render.
-This separates them from `snapshot()`, which is a view of the *live pool* and so
-does provision.
+**Journal reads never provision the pool** — a rule binding on every journal-read
+API, present and future, not an exception granted to one method. The journal's
+rows do not depend on the registry, so a visibility call must keep working on an
+install whose registry is empty, stale, or gone — precisely the state a host UI
+most needs to render. This separates them from `snapshot()`, which is a view of
+the *live pool* and so does provision. Consistency with the routing methods is
+the weaker argument: those provision because they route, and a read does not.
 
 Window aggregates are derived per request from the journal, never accumulated
 into stored counters — see [`decisions.md`](decisions.md).

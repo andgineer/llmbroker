@@ -62,9 +62,31 @@ Any request to implement a plan — "выполни очередной план"
 8. **Never delete the plan file.** It is the review artifact: the reviewer reads the diff against
    it. Deletion happens only after review and merge, when the maintainer asks — then the file and
    its row in `specs/plans/README.md` go together.
-9. **Close with a review handover**, in the final message: which plan sections are done, what was
-   done differently from the plan and why (stale plan, code disagreed, a better route), anything
-   deliberately left out, and the gate results. This is what the reviewer reads first.
+9. **Close with a review handover** — in the final message *and* appended to the plan file as a
+   `## Handover` section, so it outlives the session: which plan sections are done, what was done
+   differently from the plan and why (stale plan, code disagreed, a better route), what was
+   deliberately left out, decisions taken during implementation that the plan did not make, and
+   the gate results. This is what the reviewer reads first.
+
+## Reviewing an implemented plan
+
+1. Read the plan and its `## Handover` first, then the diff against them. The plan is the contract;
+   the handover already answers "why is this different", so those are not findings.
+2. **Stay inside the diff.** Adjacent modules are out of scope — name a problem you notice there in
+   one line and move on. Hunting in them manufactures findings without end.
+3. **A finding needs a failure scenario you can show.** Run it. Without a repro it is an
+   observation, not a finding, and it goes in the observations bucket.
+4. **Report in three buckets** — defects / deviations / observations — never as one flat list.
+   A dozen mixed items reads as a failing process even when two are bugs.
+5. Do not re-open what the plan or `specs/reference/` has already settled. Disagree in one
+   sentence, then move on.
+6. Confirm the gate (`invoke pre`, `python -m pytest`) but do not spend the pass on it.
+7. Fix nothing unless asked; report in chat.
+8. **The round is done when nothing found changes runtime behavior.** Remarks about docs, naming,
+   or comments are not grounds for another round. If a fix batch follows, review that batch too —
+   unreviewed fix code is the usual way a review loop stops converging.
+9. The largest source of findings is scope the plan never asked for. When it turns up, say so
+   plainly — it is a process signal, not just a defect.
 
 ## Testing quirks
 
@@ -113,7 +135,7 @@ Any request to implement a plan — "выполни очередной план"
 
 ## Dependencies and optional extras
 
-All storage backends (sqlite, redis, postgres, mongodb) are `[project.optional-dependencies]` in `pyproject.toml`. **Never add backend packages to the dev group** — they are installed in dev and CI via `uv sync --frozen --all-extras`. The dev group is for dev tooling only (pytest, invoke, pre-commit, etc.). `fakeredis` is the exception: it is a test-only mock with no corresponding optional extra, so it stays in dev.
+All storage backends (sqlite, postgres, mongodb) and the secrets backends (aws, vault) are `[project.optional-dependencies]` in `pyproject.toml`. **Never add backend packages to the dev group** — they are installed in dev and CI via `uv sync --frozen --all-extras`. The dev group is for dev tooling only (pytest, invoke, pre-commit, etc.).
 
 ## Architecture notes
 

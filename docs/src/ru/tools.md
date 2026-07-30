@@ -27,11 +27,16 @@ reply = llmbroker.run_tool_loop(
     tools=tools,
     dispatch={"get_weather": get_weather},
 )
-print(reply.text)
+print(reply)
 ```
 
 Асинхронная версия — `await llmbroker.arun_tool_loop(...)` поверх
 [`AsyncBroker`](async.md).
+
+Цикл ограничен `max_steps` (по умолчанию 8). Если модель и после последнего шага
+просит инструменты, поднимается `llmbroker.ToolLoopLimitError`, а не возвращается
+пустой ответ — увеличьте `max_steps` или перехватите исключение, чтобы забрать
+то, что уже получилось.
 
 Для ручного управления циклом `chat(messages, tools=...)` возвращает результат
 с `tool_calls`.

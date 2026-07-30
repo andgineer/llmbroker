@@ -8,6 +8,7 @@ import pytest
 from llmbroker.direct import AsyncDirectClient, DirectClient, DirectResult
 from llmbroker.exceptions import (
     AuthError,
+    InvalidProviderResponseError,
     LLMRequestError,
     LLMTimeoutError,
     ProviderError,
@@ -130,6 +131,48 @@ def test_async_ask_500_raises_provider_error():
     err = asyncio.run(run())
     assert type(err) is ProviderError
     assert err.status == 500
+
+
+@pytest.mark.parametrize(
+    ("response", "snippet"),
+    [
+        (httpx.Response(200, text="<html>gateway</html>"), "gateway"),
+        (httpx.Response(200, json={"error": {"message": "quota exceeded"}}), "quota exceeded"),
+    ],
+    ids=["invalid_json", "no_choices"],
+)
+def test_async_ask_garbage_200_raises_a_typed_error(response, snippet):
+    """No failover here by design, but the error is still one of ours: a raw
+    JSONDecodeError or KeyError out of a public call is not in the contract."""
+
+    async def run():
+        client = _async_client(lambda request: response)
+        with pytest.raises(InvalidProviderResponseError) as exc_info:
+            await client.ask("hi")
+        await client.aclose()
+        return exc_info.value
+
+    err = asyncio.run(run())
+    assert isinstance(err, LLMRequestError)
+    assert err.model == "m"
+    assert snippet in err.detail
+
+
+def test_sync_ask_garbage_200_raises_a_typed_error():
+    client = _sync_client(lambda request: httpx.Response(200, text="not json at all"))
+    with pytest.raises(InvalidProviderResponseError):
+        client.ask("hi")
+    client.close()
+
+
+def test_error_status_with_a_non_json_body_still_maps_to_the_status_error():
+    """The status wins over the body: an HTML 503 page is a provider error, not an
+    unparseable completion."""
+    client = _sync_client(lambda request: httpx.Response(503, text="<html>down</html>"))
+    with pytest.raises(RateLimitError) as exc_info:
+        client.ask("hi")
+    client.close()
+    assert exc_info.value.status == 503
 
 
 def test_async_ask_timeout_raises_llm_timeout():

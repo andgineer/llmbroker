@@ -10,7 +10,7 @@
 
 ```bash
 llmbroker preset freetier > llms.toml   # готовый пул бесплатных моделей
-llmbroker env llms.toml > .env          # какие ключи нужны и где их взять
+llmbroker env freetier > .env           # какие ключи нужны и где их взять
 ```
 
 ```python

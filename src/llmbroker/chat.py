@@ -7,6 +7,7 @@ reply; ``run_tool_loop`` is its sync wrapper.
 """
 
 import json
+import math
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -15,10 +16,17 @@ from typing import Any
 
 import httpx
 
+from llmbroker.exceptions import InvalidProviderResponseError, ToolLoopLimitError
 from llmbroker.models import LLMConfig, Usage
 
 _CHAT_PATH = "/chat/completions"
-_HTTP_TIMEOUT = 60.0
+HTTP_TIMEOUT = 60.0
+_BODY_SNIPPET = 300
+_MAX_INT64 = 2**63 - 1
+_TOOL_LOOP_EXHAUSTED = (
+    "the model still wanted tools after max_steps={max_steps} rounds —"
+    " raise max_steps, or catch ToolLoopLimitError to keep the partial conversation"
+)
 
 
 def is_rate_limit(status_code: int) -> bool:
@@ -79,6 +87,21 @@ def message_from_response(data: dict) -> dict:
     return data["choices"][0]["message"]
 
 
+def _token_count(value: object) -> int | None:
+    """One reported token count, or ``None`` when it is not one the journal can
+    store: a non-number, a fraction, or a magnitude past a 64-bit column — keeping
+    that last one loses the whole row on insert (``1e400`` decodes to ``inf``).
+
+    >>> _token_count(7), _token_count("12"), _token_count(float("inf")), _token_count(10**30)
+    (7, None, None, None)
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and (not math.isfinite(value) or value != int(value)):
+        return None
+    return int(value) if -_MAX_INT64 - 1 <= value <= _MAX_INT64 else None
+
+
 def parse_usage(data: dict) -> Usage | None:
     """Extract token counts from a chat-completion response body, if present."""
     raw = data.get("usage")
@@ -86,19 +109,19 @@ def parse_usage(data: dict) -> Usage | None:
         return None
     known = {"prompt_tokens", "completion_tokens", "total_tokens"}
     extra = {
-        k: int(v)
+        k: count
         for k, v in raw.items()
-        if k not in known and isinstance(v, (int, float)) and float(v) == int(v)
+        if k not in known and (count := _token_count(v)) is not None
     }
     return Usage(
-        prompt_tokens=raw.get("prompt_tokens"),
-        completion_tokens=raw.get("completion_tokens"),
-        total_tokens=raw.get("total_tokens"),
+        prompt_tokens=_token_count(raw.get("prompt_tokens")),
+        completion_tokens=_token_count(raw.get("completion_tokens")),
+        total_tokens=_token_count(raw.get("total_tokens")),
         extra=extra or None,
     )
 
 
-def make_client(timeout: float = _HTTP_TIMEOUT) -> httpx.AsyncClient:
+def make_client(timeout: float = HTTP_TIMEOUT) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=timeout)
 
 
@@ -114,28 +137,71 @@ async def _resolve_client(
             yield ephemeral
 
 
-async def call_provider(
+def _invalid_body(model: str, snippet: str) -> InvalidProviderResponseError:
+    return InvalidProviderResponseError(
+        f"{model}: HTTP 200 body is not an OpenAI-compatible chat completion",
+        model=model,
+        detail=snippet[:_BODY_SNIPPET],
+    )
+
+
+def _parse_completion(data: Any, model: str) -> tuple[str, list[dict] | None, Usage | None]:
+    """Pull (content, tool_calls, usage) out of a decoded chat-completion body.
+
+    Any shape the OpenAI schema does not admit raises ``InvalidProviderResponseError``
+    so the router can treat a garbage 200 the way it treats a 5xx. The caught set is
+    deliberately broad: an escape here reaches the caller raw and skips failover, so
+    the cost of over-catching is far below the cost of missing a case.
+    """
+    try:
+        message = message_from_response(data)
+        content = str(message.get("content") or "")
+        return content, parse_tool_calls(message), parse_usage(data)
+    except (ArithmeticError, AttributeError, KeyError, IndexError, TypeError, ValueError) as exc:
+        raise _invalid_body(model, str(data)) from exc
+
+
+def completion_from_response(
+    resp: httpx.Response,
+    model: str,
+) -> tuple[str, list[dict] | None, Usage | None]:
+    """Decode a successful chat-completion response and pull its parts out.
+
+    Both an undecodable body and one the OpenAI schema does not admit raise
+    ``InvalidProviderResponseError``, so no caller of a 200 ever sees a raw
+    decoding error.
+    """
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise _invalid_body(model, resp.text) from exc
+    return _parse_completion(data, model)
+
+
+async def call_provider(  # noqa: PLR0913
     config: LLMConfig,
     api_key: str,
     messages: list[dict],
     tools: list[dict] | None,
     *,
     client: httpx.AsyncClient | None = None,
+    timeout: float | None = None,
 ) -> tuple[str, list[dict] | None, Usage | None]:
     """POST an OpenAI-compatible completion and return (content, tool_calls, usage).
 
     With ``client`` passed, it is reused as-is (never closed here — the caller
     owns its lifetime); with ``None``, an ephemeral client is opened and closed
-    for this single call.
+    for this single call. ``timeout`` bounds this one request, overriding the
+    client's own; ``None`` leaves the client's default in force.
     """
     url, headers, body = build_chat_request(config.base_url, config.model, api_key, messages, tools)
     async with _resolve_client(client) as active:
-        resp = await active.post(url, headers=headers, json=body)
+        if timeout is None:
+            resp = await active.post(url, headers=headers, json=body)
+        else:
+            resp = await active.post(url, headers=headers, json=body, timeout=timeout)
         resp.raise_for_status()
-        data = resp.json()
-    message = message_from_response(data)
-    content = str(message.get("content") or "")
-    return content, parse_tool_calls(message), parse_usage(data)
+    return completion_from_response(resp, config.name)
 
 
 def parse_tool_calls(message: dict) -> list[dict] | None:
@@ -240,7 +306,7 @@ async def arun_tool_loop(
         text = _advance_tool_loop(convo, result, dispatch)
         if text is not None:
             return text
-    return ""
+    raise ToolLoopLimitError(_TOOL_LOOP_EXHAUSTED.format(max_steps=max_steps))
 
 
 def run_tool_loop(
@@ -264,21 +330,7 @@ def run_tool_loop(
         text = _advance_tool_loop(convo, result, dispatch)
         if text is not None:
             return text
-    return ""
+    raise ToolLoopLimitError(_TOOL_LOOP_EXHAUSTED.format(max_steps=max_steps))
 
 
-__all__ = [
-    "aiter_sse_chunks",
-    "arun_tool_loop",
-    "build_chat_request",
-    "call_provider",
-    "execute_tool_calls",
-    "is_rate_limit",
-    "make_client",
-    "message_from_response",
-    "parse_tool_calls",
-    "parse_usage",
-    "retry_after_seconds",
-    "run_tool_loop",
-    "stream_delta",
-]
+__all__ = ["arun_tool_loop", "run_tool_loop"]

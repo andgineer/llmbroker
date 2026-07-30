@@ -112,4 +112,8 @@ Direct calls raise from one hierarchy under `LLMRequestError`:
 - `ProviderError` — the provider returned an error, with `.status` and `.detail`.
   Catch it coarsely, or its subclasses `AuthError` (401/403) and `RateLimitError`
   (429/503, with `.retry_after`) for specific handling.
+- `InvalidProviderResponseError` — HTTP 200 with a body that is not a chat
+  completion (undecodable, or no assistant message), with `.model` and a
+  `.detail` snippet. There is no failover here to hide it behind: the one model
+  you named answered with garbage.
 - `LLMTimeoutError` — the call exceeded its timeout.

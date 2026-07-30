@@ -1,22 +1,86 @@
 """Env-var and in-memory secrets resolvers — read-only, no external backend.
 
-``Secrets()`` resolves ``api_key_ref`` from ``os.environ``; ``DictSecrets``
-from a mapping. Both are read-only. A plain callable is accepted and adapted.
+``Secrets()`` resolves ``api_key_ref`` from ``os.environ``, optionally falling
+back to a ``.env`` file; ``DictSecrets`` from a mapping. Both are read-only. A
+plain callable is accepted and adapted.
 """
 
 import inspect
 import os
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import cast
 
 from llmbroker.protocols.secrets import SecretsProtocol
 
 
+def parse_env_file(text: str) -> dict[str, str]:
+    """Parse ``KEY=VALUE`` lines, skipping blanks, ``#`` comments, and anything
+    else — a malformed line is not worth failing a whole deployment over.
+
+    >>> parse_env_file('# a comment\\nA=1\\nexport B="two"\\nnonsense\\n')
+    {'A': '1', 'B': 'two'}
+    """
+    values: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip().removeprefix("export ").strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):  # noqa: PLR2004
+            value = value[1:-1]
+        else:
+            # An unquoted value ends at an inline comment; a key silently carrying
+            # a trailing "# note" would be rejected as a dead one by the provider.
+            value = value.partition(" #")[0].rstrip()
+        values[key] = value
+    return values
+
+
 class Secrets:
-    """Read-only env-backed secrets resolver (the default battery)."""
+    """Read-only env-backed secrets resolver (the default battery).
+
+    ``env_file`` adds a fallback consulted only when the real environment has no
+    such variable — an exported value always wins, and a missing file is simply
+    an empty fallback. An unfilled ``KEY=`` line counts as absent.
+    """
+
+    def __init__(self, env_file: str | Path | None = None) -> None:
+        self._env_file = Path(env_file) if env_file is not None else None
+        self._file_values: dict[str, str] | None = None
+        self._file_stamp: tuple[int, int] | None = None
+
+    def _file_mapping(self, path: Path) -> dict[str, str]:
+        """Re-parse whenever the file changes, so a key filled in on a running
+        broker takes effect on the next resync exactly as an exported one would."""
+        try:
+            info = path.stat()
+            stamp = (info.st_mtime_ns, info.st_size)
+        except OSError:
+            stamp = None
+        if self._file_values is None or stamp != self._file_stamp:
+            self._file_stamp = stamp
+            try:
+                self._file_values = parse_env_file(path.read_text(encoding="utf-8"))
+            except OSError:
+                self._file_values = {}
+        return self._file_values
+
+    def _from_file(self, ref: str) -> str | None:
+        if self._env_file is None:
+            return None
+        # The skeleton `llmbroker env` writes is all `KEY=` lines: an unfilled one
+        # must leave the model keyless, not hand the provider an empty credential.
+        return self._file_mapping(self._env_file).get(ref) or None
 
     async def resolve(self, ref: str) -> str:
         value = os.environ.get(ref)
+        if value is None:
+            value = self._from_file(ref)
         if value is None:
             raise KeyError(f"Secrets: env var {ref!r} is not set")
         return value

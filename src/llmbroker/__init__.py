@@ -7,6 +7,7 @@ from llmbroker.direct import AsyncDirectClient, DirectClient, DirectResult
 from llmbroker.exceptions import (
     AuthError,
     EmptyRegistryError,
+    InvalidProviderResponseError,
     LLMBrokerError,
     LLMRequestError,
     LLMTimeoutError,
@@ -14,6 +15,7 @@ from llmbroker.exceptions import (
     NoLLMAvailableError,
     ProviderError,
     RateLimitError,
+    ToolLoopLimitError,
     UnknownModelError,
 )
 from llmbroker.models import LifecyclePhase
@@ -36,6 +38,7 @@ __all__ = [
     "EmptyRegistryError",
     "FileStore",
     "InMemoryStore",
+    "InvalidProviderResponseError",
     "LLM",
     "LifecyclePhase",
     "LLMBrokerError",
@@ -46,6 +49,7 @@ __all__ = [
     "Optimizer",
     "ProviderError",
     "RateLimitError",
+    "ToolLoopLimitError",
     "UnknownModelError",
     "Registry",
     "Result",

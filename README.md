@@ -8,7 +8,7 @@ subscription, no single point of failure. No LangChain, no heavy deps.
 ```bash
 pip install llmbroker
 llmbroker preset freetier > llms.toml   # ready-made pool of free models
-llmbroker env llms.toml > .env          # which API keys to get, and where
+llmbroker env freetier > .env           # which API keys to get, and where
 ```
 
 ```python

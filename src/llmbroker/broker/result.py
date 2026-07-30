@@ -4,7 +4,7 @@ import logging
 
 from llmbroker.broker.learning import resolve_metrics_map
 from llmbroker.broker.pool import LLMPool
-from llmbroker.models import LLMConfig, LLMMetrics, LLMState, Usage
+from llmbroker.models import LLMConfig, LLMMetrics, LLMState, Usage, check_score
 from llmbroker.protocols.store import StoreProtocol
 
 logger = logging.getLogger("llmbroker.broker")
@@ -50,6 +50,7 @@ class AsyncResult:
         return self._call_id
 
     async def record_quality(self, score: float) -> None:
+        check_score(score)
         await self._store.record_quality(
             self._llm_name,
             self._operation,

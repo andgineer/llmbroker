@@ -12,6 +12,14 @@ The command prints a skeleton with a hint above each key, where to get it. The
 same hints are available programmatically —
 [`Registry.key_info()`](reference.md#llmbroker.Registry.key_info).
 
+A broker built from a config file — `llmbroker.Broker("llms.toml")` or
+`registry=llmbroker.Registry("llms.toml")` — reads that file's sibling `.env` as
+a fallback. An exported environment variable always wins over the file, and a
+missing `.env` is simply no fallback. Nothing is installed for this: the file is
+parsed with the standard library (`KEY=VALUE` lines, `#` comments, no
+interpolation). Point it elsewhere explicitly with
+`secrets=llmbroker.Secrets("/etc/llmbroker.env")`.
+
 A model without a key simply stays inactive — the pool runs on whatever keys are
 present.
 

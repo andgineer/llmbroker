@@ -123,6 +123,10 @@ class _LearningHook:
         elif call.status == CallStatus.OK:
             self._opt.on_success(name)
         elif call.status == CallStatus.ERROR:
+            # A failure that cooled or dropped nothing has no shared state to
+            # propagate, so it must not buy a forced journal re-read: a spent wait
+            # budget is caller-triggered and would rebuild on every such call.
+            shared = True
             if call.http_status in (_HTTP_UNAUTHORIZED, _HTTP_FORBIDDEN):
                 cfg = self._pool.configs.get(name)
                 ref = cfg.api_key_ref if cfg else "unknown"
@@ -133,9 +137,13 @@ class _LearningHook:
                     call.http_status,
                     ref,
                 )
-            else:
+            elif call.cooldown_until is not None:
+                # Only a failure that actually cooled the model feeds its streak:
+                # a client-side 4xx and a spent wait budget are not its fault.
                 self._opt.on_rate_limited(name)
-            await self.maybe_rebuild(force=True)
+            else:
+                shared = False
+            await self.maybe_rebuild(force=shared)
 
     async def maybe_rebuild(self, *, force: bool = False, resync_registry: bool = True) -> None:
         """Re-derive score windows, shared cooldowns, and metrics from one cached tail
