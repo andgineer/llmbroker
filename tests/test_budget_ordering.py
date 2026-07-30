@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+from llmbroker import chat
 from llmbroker.broker import pool as pool_module
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.router import Router
@@ -40,7 +41,13 @@ async def _router(*names: str) -> tuple[Router, LLMPool, _RecordingStore]:
     for order, name in enumerate(names):
         await pool.add(_cfg(name), "secret", order)
     store = _RecordingStore()
-    return Router(pool, store, scope=None), pool, store
+    router = Router(pool, store, scope=None)
+    # The router builds its httpx client on the first attempt, inside the caller's
+    # budget: an SSL context on a cold runner costs more than the 0.2s waits below,
+    # which would expire the budget before any provider is reached — a different path
+    # (and no bound recorded) than what these tests are about.
+    router._http = chat.make_client()
+    return router, pool, store
 
 
 def _provider(hangs: set[str]):
