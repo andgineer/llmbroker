@@ -175,10 +175,19 @@ resulting cost estimate. The current behavior rules themselves live in
 - **No DB migrations**: a single installation (0.0.12), upgraded manually;
   `ensure_schema` creates from scratch, and on a version mismatch, fails
   fast with instructions.
+- **Every backend keeps its schema marker inside its own `llmbroker_`-namespaced
+  object**, so dropping the `llmbroker_*` objects fully resets llmbroker's state —
+  which is what the mismatch error tells the operator to do, and it has to be
+  enough. Nothing outside that namespace is llmbroker's to write: on SQLite the
+  file header (`PRAGMA user_version`) belongs to the embedding application, which
+  is the whole database in the documented shared-file setup. A database left by a
+  release that stamped the header is adopted once — the marker object is created
+  from that value and the header handed back — and a header found with no
+  `llmbroker_*` tables in the file is the host's, never read and never cleared.
 - **The broker never manages SQLite's `journal_mode`; WAL is the file owner's
-  responsibility.** The SQLite driver only reads and writes `user_version` for
-  schema versioning — it does not enable WAL and does not set `busy_timeout`
-  (sqlite3's 5 s default stands, and it is not exposed as a knob). Journal mode
+  responsibility.** The SQLite driver does not enable WAL and does not set
+  `busy_timeout` (sqlite3's 5 s default stands, and it is not exposed as a
+  knob). Journal mode
   is a persistent, file-level property belonging to whoever owns the database
   file: on a database shared with the host application (the normal setup) the
   host owns it; on a file given to the broker alone the operator sets it once,

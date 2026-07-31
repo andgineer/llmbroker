@@ -34,6 +34,11 @@ The normal setup is one database shared by llmbroker and your application: the
 broker keeps its own `llmbroker_*` tables alongside yours and touches nothing
 else (the [Alembic](#alembic) hook keeps migration autogenerate clear of them).
 
+That includes `PRAGMA user_version`, the file header slot many migration tools
+use — it is yours. The broker keeps its own schema version in an
+`llmbroker_schema_version` table, so dropping the `llmbroker_*` tables resets
+everything llmbroker holds in the file.
+
 llmbroker never sets or changes SQLite's `journal_mode` — WAL is a persistent,
 file-level property that belongs to whoever owns the database file, so enabling
 it is your call, not the broker's. On a shared file that owner is your
@@ -51,6 +56,36 @@ sqlite3 broker.db 'PRAGMA journal_mode=WAL'
 This applies to SQLite only. Postgres and MongoDB have no equivalent file-level
 lock — sharing one database with your application is fine, and a dedicated
 schema or database is optional tidiness, not a concurrency need.
+
+## Startup errors {#errors}
+
+Two conditions can stop the broker before it serves a single request, and a host
+usually wants to treat them differently:
+
+- `EmptyRegistryError` — nothing has been synced into the registry yet. Benign:
+  the installation is unconfigured, not broken.
+- `SchemaVersionError` — the store holds a schema version this release cannot
+  use. Fatal and operator-actionable: drop the `llmbroker_*` tables and restart
+  (export registry/secrets/calls first if you need them). `found` and `expected`
+  carry the two versions.
+
+Both subclass `LLMBrokerError`, itself a `RuntimeError`, so catch at the
+granularity you need:
+
+```python
+try:
+    models = llms.snapshot()
+except llmbroker.EmptyRegistryError:
+    models = {}   # nothing configured yet — render an empty screen, not a 500
+```
+
+`SchemaVersionError` propagates: its message is the operator's instruction, so
+swallowing it turns a schema mismatch into "no providers configured". Catching
+`LLMBrokerError` covers both, and `RuntimeError` covers both plus everything
+else.
+
+A failed request raises from a separate tree (`LLMRequestError` and its
+subclasses) — see [Calling the broker](usage.md#calling).
 
 ## Closing the broker {#closing}
 

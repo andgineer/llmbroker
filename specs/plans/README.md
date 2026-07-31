@@ -9,9 +9,10 @@ over a stale plan, gate on `invoke pre` + `pytest` after every batch, never bump
 never commit unasked, and leave the plan file in place for review. Nothing needs to be restated in
 the request. The plan and its row here are removed only after review and merge, on request.
 
-Statuses as of 2026-07-30: none of the three plans below is started. (`add-model.md` originally
-described the `add-model` command, which shipped; the file now carries the model-aliases rework
-that supersedes it.)
+Statuses as of 2026-07-31: `sqlite-schema-version-table.md` is implemented and awaiting review
+(see its `## Handover`); the other two are not started. (`add-model.md` originally described the
+`add-model` command, which shipped; the file now carries the model-aliases rework that supersedes
+it.)
 
 ## Order
 

@@ -296,7 +296,10 @@ verdicts, seeded with model names at `sync`), and **calls** (the journal). There
 is no state or summaries table — shared cooldowns and learned quality derive
 entirely from the calls journal (see [`optimizer.md`](optimizer.md)).
 
-- **SQLite** tracks version via `PRAGMA user_version`. The driver deliberately
+- **SQLite** tracks version via a single-row `llmbroker_schema_version` table,
+  like the other two backends: the marker lives inside the `llmbroker_*`
+  namespace, and the file header (`PRAGMA user_version`) stays the embedding
+  application's — see [`decisions.md`](decisions.md). The driver deliberately
   does not manage `journal_mode` (it never enables WAL) or `busy_timeout`:
   journal mode is a persistent, file-level property owned by whoever owns the
   database file, so on a database shared with the host the host owns it and on a

@@ -24,7 +24,7 @@ set `parallel = 1` on its entry.
 !!! tip "Keys do not have to live in `.env`"
     AWS Secrets Manager, Vault, a DB or your own storage — see [API keys](secrets.md).
 
-## Calling the broker
+## Calling the broker {#calling}
 
 ```python
 llms = llmbroker.Broker("llms.toml")

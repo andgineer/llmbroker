@@ -24,7 +24,7 @@ llmbroker env llms.toml > .env
 !!! tip "Ключи не обязаны лежать в `.env`"
     AWS Secrets Manager, Vault, БД или своё хранилище — см. [API-ключи](secrets.md).
 
-## Вызов брокера
+## Вызов брокера {#calling}
 
 ```python
 llms = llmbroker.Broker("llms.toml")

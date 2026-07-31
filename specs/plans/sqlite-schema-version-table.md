@@ -108,4 +108,51 @@ Existing cases stay; new ones, all SQLite-specific:
 
 dinary carries `PRAGMA user_version = 0;` in `0002_drop_legacy_llmbroker_tables.sql` as the
 workaround for exactly this bug; it can drop that line once this ships.
+
+## Handover
+
+Implemented in full: §1 marker table, §2 resolution order, §3 error type (reused
+`SchemaVersionError`, unchanged message), §4 tests, §5 specs and docs. Nothing left out.
+
+**What was built.** `sqlite/driver.py` gained `llmbroker_schema_version` (single row, `id = 1`
+with a `CHECK`, mirroring Postgres) plus four small readers — `_has_table`, `_has_store_tables`,
+`_marker_version`, `_header_version`. `_apply_ddl` now resolves the version before writing
+anything and takes one of three paths exactly as §2 specifies. `PRAGMA user_version` is written
+only on the adopt path, and only back to `0`. `_schema_ready`, the `BEGIN IMMEDIATE` section and
+`SCHEMA_VERSION` (still 5) are untouched; `backends/spec.py` and the driver-conformance test did
+not change.
+
+**Decisions the plan did not make:**
+
+- *Marker table present but its row missing* is treated as a fresh install (stamp it, do not read
+  the header), not as a reason to fall back to the header. The plan's case 1 says a marker table
+  makes the header off-limits "now or ever after", and this keeps that absolute. It also matches
+  Postgres, where table-absent and row-absent are indistinguishable by construction.
+- The stamp condition is *"the marker row was absent"*, not Postgres's `current == 0`. On the
+  adopt path `current` equals `SCHEMA_VERSION`, so a literal copy of the Postgres condition would
+  have created the marker table and left it empty.
+- `_has_store_tables` matches with `GLOB 'llmbroker_*'`, not `LIKE 'llmbroker\_%'` — `_` is a
+  single-character wildcard in `LIKE`. It also excludes the marker table by name, so the predicate
+  reads "llmbroker *store* tables exist" on its own terms rather than only by call-site ordering.
+
+**Deviation from §4.** The two pre-existing mismatch tests (`..._raises_on_version_mismatch`,
+`..._is_still_a_runtime_error`) had to change: both built their stale database by setting the
+header on an otherwise empty file, which is now the host-collision case and correctly does not
+raise. They now corrupt the marker row instead, so they test case 1; the legacy-header mismatch
+(case 2) is covered by the new `test_sqlite_legacy_header_of_older_version_raises`. "Existing
+cases stay" holds for what they assert, not for how they set up.
+
+Tests reach into `_schema_ready` through a `_ensure_schema` helper that pops the path first —
+every new case reopens the same file after editing it behind the driver's back, which the
+per-path memo would otherwise skip.
+
+**Verification.** All seven SQLite cases were re-run against the pre-change driver (`git stash` of
+`sqlite/driver.py` alone): 7 failed, 1 passed — the regression and host-collision cases fail
+exactly as reported in issue #12.
+
+**Gate:** `invoke pre` — all hooks passed, pyrefly 0 errors. `python -m pytest` — **819 passed**,
+zero skips, zero errors (Docker up, testcontainer suites included).
+
+Not done, by instruction: no version bump, no commit. `specs/plans/README.md` had its status line
+updated to reflect this plan's state; its row stays until review and merge.
 </content>

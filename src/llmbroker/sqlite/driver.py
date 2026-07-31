@@ -19,6 +19,21 @@ from llmbroker.exceptions import SchemaVersionError
 
 _SQL_TYPES = {"text": "TEXT", "int": "INTEGER", "real": "REAL", "json": "TEXT", "timestamp": "TEXT"}
 
+_VERSION_TABLE = "llmbroker_schema_version"
+
+_CREATE_VERSION_TABLE = """\
+CREATE TABLE IF NOT EXISTS llmbroker_schema_version (
+    id      INTEGER PRIMARY KEY CHECK (id = 1),
+    version INTEGER NOT NULL
+)\
+"""
+
+_UPSERT_VERSION = """\
+INSERT INTO llmbroker_schema_version (id, version)
+VALUES (1, ?)
+ON CONFLICT (id) DO UPDATE SET version = excluded.version\
+"""
+
 # Path-keyed, not id(connection)-keyed: many short-lived aiosqlite connections
 # are opened per call against the same file, so the cache must survive them.
 _schema_ready: dict[str, int] = {}
@@ -64,10 +79,46 @@ def _create_table_sql(spec: TableSpec) -> str:
     return f"CREATE TABLE IF NOT EXISTS {spec.name} ({columns})"
 
 
-async def _apply_ddl(db: aiosqlite.Connection) -> None:
+async def _has_table(db: aiosqlite.Connection, name: str) -> bool:
+    cursor = await db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (name,),
+    )
+    return await cursor.fetchone() is not None
+
+
+async def _has_store_tables(db: aiosqlite.Connection) -> bool:
+    # GLOB, not LIKE: "_" is a single-character wildcard in LIKE.
+    cursor = await db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table'"
+        " AND name GLOB 'llmbroker_*' AND name <> ?",
+        (_VERSION_TABLE,),
+    )
+    return await cursor.fetchone() is not None
+
+
+async def _marker_version(db: aiosqlite.Connection) -> int | None:
+    cursor = await db.execute("SELECT version FROM llmbroker_schema_version WHERE id = 1")
+    row = await cursor.fetchone()
+    return int(row[0]) if row else None
+
+
+async def _header_version(db: aiosqlite.Connection) -> int:
     cursor = await db.execute("PRAGMA user_version")
     row = await cursor.fetchone()
-    current = int(row[0]) if row else 0
+    return int(row[0]) if row else 0
+
+
+async def _apply_ddl(db: aiosqlite.Connection) -> None:
+    marker_table = await _has_table(db, _VERSION_TABLE)
+    marker = await _marker_version(db) if marker_table else None
+    # The file header carries llmbroker's version only in a database an older
+    # release already wrote; with no llmbroker tables in the file, a non-zero
+    # value is far more likely to be the embedding application's own.
+    legacy = 0
+    if not marker_table and await _has_store_tables(db):
+        legacy = await _header_version(db)
+    current = marker if marker is not None else legacy
     if current not in (0, SCHEMA_VERSION):
         raise SchemaVersionError(
             f"llmbroker schema version {current} found, this release expects"
@@ -76,6 +127,7 @@ async def _apply_ddl(db: aiosqlite.Connection) -> None:
             found=current,
             expected=SCHEMA_VERSION,
         )
+    await db.execute(_CREATE_VERSION_TABLE)
     for spec in TABLES.values():
         await db.execute(_create_table_sql(spec))
         if spec.key:
@@ -87,8 +139,10 @@ async def _apply_ddl(db: aiosqlite.Connection) -> None:
             idx_name = f"{spec.name}_idx_{'_'.join(idx_cols)}"
             cols = ", ".join(idx_cols)
             await db.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {spec.name}({cols})")
-    if current == 0:
-        await db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    if marker is None:
+        await db.execute(_UPSERT_VERSION, (SCHEMA_VERSION,))
+    if legacy:
+        await db.execute("PRAGMA user_version = 0")
 
 
 class SqliteDriver:
