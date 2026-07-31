@@ -38,7 +38,7 @@
 | src/llmbroker/protocols/registry.py   |        8 |        0 |    100% |           |
 | src/llmbroker/protocols/secrets.py    |        5 |        0 |    100% |           |
 | src/llmbroker/protocols/store.py      |        8 |        0 |    100% |           |
-| src/llmbroker/sqlite/driver.py        |      159 |        2 |     99% |   243-244 |
+| src/llmbroker/sqlite/driver.py        |      182 |        2 |     99% |   297-298 |
 | src/llmbroker/sqlite/registry.py      |        6 |        0 |    100% |           |
 | src/llmbroker/sqlite/secrets.py       |        6 |        0 |    100% |           |
 | src/llmbroker/sqlite/store.py         |        8 |        0 |    100% |           |
@@ -47,7 +47,7 @@
 | src/llmbroker/standalone/store.py     |      143 |        5 |     97% |185, 206-207, 239-240 |
 | src/llmbroker/sync.py                 |      100 |        1 |     99% |        90 |
 | src/llmbroker/vault/secrets.py        |       19 |        0 |    100% |           |
-| **TOTAL**                             | **2578** |   **86** | **97%** |           |
+| **TOTAL**                             | **2601** |   **86** | **97%** |           |
 
 
 ## Setup coverage badge
