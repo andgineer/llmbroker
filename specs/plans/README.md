@@ -9,20 +9,25 @@ over a stale plan, gate on `invoke pre` + `pytest` after every batch, never bump
 never commit unasked, and leave the plan file in place for review. Nothing needs to be restated in
 the request. The plan and its row here are removed only after review and merge, on request.
 
-Statuses as of 2026-08-01: `llm-judge.md` is not started.
+Statuses as of 2026-08-01: `preset-sync.md` and `llm-judge.md` are not started.
 
 ## Order
 
 | # | Plan | Issue | Blocked by | Notes |
 |---|---|---|---|---|
-| 1 | `llm-judge.md` | #8 | — | Largest new feature, no waiting consumer |
+| 1 | `preset-sync.md` | — | — | Closes the zero-admin gap in the mission; changes the `sync` API surface |
+| 2 | `llm-judge.md` | #8 | — | Largest new feature, no waiting consumer |
 
 ## Why this order
 
-**#1 is the only plan queued.** The judge is the largest purely-new feature and nothing external
-waits for it. It carries one prerequisite of its own: the `operation` filter can select a named
-operation but not the unlabelled bucket, which stops being harmless as soon as the judge journals
-traffic under `llmbroker.judge`. The plan states what must close.
+**#1 closes a mission-level gap** (zero administration currently stops at preset updates) and
+changes the public `sync` signature — better landed before new consumers of the API appear. It is
+independent of the judge; neither blocks the other.
+
+**#2, the judge,** is the largest purely-new feature and nothing external waits for it. It
+carries one prerequisite of its own: the `operation` filter can select a named operation but not
+the unlabelled bucket, which stops being harmless as soon as the judge journals traffic under
+`llmbroker.judge`. The plan states what must close.
 
 Two rules established by shipped work and binding on what follows:
 
