@@ -287,6 +287,26 @@ def test_preset_merge_new_api_key_ref_brings_its_keys_help(tmp_path):
     assert data["keys"]["OTHER_API_KEY"]["help"] == "get a key at other.example"
 
 
+def test_preset_merge_reports_a_changed_api_key_ref(tmp_path, capsys):
+    """A catalog that only re-spells a provider's ref moves nothing else, so there
+    is no model line to notice — and the file quietly starts wanting a new env var."""
+    catalog = (
+        b'[[provider]]\nid="anthropic"\nlabel="Anthropic"\n'
+        b'base_url="https://api.anthropic.com/v1"\napi_key_ref="CLAUDE_API_KEY"\n'
+        b'  [[provider.models]]\n  alias="opus"\n  model="claude-opus-4-8"\n'
+        b'  label="Opus"\n  verified="u"\n'
+    )
+    f = _alias_file(tmp_path)
+    with patch("urllib.request.urlopen", side_effect=_mock_fetch(_FRESH_PRESET, catalog)):
+        rc = main(["preset", "freetier", "--merge", str(f)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "opus: api_key_ref ANTHROPIC_API_KEY -> CLAUDE_API_KEY" in out
+    assert "set CLAUDE_API_KEY before the next call" in out
+    (entry,) = tomllib.loads(f.read_text())["custom"]
+    assert (entry["model"], entry["name"]) == ("claude-opus-4-8", "anthropic-claude-opus-4-8")
+
+
 def test_preset_merge_duplicate_catalog_alias_is_an_error(tmp_path, capsys):
     catalog = _REFRESH_CATALOG + (
         b'[[provider]]\nid="dup"\nlabel="Dup"\nbase_url="https://dup/v1"\napi_key_ref="D_KEY"\n'

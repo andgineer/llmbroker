@@ -19,7 +19,13 @@ from llmbroker.chat import (
     retry_after_seconds,
     stream_delta,
 )
-from llmbroker.exceptions import AuthError, LLMTimeoutError, ProviderError, RateLimitError
+from llmbroker.exceptions import (
+    AuthError,
+    InvalidProviderResponseError,
+    LLMTimeoutError,
+    ProviderError,
+    RateLimitError,
+)
 from llmbroker.models import Usage
 
 _HTTP_ERROR_FLOOR = 400
@@ -63,6 +69,18 @@ def _provider_error(status: int, detail: str, headers: Mapping[str, str]) -> Pro
             retry_after=retry_after,
         )
     return ProviderError(f"provider returned HTTP {status}", status=status, detail=detail)
+
+
+def _invalid_stream(model: str, headers: Mapping[str, str]) -> InvalidProviderResponseError:
+    """The 200 that decoded no chat completion — a proxy's error page, a provider
+    ignoring ``stream``, an SSE-framed error payload. ``ask`` raises on the same
+    bodies; a stream must not hand back an empty answer instead."""
+    return InvalidProviderResponseError(
+        f"{model}: HTTP 200 body is not an OpenAI-compatible SSE stream",
+        model=model,
+        detail=f"content-type={headers.get('content-type', '')!r},"
+        " no chat-completion chunks decoded",
+    )
 
 
 def _result(resp: httpx.Response, model: str) -> DirectResult:
@@ -155,10 +173,16 @@ class AsyncDirectClient:
                 if resp.status_code >= _HTTP_ERROR_FLOOR:
                     detail = (await resp.aread()).decode(errors="replace")[:_DETAIL_SNIPPET]
                     raise _provider_error(resp.status_code, detail, resp.headers)
+                completions = 0
                 async for chunk in aiter_sse_chunks(resp):
+                    # `choices` is what makes a chunk a chat completion; counting
+                    # *deltas* instead would reject a legitimately empty answer.
+                    completions += "choices" in chunk
                     delta = stream_delta(chunk)
                     if delta:
                         yield delta
+                if not completions:
+                    raise _invalid_stream(self._model, resp.headers)
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError("direct stream timed out") from exc
 

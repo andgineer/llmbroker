@@ -16,6 +16,7 @@ from llmbroker.models import (
     LLMConfig,
     Usage,
     check_limit,
+    check_unique_aliases,
     to_utc,
     with_utc_timestamps,
 )
@@ -32,7 +33,7 @@ class DriverRegistry:
 
     async def load(self) -> list[LLMConfig]:
         rows = await self._driver.fetch("registry")
-        return [
+        configs = [
             LLMConfig.from_metadata(
                 name=str(row["name"]),
                 base_url=str(row["base_url"]),
@@ -42,6 +43,10 @@ class DriverRegistry:
             )
             for row in rows
         ]
+        # Names come back unique from the store's own key; aliases live in the
+        # metadata column, where nothing enforces them.
+        check_unique_aliases(configs)
+        return configs
 
     async def mirror(self, configs: list[LLMConfig]) -> None:
         """Total mirror: add new, update existing, delete stored entries absent

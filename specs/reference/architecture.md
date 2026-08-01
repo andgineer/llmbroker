@@ -114,6 +114,14 @@ disguise:
   so one node's failure to reach a model in time is weak evidence for another's.
   A cooldown is shared precisely because the thing it describes, a quota, is a
   property of the *key*, which genuinely is shared.
+- **It is one signal for both routing paths, deliberately approximate.** A
+  stream contributes the budget it missed reaching the first delta, a completion
+  the budget it missed answering in full, and neither is scaled before being
+  recorded. In one direction that is exact — a model that produced no first
+  token within X would not have finished within X either; in the other it
+  overstates, since a slow full answer may still start promptly. Ordering is all
+  it can affect, so a second signal with its own window and its own reset would
+  cost more on the acquisition path than the sharper bound is worth.
 
 An expiry that fired before the attempt reached the provider — the budget was
 already spent when the slot was taken — teaches nothing: the model never got a

@@ -76,6 +76,14 @@ For each candidate provider/model, using the taxonomies fixed in
 - Keep sibling models from one provider in the preset simultaneously only as
   a deliberate decision (e.g. genuinely different quota pools), never as
   leftovers from a half-finished refresh.
+- **A model `presets/paid-catalog.toml` lists does not belong in this pool.**
+  Pool entries here are named `<provider id>-<model id>`, and an entry added
+  from the catalog takes a machine-formed name of exactly that shape, so a model
+  held by both files makes a name no config can carry twice — `add-model` and
+  `preset --merge` refuse it. If the
+  model belongs in the free pool, take it out of the catalog instead: the
+  endpoint and the `api_key_ref` are the same either way, and the billing tier
+  lives in the user's provider account, not in a config field.
 
 ## 5. Regenerate the outputs
 
@@ -92,6 +100,8 @@ For each candidate provider/model, using the taxonomies fixed in
   and confirm every `[[llms]]` row parses into an `LLMConfig` with a
   `rate_limit`, and every `[keys.*]` row parses into a `KeyInfo` with a
   recognized `effort` and `value` (not `None`).
+- Cross-check `presets/paid-catalog.toml`: no `[[llms]]` `name` may equal a
+  `<provider id>-<model id>` pair from the catalog.
 - `invoke pre` and `python -m pytest` are green.
 - Present a diff summary — added / removed / changed models, and the
   sourced reason for each — for human review. Do not commit the change

@@ -222,7 +222,10 @@ def test_async_stream_sets_stream_flag():
         import json
 
         seen["body"] = json.loads(request.content)
-        return httpx.Response(200, content=b"data: [DONE]\n\n")
+        return httpx.Response(
+            200,
+            content=b'data: {"choices": [{"delta": {"content": "x"}}]}\n\ndata: [DONE]\n\n',
+        )
 
     async def run():
         client = _async_client(handler)
@@ -246,6 +249,57 @@ def test_async_stream_error_status_raises_before_yield():
 
     err = asyncio.run(run())
     assert err.status == 403
+
+
+@pytest.mark.parametrize(
+    ("body", "content_type"),
+    [
+        (b"<html><body>502 from your proxy</body></html>", "text/html"),
+        (b'{"choices": [{"message": {"content": "hi"}}]}', "application/json"),
+        (
+            b'data: {"error": {"message": "upstream rate limit"}}\n\ndata: [DONE]\n\n',
+            "text/event-stream",
+        ),
+    ],
+)
+def test_async_stream_garbage_200_raises_instead_of_yielding_nothing(body, content_type):
+    """A proxy error page, a provider ignoring `stream`, an SSE-framed error payload:
+    `ask` raises on all three, so a stream must not hand back a silent empty answer."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body, headers={"content-type": content_type})
+
+    async def run():
+        client = _async_client(handler)
+        with pytest.raises(InvalidProviderResponseError) as exc_info:
+            _ = [d async for d in client.stream("hi")]
+        await client.aclose()
+        return exc_info.value
+
+    err = asyncio.run(run())
+    assert err.model == "m"
+    assert "no chat-completion chunks decoded" in (err.detail or "")
+
+
+def test_async_stream_empty_completion_is_not_garbage():
+    """A model that answers with nothing said nothing wrong: a chunk carrying
+    `choices` makes it a real completion, however empty."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}\n\n'
+            b"data: [DONE]\n\n",
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async def run():
+        client = _async_client(handler)
+        deltas = [d async for d in client.stream("hi")]
+        await client.aclose()
+        return deltas
+
+    assert asyncio.run(run()) == []
 
 
 # --------------------------------------------------------------------------- #

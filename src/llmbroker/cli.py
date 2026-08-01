@@ -173,15 +173,24 @@ def _refresh_alias_entries(
             )
             continue
         prov, model = found
-        was = entry.get("model")
+        was_model = entry.get("model")
+        was_ref = entry.get("api_key_ref")
         entry["model"] = str(model["model"])
         entry["name"] = f"{prov['id']}-{model['model']}"
         entry["base_url"] = str(prov["base_url"])
         entry["api_key_ref"] = str(prov["api_key_ref"])
         if prov.get("key_help"):
             key_help[str(prov["api_key_ref"])] = str(prov["key_help"])
-        if was != entry["model"]:
-            print(f"{alias}: {was} -> {entry['model']}")
+        if was_model != entry["model"]:
+            print(f"{alias}: {was_model} -> {entry['model']}")
+        if was_ref != entry["api_key_ref"]:
+            # The one change that needs the user to do something. It can arrive
+            # without a model change at all — a catalog that re-spells a provider's
+            # ref refreshes to a file that silently wants an env var nobody set.
+            print(
+                f"{alias}: api_key_ref {was_ref} -> {entry['api_key_ref']}"
+                f" — set {entry['api_key_ref']} before the next call",
+            )
     return key_help
 
 
@@ -201,8 +210,9 @@ def _merged_name_clash(preset_text: str, custom_entries: list[dict]) -> str | No
         if name in seen:
             return (
                 f"error: the merged file would carry two entries named '{name}' —"
-                " rename the [[custom]] entry, or drop its 'alias' so refreshes stop"
-                " renaming it"
+                " rename the [[custom]] entry if it is pinned; an alias entry's name is"
+                " machine-formed again on every refresh, so renaming it will not stick"
+                " — drop its 'alias' to pin it instead"
             )
         seen.add(name)
     return None

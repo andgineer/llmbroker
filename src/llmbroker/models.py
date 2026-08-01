@@ -227,6 +227,24 @@ def check_score(score: float) -> None:
         raise ValueError(f"quality score must be within [0.0, 1.0], got {score}")
 
 
+def check_unique_aliases(configs: "list[LLMConfig]") -> None:
+    """Reject a registry whose aliases do not name exactly one entry each.
+
+    Enforced by every registry on read, not just the one that parses a file: a
+    lookup by alias returns the first match, so a duplicate silently resolves to
+    one of two models instead of raising.
+    """
+    seen: set[str] = set()
+    for cfg in configs:
+        if cfg.alias is None:
+            continue
+        if cfg.alias in seen:
+            raise ValueError(
+                f"Registry: duplicate alias {cfg.alias!r} — an alias names exactly one entry",
+            )
+        seen.add(cfg.alias)
+
+
 @dataclass(frozen=True, slots=True)
 class LLMMetrics:
     """Per-LLM admin read-model derived from Call rows."""

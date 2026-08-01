@@ -122,7 +122,11 @@ what one version was good at says nothing about the next.
 
 The new `name` is machine-formed the same way pool entries are named, so it can
 occasionally land on one of them. `--merge` refuses that outright and writes
-nothing — rename your entry, or drop its `alias` to stop refreshes renaming it.
+nothing. Renaming your entry will not help — the next refresh forms the name
+again — so drop its `alias` to pin it instead.
+
+A refresh that moves an entry to another provider prints the new `api_key_ref`
+too: set that env var before the next call.
 
 ## Stream and ask (async)
 

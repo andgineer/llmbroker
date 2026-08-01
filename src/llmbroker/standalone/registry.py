@@ -4,7 +4,7 @@ import json
 import tomllib
 from pathlib import Path
 
-from llmbroker.models import KeyInfo, LLMConfig
+from llmbroker.models import KeyInfo, LLMConfig, check_unique_aliases
 
 
 def _int_or_none(value: object) -> int | None:
@@ -33,18 +33,6 @@ def _config_from_entry(entry: dict, *, custom: bool) -> LLMConfig | None:
         custom=custom,
         alias=str(alias) if alias is not None else None,
     )
-
-
-def _check_unique_aliases(configs: list[LLMConfig]) -> None:
-    seen: set[str] = set()
-    for cfg in configs:
-        if cfg.alias is None:
-            continue
-        if cfg.alias in seen:
-            raise ValueError(
-                f"Registry: duplicate alias {cfg.alias!r} — an alias names exactly one entry",
-            )
-        seen.add(cfg.alias)
 
 
 def _check_unique_names(configs: list[LLMConfig]) -> None:
@@ -124,7 +112,7 @@ class Registry:
             if cfg is not None:
                 result.append(cfg)
         _check_unique_names(result)
-        _check_unique_aliases(result)
+        check_unique_aliases(result)
         return result
 
     async def key_info(self) -> dict[str, KeyInfo]:
