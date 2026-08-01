@@ -11,21 +11,21 @@
 | src/llmbroker/backends/inmemory.py    |       36 |        2 |     94% |    19, 60 |
 | src/llmbroker/backends/ports.py       |       96 |        0 |    100% |           |
 | src/llmbroker/backends/spec.py        |        7 |        0 |    100% |           |
-| src/llmbroker/broker/broker.py        |      182 |        3 |     98% |101, 169, 398 |
+| src/llmbroker/broker/broker.py        |      212 |       12 |     94% |129, 145, 213, 307-321, 491 |
 | src/llmbroker/broker/catalog.py       |       74 |        0 |    100% |           |
 | src/llmbroker/broker/learning.py      |      121 |        7 |     94% |51-54, 113, 116, 170 |
 | src/llmbroker/broker/pool.py          |      187 |        2 |     99% |   70, 139 |
 | src/llmbroker/broker/pool\_view.py    |       22 |        0 |    100% |           |
 | src/llmbroker/broker/result.py        |       45 |        0 |    100% |           |
-| src/llmbroker/broker/router.py        |      144 |        2 |     99% |   330-331 |
+| src/llmbroker/broker/router.py        |      243 |       79 |     67% |117-144, 158-159, 474-519, 535-586, 601-609, 614-615 |
 | src/llmbroker/broker/source.py        |       38 |        2 |     95% |     42-43 |
 | src/llmbroker/broker/stats.py         |       17 |        0 |    100% |           |
 | src/llmbroker/chat.py                 |      155 |        7 |     95% |50, 136-137, 233-234, 264, 332 |
-| src/llmbroker/cli.py                  |      254 |       23 |     91% |135-137, 170-172, 174-175, 185-186, 205, 208-209, 212, 237-238, 275-277, 311, 342-344 |
+| src/llmbroker/cli.py                  |      354 |       28 |     92% |139, 142, 199, 227, 246-248, 255, 310-312, 314-315, 325-326, 344, 347-348, 351, 383-384, 456-458, 484, 516-518 |
 | src/llmbroker/direct.py               |      106 |        8 |     92% |102, 163, 167-168, 171, 174, 233-234 |
-| src/llmbroker/exceptions.py           |       33 |        0 |    100% |           |
+| src/llmbroker/exceptions.py           |       38 |        2 |     95% |   132-133 |
 | src/llmbroker/integrations/alembic.py |        2 |        0 |    100% |           |
-| src/llmbroker/models.py               |       90 |        0 |    100% |           |
+| src/llmbroker/models.py               |       95 |        0 |    100% |           |
 | src/llmbroker/mongodb/driver.py       |       87 |        4 |     95% |21, 63, 154-155 |
 | src/llmbroker/mongodb/registry.py     |        6 |        0 |    100% |           |
 | src/llmbroker/mongodb/secrets.py      |        6 |        0 |    100% |           |
@@ -42,12 +42,12 @@
 | src/llmbroker/sqlite/registry.py      |        6 |        0 |    100% |           |
 | src/llmbroker/sqlite/secrets.py       |        6 |        0 |    100% |           |
 | src/llmbroker/sqlite/store.py         |        8 |        0 |    100% |           |
-| src/llmbroker/standalone/registry.py  |       54 |        1 |     98% |        94 |
+| src/llmbroker/standalone/registry.py  |       73 |        1 |     99% |       134 |
 | src/llmbroker/standalone/secrets.py   |       74 |        4 |     95% |32, 110, 117, 122 |
 | src/llmbroker/standalone/store.py     |      143 |        5 |     97% |185, 206-207, 239-240 |
 | src/llmbroker/sync.py                 |      100 |        1 |     99% |        90 |
 | src/llmbroker/vault/secrets.py        |       19 |        0 |    100% |           |
-| **TOTAL**                             | **2601** |   **86** | **97%** |           |
+| **TOTAL**                             | **2859** |  **179** | **94%** |           |
 
 
 ## Setup coverage badge
