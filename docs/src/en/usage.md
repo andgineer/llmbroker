@@ -64,6 +64,10 @@ every model that is free right now is tried, with no deadline of yours on the
 answer. Scripts do not need to close the broker; when you do need to — see
 [Servers & clusters](server.md#closing).
 
+To print the answer as it is written rather than all at once, the pool streams
+too — `async for delta in llms.stream(...)`, async-only, see
+[Async](async.md).
+
 ## Quality rating {#quality}
 
 Rate the replies and the broker learns which models are good at which tasks:

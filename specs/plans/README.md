@@ -9,7 +9,8 @@ over a stale plan, gate on `invoke pre` + `pytest` after every batch, never bump
 never commit unasked, and leave the plan file in place for review. Nothing needs to be restated in
 the request. The plan and its row here are removed only after review and merge, on request.
 
-Statuses as of 2026-07-31: neither plan below is started. (`add-model.md` originally described the
+Statuses as of 2026-07-31: `add-model.md` is implemented and awaiting review (see its
+`## Handover`); `llm-judge.md` is not started. (`add-model.md` originally described the
 `add-model` command, which shipped; the file now carries the model-aliases rework that supersedes
 it.)
 
@@ -17,7 +18,7 @@ it.)
 
 | # | Plan | Issue | Blocked by | Notes |
 |---|---|---|---|---|
-| 1 | `add-model.md` (model aliases) | — | — | Waiting consumer: echo-words (paid backend + streaming); pool `stream()` now has the transport-error surface it needed |
+| 1 | `add-model.md` (model aliases) | — | — | Implemented, awaiting review. Waiting consumer: echo-words (paid backend + streaming) |
 | 2 | `llm-judge.md` | #8 | — | Largest new feature, no waiting consumer; last |
 
 ## Why this order

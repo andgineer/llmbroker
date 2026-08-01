@@ -171,13 +171,13 @@ class Broker:
             ),
         )
 
-    def direct(self, name: str) -> DirectClient:
-        """Return a synchronous direct client (``ask()`` only) for any registry model.
+    def direct(self, alias: str | None = None, *, name: str | None = None) -> DirectClient:
+        """Return a synchronous direct client (``ask()`` only) for a ``[[custom]]`` model.
 
-        Streaming is async-only; use ``AsyncBroker.direct`` for deltas. Raises
-        ``UnknownModelError`` / ``MissingKeyError`` like the async counterpart.
+        Streaming is async-only; use ``AsyncBroker.direct`` for deltas. Same
+        alias/name keyspaces and errors as the async counterpart.
         """
-        cfg, key = self._run(self._async._resolve_direct(name))  # noqa: SLF001
+        cfg, key = self._run(self._async._resolve_direct(alias, name=name))  # noqa: SLF001
         return DirectClient(base_url=cfg.base_url, model=cfg.model, api_key=key)
 
     def record_quality(

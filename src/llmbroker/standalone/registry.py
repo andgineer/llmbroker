@@ -14,6 +14,12 @@ def _int_or_none(value: object) -> int | None:
 def _config_from_entry(entry: dict, *, custom: bool) -> LLMConfig | None:
     name = entry.get("name")
     base_url = entry.get("base_url")
+    alias = entry.get("alias")
+    if alias is not None and not custom:
+        raise ValueError(
+            f"Registry: [[llms]] entry {name!r} carries an 'alias' — aliases belong to"
+            " [[custom]] entries only; preset-managed pool models are anonymous",
+        )
     if not name or not base_url:
         return None
     raw_pool = entry.get("pool", True)
@@ -25,7 +31,37 @@ def _config_from_entry(entry: dict, *, custom: bool) -> LLMConfig | None:
         parallel=_int_or_none(entry.get("parallel")),
         pooled=raw_pool if isinstance(raw_pool, bool) else True,
         custom=custom,
+        alias=str(alias) if alias is not None else None,
     )
+
+
+def _check_unique_aliases(configs: list[LLMConfig]) -> None:
+    seen: set[str] = set()
+    for cfg in configs:
+        if cfg.alias is None:
+            continue
+        if cfg.alias in seen:
+            raise ValueError(
+                f"Registry: duplicate alias {cfg.alias!r} — an alias names exactly one entry",
+            )
+        seen.add(cfg.alias)
+
+
+def _check_unique_names(configs: list[LLMConfig]) -> None:
+    """Refuse a name carried twice across ``[[llms]]`` and ``[[custom]]``.
+
+    Every downstream store keys on the name — a DB registry's primary key, the
+    live pool's slot map — so a duplicate is not an ambiguity to resolve later
+    but an entry silently lost at the next sync.
+    """
+    seen: set[str] = set()
+    for cfg in configs:
+        if cfg.name in seen:
+            raise ValueError(
+                f"Registry: duplicate name {cfg.name!r} — a name identifies exactly one"
+                " entry, across [[llms]] and [[custom]] alike",
+            )
+        seen.add(cfg.name)
 
 
 def key_info_from_entry(ref: str, raw: object) -> KeyInfo:
@@ -74,6 +110,8 @@ class Registry:
         The two arrays are parsed identically; ``[[custom]]`` entries are flagged
         ``custom=True`` so ``sync`` never prunes them. Both honor a per-entry
         ``pool`` flag, so a custom model can join the pool or stay direct-only.
+        Only ``[[custom]]`` entries may carry an ``alias``, unique across the file;
+        names are unique across both arrays.
         """
         data = _read_data(self._path)
         result: list[LLMConfig] = []
@@ -85,6 +123,8 @@ class Registry:
             cfg = _config_from_entry(entry, custom=True)
             if cfg is not None:
                 result.append(cfg)
+        _check_unique_names(result)
+        _check_unique_aliases(result)
         return result
 
     async def key_info(self) -> dict[str, KeyInfo]:

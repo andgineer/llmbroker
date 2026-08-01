@@ -18,6 +18,36 @@ Background reading before you start (do not skip):
   llmbroker calls **only OpenAI-compatible** `/chat/completions` endpoints. A
   provider without an OpenAI-compatible endpoint cannot be in this catalog.
 
+## 0a. The alias contract (read first, it constrains every edit below)
+
+Every `[[provider.models]]` line carries an `alias` — the eternal handle an
+application passes to `direct("opus")`. It is the one field in this file a user's
+config depends on, so it is governed by a permanence contract:
+
+- **A published alias never disappears and never renames.** A generation change
+  re-points the existing alias at the successor model; it does not mint a new one.
+  Dropping a model that still has a live alias breaks every config following it —
+  either keep the alias pointing at the provider's successor, or accept that
+  `preset --merge` will warn on it forever.
+- **No version substring in an alias.** `opus`, `gpt-mini`, `flash` are aliases;
+  `opus-4-8`, `gpt-5`, `flash-2-5` are not. The alias outlives the version by
+  construction, so a version inside it is a contradiction.
+- **Aliases are unique across the whole catalog**, not per provider. A duplicate
+  makes the catalog invalid and `llmbroker` refuses it with an error.
+- **A model a shipped preset already pools does not belong here.** An alias
+  entry's `name` is machine-formed `<provider id>-<model id>`, the same
+  convention preset pool entries are named by, so a model this file shares with
+  `presets/freetier.toml` produces a name no config can carry twice —
+  `add-model` and `preset --merge` both refuse it outright. Nor is there
+  anything to add: the endpoint and the `api_key_ref` are the same ones the
+  preset already uses, and the billing tier lives in the user's provider
+  account, not in any config.
+
+Aliases are what `llmbroker preset <name> --merge FILE` follows: for each of the
+user's entries carrying an alias it rewrites `model`, `name`, `base_url`, and
+`api_key_ref` from this file. That is the whole point of a refresh — so an alias
+whose target you change here changes the model of every deployment following it.
+
 ## 0. What "verified" means here (read first)
 
 Every model id you write is an **API id** — the exact string a caller puts in
@@ -102,6 +132,7 @@ api_key_ref = "ANTHROPIC_API_KEY"                  # env var / secrets ref name
 key_help    = "Create a key at https://console.anthropic.com/ (paid)."
 
   [[provider.models]]
+  alias    = "opus"                                # eternal handle — see §0a
   model    = "claude-opus-4-8"                     # exact API id (verbatim from the reference)
   label    = "Claude Opus 4.8 — highest-quality reasoning"
   verified = "https://docs.anthropic.com/en/docs/about-claude/models (YYYY-MM-DD)"
@@ -109,6 +140,9 @@ key_help    = "Create a key at https://console.anthropic.com/ (paid)."
 
 Rules:
 
+- `alias` obeys §0a: carried over unchanged from the previous catalog whenever the
+  model it names is being replaced by a successor, never version-bearing, unique
+  across the file.
 - `model` is the exact API id, copied verbatim from the provider's reference.
 - `verified` is the **provider-own** URL you read the id from, plus today's date.
 - `base_url` is the OpenAI-compatible endpoint you confirmed this pass.
@@ -120,7 +154,12 @@ Rules:
 
 - Parse `presets/paid-catalog.toml` with `tomllib` and confirm every
   `[[provider]]` has `id`, `base_url`, `api_key_ref`, and at least one
-  `[[provider.models]]` with a `model`, `label`, and `verified`.
+  `[[provider.models]]` with an `alias`, `model`, `label`, and `verified`.
+- Confirm the alias contract mechanically: aliases unique across the whole file,
+  none carrying a version substring, and every alias present in the previous
+  revision still present in the new one.
+- Cross-check every shipped preset in `presets/`: no `<provider id>-<model id>`
+  pair in this file may equal a preset pool entry's `name`.
 - Spot-check: for at least one provider whose key you hold, confirm each `model`
   id is accepted (a real request, or the provider's models-list endpoint). This
   is an optional cross-check, not a substitute for §0–§1.
@@ -129,6 +168,8 @@ Rules:
 
 ## Guardrails
 
+- **Aliases are permanent.** Re-point one at a successor model; never rename or
+  drop one, never put a version in one — see §0a.
 - **Ids only from the provider's own official docs, verbatim.** Official domains
   reached via redirects count; third-party lists, marketing names, and memory do
   not. Cite every id with the URL you actually read.

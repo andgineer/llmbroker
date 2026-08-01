@@ -6,8 +6,8 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from llmbroker.broker.broker import AsyncBroker
-from llmbroker.exceptions import MissingKeyError, UnknownModelError
+from llmbroker.broker.broker import AsyncBroker, _find_custom
+from llmbroker.exceptions import MissingKeyError, PoolModelError, UnknownModelError
 from llmbroker.models import LLMConfig
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets
@@ -23,6 +23,7 @@ api_key_ref="K"
 
 [[custom]]
 name="frontier"
+alias="opus"
 base_url="https://paid/v1"
 model="big"
 api_key_ref="K"
@@ -92,7 +93,7 @@ def test_pool_membership_ignores_custom_but_honors_pool_flag(tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-def test_direct_streams_paid_model(tmp_path):
+def test_direct_streams_paid_model_by_alias(tmp_path):
     seen: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -104,7 +105,7 @@ def test_direct_streams_paid_model(tmp_path):
     async def run():
         with patch("llmbroker.broker.broker.make_client", return_value=mock):
             async with _broker(tmp_path) as broker:
-                client = await broker.direct("frontier")
+                client = await broker.direct("opus")
                 return [d async for d in client.stream("hi")]
 
     deltas = asyncio.run(run())
@@ -112,9 +113,9 @@ def test_direct_streams_paid_model(tmp_path):
     assert seen["url"] == "https://paid/v1/chat/completions"
 
 
-def test_direct_works_on_pool_model(tmp_path):
+def test_direct_by_name_pins_the_version(tmp_path):
     def handler(request: httpx.Request) -> httpx.Response:
-        body = {"choices": [{"message": {"role": "assistant", "content": "direct-pool"}}]}
+        body = {"choices": [{"message": {"role": "assistant", "content": "pinned"}}]}
         return httpx.Response(200, json=body)
 
     mock = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=1.0)
@@ -122,10 +123,30 @@ def test_direct_works_on_pool_model(tmp_path):
     async def run():
         with patch("llmbroker.broker.broker.make_client", return_value=mock):
             async with _broker(tmp_path) as broker:
-                client = await broker.direct("pooled-a")
+                client = await broker.direct(name="extra")
                 return await client.ask("hi")
 
-    assert asyncio.run(run()).text == "direct-pool"
+    assert asyncio.run(run()).text == "pinned"
+
+
+def test_direct_refuses_pool_model(tmp_path):
+    async def run():
+        async with _broker(tmp_path) as broker:
+            with pytest.raises(PoolModelError, match="anonymous"):
+                await broker.direct(name="pooled-a")
+
+    asyncio.run(run())
+
+
+def test_direct_requires_exactly_one_keyspace(tmp_path):
+    async def run():
+        async with _broker(tmp_path) as broker:
+            with pytest.raises(ValueError, match="exactly one"):
+                await broker.direct()
+            with pytest.raises(ValueError, match="exactly one"):
+                await broker.direct("opus", name="frontier")
+
+    asyncio.run(run())
 
 
 def test_direct_unknown_model_raises(tmp_path):
@@ -137,11 +158,52 @@ def test_direct_unknown_model_raises(tmp_path):
     asyncio.run(run())
 
 
+def test_direct_cross_keyspace_miss_names_the_other_keyspace(tmp_path):
+    async def run():
+        async with _broker(tmp_path) as broker:
+            with pytest.raises(UnknownModelError, match=r"call direct\(name='frontier'\)"):
+                await broker.direct("frontier")
+            with pytest.raises(UnknownModelError, match=r"call direct\('opus'\)"):
+                await broker.direct(name="opus")
+
+    asyncio.run(run())
+
+
+def test_direct_positional_pool_name_says_pool_straight_away(tmp_path):
+    """The pre-alias call shape. Routing it through the name keyspace first would
+    only spend an error to arrive at the same PoolModelError."""
+
+    async def run():
+        async with _broker(tmp_path) as broker:
+            with pytest.raises(PoolModelError, match="anonymous"):
+                await broker.direct("pooled-a")
+
+    asyncio.run(run())
+
+
+def test_direct_by_name_prefers_the_custom_entry_over_a_pool_namesake():
+    """The file registry refuses a duplicate name, but a DB registry mirrored
+    before that check existed can still hand one back: the user's own entry is
+    what `name=` means, not the pool entry that happens to sort first."""
+    pooled = LLMConfig(name="dup", base_url="https://pool/v1", model="m", api_key_ref="K")
+    mine = LLMConfig(
+        name="dup",
+        base_url="https://paid/v1",
+        model="big",
+        api_key_ref="K",
+        custom=True,
+        pooled=False,
+    )
+    assert _find_custom([pooled, mine], None, "dup") is mine
+    with pytest.raises(PoolModelError):
+        _find_custom([pooled], None, "dup")
+
+
 def test_direct_missing_key_raises(tmp_path):
     async def run():
         async with _broker(tmp_path, secrets=DictSecrets({})) as broker:
             with pytest.raises(MissingKeyError):
-                await broker.direct("frontier")
+                await broker.direct("opus")
 
     asyncio.run(run())
 
@@ -164,6 +226,8 @@ def test_sync_broker_direct_ask(tmp_path):
             secrets=DictSecrets({"K": "test"}),
             store=FileStore(tmp_path / "store"),
         ) as broker:
-            result = broker.direct("frontier").ask("hi")
+            result = broker.direct("opus").ask("hi")
+            with pytest.raises(PoolModelError):
+                broker.direct(name="pooled-a")
 
     assert result.text == "sync-direct"

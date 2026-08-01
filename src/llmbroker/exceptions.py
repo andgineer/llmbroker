@@ -61,6 +61,14 @@ class UnknownModelError(LLMRequestError):
     """No registry entry matched the requested model name."""
 
 
+class PoolModelError(LLMRequestError):
+    """``direct()`` was pointed at a preset-managed pool entry.
+
+    Pool models are anonymous: reach them through ``ask``/``chat``/``stream``,
+    which route and learn. A model you want to name is a ``[[custom]]`` entry.
+    """
+
+
 class MissingKeyError(LLMRequestError):
     """The model's ``api_key_ref`` could not be resolved before the call.
 
@@ -109,6 +117,20 @@ class InvalidProviderResponseError(LLMRequestError):
         super().__init__(message)
         self.model = model
         self.detail = detail
+
+
+class StreamInterruptedError(LLMRequestError):
+    """A pooled stream died after it had already emitted deltas.
+
+    Failover is impossible once output has reached the caller, so the broker
+    raises instead of retrying elsewhere: the deltas already yielded stand, and
+    the rest of the answer is lost. ``llm_name`` names the model; ``__cause__``
+    carries the underlying provider or transport error.
+    """
+
+    def __init__(self, message: str, *, llm_name: str) -> None:
+        super().__init__(message)
+        self.llm_name = llm_name
 
 
 class AuthError(ProviderError):

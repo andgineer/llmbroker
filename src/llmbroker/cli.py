@@ -1,8 +1,9 @@
 """python -m llmbroker <command>.
 
 Subcommands: env (emit .env skeleton), preset (download curated preset TOML,
-or --merge it into a file), add-model (append a paid model from the catalog),
-sync (mirror a preset TOML into a DB registry — DB-init workflow).
+or --merge it into a file, refreshing alias-following custom entries from the
+paid catalog), add-model (append a paid model from the catalog), sync (mirror a
+preset TOML into a DB registry — DB-init workflow).
 """
 
 import argparse
@@ -14,6 +15,7 @@ import tempfile
 import tomllib
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from http import HTTPStatus
 from pathlib import Path
 
@@ -123,10 +125,119 @@ def _cmd_preset(args: argparse.Namespace) -> int:
     return 0
 
 
+def _catalog_alias_index(catalog: dict) -> dict[str, tuple[dict, dict]] | None:
+    """Map every catalog alias to its ``(provider, model)`` pair.
+
+    ``None`` (with a message) when the catalog is invalid: an alias names exactly
+    one model, so a duplicate makes the whole file unusable.
+    """
+    index: dict[str, tuple[dict, dict]] = {}
+    for prov in catalog.get("provider", []):
+        if not isinstance(prov, dict) or not (
+            prov.get("id") and prov.get("base_url") and prov.get("api_key_ref")
+        ):
+            continue
+        for model in prov.get("models", []):
+            if not isinstance(model, dict) or not (model.get("alias") and model.get("model")):
+                continue
+            alias = str(model["alias"])
+            if alias in index:
+                print(
+                    f"error: paid catalog is invalid — alias '{alias}' is used twice",
+                    file=sys.stderr,
+                )
+                return None
+            index[alias] = (prov, model)
+    return index
+
+
+def _refresh_alias_entries(
+    entries: list[dict],
+    index: dict[str, tuple[dict, dict]],
+) -> dict[str, str]:
+    """Re-point every alias entry at what the catalog now recommends, in place.
+
+    Returns the ``api_key_ref -> key_help`` pairs the refreshed entries need, so a
+    provider switch brings its onboarding help along.
+    """
+    key_help: dict[str, str] = {}
+    for entry in entries:
+        alias = entry.get("alias")
+        if not alias:
+            continue
+        found = index.get(str(alias))
+        if found is None:
+            print(
+                f"warning: alias '{alias}' is not in the paid catalog — entry left untouched",
+                file=sys.stderr,
+            )
+            continue
+        prov, model = found
+        was = entry.get("model")
+        entry["model"] = str(model["model"])
+        entry["name"] = f"{prov['id']}-{model['model']}"
+        entry["base_url"] = str(prov["base_url"])
+        entry["api_key_ref"] = str(prov["api_key_ref"])
+        if prov.get("key_help"):
+            key_help[str(prov["api_key_ref"])] = str(prov["key_help"])
+        if was != entry["model"]:
+            print(f"{alias}: {was} -> {entry['model']}")
+    return key_help
+
+
+def _merged_name_clash(preset_text: str, custom_entries: list[dict]) -> str | None:
+    """The error for a name the merged file would carry twice, or ``None``.
+
+    A refreshed alias entry takes a machine-formed name in the preset's own
+    convention, so a catalog move can land it on a preset pool entry. Shipping
+    that file would lose one of the two at the next sync, which keys on the name.
+    """
+    seen: set[str] = set()
+    preset_llms = tomllib.loads(preset_text).get("llms", [])
+    for entry in [*preset_llms, *custom_entries]:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        name = str(entry["name"])
+        if name in seen:
+            return (
+                f"error: the merged file would carry two entries named '{name}' —"
+                " rename the [[custom]] entry, or drop its 'alias' so refreshes stop"
+                " renaming it"
+            )
+        seen.add(name)
+    return None
+
+
+def _custom_key_tail(
+    custom_entries: list[dict],
+    existing_keys: dict,
+    preset_key_refs: set,
+    new_key_help: dict[str, str],
+) -> dict:
+    """The ``[keys]`` the re-emitted ``[[custom]]`` tail must carry: whatever the
+    file already had for its own refs, plus catalog help for a ref new to it."""
+    refs: list[str] = []
+    for entry in custom_entries:
+        ref = entry.get("api_key_ref")
+        if ref and str(ref) not in refs:
+            refs.append(str(ref))
+    keys: dict = {}
+    for ref in refs:
+        if ref in preset_key_refs:
+            continue
+        if ref in existing_keys:
+            keys[ref] = existing_keys[ref]
+        elif ref in new_key_help:
+            keys[ref] = {"help": new_key_help[ref]}
+    return keys
+
+
 def _merge_preset(preset_text: str, name: str, target: Path) -> int:
     """Refresh the managed ``[[llms]]`` + ``[keys]`` in ``target`` from a fresh preset,
-    keeping the user's ``[[custom]]`` models and their keys. Managed comments come from
-    the preset verbatim; the re-emitted ``[[custom]]`` tail loses inline comments."""
+    keeping the user's ``[[custom]]`` models and their keys. A custom entry carrying an
+    ``alias`` also follows the paid catalog, so its provider fields are rewritten too.
+    Managed comments come from the preset verbatim; the re-emitted ``[[custom]]`` tail
+    loses inline comments. Atomic: any error leaves ``target`` untouched."""
     if target.suffix.lower() != ".toml":
         print(f"error: --merge target must be a .toml file, got {target}", file=sys.stderr)
         return 1
@@ -136,15 +247,28 @@ def _merge_preset(preset_text: str, name: str, target: Path) -> int:
         print(f"error: cannot read existing {target}: {exc}", file=sys.stderr)
         return 1
 
-    preset_key_refs = set(tomllib.loads(preset_text).get("keys", {}))
     custom_entries = [e for e in existing.get("custom", []) if isinstance(e, dict)]
-    custom_refs = {e["api_key_ref"] for e in custom_entries if e.get("api_key_ref")}
-    existing_keys = existing.get("keys", {})
-    custom_keys = {
-        ref: existing_keys[ref]
-        for ref in custom_refs
-        if ref in existing_keys and ref not in preset_key_refs
-    }
+    new_key_help: dict[str, str] = {}
+    if any(e.get("alias") for e in custom_entries):
+        catalog_text = _fetch_preset_file("paid-catalog")
+        if catalog_text is None:
+            return 1
+        index = _catalog_alias_index(tomllib.loads(catalog_text))
+        if index is None:
+            return 1
+        new_key_help = _refresh_alias_entries(custom_entries, index)
+
+    clash = _merged_name_clash(preset_text, custom_entries)
+    if clash is not None:
+        print(clash, file=sys.stderr)
+        return 1
+
+    custom_keys = _custom_key_tail(
+        custom_entries,
+        existing.get("keys", {}),
+        set(tomllib.loads(preset_text).get("keys", {})),
+        new_key_help,
+    )
 
     tail: dict = {}
     if custom_entries:
@@ -160,10 +284,26 @@ def _merge_preset(preset_text: str, name: str, target: Path) -> int:
     return 0
 
 
-def _prompt_choice(label: str, items: list[dict], key: str) -> dict | None:
-    """Print a numbered menu of ``items`` (shown by ``key`` or its own name) and read a pick."""
+def _provider_menu_label(prov: dict) -> str:
+    return str(prov.get("label") or prov.get("id") or "")
+
+
+def _model_menu_label(model: dict) -> str:
+    """``alias — label (current model)`` — the alias leads, since it is what the
+    application will pass to ``direct()`` and the only part that never changes."""
+    label = model.get("label") or model.get("model")
+    alias = model.get("alias")
+    return f"{alias} — {label} ({model.get('model')})" if alias else str(label)
+
+
+def _prompt_choice(
+    label: str,
+    items: list[dict],
+    display: "Callable[[dict], str]",
+) -> dict | None:
+    """Print a numbered menu of ``items`` and read a pick."""
     for i, item in enumerate(items, 1):
-        print(f"  {i}. {item.get(key) or item.get('model') or item.get('id')}")
+        print(f"  {i}. {display(item)}")
     raw = input(f"{label} [1-{len(items)}]: ").strip()
     try:
         idx = int(raw)
@@ -180,7 +320,7 @@ def _select_from_flags(
     providers: list[dict],
     provider_id: str | None,
     model_id: str | None,
-) -> tuple[dict, str] | None:
+) -> tuple[dict, dict] | None:
     if provider_id is None or model_id is None:
         print("error: --provider and --model must be given together", file=sys.stderr)
         return None
@@ -189,36 +329,35 @@ def _select_from_flags(
         have = ", ".join(str(p.get("id")) for p in providers)
         print(f"error: unknown provider '{provider_id}' (have: {have})", file=sys.stderr)
         return None
-    models = [
-        str(m["model"]) for m in prov.get("models", []) if isinstance(m, dict) and m.get("model")
-    ]
-    if model_id not in models:
-        have = ", ".join(models)
+    models = [m for m in prov.get("models", []) if isinstance(m, dict) and m.get("model")]
+    model = next((m for m in models if str(m["model"]) == model_id), None)
+    if model is None:
+        have = ", ".join(str(m["model"]) for m in models)
         print(f"error: unknown model '{model_id}' (have: {have})", file=sys.stderr)
         return None
-    return prov, model_id
+    return prov, model
 
 
-def _select_interactive(providers: list[dict]) -> tuple[dict, str] | None:
-    prov = _prompt_choice("Pick a provider", providers, "label")
+def _select_interactive(providers: list[dict]) -> tuple[dict, dict] | None:
+    prov = _prompt_choice("Pick a provider", providers, _provider_menu_label)
     if prov is None:
         return None
     models = [m for m in prov.get("models", []) if isinstance(m, dict) and m.get("model")]
     if not models:
         print(f"error: provider '{prov.get('id')}' has no usable models", file=sys.stderr)
         return None
-    model = _prompt_choice("Pick a model", models, "label")
+    model = _prompt_choice("Pick a model", models, _model_menu_label)
     if model is None:
         return None
-    return prov, str(model["model"])
+    return prov, model
 
 
 def _select_provider_model(
     providers: list[dict],
     provider_id: str | None,
     model_id: str | None,
-) -> tuple[dict, str] | None:
-    """Resolve (provider, model id) from flags, or interactively. ``None`` on error."""
+) -> tuple[dict, dict] | None:
+    """Resolve (provider, catalog model) from flags, or interactively. ``None`` on error."""
     if provider_id is not None or model_id is not None:
         return _select_from_flags(providers, provider_id, model_id)
     return _select_interactive(providers)
@@ -228,6 +367,13 @@ def _cmd_add_model(args: argparse.Namespace) -> int:  # noqa: PLR0911
     target = Path(args.into)
     if target.suffix.lower() != ".toml":
         print(f"error: --into target must be a .toml file, got {target}", file=sys.stderr)
+        return 1
+    if args.name and not args.pin:
+        print(
+            "error: --name is only valid with --pin — an alias entry's name is machine-formed"
+            " from the provider and model ids, and rewritten by every catalog refresh",
+            file=sys.stderr,
+        )
         return 1
     text = _fetch_preset_file("paid-catalog")
     if text is None:
@@ -241,7 +387,7 @@ def _cmd_add_model(args: argparse.Namespace) -> int:  # noqa: PLR0911
     selection = _select_provider_model(providers, args.provider, args.model)
     if selection is None:
         return 1
-    prov, model_id = selection
+    prov, model = selection
     if not (prov.get("base_url") and prov.get("api_key_ref")):
         print(
             f"error: catalog entry for '{prov.get('id')}' is incomplete"
@@ -249,32 +395,32 @@ def _cmd_add_model(args: argparse.Namespace) -> int:  # noqa: PLR0911
             file=sys.stderr,
         )
         return 1
-
-    if interactive:
-        name = _prompt_name(args.name or str(prov["id"]))
-        pooled = _prompt_yes_no("Add to the pool (failover)?", default=bool(args.pool))
-    else:
-        name = (args.name or str(prov["id"])).strip()
-        pooled = bool(args.pool)
-
-    return _append_custom_entry(target, prov, model_id, name, pooled=pooled)
-
-
-def _append_custom_entry(
-    target: Path,
-    prov: dict,
-    model_id: str,
-    name: str,
-    *,
-    pooled: bool,
-) -> int:
-    """Append one ``[[custom]]`` block (plus its ``[keys]`` help if the ref is new)
-    to ``target``, preserving the rest of the file. Refuses a name collision."""
-    try:
-        existing = tomllib.loads(target.read_text(encoding="utf-8")) if target.exists() else {}
-    except (tomllib.TOMLDecodeError, OSError) as exc:
-        print(f"error: cannot read existing {target}: {exc}", file=sys.stderr)
+    model_id = str(model["model"])
+    if not args.pin and not model.get("alias"):
+        print(
+            f"error: catalog model '{model_id}' carries no alias — pass --pin to add it"
+            " as a version-pinned entry instead",
+            file=sys.stderr,
+        )
         return 1
+    alias = None if args.pin else str(model["alias"])
+
+    if args.pin:
+        default_name = (args.name or str(prov["id"])).strip()
+        name = _prompt_name(default_name) if interactive else default_name
+    else:
+        name = f"{prov['id']}-{model_id}"
+    pooled = (
+        _prompt_yes_no("Add to the pool (failover)?", default=bool(args.pool))
+        if interactive
+        else bool(args.pool)
+    )
+
+    return _append_custom_entry(target, prov, model_id, name, alias=alias, pooled=pooled)
+
+
+def _collision(target: Path, existing: dict, name: str, alias: str | None) -> str | None:
+    """The error message for a name or alias already in the file, or ``None``."""
     taken = {
         str(e["name"])
         for section in ("llms", "custom")
@@ -282,24 +428,51 @@ def _append_custom_entry(
         if isinstance(e, dict) and e.get("name")
     }
     if name in taken:
-        print(
-            f"error: an entry named '{name}' already exists in {target} — use --name",
-            file=sys.stderr,
-        )
+        hint = " — use --name" if alias is None else " (that catalog model is already in the file)"
+        return f"error: an entry named '{name}' already exists in {target}{hint}"
+    aliases = {
+        str(e["alias"])
+        for e in existing.get("custom", [])
+        if isinstance(e, dict) and e.get("alias")
+    }
+    if alias is not None and alias in aliases:
+        return f"error: alias '{alias}' is already used in {target}"
+    return None
+
+
+def _append_custom_entry(  # noqa: PLR0913
+    target: Path,
+    prov: dict,
+    model_id: str,
+    name: str,
+    *,
+    alias: str | None,
+    pooled: bool,
+) -> int:
+    """Append one ``[[custom]]`` block (plus its ``[keys]`` help if the ref is new)
+    to ``target``, preserving the rest of the file. Refuses a name or alias collision."""
+    try:
+        existing = tomllib.loads(target.read_text(encoding="utf-8")) if target.exists() else {}
+    except (tomllib.TOMLDecodeError, OSError) as exc:
+        print(f"error: cannot read existing {target}: {exc}", file=sys.stderr)
+        return 1
+    clash = _collision(target, existing, name, alias)
+    if clash is not None:
+        print(clash, file=sys.stderr)
         return 1
 
     ref = str(prov["api_key_ref"])
-    block: dict = {
-        "custom": [
-            {
-                "name": name,
-                "base_url": str(prov["base_url"]),
-                "model": model_id,
-                "api_key_ref": ref,
-                "pool": pooled,
-            },
-        ],
-    }
+    entry: dict = {"alias": alias} if alias is not None else {}
+    entry.update(
+        {
+            "name": name,
+            "model": model_id,
+            "base_url": str(prov["base_url"]),
+            "api_key_ref": ref,
+            "pool": pooled,
+        },
+    )
+    block: dict = {"custom": [entry]}
     if ref not in existing.get("keys", {}) and prov.get("key_help"):
         block["keys"] = {ref: {"help": str(prov["key_help"])}}
 
@@ -310,7 +483,8 @@ def _append_custom_entry(
     else:
         target.write_text(rendered + "\n", encoding="utf-8")
 
-    print(f"added [[custom]] '{name}' ({model_id}) to {target}")
+    reach = f"direct({alias!r})" if alias is not None else f"direct(name={name!r})"
+    print(f"added [[custom]] '{name}' ({model_id}) to {target} — reach it with {reach}")
     print(f"next: set {ref} (e.g. `llmbroker env {target} >> .env`) and sync your config")
     return 0
 
@@ -369,7 +543,8 @@ def main(argv: list[str] | None = None) -> int:
         description=(
             "Print a curated preset TOML to stdout. To save: preset freetier > freetier.toml."
             " With --merge FILE, refresh the [[llms]] and [keys] in FILE from the preset while"
-            " keeping your [[custom]] models and their keys."
+            " keeping your [[custom]] models and their keys; a [[custom]] entry carrying an"
+            " alias is also re-pointed at whatever the paid catalog now recommends."
         ),
     )
     preset_p.add_argument("name", help="preset name (e.g. freetier)")
@@ -386,7 +561,8 @@ def main(argv: list[str] | None = None) -> int:
         description=(
             "Pick a paid provider and model from the curated catalog and append a [[custom]]"
             " entry to your config file. Interactive by default; pass --provider and --model"
-            " to run non-interactively."
+            " to run non-interactively. The entry follows the catalog's alias — call it as"
+            " direct('opus') and `preset <name> --merge` keeps it on the current version."
         ),
     )
     addm_p.add_argument(
@@ -405,7 +581,16 @@ def main(argv: list[str] | None = None) -> int:
         metavar="ID",
         help="model id (with --provider, non-interactive)",
     )
-    addm_p.add_argument("--name", metavar="NAME", help="entry name (default: provider id)")
+    addm_p.add_argument(
+        "--pin",
+        action="store_true",
+        help="pin this exact model version: no alias, never rewritten by a catalog refresh",
+    )
+    addm_p.add_argument(
+        "--name",
+        metavar="NAME",
+        help="entry name for a --pin entry (default: provider id); invalid without --pin",
+    )
     addm_p.add_argument(
         "--pool",
         action="store_true",

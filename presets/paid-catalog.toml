@@ -14,16 +14,19 @@ api_key_ref = "ANTHROPIC_API_KEY"
 key_help    = "Create a key at https://console.anthropic.com/ (paid)."
 
   [[provider.models]]
+  alias    = "opus"
   model    = "claude-opus-4-8"
   label    = "Claude Opus 4.8 — recommended default for complex agentic/enterprise work"
   verified = "https://platform.claude.com/docs/en/docs/about-claude/models/overview (2026-07-20)"
 
   [[provider.models]]
+  alias    = "fable"
   model    = "claude-fable-5"
   label    = "Claude Fable 5 — most capable, for long-running agents"
   verified = "https://platform.claude.com/docs/en/docs/about-claude/models/overview (2026-07-20)"
 
   [[provider.models]]
+  alias    = "sonnet"
   model    = "claude-sonnet-5"
   label    = "Claude Sonnet 5 — best speed/intelligence balance, lower cost"
   verified = "https://platform.claude.com/docs/en/docs/about-claude/models/overview (2026-07-20)"
@@ -36,11 +39,13 @@ api_key_ref = "OPENAI_API_KEY"
 key_help    = "Create a key at https://platform.openai.com/api-keys (paid)."
 
   [[provider.models]]
+  alias    = "gpt"
   model    = "gpt-5.6-sol"
   label    = "GPT-5.6 Sol — frontier model for complex professional work"
   verified = "https://developers.openai.com/api/docs/models (2026-07-20)"
 
   [[provider.models]]
+  alias    = "gpt-mini"
   model    = "gpt-5.6-terra"
   label    = "GPT-5.6 Terra — balances intelligence and cost"
   verified = "https://developers.openai.com/api/docs/models (2026-07-20)"
@@ -53,11 +58,7 @@ api_key_ref = "GEMINI_API_KEY"
 key_help    = "Create a key at https://aistudio.google.com/apikey (paid tier)."
 
   [[provider.models]]
+  alias    = "flash"
   model    = "gemini-3.5-flash"
   label    = "Gemini 3.5 Flash — most intelligent, agentic and coding"
-  verified = "https://ai.google.dev/gemini-api/docs/models (2026-07-20)"
-
-  [[provider.models]]
-  model    = "gemini-2.5-flash"
-  label    = "Gemini 2.5 Flash — best price-performance"
   verified = "https://ai.google.dev/gemini-api/docs/models (2026-07-20)"

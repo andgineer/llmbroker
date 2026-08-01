@@ -173,6 +173,150 @@ def test_preset_merge_creates_file_when_absent(tmp_path):
     assert "custom" not in data
 
 
+_REFRESH_CATALOG = (
+    b'[[provider]]\nid="anthropic"\nlabel="Anthropic"\n'
+    b'base_url="https://api.anthropic.com/v2"\napi_key_ref="ANTHROPIC_API_KEY"\n'
+    b'key_help="console.anthropic.com"\n'
+    b'  [[provider.models]]\n  alias="opus"\n  model="claude-opus-5"\n'
+    b'  label="Opus"\n  verified="u"\n'
+)
+
+
+def _mock_fetch(*bodies: bytes):
+    """urlopen side_effect serving each body in turn (preset first, then catalog)."""
+    return [_mock_urlopen(b) for b in bodies]
+
+
+def _alias_file(tmp_path, extra: str = "") -> object:
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[llms]]\nname="groq-old"\nbase_url="https://old/v1"\nmodel="old"'
+        '\napi_key_ref="GROQ_API_KEY"\n'
+        '[[custom]]\nalias="opus"\nname="anthropic-claude-opus-4-8"'
+        '\nmodel="claude-opus-4-8"\nbase_url="https://api.anthropic.com/v1"'
+        '\napi_key_ref="ANTHROPIC_API_KEY"\npool=false\n' + extra
+    )
+    return f
+
+
+def test_preset_merge_refreshes_alias_entry(tmp_path, capsys):
+    f = _alias_file(tmp_path)
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=_mock_fetch(_FRESH_PRESET, _REFRESH_CATALOG),
+    ):
+        rc = main(["preset", "freetier", "--merge", str(f)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "opus: claude-opus-4-8 -> claude-opus-5" in out
+    (entry,) = tomllib.loads(f.read_text())["custom"]
+    assert entry["model"] == "claude-opus-5"
+    assert entry["name"] == "anthropic-claude-opus-5"  # name follows the version
+    assert entry["base_url"] == "https://api.anthropic.com/v2"
+    assert entry["alias"] == "opus"
+    assert entry["pool"] is False
+
+
+def test_preset_merge_leaves_pinned_entry_byte_identical(tmp_path):
+    pin = (
+        '[[custom]]\nname="frontier"\nmodel="claude-opus-4-8"'
+        '\nbase_url="https://api.anthropic.com/v1"\napi_key_ref="ANTHROPIC_API_KEY"\npool=false\n'
+    )
+    f = _alias_file(tmp_path, extra=pin)
+    before = next(e for e in tomllib.loads(f.read_text())["custom"] if e["name"] == "frontier")
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=_mock_fetch(_FRESH_PRESET, _REFRESH_CATALOG),
+    ):
+        rc = main(["preset", "freetier", "--merge", str(f)])
+    assert rc == 0
+    after = next(e for e in tomllib.loads(f.read_text())["custom"] if e["name"] == "frontier")
+    assert after == before
+
+
+def test_preset_merge_unknown_alias_warns_and_keeps_entry(tmp_path, capsys):
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[custom]]\nalias="ghost"\nname="x-y"\nmodel="y"\nbase_url="https://x/v1"'
+        '\napi_key_ref="X_KEY"\npool=false\n'
+    )
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=_mock_fetch(_FRESH_PRESET, _REFRESH_CATALOG),
+    ):
+        rc = main(["preset", "freetier", "--merge", str(f)])
+    assert rc == 0
+    assert "alias 'ghost' is not in the paid catalog" in capsys.readouterr().err
+    (entry,) = tomllib.loads(f.read_text())["custom"]
+    assert entry["model"] == "y"
+
+
+def test_preset_merge_without_alias_entries_fetches_no_catalog(tmp_path):
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[custom]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="big"'
+        '\napi_key_ref="MY_KEY"\npool=false\n'
+    )
+    fetches: list[str] = []
+
+    def urlopen(url, *_a, **_kw):
+        fetches.append(url)
+        return _mock_urlopen(_FRESH_PRESET)
+
+    with patch("urllib.request.urlopen", side_effect=urlopen):
+        rc = main(["preset", "freetier", "--merge", str(f)])
+    assert rc == 0
+    assert len(fetches) == 1
+    assert "paid-catalog" not in fetches[0]
+
+
+def test_preset_merge_new_api_key_ref_brings_its_keys_help(tmp_path):
+    """A refresh that moves an alias onto another provider carries the new ref's help."""
+    catalog = (
+        b'[[provider]]\nid="other"\nlabel="Other"\nbase_url="https://other/v1"\n'
+        b'api_key_ref="OTHER_API_KEY"\nkey_help="get a key at other.example"\n'
+        b'  [[provider.models]]\n  alias="opus"\n  model="other-big"\n'
+        b'  label="Big"\n  verified="u"\n'
+    )
+    f = _alias_file(tmp_path)
+    with patch("urllib.request.urlopen", side_effect=_mock_fetch(_FRESH_PRESET, catalog)):
+        rc = main(["preset", "freetier", "--merge", str(f)])
+    assert rc == 0
+    data = tomllib.loads(f.read_text())
+    assert data["custom"][0]["api_key_ref"] == "OTHER_API_KEY"
+    assert data["keys"]["OTHER_API_KEY"]["help"] == "get a key at other.example"
+
+
+def test_preset_merge_duplicate_catalog_alias_is_an_error(tmp_path, capsys):
+    catalog = _REFRESH_CATALOG + (
+        b'[[provider]]\nid="dup"\nlabel="Dup"\nbase_url="https://dup/v1"\napi_key_ref="D_KEY"\n'
+        b'  [[provider.models]]\n  alias="opus"\n  model="dup-1"\n  label="D"\n  verified="u"\n'
+    )
+    f = _alias_file(tmp_path)
+    original = f.read_text()
+    with patch("urllib.request.urlopen", side_effect=_mock_fetch(_FRESH_PRESET, catalog)):
+        rc = main(["preset", "freetier", "--merge", str(f)])
+    assert rc == 1
+    assert "alias 'opus' is used twice" in capsys.readouterr().err
+    assert f.read_text() == original  # nothing written
+
+
+def test_preset_merge_refuses_to_rename_an_alias_onto_a_pool_entry(tmp_path, capsys):
+    """The refreshed name lands on a preset [[llms]] name: writing that file would
+    lose one of the two entries at the next sync, so nothing is written."""
+    preset = (
+        b'[[llms]]\nname="anthropic-claude-opus-5"\nbase_url="https://free/v1"\n'
+        b'model="claude-opus-5"\napi_key_ref="FREE_KEY"\n'
+    )
+    f = _alias_file(tmp_path)
+    original = f.read_text()
+    with patch("urllib.request.urlopen", side_effect=_mock_fetch(preset, _REFRESH_CATALOG)):
+        rc = main(["preset", "freetier", "--merge", str(f)])
+    assert rc == 1
+    assert "two entries named 'anthropic-claude-opus-5'" in capsys.readouterr().err
+    assert f.read_text() == original
+
+
 def test_preset_merge_rejects_non_toml(tmp_path, capsys):
     f = tmp_path / "llms.json"
     with patch("urllib.request.urlopen", return_value=_mock_urlopen(_FAKE_TOML)):
@@ -187,8 +331,10 @@ _CATALOG = (
     b'[[provider]]\nid="anthropic"\nlabel="Anthropic"\n'
     b'base_url="https://api.anthropic.com/v1"\napi_key_ref="ANTHROPIC_API_KEY"\n'
     b'key_help="console.anthropic.com"\n'
-    b'  [[provider.models]]\n  model="claude-opus-4-8"\n  label="Opus"\n  verified="u"\n'
-    b'  [[provider.models]]\n  model="claude-sonnet-5"\n  label="Sonnet"\n  verified="u"\n'
+    b'  [[provider.models]]\n  alias="opus"\n  model="claude-opus-4-8"\n'
+    b'  label="Opus"\n  verified="u"\n'
+    b'  [[provider.models]]\n  alias="sonnet"\n  model="claude-sonnet-5"\n'
+    b'  label="Sonnet"\n  verified="u"\n'
 )
 
 
@@ -200,7 +346,7 @@ def _base_file(tmp_path):
     return f
 
 
-def test_add_model_flags_appends_custom(tmp_path):
+def test_add_model_flags_appends_alias_custom(tmp_path):
     f = _base_file(tmp_path)
     with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
         rc = main(
@@ -210,7 +356,8 @@ def test_add_model_flags_appends_custom(tmp_path):
     data = tomllib.loads(f.read_text())
     assert [e["name"] for e in data["llms"]] == ["pool"]  # existing entry preserved
     (entry,) = data["custom"]
-    assert entry["name"] == "anthropic"
+    assert entry["alias"] == "opus"
+    assert entry["name"] == "anthropic-claude-opus-4-8"  # machine-formed
     assert entry["model"] == "claude-opus-4-8"
     assert entry["base_url"] == "https://api.anthropic.com/v1"
     assert entry["api_key_ref"] == "ANTHROPIC_API_KEY"
@@ -218,7 +365,7 @@ def test_add_model_flags_appends_custom(tmp_path):
     assert data["keys"]["ANTHROPIC_API_KEY"]["help"] == "console.anthropic.com"
 
 
-def test_add_model_pool_and_name_flags(tmp_path):
+def test_add_model_pin_writes_name_only_block(tmp_path):
     f = _base_file(tmp_path)
     with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
         rc = main(
@@ -230,6 +377,7 @@ def test_add_model_pool_and_name_flags(tmp_path):
                 "anthropic",
                 "--model",
                 "claude-sonnet-5",
+                "--pin",
                 "--name",
                 "frontier",
                 "--pool",
@@ -237,8 +385,76 @@ def test_add_model_pool_and_name_flags(tmp_path):
         )
     assert rc == 0
     (entry,) = tomllib.loads(f.read_text())["custom"]
+    assert "alias" not in entry
     assert entry["name"] == "frontier"
+    assert entry["model"] == "claude-sonnet-5"
     assert entry["pool"] is True
+
+
+def test_add_model_pin_defaults_name_to_provider_id(tmp_path):
+    f = _base_file(tmp_path)
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
+        rc = main(
+            [
+                "add-model",
+                "--into",
+                str(f),
+                "--provider",
+                "anthropic",
+                "--model",
+                "claude-opus-4-8",
+                "--pin",
+            ]
+        )
+    assert rc == 0
+    (entry,) = tomllib.loads(f.read_text())["custom"]
+    assert entry["name"] == "anthropic"
+    assert "alias" not in entry
+
+
+def test_add_model_name_without_pin_errors(tmp_path, capsys):
+    f = _base_file(tmp_path)
+    rc = main(
+        [
+            "add-model",
+            "--into",
+            str(f),
+            "--provider",
+            "anthropic",
+            "--model",
+            "claude-opus-4-8",
+            "--name",
+            "mine",
+        ]
+    )
+    assert rc == 1
+    assert "--name is only valid with --pin" in capsys.readouterr().err
+
+
+def test_add_model_alias_collision_refused(tmp_path, capsys):
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[custom]]\nalias="opus"\nname="something-else"\nbase_url="https://x/v1"\n'
+        'model="old"\napi_key_ref="ANTHROPIC_API_KEY"\npool=false\n'
+    )
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
+        rc = main(
+            ["add-model", "--into", str(f), "--provider", "anthropic", "--model", "claude-opus-4-8"]
+        )
+    assert rc == 1
+    assert "alias 'opus' is already used" in capsys.readouterr().err
+
+
+def test_add_model_catalog_model_without_alias_needs_pin(tmp_path, capsys):
+    catalog = (
+        b'[[provider]]\nid="x"\nlabel="X"\nbase_url="https://x/v1"\napi_key_ref="X_KEY"\n'
+        b'  [[provider.models]]\n  model="m1"\n  label="M1"\n  verified="u"\n'
+    )
+    f = _base_file(tmp_path)
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(catalog)):
+        rc = main(["add-model", "--into", str(f), "--provider", "x", "--model", "m1"])
+    assert rc == 1
+    assert "carries no alias" in capsys.readouterr().err
 
 
 def test_add_model_unknown_provider(tmp_path, capsys):
@@ -269,6 +485,7 @@ def test_add_model_name_collision(tmp_path, capsys):
                 "anthropic",
                 "--model",
                 "claude-opus-4-8",
+                "--pin",
                 "--name",
                 "pool",
             ]  # collides with the [[llms]] entry
@@ -289,19 +506,19 @@ def test_add_model_does_not_duplicate_existing_key(tmp_path):
     assert data["keys"]["ANTHROPIC_API_KEY"]["help"] == "existing help"
 
 
-def test_add_model_interactive(tmp_path):
+def test_add_model_interactive(tmp_path, capsys):
     f = _base_file(tmp_path)
     with (
         patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)),
-        patch(
-            "builtins.input", side_effect=["1", "2", "", "n"]
-        ),  # provider, model, name(default), pool=no
+        patch("builtins.input", side_effect=["1", "2", "n"]),  # provider, model, pool=no
     ):
         rc = main(["add-model", "--into", str(f)])
     assert rc == 0
+    assert "sonnet — Sonnet (claude-sonnet-5)" in capsys.readouterr().out  # alias-led menu
     (entry,) = tomllib.loads(f.read_text())["custom"]
-    assert entry["name"] == "anthropic"  # default = provider id
-    assert entry["model"] == "claude-sonnet-5"  # picked #2
+    assert entry["alias"] == "sonnet"  # picked #2
+    assert entry["name"] == "anthropic-claude-sonnet-5"
+    assert entry["model"] == "claude-sonnet-5"
     assert entry["pool"] is False
 
 
@@ -343,7 +560,7 @@ def test_add_model_interactive_honors_pool_and_name_flags(tmp_path):
             "builtins.input", side_effect=["1", "1", "", ""]
         ),  # provider, model, name/pool = defaults
     ):
-        rc = main(["add-model", "--into", str(f), "--name", "myclaude", "--pool"])
+        rc = main(["add-model", "--into", str(f), "--pin", "--name", "myclaude", "--pool"])
     assert rc == 0
     (entry,) = tomllib.loads(f.read_text())["custom"]
     assert entry["name"] == "myclaude"  # --name used as the prompt default, accepted blank

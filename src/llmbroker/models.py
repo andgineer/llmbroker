@@ -54,6 +54,10 @@ class LLMConfig:
       the curated preset, so ``sync`` never prunes it. Independent of ``pooled``
       — a custom entry may be pooled (a user's own extra pool model) or not (a
       direct-only model such as a paid one).
+
+    ``alias`` is the entry's eternal handle, set only on custom entries: ``name``
+    carries the model version and is rewritten by a catalog refresh, the alias
+    never is.
     """
 
     name: str
@@ -63,6 +67,7 @@ class LLMConfig:
     parallel: int | None = None
     pooled: bool = True
     custom: bool = False
+    alias: str | None = None
 
     def to_metadata(self) -> dict[str, object]:
         """Structured optional config, serialized for the registry's JSON column.
@@ -74,6 +79,9 @@ class LLMConfig:
         >>> paid = LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", pooled=False)
         >>> paid.to_metadata()
         {'pool': False}
+        >>> followed = LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", alias="opus")
+        >>> followed.to_metadata()
+        {'alias': 'opus'}
         """
         metadata: dict[str, object] = {}
         if self.parallel is not None:
@@ -82,6 +90,8 @@ class LLMConfig:
             metadata["pool"] = False
         if self.custom:
             metadata["custom"] = True
+        if self.alias is not None:
+            metadata["alias"] = self.alias
         return metadata
 
     @classmethod
@@ -102,6 +112,8 @@ class LLMConfig:
         pooled = raw_pool if isinstance(raw_pool, bool) else True
         raw_custom = metadata.get("custom")
         custom = raw_custom if isinstance(raw_custom, bool) else False
+        raw_alias = metadata.get("alias")
+        alias = raw_alias if isinstance(raw_alias, str) else None
         return cls(
             name=name,
             base_url=base_url,
@@ -110,6 +122,7 @@ class LLMConfig:
             parallel=parallel,
             pooled=pooled,
             custom=custom,
+            alias=alias,
         )
 
 

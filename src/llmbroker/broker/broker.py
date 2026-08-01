@@ -22,7 +22,8 @@ raw state or hook the ``llmbroker`` logger.
 import asyncio
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import aclosing
 from datetime import datetime
 from pathlib import Path
 
@@ -38,7 +39,12 @@ from llmbroker.broker.source import resolve_source
 from llmbroker.broker.stats import stats_from_calls
 from llmbroker.chat import make_client
 from llmbroker.direct import AsyncDirectClient
-from llmbroker.exceptions import MissingKeyError, NoLLMAvailableError, UnknownModelError
+from llmbroker.exceptions import (
+    MissingKeyError,
+    NoLLMAvailableError,
+    PoolModelError,
+    UnknownModelError,
+)
 from llmbroker.models import (
     AsyncResourceProtocol,
     Call,
@@ -83,6 +89,44 @@ def _default_store(registry: RegistryProtocol) -> StoreProtocol:
     if isinstance(registry, Registry):
         return FileStore(registry.path.parent / "store")
     return FileStore(Path("store"))
+
+
+_POOL_MODEL_HINT = (
+    "pool models are anonymous — reach them with ask()/chat()/stream(), which route and"
+    " learn; add a [[custom]] entry for the model if you need to call it by name"
+)
+
+
+def _find_custom(configs: list[LLMConfig], alias: str | None, name: str | None) -> LLMConfig:
+    """Resolve one custom entry from exactly one of the two keyspaces.
+
+    A miss whose string exists in the *other* keyspace says so, since the two are
+    one typo apart at a call site.
+    """
+    if alias is not None:
+        for cfg in configs:
+            if cfg.custom and cfg.alias == alias:
+                return cfg
+        if any(c.custom and c.name == alias for c in configs):
+            raise UnknownModelError(
+                f"no entry with alias {alias!r}; an entry with this name exists"
+                f" — call direct(name={alias!r})",
+            )
+        if any(c.name == alias for c in configs):
+            # The pre-alias call shape: direct() took a name, and a pool name at that.
+            # Sending it to direct(name=...) first would only spend an error saying so.
+            raise PoolModelError(f"{alias!r} is a preset-managed pool model: {_POOL_MODEL_HINT}")
+        raise UnknownModelError(f"no entry with alias {alias!r} in the registry")
+    for cfg in configs:
+        if cfg.custom and cfg.name == name:
+            return cfg
+    if any(c.custom and c.alias == name for c in configs):
+        raise UnknownModelError(
+            f"no entry named {name!r}; an entry with this alias exists — call direct({name!r})",
+        )
+    if any(c.name == name for c in configs):
+        raise PoolModelError(f"{name!r} is a preset-managed pool model: {_POOL_MODEL_HINT}")
+    raise UnknownModelError(f"no model named {name!r} in the registry")
 
 
 class AsyncBroker:
@@ -245,18 +289,58 @@ class AsyncBroker:
             self._maybe_alert_underprov(exc)
             raise
 
+    async def stream(
+        self,
+        prompt: str,
+        *,
+        operation: str | None = None,
+        trace_id: str | None = None,
+        wait: float | None = None,
+    ) -> AsyncIterator[str]:
+        """Route a completion over the pool and yield text deltas as they arrive.
+
+        Fails over between models exactly like ``ask`` until the first delta;
+        after it the answer is already partly the caller's, so a death raises
+        ``StreamInterruptedError``. Async-only — the sync ``Broker`` has no
+        counterpart.
+        """
+        await self.ensure_pool()
+        try:
+            async with aclosing(
+                self._router.stream(
+                    [{"role": "user", "content": prompt}],
+                    operation=operation,
+                    trace_id=trace_id,
+                    wait=wait,
+                ),
+            ) as deltas:
+                async for delta in deltas:
+                    yield delta
+        except NoLLMAvailableError as exc:
+            self._maybe_alert_underprov(exc)
+            raise
+
     # ------------------------------------------------------------------
     # Direct single-model access (no pool, no failover)
     # ------------------------------------------------------------------
 
-    async def direct(self, name: str) -> AsyncDirectClient:
-        """Return a direct client for any registry model, pooled or not.
+    async def direct(
+        self,
+        alias: str | None = None,
+        *,
+        name: str | None = None,
+    ) -> AsyncDirectClient:
+        """Return a direct client for one of your own ``[[custom]]`` models.
 
         Bypasses the pool and its failover entirely: the returned client calls
-        exactly this model and can stream. Raises ``UnknownModelError`` if no
-        entry matches ``name``, or ``MissingKeyError`` if its key is unset.
+        exactly this model and can stream. Pass exactly one of ``alias`` — the
+        eternal handle a catalog refresh re-points at the successor version — or
+        ``name=``, which pins the exact version and so fails loudly once a
+        refresh has moved on. Raises ``PoolModelError`` for a preset-managed pool
+        model, ``UnknownModelError`` if nothing matches, ``MissingKeyError`` if
+        the key is unset.
         """
-        cfg, key = await self._resolve_direct(name)
+        cfg, key = await self._resolve_direct(alias, name=name)
         if self._direct_http is None:
             self._direct_http = make_client()
         return AsyncDirectClient(
@@ -266,16 +350,25 @@ class AsyncBroker:
             client=self._direct_http,
         )
 
-    async def _resolve_direct(self, name: str) -> tuple[LLMConfig, str]:
-        """Load ``name`` from the registry and resolve its key (shared by the sync façade)."""
-        configs = {c.name: c for c in await self._registry.load()}
-        cfg = configs.get(name)
-        if cfg is None:
-            raise UnknownModelError(f"no model named {name!r} in the registry")
+    async def _resolve_direct(
+        self,
+        alias: str | None = None,
+        *,
+        name: str | None = None,
+    ) -> tuple[LLMConfig, str]:
+        """Look the entry up in its keyspace and resolve its key (shared by the sync façade)."""
+        if (alias is None) == (name is None):
+            raise ValueError(
+                "direct() takes exactly one of alias (positional) or name= —"
+                " they are separate keyspaces",
+            )
+        configs = await self._registry.load()
+        cfg = _find_custom(configs, alias, name)
+        ref = alias if alias is not None else name
         key = await resolve_key(self._secrets, cfg.api_key_ref, self._scope)
         if key is None:
             raise MissingKeyError(
-                f"api_key_ref {cfg.api_key_ref!r} for model {name!r} could not be resolved"
+                f"api_key_ref {cfg.api_key_ref!r} for model {ref!r} could not be resolved"
                 " — set the env var or configure a secrets backend",
             )
         return cfg, key

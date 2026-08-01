@@ -175,6 +175,168 @@ classification, not its own `except` chain.
 6. Gate after every batch: `invoke pre` → no ruff/pyrefly errors, `python -m pytest` →
    `N passed` with zero skips. Version bump is the maintainer's call (breaking: see §3).
 
+## Handover
+
+Implemented in full: §1–§8. Gate green after every batch; final run `invoke pre` clean
+(ruff, ruff-format, pyrefly, hygiene hooks) and `python -m pytest` → **849 passed**, zero
+skips, zero errors (Docker up, so the postgres/mongodb/localstack/vault testcontainer
+suites all ran). Version deliberately **not** bumped — the maintainer's call, and the
+change is breaking (see §3).
+
+### Decisions the plan left open
+
+- **What `wait` bounds on a stream** (§4's explicit open question): **slot acquisition plus
+  the wait for the first delta**, not the whole stream. That is the one stretch failover can
+  still rescue; past the first delta the pace is the consumer's as much as the model's, so a
+  wall-clock budget there would blame the model for its reader. The stream is not left
+  unbounded — every read after the first delta stays under the global HTTP ceiling, so an
+  endpoint that goes quiet mid-answer still dies. Recorded in `architecture.md` next to the
+  existing `wait` contract.
+- **Mid-stream death cools the model.** The plan said only "wrapped and raised". It goes
+  through the same `_classify`/`_dispose` surface as any other failure, so a provider that
+  drops connections mid-answer is cooled for the *next* caller even though this one cannot
+  be rescued. This is what "reuse the router's failure surface, do not grow a second one"
+  means in practice.
+- **A consumer that abandons the iterator ends a successful attempt** — slot released,
+  cooling/unmet-budget cleared, one `OK` row journaled. Journaling `ERROR` would teach the
+  pool that a model failed because its reader stopped; journaling nothing would drop the
+  attempt from the journal and break "one row per attempt".
+- **The wrapper type is a new `StreamInterruptedError(LLMRequestError)`** carrying
+  `llm_name` and the original error as `__cause__`, exported from the top-level package.
+- **Alias fields in the entry block are ordered** `alias, name, model, base_url,
+  api_key_ref, pool` (the plan's §6 order); pinned blocks are the same minus `alias`.
+- **`--merge` is atomic.** A file with alias entries whose catalog fetch fails, or whose
+  catalog has a duplicate alias, exits 1 with nothing written — a half-refreshed file that
+  *looks* refreshed is worse than none. An alias merely absent from a valid catalog stays a
+  warning with the entry untouched, exactly as specified.
+- **Catalog aliases chosen** (§1): `opus`, `fable`, `sonnet`, `gpt`, `gpt-mini`, `flash`
+  (see review round 3 for the one dropped after review).
+- **A catalog model with no alias plus no `--pin`** is a clean error telling the user to
+  pass `--pin`, rather than a silent fallback to a pinned block.
+
+### Done differently from the plan
+
+- **§2's "names among names (the latter is already enforced)" is not true of the file
+  registry** — it never checked for duplicate names and still does not; DB registries get it
+  from the primary key. Alias uniqueness *is* enforced there, as asked. Left the name case
+  alone: it is pre-existing behaviour outside this diff. Worth a one-line fix later.
+- **§4 asked for a `finally`; the code uses `except GeneratorExit`.** Same guarantee, but it
+  distinguishes an abandoned stream (a completed attempt, journaled `OK`) from cancellation
+  (re-raised untouched, unjournaled — mirroring `_attempt`), which a bare `finally` could
+  not.
+- **`_attempt` was refactored, not just extended.** Its record closure, its OK path and its
+  failure disposal became `_record`/`_finish_ok`/`_dispose` on `Router`, keyed by a small
+  `_Attempt` value. Streaming reuses all three; behaviour is unchanged (the existing router,
+  wait-budget, degraded-transport and cluster-cooldown suites cover it).
+- **`cli.md` was not touched.** §8 names `direct.md` (en+ru) and "wherever pool usage is
+  documented"; `cli.md` never documented `add-model` or `--merge` in the first place, and
+  `direct.md` documents both plus `--pin`. Flagging it rather than widening scope: a
+  reviewer may want an `add-model` stanza there.
+
+### Left out
+
+Nothing from §1–§8. The consumer follow-up below (echo-words specs) is explicitly out of
+scope and untouched.
+
+### Spec-worthy content moved
+
+`specs/reference/architecture.md` gained two sections — "Direct model access and stable
+aliases" (the two identifiers, the followed/pinned switch, learning reset by name change,
+disjoint keyspaces as a version assertion, alias permanence/uniqueness, refresh as a file
+rewrite) and "Pool streaming" (failover ends at the first delta, one row per attempt,
+abandonment is success) — plus the streaming `wait` rule inside the existing `wait`
+contract and the two new CLI behaviours in the CLI list.
+`presets/paid-catalog-refresh-prompt.md` gained §0a, the alias contract the catalog
+refresher is bound by.
+
+### Review round 1 — fixes applied
+
+- **A non-SSE HTTP 200 now cools down and fails over** (`_stream_deltas`). It used to
+  decode zero chunks, exit normally and journal `OK`: a proxy error page or a provider
+  ignoring `stream` handed the caller an empty answer with no exception and no failover,
+  while `chat` on the same body cooled the model and moved on. A 200 that decodes no
+  chunk at all now raises `InvalidProviderResponseError` and goes through the existing
+  classification. This is what the "Pool streaming" spec section already claimed.
+- **`direct("<pool name>")` raises `PoolModelError` on the first hop.** The alias branch
+  matched the name keyspace without checking `custom`, so the pre-alias call shape spent
+  one error pointing at `direct(name=...)` only for that call to raise `PoolModelError`.
+- **The abandoned-iterator claim in `architecture.md` was corrected rather than the
+  mechanism.** "The slot goes back immediately" is not achievable: an async generator has
+  no signal other than being closed, and the provider connection is open until then, so
+  holding the slot is correct. Python closes it for `break`, an exception and cancellation
+  (the last reference drops); a consumer that parks the iterator in a variable owns closing
+  it. The spec now states that contract, `direct.md` (en+ru) shows `aclosing`, and a test
+  pins both shapes.
+
+Not changed, flagged for the maintainer: streaming's `note_unmet_budget` records a
+time-to-first-delta budget into the same learned signal `chat` fills with a whole-attempt
+budget (valid in one direction, pessimistic in the other — a semantics call, not a bug);
+alias uniqueness is enforced on the file registry only, as with names; `AsyncDirectClient.stream`
+has the same non-SSE blindness that was just fixed in the router, but there is no failover
+there and it is outside this diff.
+
+### Review round 2 — fixes applied
+
+- **An SSE-framed provider error on HTTP 200 now cools down and fails over.**
+  Round 1's guard counted decoded chunks, so a body of
+  `data: {"error": …}` + `[DONE]` decoded one chunk, exited normally and
+  journaled `OK` — an empty answer handed to the caller with no exception and
+  no failover, while `chat` on the equivalent body cooled the model and moved
+  on. The guard now counts chunks carrying `choices`, which is what makes a
+  chunk a chat completion. Counting *deltas* instead would have rejected a
+  legitimately empty answer, so both shapes are pinned by tests.
+- **A name now identifies exactly one entry, and the file registry enforces it.**
+  §2 assumed this was already true; it was not. It became load-bearing when §6
+  started machine-forming names in the preset's own `<provider>-<model>`
+  convention: `add-model --provider google --model gemini-2.5-flash` into a
+  fresh file, then `preset freetier --merge`, produced a file carrying
+  `google-gemini-2.5-flash` in both `[[llms]]` and `[[custom]]`. Nothing
+  refused it, and every store keys on the name — a DB sync upserts, so one
+  entry vanished and the alias following it started raising
+  `UnknownModelError`. `Registry.load` now refuses a duplicate name across both
+  arrays, and `--merge` refuses to *write* one (before touching the file, so
+  atomicity holds). `add-model`'s own collision check already covered its half.
+- **`direct(name=…)` resolves the custom entry, not a pool namesake.** §3 says
+  "`name=` searches custom entries by name"; the code searched every entry and
+  raised `PoolModelError` on the first match, so a pool entry sorted ahead of
+  the user's own entry of that name made a real custom entry unreachable behind
+  a false error. The name keyspace is now custom-only, with pool entries
+  consulted solely to choose which error comes back.
+
+Spec: `architecture.md` gained the name-uniqueness invariant next to the two
+identifiers; `direct.md` (en+ru) documents the `--merge` refusal. Gate after the
+fixes: `invoke pre` clean, `python -m pytest` → **857 passed**, zero skips.
+
+Still not changed, and still flagged for the maintainer: streaming's
+`note_unmet_budget` records a time-to-first-delta budget into the signal `chat`
+fills with a whole-attempt budget (a semantics call); alias uniqueness is
+enforced on the file registry only; `AsyncDirectClient.stream` has the non-SSE
+blindness just fixed in the router, but has no failover to lose and is outside
+this diff.
+
+### Review round 3 — fixes applied
+
+- **`flash-mini` is out of the paid catalog.** It named `gemini-2.5-flash` at
+  the same endpoint, with the same `api_key_ref`, as the `freetier` preset's own
+  pool entry — so it machine-formed to that entry's name and `add-model` refused
+  it on any freetier config. Nothing was being sold there either: the billing
+  tier lives in the user's Google account, not in a config field. Removing it
+  before release is free; after one, the alias-permanence contract would have
+  made the collision permanent.
+- **The rule is now the catalog refresher's, not folklore.** §0a of
+  `paid-catalog-refresh-prompt.md` states that a model a shipped preset already
+  pools does not belong in the catalog, and §4 gained the mechanical check: no
+  `<provider id>-<model id>` in the catalog may equal a preset pool entry's
+  `name`.
+
+Still flagged for the maintainer, deliberately unfixed in this round: `--merge`
+reports only a changed `model` id, so a changed `api_key_ref` is never announced
+— when a refresh edits a provider block's ref and nothing else, the merge prints
+no line at all and the entry quietly starts needing an env var the user has
+never set (`MissingKeyError` at the next call). The same refusal message advises
+"rename the `[[custom]]` entry", which cannot work: an alias entry's name is
+machine-formed on every merge, before the check runs.
+
 ## Consumer follow-up (not part of this plan)
 
 echo-words (`spec/tickets/llmbroker-direct-streaming-client.md` and its implementation plan)

@@ -91,6 +91,78 @@ def test_load_custom_array_flags_and_pool(tmp_path):
     assert (configs["c-direct"].custom, configs["c-direct"].pooled) == (True, False)
 
 
+# ── alias ────────────────────────────────────────────────────────────────────
+
+
+def test_load_alias_on_custom_entry(tmp_path):
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[custom]]\nname="anthropic-claude-opus-4-8"\nalias="opus"\n'
+        'base_url="https://a/v1"\nmodel="claude-opus-4-8"\napi_key_ref="K"\npool=false\n'
+        '[[custom]]\nname="pinned"\nbase_url="https://b/v1"\nmodel="m"\napi_key_ref="K"\n'
+    )
+    configs = {c.name: c for c in asyncio.run(Registry(f).load())}
+    assert configs["anthropic-claude-opus-4-8"].alias == "opus"
+    assert configs["pinned"].alias is None
+
+
+def test_load_alias_on_llms_entry_is_a_config_error(tmp_path):
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[llms]]\nname="pool"\nalias="free"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
+    )
+    with pytest.raises(ValueError, match="aliases belong to"):
+        asyncio.run(Registry(f).load())
+
+
+def test_load_duplicate_aliases_refused(tmp_path):
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[custom]]\nname="a"\nalias="opus"\nbase_url="https://a/v1"\nmodel="m1"\napi_key_ref="K"\n'
+        '[[custom]]\nname="b"\nalias="opus"\nbase_url="https://b/v1"\nmodel="m2"\napi_key_ref="K"\n'
+    )
+    with pytest.raises(ValueError, match="duplicate alias"):
+        asyncio.run(Registry(f).load())
+
+
+def test_load_duplicate_names_across_arrays_refused(tmp_path):
+    """The shape a catalog refresh can produce: an alias entry renamed onto a
+    preset pool entry. A DB sync keys on the name and would lose one of them."""
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[llms]]\nname="google-gemini-2.5-flash"\nbase_url="https://g/v1"'
+        '\nmodel="gemini-2.5-flash"\napi_key_ref="K"\n'
+        '[[custom]]\nalias="flash-mini"\nname="google-gemini-2.5-flash"'
+        '\nmodel="gemini-2.5-flash"\nbase_url="https://g/v1"\napi_key_ref="K"\npool=false\n'
+    )
+    with pytest.raises(ValueError, match="duplicate name"):
+        asyncio.run(Registry(f).load())
+
+
+def test_llmconfig_alias_metadata_round_trip():
+    cfg = LLMConfig(
+        name="anthropic-claude-opus-4-8",
+        base_url="u",
+        model="claude-opus-4-8",
+        api_key_ref="K",
+        pooled=False,
+        custom=True,
+        alias="opus",
+    )
+    metadata = cfg.to_metadata()
+    assert metadata == {"pool": False, "custom": True, "alias": "opus"}
+    assert (
+        LLMConfig.from_metadata(
+            name=cfg.name,
+            base_url=cfg.base_url,
+            model=cfg.model,
+            api_key_ref=cfg.api_key_ref,
+            metadata=metadata,
+        )
+        == cfg
+    )
+
+
 # ── SQLite registry tests ─────────────────────────────────────────────────────
 
 
@@ -229,6 +301,21 @@ async def test_mutable_registry_parallel_round_trip(mutable_registry):
     await mutable_registry.mirror([cfg])
     result = {c.name: c for c in await mutable_registry.load()}
     assert result["p1"].parallel == 3
+
+
+async def test_mutable_registry_alias_round_trip(mutable_registry):
+    cfg = LLMConfig(
+        name="anthropic-claude-opus-4-8",
+        base_url="https://x/v1",
+        model="claude-opus-4-8",
+        api_key_ref="K",
+        pooled=False,
+        custom=True,
+        alias="opus",
+    )
+    await mutable_registry.mirror([cfg])
+    result = {c.name: c for c in await mutable_registry.load()}
+    assert result["anthropic-claude-opus-4-8"].alias == "opus"
 
 
 async def test_mutable_registry_parallel_none_round_trip(mutable_registry):

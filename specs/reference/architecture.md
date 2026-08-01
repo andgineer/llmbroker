@@ -68,6 +68,15 @@ special meaning. There is no per-model timeout knob and will not be one: a
 latency budget belongs to the call, not to the model, and a per-model number
 could not compose with failover.
 
+**For a stream, `wait` bounds the wait for the first delta.** A stream has no
+single "the attempt finished" moment, so the budget covers the one stretch that
+is still the broker's to rescue: acquiring a slot and reaching the first delta.
+Past it the pace is the consumer's as much as the model's — a caller that
+processes deltas slowly suspends the stream between them — so blaming the model
+for the wall clock there would be blaming it for its reader. The stream is not
+left unbounded: every read after the first delta stays under the global ceiling,
+so an endpoint that goes quiet mid-answer still dies rather than hanging.
+
 **A spent budget is never a model's fault.** When the caller's `wait` runs out
 while a model is answering, that model is not cooled down and its failure
 streak does not advance — the call raises `NoLLMAvailableError(reason="timeout")`
@@ -224,7 +233,15 @@ object as the first argument (instead of a string) skips dispatch entirely.
   it — so a first-time user needs no local file at all. Onboarding is folded into
   this command rather than a separate `setup`/`status` command, to keep the CLI
   surface small.
-- `python -m llmbroker preset <name>` — print a curated preset TOML to stdout (redirect to save: `preset freetier > freetier.toml`)
+- `python -m llmbroker preset <name>` — print a curated preset TOML to stdout
+  (redirect to save: `preset freetier > freetier.toml`), or `--merge FILE` to
+  refresh that file in place: the managed pool entries and their keys from the
+  preset, and every alias-following custom entry from the paid catalog (see
+  "Direct model access and stable aliases").
+- `python -m llmbroker add-model` — pick a paid provider and model from the
+  curated catalog and append it as a custom entry. It follows the catalog's
+  alias by default so later refreshes keep it current; `--pin` writes a
+  version-pinned entry instead, which no refresh touches.
 - `python -m llmbroker sync <preset> <db>` — mirror a preset TOML into a DB
   registry, `<db>` accepting any source dispatch form (sqlite path/URL,
   `postgresql://…`, `mongodb://…`); a DB-init CLI touchpoint for the same
@@ -387,6 +404,105 @@ verdicts are gone with it, since nothing survives outside the journal/disabled
 map that `sync` never touches (see "Provider seeding" below). See
 [`freetier-providers.md`](freetier-providers.md) for how the curated free-tier
 preset specifically is kept current.
+
+---
+
+## Direct model access and stable aliases
+
+Application code must not change when a model version changes. A deployment that
+follows the curated recommendation for "opus" keeps calling `direct("opus")`
+while the catalog moves that alias from one generation to the next; only the
+minority that genuinely needs a fixed version pins one.
+
+**Only user-owned `[[custom]]` entries are reachable directly.** Pointing
+`direct` at a preset-managed pool entry raises `PoolModelError`. The pool is
+anonymous by design: its members are reached through `ask`/`chat`/`stream`,
+which route and learn, and choosing or debugging an individual pool model from
+application code contradicts that. A model a host wants to call by name is a
+`[[custom]]` entry — that is what the array is for.
+
+**A custom entry carries two identifiers with disjoint roles.**
+
+- *name* — the full identity, following the convention preset entries already
+  use: the provider id, then the model id. It carries the version, and the
+  registry, journal, learning, and visibility all key on it exactly as they do
+  for pool entries. For an alias entry the tooling writes it, because it must
+  change when the followed version does.
+- *alias* — the eternal handle: what the application passes, and the id of the
+  catalog line the entry follows. It never carries a version.
+
+**Alias presence is the followed/pinned switch.** With an alias, the entry's
+provider fields are catalog-managed and a refresh rewrites them. Without one,
+the entry is entirely the user's and a refresh never touches it — a pin needs no
+syntax of its own.
+
+**Learning resets by name change, with no dedicated mechanism.** A refresh
+rewrites the model id and the entry name together, so journal rows for the old
+name orphan naturally and the new model starts clean. Scores learned for one
+version never carry to another.
+
+**The two lookup keyspaces are disjoint, and naming one is a version
+assertion.** A call names either an alias or a name, never one string that could
+be both — so there is no cross-uniqueness rule to enforce, call sites document
+themselves, and asking for an entry *by name* fails loudly once a refresh has
+moved the alias on, instead of silently running a newer model. A miss whose
+string exists in the other keyspace says so.
+
+**Aliases are unique across the whole catalog** and permanent: a published alias
+never disappears and never renames — a generation change re-points it at the
+successor model. A duplicate makes the catalog invalid and is refused with an
+error, like any other bad catalog.
+
+**A name identifies exactly one entry, across both arrays.** Every store keys on
+it — a DB registry's primary key, the live pool's slot map — so a config
+carrying a name twice does not raise an ambiguity to resolve later, it loses an
+entry at the next sync. An alias entry's name is machine-formed in the same
+`<provider>-<model>` convention preset pool entries use, so a catalog move can
+land one on the other; that is refused where it would be introduced (loading a
+config, and `--merge` before it writes anything) rather than tolerated. When a
+name does resolve, the user's own entry is what it means: `direct(name=…)`
+searches custom entries, and a pool entry of that name only decides which error
+comes back.
+
+**Refreshing is a file rewrite, never a runtime lookup.** `preset <name> --merge
+FILE` re-points every alias entry in the file at what the catalog now
+recommends, printing one line per change; an alias the catalog no longer knows
+is a warning and its entry is left untouched. The file stays the single source
+of truth and `sync` stays offline — nothing consults the catalog at runtime or
+at sync time.
+
+## Pool streaming
+
+The routed pool streams as well as it answers: deltas arrive as the provider
+produces them, over the same routing, failover, and journaling as a pooled call.
+It is async-only, like the direct client's streaming.
+
+**Failover ends at the first delta.** Every failure before it — a 429, a 5xx, a
+transport error, a malformed response — cools the model down and moves to the
+next candidate exactly as a non-streaming attempt would, through the same
+classification; there is not a second failure surface for streams. After the
+first delta the answer is already partly the caller's, and no design can rescue
+it: retrying elsewhere would either duplicate the text already delivered or
+splice two models' prose together. So a mid-stream death cools the model (it
+misbehaved no less than one failing earlier) and raises, carrying the model name
+and the underlying cause; the deltas already yielded stand.
+
+Each attempt journals one row, as `chat` does. **A consumer that stops pulling
+ends a successful attempt**, not a failed one: the model answered and did
+nothing wrong, so the row is `OK` — abandoning an iterator must never cost a
+model a *failure*.
+
+**The slot goes back when the iterator is closed, and closing it is the
+consumer's move.** An async generator has no other signal: the broker cannot
+tell "paused between deltas" from "never coming back", and the provider
+connection is still open either way, so holding the slot until close is correct
+rather than conservative. Python closes the iterator for the ordinary shapes —
+`break`, an exception through the loop, a cancelled task — because the last
+reference drops there. A consumer that keeps the iterator in a variable and
+walks away holds the slot until the event loop finalizes it, so a long-lived
+host that abandons streams that way must close them itself
+(`contextlib.aclosing`). This is the standard async-generator ownership
+contract, not a broker rule.
 
 ---
 
