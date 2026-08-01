@@ -28,7 +28,7 @@ config depends on, so it is governed by a permanence contract:
   re-points the existing alias at the successor model; it does not mint a new one.
   Dropping a model that still has a live alias breaks every config following it —
   either keep the alias pointing at the provider's successor, or accept that
-  `preset --merge` will warn on it forever.
+  `preset --sync` will warn on it forever.
 - **No version substring in an alias.** `opus`, `gpt-mini`, `flash` are aliases;
   `opus-4-8`, `gpt-5`, `flash-2-5` are not. The alias outlives the version by
   construction, so a version inside it is a contradiction.
@@ -38,12 +38,12 @@ config depends on, so it is governed by a permanence contract:
   entry's `name` is machine-formed `<provider id>-<model id>`, the same
   convention preset pool entries are named by, so a model this file shares with
   `presets/freetier.toml` produces a name no config can carry twice —
-  `add-model` and `preset --merge` both refuse it outright. Nor is there
+  `add-model` and `preset --sync` both refuse it outright. Nor is there
   anything to add: the endpoint and the `api_key_ref` are the same ones the
   preset already uses, and the billing tier lives in the user's provider
   account, not in any config.
 
-Aliases are what `llmbroker preset <name> --merge FILE` follows: for each of the
+Aliases are what `llmbroker preset <name> --sync FILE` follows: for each of the
 user's entries carrying an alias it rewrites `model`, `name`, `base_url`, and
 `api_key_ref` from this file. That is the whole point of a refresh — so an alias
 whose target you change here changes the model of every deployment following it.

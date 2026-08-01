@@ -88,40 +88,97 @@ provider may expose ten models yet only one is genuinely usable).
 
 ## Curated providers
 
+Last refreshed 2026-08-01.
+
 | Key (`api_key_ref`) | Best free model | Effort | Value | RPM | RPD | Get a key |
 |---|---|---|---|---|---|---|
-| `GEMINI_API_KEY` | Gemini 2.5 Flash | `oauth` | `high` | 15 | 1,500 | <https://aistudio.google.com/apikey> |
-| `GROQ_API_KEY` | llama-3.3-70b-versatile | `signup` | `good` | 30 | 1,000 | <https://console.groq.com/keys> |
-| `OPENROUTER_API_KEY` | gpt-oss-120b `:free` | `signup` | `good` | 20 | 50 / 1,000 | <https://openrouter.ai/keys> |
+| `GEMINI_API_KEY` | Gemini 3.5 Flash-Lite | `oauth` | `high` | 15 | 500 | <https://aistudio.google.com/apikey> |
+| `GROQ_API_KEY` | openai/gpt-oss-120b | `signup` | `good` | 30 | 1,000 | <https://console.groq.com/keys> |
+| `OPENROUTER_API_KEY` | Nemotron 3 Ultra + Laguna S 2.1 `:free` | `signup` | `high` | 20 | 50 / 1,000 | <https://openrouter.ai/keys> |
 
 Per-provider notes:
 
-- **Gemini 2.5 Flash** — frontier-adjacent, multimodal, ~1M context; the largest
-  daily cap of the three. Google's docs publish no fixed numbers (limits are
-  per-project and shown only in the AI Studio dashboard), so Gemini figures are
-  nominal and may vary by project/region/billing state.
-- **Groq** — solid general model; Groq's standout is extreme inference speed.
-  Limits apply at the organization level. Cached tokens do not count toward
-  limits.
-- **OpenRouter** — capable open MoE, plus aggregator access to many free models
-  under one key. The daily cap is 50 RPD with under $10 lifetime credit purchased,
-  rising to 1,000 RPD once $10+ has been purchased (a one-time, never-expiring
-  top-up). **All `:free` models share one account-wide daily quota**, so carrying
-  more than one OpenRouter free model adds no availability.
+- **Gemini** — the free tier reaches the whole Flash family, but at sharply
+  different daily caps: the Flash models (2.5 / 3.5 / 3.6) get 20 RPD, while
+  Flash-Lite gets 500 RPD at 15 RPM. Flash-Lite is therefore the pooled entry —
+  25× the daily cap for the same Artificial Analysis intelligence index (50, tied
+  with 3.6 Flash). Pro-series models are paid-only. Limits are per-project and
+  shown in the AI Studio dashboard, so these figures are nominal and may vary by
+  project/region/billing state.
+- **Groq** — only Groq's *production* models belong in the pool; preview models
+  are documented as evaluation-only. `openai/gpt-oss-120b` is the strongest of
+  those, and carries double the daily token cap of llama-3.3-70b-versatile
+  (200K vs 100K TPD) at the same 1,000 RPD. Groq's standout is extreme inference
+  speed. Limits apply at the organization level; cached tokens do not count
+  toward them.
+- **OpenRouter** — aggregator access to many free models under one key, but the
+  free lineup churns hard: endpoints are delisted with no notice (`openai/gpt-oss-120b:free`
+  disappeared entirely, leaving only the paid variant), so this entry needs
+  re-checking against the live models API every refresh. `nvidia/nemotron-3-ultra-550b-a55b:free`
+  is the strongest survivor — 550B/55B-active hybrid Mamba-Transformer MoE, 1M
+  context, Artificial Analysis intelligence index 47.7, the highest of any US
+  open-weight model and far above gpt-oss-120b (33.3). The free endpoint requires
+  consenting to NVIDIA's data collection. `poolside/laguna-s-2.1:free` is the
+  second entry, chosen for its upstream as much as its strength: Poolside serves
+  its own model, so its failures are uncorrelated with Nvidia's. It is a
+  118B/8B-active MoE with 1M context, built for agentic coding — SWE-Bench
+  Multilingual 78.5%, SWE-Bench Pro 59.4%, Terminal-Bench 2.1 70.2%, ahead of
+  Nemotron 3 Ultra on that ground while answering general prompts fine.
+  The daily cap is 50 RPD with under $10 lifetime credit purchased, rising to
+  1,000 RPD once $10+ has been purchased (a one-time, never-expiring top-up).
+- **OpenRouter hosts nothing itself** — every model is routed to an upstream, and
+  a `:free` model has exactly one upstream endpoint with no fallback behind it
+  (the paid slug of the same model has several, and OpenRouter switches between
+  them). So a free entry inherits its upstream's outages directly, and an
+  occasional HTTP 200 carrying an error body instead of a completion is expected
+  rather than exceptional. The pool absorbs it: the router classifies that as a
+  failover error and cools the entry.
 
-`nvidia/nemotron-3-super-120b-a12b:free` is a notable OpenRouter free model —
-stronger than gpt-oss-120b on coding/agentic work (SWE-Bench Verified ~60.5 vs
-~41.9), weaker on conversational quality (Arena-Hard ~73.9 vs ~90.3), comparable
-overall. It is excluded from the catalog because it shares OpenRouter's single
-free quota with gpt-oss-120b and llmbroker has no quality-aware routing to exploit
-the difference.
+An aggregator therefore earns more than one pool entry, on the strict condition
+that the entries resolve to *different* upstreams. The quota argument cuts one way
+only: **all `:free` models share one account-wide daily quota**, so a second entry
+adds no requests, and quota exhaustion — the free tier's longest outage, lasting
+until the daily reset — is not helped by it at all. What a second entry does add is
+independence from one upstream's failures, and that matters most in the pool's
+smallest configuration. Onboarding is ranked by effort, so a user may hold the
+OpenRouter key alone, precisely because one key reaches many upstreams; with a
+single entry that user has no failover whatsoever. Two entries on two upstreams
+give them one. Entries sharing an upstream (the seven `nemotron` models all resolve
+to Nvidia) add nothing on either axis.
+
+---
+
+## Curation rules for adding and removing entries
+
+What a curated update may do is bounded by what a downstream sync will do with
+it (see "Syncing the lineup" in [`architecture.md`](architecture.md)).
+
+- **A same-provider replacement removes the old entry.** The two usually share
+  one provider quota, and a still-endorsed old model would keep spending it on
+  worse answers. Downstream this is free: the arrival carries the old entry's
+  `api_key_ref`, so the sync pairs them and removes it with no key involved.
+- **Dropping the last entry of a provider is a removal downstream installations
+  follow only when the same update gives them a usable replacement.** A provider
+  therefore leaves the preset when it is no longer worth a slot; installations
+  that cannot use the newcomer keep a working model instead of losing one, and
+  the sync report names it on every run so an admin can act.
+- **Consequently a curated update that drops a provider without adding one
+  prunes nothing downstream.** That is intended, not a gap to close: the
+  alternative is an update that silently shrinks a pool. A future curator should
+  not try to "fix" it by dropping more.
+- **A model bump is a new entry name**, never an in-place `model` change — a
+  sync refuses that, since learned quality is bound to the entry name.
 
 ---
 
 ## Candidate providers (not yet in the catalog)
 
-- **Cerebras** — `gpt-oss-120b` and Llama 3.1 8B free, very fast, no card
-  (`signup`). A strong candidate addition.
+- **Cerebras** — extremely fast, and the only free tier here with no daily
+  *request* cap (5 RPM, 30K TPM, 1M TPD). Held back for two reasons: its one
+  production model is the `gpt-oss-120b` the Groq entry already carries, so it
+  buys another quota bucket rather than another capability (its `zai-glm-4.7` and
+  `gemma-4-31b` are preview-only); and free credits now require adding a verified
+  payment method, which makes it `verify`, not `signup`.
 - **Mistral La Plateforme** — free "Experiment" tier requires phone verification
   and opting into data-training (`verify`).
 
@@ -131,10 +188,16 @@ the difference.
 
 Authoritative provider docs (best for exact numbers):
 
-- Groq rate limits — <https://console.groq.com/docs/rate-limits>
-- OpenRouter limits — <https://openrouter.ai/docs/api/reference/limits>
-- Gemini rate limits — <https://ai.google.dev/gemini-api/docs/rate-limits>
-  (points to the per-project dashboard at <https://aistudio.google.com/rate-limit>)
+- Groq rate limits — <https://console.groq.com/docs/rate-limits>; production vs
+  preview tier — <https://console.groq.com/docs/models>
+- OpenRouter limits — <https://openrouter.ai/docs/api/reference/limits>; the live
+  free lineup — <https://openrouter.ai/api/v1/models>, filtered on ids ending
+  `:free`. That endpoint is the only reliable check that a `:free` model still
+  exists, and needs no key.
+- Gemini free-tier availability — <https://ai.google.dev/gemini-api/docs/pricing>;
+  rate limits — <https://ai.google.dev/gemini-api/docs/rate-limits> (which publishes
+  no free-tier table, pointing instead at the per-project dashboard at
+  <https://aistudio.google.com/rate-limit>)
 
 Community trackers (breadth, cross-checking):
 

@@ -11,7 +11,7 @@ Background reading before you start (do not skip):
   curated providers, and the sources list. This is the document you refresh.
 - [`../specs/reference/architecture.md`](../specs/reference/architecture.md) and
   [`../specs/reference/optimizer.md`](../specs/reference/optimizer.md) — the
-  two-halves catalog and `SeedPolicy.SYNC`, which govern how a refreshed
+  two-halves catalog and the sync removal rule, which govern how a refreshed
   preset lands on a running deployment. You do not implement this behavior;
   you must not violate its invariants (see Guardrails below).
 - `src/llmbroker/models.py` — the `EffortLevel` and `ValueLevel` enums. These
@@ -52,9 +52,21 @@ For each candidate provider/model, using the taxonomies fixed in
 ## 3. Apply the curation rules
 
 - One genuinely useful model per provider — curate, do not pad.
-- Drop a model that adds no availability: e.g. a second OpenRouter `:free`
-  model sharing the same account-wide daily quota as one already in the
-  catalog — there is no quality-aware routing to exploit the difference.
+- Drop a model that adds no availability: another entry drawing on the same
+  quota *and* the same upstream buys nothing, since there is no quality-aware
+  routing to exploit the difference.
+- **An aggregator is the exception, and it must be checked, not assumed.** A
+  provider that hosts nothing itself (OpenRouter) routes each model to an
+  upstream, and a free model usually has exactly one upstream with no fallback
+  behind it — so it inherits that upstream's outages whole. Two entries on two
+  different upstreams are therefore worth two slots even though they share one
+  account-wide quota: onboarding is ranked by effort, so a user may hold that
+  key *alone* — precisely because one key reaches many upstreams — and a single
+  entry leaves them with no failover at all. Two entries sharing an upstream
+  remain worthless. Resolve the upstream per model from
+  `https://openrouter.ai/api/v1/models/<author>/<slug>:free/endpoints` (the
+  `provider_name` field); never infer it from the model's author, which is a
+  different thing.
 - Keep the pool multi-provider. A single-provider or paid-tier preset
   defeats the premise of pooling independent quota buckets.
 
@@ -63,24 +75,32 @@ For each candidate provider/model, using the taxonomies fixed in
 - **A model bump is a new entry with a new name.** Never change the `model`
   field of an existing `[[llms]]` entry — encode the version in the entry
   name instead (e.g. `groq-llama-3.3-70b` → `groq-llama-4-70b`) so old and
-  new versions coexist as distinct entries. `SeedPolicy.SYNC` refuses an
-  in-place `model` change with an alert; the deployment's learned evidence
-  under the old name is about the old model.
-- **Removing an entry from the preset is safe and cheap.** At deployments,
-  `SYNC` turns a removal into deprecation — a reversible, last-resort
-  demotion, not data loss.
+  new versions coexist as distinct entries. A sync refuses an in-place `model`
+  change; the deployment's learned evidence under the old name is about the
+  old model.
 - **When a strictly better sibling replaces an old model, remove the old
   entry.** They usually share one provider quota; leaving both in the preset
   means a still-endorsed old model keeps burning shared quota on worse
-  answers.
+  answers. Downstream this costs nothing: the arrival carries the same
+  `api_key_ref`, so the sync pairs the two and drops the old entry without
+  consulting any key.
+- **Dropping the last entry of a provider only prunes downstream when the same
+  update gives installations a replacement they can call.** A sync removes an
+  entry the preset dropped only if an arrival pays for it — with the same key,
+  or with one the installation has. So an update that removes a provider
+  without adding one prunes nothing downstream: those installations keep a
+  working model, and their sync report names it on every run until an admin
+  sets the key that would unlock the cleanup. That is intended. Do not "fix"
+  it by removing more.
 - Keep sibling models from one provider in the preset simultaneously only as
-  a deliberate decision (e.g. genuinely different quota pools), never as
-  leftovers from a half-finished refresh.
+  a deliberate decision (genuinely different quota pools, or an aggregator's
+  genuinely different upstreams), never as leftovers from a half-finished
+  refresh. State which of the two it is in the diff summary.
 - **A model `presets/paid-catalog.toml` lists does not belong in this pool.**
   Pool entries here are named `<provider id>-<model id>`, and an entry added
   from the catalog takes a machine-formed name of exactly that shape, so a model
   held by both files makes a name no config can carry twice — `add-model` and
-  `preset --merge` refuse it. If the
+  `preset --sync` refuse it. If the
   model belongs in the free pool, take it out of the catalog instead: the
   endpoint and the `api_key_ref` are the same either way, and the billing tier
   lives in the user's provider account, not in a config field.

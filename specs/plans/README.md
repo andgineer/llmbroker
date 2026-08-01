@@ -9,14 +9,16 @@ over a stale plan, gate on `invoke pre` + `pytest` after every batch, never bump
 never commit unasked, and leave the plan file in place for review. Nothing needs to be restated in
 the request. The plan and its row here are removed only after review and merge, on request.
 
-Statuses as of 2026-08-01: `preset-sync.md` and `llm-judge.md` are not started.
+Statuses as of 2026-08-01: `preset-sync.md` is implemented and under review; `pool-lifecycle.md`
+and `llm-judge.md` are not started.
 
 ## Order
 
 | # | Plan | Issue | Blocked by | Notes |
 |---|---|---|---|---|
 | 1 | `preset-sync.md` | — | — | Closes the zero-admin gap in the mission; changes the `sync` API surface |
-| 2 | `llm-judge.md` | #8 | — | Largest new feature, no waiting consumer |
+| 2 | `pool-lifecycle.md` | — | #1 | Ships in the same release as #1: replaces its removal rule, adds pool-health visibility |
+| 3 | `llm-judge.md` | #8 | — | Largest new feature, no waiting consumer |
 
 ## Why this order
 
@@ -24,7 +26,11 @@ Statuses as of 2026-08-01: `preset-sync.md` and `llm-judge.md` are not started.
 changes the public `sync` signature — better landed before new consumers of the API appear. It is
 independent of the judge; neither blocks the other.
 
-**#2, the judge,** is the largest purely-new feature and nothing external waits for it. It
+**#2 must not ship without #1.** It replaces #1's removal rule outright — releasing #1 alone would
+publish a rule whose own report makes a promise it cannot keep, and a file writer that can corrupt
+a config. Review them as one change.
+
+**#3, the judge,** is the largest purely-new feature and nothing external waits for it. It
 carries one prerequisite of its own: the `operation` filter can select a named operation but not
 the unlabelled bucket, which stops being harmless as soon as the judge journals traffic under
 `llmbroker.judge`. The plan states what must close.

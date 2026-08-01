@@ -2,21 +2,29 @@
 # Fill the api_key_ref env vars: `python -m llmbroker env presets/freetier.toml > .env`
 
 [[llms]]
-name        = "groq-llama-3.3-70b"
+name        = "groq-gpt-oss-120b"
 base_url    = "https://api.groq.com/openai/v1"
-model       = "llama-3.3-70b-versatile"
+model       = "openai/gpt-oss-120b"
 api_key_ref = "GROQ_API_KEY"
 
+# Two OpenRouter entries on purpose: they resolve to different upstreams (Nvidia,
+# Poolside), so a key held alone still has somewhere to fail over to.
 [[llms]]
-name        = "openrouter-gpt-oss-120b"
+name        = "openrouter-nemotron-3-ultra"
 base_url    = "https://openrouter.ai/api/v1"
-model       = "openai/gpt-oss-120b:free"
+model       = "nvidia/nemotron-3-ultra-550b-a55b:free"
 api_key_ref = "OPENROUTER_API_KEY"
 
 [[llms]]
-name        = "google-gemini-2.5-flash"
+name        = "openrouter-laguna-s-2.1"
+base_url    = "https://openrouter.ai/api/v1"
+model       = "poolside/laguna-s-2.1:free"
+api_key_ref = "OPENROUTER_API_KEY"
+
+[[llms]]
+name        = "google-gemini-3.5-flash-lite"
 base_url    = "https://generativelanguage.googleapis.com/v1beta/openai"
-model       = "gemini-2.5-flash"
+model       = "gemini-3.5-flash-lite"
 api_key_ref = "GEMINI_API_KEY"
 
 # Per-provider onboarding: how to get the key, how hard it is (effort), and how
@@ -29,7 +37,7 @@ help   = "Create a free API key at [groq](https://console.groq.com/keys) (sign i
 
 [keys.OPENROUTER_API_KEY]
 effort = "signup"
-value  = "good"
+value  = "high"
 help   = "Create a free API key at [openrouter](https://openrouter.ai/keys)."
 
 [keys.GEMINI_API_KEY]

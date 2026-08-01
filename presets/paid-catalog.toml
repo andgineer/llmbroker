@@ -3,8 +3,8 @@
 #
 # Model ids below were read from each provider's own authoritative docs on the
 # `verified` date. Re-run `presets/paid-catalog-refresh-prompt.md` to refresh
-# them and add more providers (xAI, Mistral, DeepSeek, ...).
-# refreshed = "2026-07-20"
+# them and add more providers (Mistral, ...).
+# refreshed = "2026-08-01"
 
 [[provider]]
 id          = "anthropic"
@@ -15,21 +15,21 @@ key_help    = "Create a key at https://console.anthropic.com/ (paid)."
 
   [[provider.models]]
   alias    = "opus"
-  model    = "claude-opus-4-8"
-  label    = "Claude Opus 4.8 — recommended default for complex agentic/enterprise work"
-  verified = "https://platform.claude.com/docs/en/docs/about-claude/models/overview (2026-07-20)"
+  model    = "claude-opus-5"
+  label    = "Claude Opus 5 — recommended default for complex agentic coding and enterprise work"
+  verified = "https://platform.claude.com/docs/en/docs/about-claude/models/overview (2026-08-01)"
 
   [[provider.models]]
   alias    = "fable"
   model    = "claude-fable-5"
   label    = "Claude Fable 5 — most capable, for long-running agents"
-  verified = "https://platform.claude.com/docs/en/docs/about-claude/models/overview (2026-07-20)"
+  verified = "https://platform.claude.com/docs/en/docs/about-claude/models/overview (2026-08-01)"
 
   [[provider.models]]
   alias    = "sonnet"
   model    = "claude-sonnet-5"
   label    = "Claude Sonnet 5 — best speed/intelligence balance, lower cost"
-  verified = "https://platform.claude.com/docs/en/docs/about-claude/models/overview (2026-07-20)"
+  verified = "https://platform.claude.com/docs/en/docs/about-claude/models/overview (2026-08-01)"
 
 [[provider]]
 id          = "openai"
@@ -42,13 +42,13 @@ key_help    = "Create a key at https://platform.openai.com/api-keys (paid)."
   alias    = "gpt"
   model    = "gpt-5.6-sol"
   label    = "GPT-5.6 Sol — frontier model for complex professional work"
-  verified = "https://developers.openai.com/api/docs/models (2026-07-20)"
+  verified = "https://developers.openai.com/api/docs/models (2026-08-01)"
 
   [[provider.models]]
   alias    = "gpt-mini"
   model    = "gpt-5.6-terra"
   label    = "GPT-5.6 Terra — balances intelligence and cost"
-  verified = "https://developers.openai.com/api/docs/models (2026-07-20)"
+  verified = "https://developers.openai.com/api/docs/models (2026-08-01)"
 
 [[provider]]
 id          = "google"
@@ -59,6 +59,38 @@ key_help    = "Create a key at https://aistudio.google.com/apikey (paid tier)."
 
   [[provider.models]]
   alias    = "flash"
-  model    = "gemini-3.5-flash"
-  label    = "Gemini 3.5 Flash — most intelligent, agentic and coding"
-  verified = "https://ai.google.dev/gemini-api/docs/models (2026-07-20)"
+  model    = "gemini-3.6-flash"
+  label    = "Gemini 3.6 Flash — latest stable Flash, fastest production inference"
+  verified = "https://ai.google.dev/gemini-api/docs/models (2026-08-01)"
+
+[[provider]]
+id          = "xai"
+label       = "xAI (Grok)"
+base_url    = "https://api.x.ai/v1"
+api_key_ref = "XAI_API_KEY"
+key_help    = "Create a key at https://console.x.ai/ (paid)."
+
+  [[provider.models]]
+  alias    = "grok"
+  model    = "grok-4.5"
+  label    = "Grok 4.5 — xAI's most intelligent and fastest model, for code and chat"
+  verified = "https://docs.x.ai/docs/models (2026-08-01)"
+
+[[provider]]
+id          = "deepseek"
+label       = "DeepSeek"
+base_url    = "https://api.deepseek.com"
+api_key_ref = "DEEPSEEK_API_KEY"
+key_help    = "Create a key at https://platform.deepseek.com/ (paid)."
+
+  [[provider.models]]
+  alias    = "deepseek"
+  model    = "deepseek-v4-pro"
+  label    = "DeepSeek V4 Pro — flagship for hard reasoning, knowledge, coding and agents"
+  verified = "https://api-docs.deepseek.com/quick_start/pricing (2026-08-01)"
+
+  [[provider.models]]
+  alias    = "deepseek-flash"
+  model    = "deepseek-v4-flash"
+  label    = "DeepSeek V4 Flash — fast, low-cost sibling for high-volume work"
+  verified = "https://api-docs.deepseek.com/quick_start/pricing (2026-08-01)"
