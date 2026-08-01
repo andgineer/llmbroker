@@ -242,6 +242,34 @@ def _custom_key_tail(
     return keys
 
 
+def _custom_block(entry: dict) -> str:
+    """One ``[[custom]]`` section. The header is written here rather than left to
+    ``tomli_w``, which renders a short array of tables as an inline top-level key —
+    written after a trailing ``[keys.*]`` table that parses as a member of that table."""
+    return f"[[custom]]\n{tomli_w.dumps(entry).rstrip()}"
+
+
+def _write_atomic(target: Path, text: str) -> None:
+    """Write through a sibling temp file and rename, so a crash mid-write cannot
+    truncate the config the user already has."""
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        delete=False,
+    ) as fh:
+        fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+        tmp = Path(fh.name)
+    try:
+        os.replace(tmp, target)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def _merge_preset(preset_text: str, name: str, target: Path) -> int:
     """Refresh the managed ``[[llms]]`` + ``[keys]`` in ``target`` from a fresh preset,
     keeping the user's ``[[custom]]`` models and their keys. A custom entry carrying an
@@ -280,16 +308,11 @@ def _merge_preset(preset_text: str, name: str, target: Path) -> int:
         new_key_help,
     )
 
-    tail: dict = {}
-    if custom_entries:
-        tail["custom"] = custom_entries
-    if custom_keys:
-        tail["keys"] = custom_keys
-
     parts = [preset_text.rstrip("\n")]
-    if tail:
-        parts.append(tomli_w.dumps(tail).rstrip("\n"))
-    target.write_text("\n\n".join(parts) + "\n", encoding="utf-8")
+    parts.extend(_custom_block(entry) for entry in custom_entries)
+    if custom_keys:
+        parts.append(tomli_w.dumps({"keys": custom_keys}).rstrip("\n"))
+    _write_atomic(target, "\n\n".join(parts) + "\n")
     print(f"merged preset '{name}' into {target} (kept {len(custom_entries)} [[custom]] entries)")
     return 0
 
@@ -482,16 +505,14 @@ def _append_custom_entry(  # noqa: PLR0913
             "pool": pooled,
         },
     )
-    block: dict = {"custom": [entry]}
+    parts = [_custom_block(entry)]
     if ref not in existing.get("keys", {}) and prov.get("key_help"):
-        block["keys"] = {ref: {"help": str(prov["key_help"])}}
+        keys = {ref: {"help": str(prov["key_help"])}}
+        parts.append(tomli_w.dumps({"keys": keys}).rstrip("\n"))
 
-    rendered = tomli_w.dumps(block).rstrip("\n")
     if target.exists():
-        with target.open("a", encoding="utf-8") as fh:
-            fh.write("\n" + rendered + "\n")
-    else:
-        target.write_text(rendered + "\n", encoding="utf-8")
+        parts.insert(0, target.read_text(encoding="utf-8").rstrip("\n"))
+    _write_atomic(target, "\n\n".join(parts) + "\n")
 
     reach = f"direct({alias!r})" if alias is not None else f"direct(name={name!r})"
     print(f"added [[custom]] '{name}' ({model_id}) to {target} — reach it with {reach}")

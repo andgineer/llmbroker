@@ -173,6 +173,19 @@ def test_preset_merge_creates_file_when_absent(tmp_path):
     assert "custom" not in data
 
 
+def test_preset_merge_keeps_a_short_custom_entry_out_of_the_keys_table(tmp_path):
+    """A custom entry short enough for tomli_w to render inline must still land as a
+    top-level [[custom]] entry, not inside the preset's trailing [keys.*] table."""
+    f = tmp_path / "llms.toml"
+    f.write_text('[[custom]]\nname="l"\nbase_url="http://h/v1"\nmodel="m"\napi_key_ref="K"\n')
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_FRESH_PRESET)):
+        rc = main(["preset", "freetier", "--merge", str(f)])
+    assert rc == 0
+    data = tomllib.loads(f.read_text())
+    assert [e["name"] for e in data["custom"]] == ["l"]
+    assert "custom" not in data["keys"]["GROQ_API_KEY"]
+
+
 _REFRESH_CATALOG = (
     b'[[provider]]\nid="anthropic"\nlabel="Anthropic"\n'
     b'base_url="https://api.anthropic.com/v2"\napi_key_ref="ANTHROPIC_API_KEY"\n'
@@ -524,6 +537,40 @@ def test_add_model_does_not_duplicate_existing_key(tmp_path):
     assert rc == 0
     data = tomllib.loads(f.read_text())  # still valid TOML, key kept once
     assert data["keys"]["ANTHROPIC_API_KEY"]["help"] == "existing help"
+
+
+_SHORT_CATALOG = (
+    b'[[provider]]\nid="h"\nlabel="H"\nbase_url="http://h"\napi_key_ref="K"\n'
+    b'key_help="hh"\n  [[provider.models]]\n  alias="m"\n  model="m"\n'
+    b'  label="M"\n  verified="u"\n'
+)
+
+
+def test_add_model_keeps_a_short_entry_out_of_a_trailing_keys_table(tmp_path):
+    """A catalog entry short enough for tomli_w to render inline must still land as a
+    top-level [[custom]] entry, not inside the file's trailing [keys.*] table."""
+    f = tmp_path / "llms.toml"
+    f.write_text('[keys.POOL_KEY]\nhelp = "pool help"\n')
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_SHORT_CATALOG)):
+        rc = main(
+            [
+                "add-model",
+                "--into",
+                str(f),
+                "--provider",
+                "h",
+                "--model",
+                "m",
+                "--pin",
+                "--name",
+                "x",
+            ]
+        )
+    assert rc == 0
+    data = tomllib.loads(f.read_text())
+    assert [e["name"] for e in data["custom"]] == ["x"]
+    assert "custom" not in data["keys"]["POOL_KEY"]
+    assert data["keys"]["K"]["help"] == "hh"
 
 
 def test_add_model_interactive(tmp_path, capsys):
