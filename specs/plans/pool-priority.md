@@ -1,13 +1,11 @@
 # Pool priority: a curated weight that survives storage, shrunk toward host quality ratings
 
-**Depends on `preset-autorefresh.md` and ships after it.** Two of its results decide this plan's
-shape. Its identity gate defines when a fetched lineup "changes nothing" — this plan adds a
-persisted field to `LLMConfig`, so the comparison must account for it, and doing that once, after
-the gate exists, is one edit instead of a rebase. And once a refresh runs unattended on a daily
-clock, a curated weight is something an installation adopts without an admin reading it, which
-raises the bar on §5's rubric and on the validation in §6.
-
-Line anchors below are current-main numbers; `preset-autorefresh.md` moves them.
+**The preset auto-refresh is shipped, and two of its results decide this plan's shape.** Its
+identity gate defines when a fetched lineup "changes nothing": the registry target compares entries
+keyed by name, so a persisted weight on `LLMConfig` joins that comparison by itself and this plan
+owes it a test rather than a mechanism. And a refresh now runs unattended on a daily clock, so a
+curated weight is something an installation adopts without an admin reading it — which raises the
+bar on §5's rubric and on the validation in §6.
 
 ## The problem
 
@@ -135,9 +133,10 @@ backend by itself. This section is nonetheless a required *test* (§6): the roun
 defect this plan exists to fix, and it must have a regression test on a real backend, not a
 reasoned assurance.
 
-**`preset-autorefresh.md` §2's identity gate** must treat a changed weight as a change. Confirm
-against that plan's implementation, which lands first; if it compares rendered TOML, §2's
-`_entry_dict` edit covers it for free, and the test in §6 says so either way.
+**The sync's identity gate** must treat a changed weight as a change. It already does on both
+targets — the file branch compares the rendered TOML, which §2's `_entry_dict` edit feeds, and the
+registry branch compares entries by name, which picks up any new `LLMConfig` field. §6 tests it
+rather than assuming it.
 
 ## 3. Blending prior with evidence — `optimizer.py`
 

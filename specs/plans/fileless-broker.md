@@ -1,15 +1,16 @@
 # The fileless broker: `Broker()` for the free pool, `direct=` for paid models
 
-**Depends on `preset-autorefresh.md` and ships after it.** It builds the three things this plan
-stands on: the home directory, the cached preset text with the bundled/offline fallback chain, and
-the unconditional daily refresh. Without them a registry-less broker would fetch on every start and
-die without network.
+**The preset auto-refresh is shipped, and this plan stands on three of its results**: the home
+directory (`llmbroker/home.py`), the cached preset text with its offline fallback, and the
+unconditional daily refresh. Without them a registry-less broker would fetch on every start and die
+without network. What this plan still owes that chain is its floor — a preset bundled in the wheel
+(§5), so a first run with no network and no cache has something to start from.
 
 Both halves below ship in **one release**. A zero-config broker with no way to declare a paid model
 is incomplete — the config file is currently the only place to declare one, and this plan removes
 the need for the file.
 
-Line anchors are current-main numbers; the two plans queued ahead of this one move them.
+Line anchors are current-main numbers; the plan queued ahead of this one moves them.
 
 ## The problem
 
@@ -17,8 +18,8 @@ Line anchors are current-main numbers; the two plans queued ahead of this one mo
 
 1. *It declares the pool.* Today the user is told to materialize the curated preset by hand:
    `llmbroker preset freetier > llms.toml`. This is a ritual with no decision in it — the user does
-   not choose anything, does not edit anything, and (after `preset-autorefresh.md`) does not
-   maintain anything either. The pool is ours; asking the user to keep a copy of it is asking
+   not choose anything, does not edit anything, and — now that the lineup refreshes itself — does
+   not maintain anything either. The pool is ours; asking the user to keep a copy of it is asking
    them to hold our state.
 2. *It declares paid direct models.* `[[custom]]` entries — a paid model reached by name through
    `direct()`, never routed by the pool. This is a real declaration with real content, but it is
@@ -44,7 +45,7 @@ all: it declares models the pool never touches.
 1. **The pool is exactly the curated preset.** Nothing a user declares ever enters it. This is the
    invariant the rest of the plan follows from.
 2. **`Broker()` works with no arguments** — the free pool, keys from the environment, everything
-   llmbroker needs to remember in the home directory from `preset-autorefresh.md`.
+   llmbroker needs to remember in the home directory.
 3. **`direct=` declares paid models**, in two forms and no others: a *catalog alias* (`"opus"`) whose
    version we track, or a full `LLMConfig` whose version the user tracks. The parameter is named for
    what those models are — they are reached with `broker.direct(...)`, never by the router.
@@ -81,12 +82,11 @@ registry source")` when `registry is None`. Instead it builds the default instal
 | secrets | `Secrets(Path(".env"))` — process env first, the CWD `.env` as fallback | where a script's keys are; matches what a file registry already does with its sibling `.env` |
 | store | `FileStore(<home>/store)` | §1.2 |
 
-With no writable home (`preset-autorefresh.md` §1 returns `None`), the registry is an in-memory
+With no writable home (`home_dir()` returns `None`), the registry is an in-memory
 one seeded per run from the cached-or-bundled preset and the store is `InMemoryStore` — the
 broker still works, it just remembers nothing between runs.
 
-The refresh from `preset-autorefresh.md` applies unchanged: the lineup file is a file registry
-like any other.
+The shipped refresh applies unchanged: the lineup file is a file registry like any other.
 
 ### 1.2 Why the journal is machine-global here, and why that is right
 
@@ -99,7 +99,7 @@ Sharing one journal across every project on the machine is not a compromise but 
 in this mode the keys come from the environment, so **the quota being tracked really is one pool**.
 The case where it is not — two projects with different keys — is already handled, because 429 and
 dead-key detection scope by `key_hash` (`learning.py:168`). A project that wants full isolation
-passes `home=` (`preset-autorefresh.md` §1.2).
+passes `home=`.
 
 ## 2. `direct=`
 
@@ -125,7 +125,7 @@ At provision, in `Catalog`, after the registry load and before `_reconcile`:
 
 - an `LLMConfig` is taken as given, forced to `custom=True`;
 - a `str` is resolved against the paid catalog — cached in the home directory and refreshed on
-  `preset-autorefresh.md`'s clock — through the existing `catalog_alias_index`
+  the refresh's own clock — through the existing `catalog_alias_index`
   (`upstream.py:119`), producing an entry with
   `alias` set to the requested handle, `model` and `base_url` and `api_key_ref` from the catalog,
   and `name` formed as `f"{provider_id}-{model_id}"` (the same shape `cli.py:280` writes today);
@@ -192,8 +192,9 @@ needs, and shipping `direct=` on top of a broken version-follower would bake the
 ## 5. Shipping the preset in the wheel
 
 `presets/*.toml` sit in the repository root while the package is built from `src/`
-(`pyproject.toml:37-40`), so **no preset reaches the installed wheel**. `preset-autorefresh.md`'s fallback chain
-therefore has no floor: a first run with no network and a cold cache has nothing to fall back to.
+(`pyproject.toml:37-40`), so **no preset reaches the installed wheel**. The refresh's fallback
+chain therefore has no floor: a first run with no network and a cold cache has nothing to fall back
+to.
 
 - `presets/freetier.toml` and `presets/paid-catalog.toml` move to `src/llmbroker/presets/`, declared
   as package data (`*.toml` only).
@@ -282,7 +283,8 @@ Each batch ends green on `invoke pre` + `python -m pytest` (`. ./activate.sh` fi
 
 1. §4, the alias-refresh defect, repro test first. It is a bug on today's main and everything after
    depends on the machinery it fixes.
-2. §5, the bundled preset and the packaging move, with tests — `preset-autorefresh.md`'s fallback chain gets its floor.
+2. §5, the bundled preset and the packaging move, with tests — the refresh's fallback chain gets
+   its floor.
 3. §3, deleting `pooled`, with the spec sentence that replaces it.
 4. §1, the fileless broker, with tests.
 5. §2, `direct=`, with tests.
