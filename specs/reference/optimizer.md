@@ -83,6 +83,9 @@ identity can record the verdict days or months later, and it lands on the same
 against the call they rate — are what makes an arbitrarily late rating safe,
 since retention may already have purged the original call row.
 
+The bound belongs to this verdict alone: it answers "is this definitely bad",
+while the blended mean under "Selection" answers "which is better".
+
 There is no global verdict — demotion is always per `(model, operation)`.
 Recovery is exactly: new ratings that push the window's bound back above the
 floor, or last-resort traffic when nothing else is available — there is no
@@ -141,11 +144,66 @@ would fill it.
 
 ## Selection
 
-Slot acquisition sorts on one key: a slot quality-demoted for the requested
-operation sorts after every non-demoted slot; among slots with the same
-demotion verdict, curated priority wins (registry/preset position — lower is
-better). Demotion is soft — a demoted slot with no alternative is still
-acquired. `LLMConfig.parallel` caps simultaneous in-flight requests per slot.
+Slot acquisition sorts on one key, in this precedence: a slot that recently
+failed to answer within a budget as small as the one on offer sorts last among
+its peers; then a slot quality-demoted for the requested operation sorts after
+every non-demoted slot; then **the higher priority wins**; and only then, as a
+tiebreaker that keeps the choice deterministic, the entry's registry/preset
+position.
+
+**Priority is the entry's curated weight, displaced by the observed host ratings
+as they accumulate.** The weight is a prior on the quality rating the entry is
+expected to earn, on the same `0..1` scale as a rating, defaulting to `0.0` — so
+an entry the curated lineup does not carry starts below every curated one
+without needing a rule of its own.
+
+**The weight decides where a model starts, never where it stays.** Evidence
+displaces it by shrinkage rather than by a threshold: with no ratings the
+priority is exactly the weight; the weight is worth `prior_strength`
+pseudo-ratings against an empty window and proportionally fewer as the window
+fills; and a full window (`quality_window` ratings) leaves the priority equal to
+the observed mean, with the weight contributing nothing. So ratings can reorder
+the pool freely against the curated starting order — no curated position is
+beyond overturning, and a model rated badly enough measures down to the bottom
+of the scale however high it was placed. The fade is monotone: each rating moves
+the priority toward the window's mean and never back.
+
+**Position is not a priority carrier.** A registry stores no ordering, so an
+entry's standing has to be data on the entry (see
+[`architecture.md`](architecture.md)).
+
+Demotion is soft — a demoted slot with no alternative is still acquired, and so
+is a slot whose priority has collapsed: priority orders the pool, it never
+withdraws from it. `LLMConfig.parallel` caps simultaneous in-flight requests per
+slot.
+
+### Why the blend, and not the Wilson bound
+
+The Wilson upper bound answers *"is this definitely bad"* and is deliberately
+optimistic on thin evidence, which is right for refusing to demote and wrong for
+ranking: at equal true quality it sits *lower* for the model with more samples,
+so the best-sampled model — the leader — would yield to a barely-tried one,
+recover, and oscillate. The blended mean answers *"which is better"*. The bound
+must not be used for ranking, and the blend must not be used for demotion.
+
+---
+
+## The two axes, and the invariant that keeps them apart
+
+Availability and quality are separate mechanisms and must stay so:
+
+- **Cooldown** is provider-driven, self-healing, and a hard exclusion: the wait
+  scales as `backoff_factor ** consecutive_fails` and resets on the next
+  success, so a degrading model is withdrawn for longer and a recovering one
+  returns at once.
+- **Quality** is host-driven, sticky, and orders rather than excludes.
+
+**Nothing but a host rating may enter the quality window.** Demotion has no
+time-based recovery, so anything auto-generated — a failure count, an outage, a
+synthetic score — would demote a model permanently: demoted means no traffic, no
+traffic means no new ratings, no new ratings means no way back. Availability
+therefore never feeds ranking either; that was proposed and rejected on this
+rule, alongside the entry [`decisions.md`](decisions.md) already carries.
 
 ---
 

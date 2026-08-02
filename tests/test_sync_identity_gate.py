@@ -70,6 +70,19 @@ async def test_a_moved_preset_still_rewrites_the_file(tmp_path):
     assert "new help" in target.read_text()
 
 
+async def test_a_preset_whose_only_change_is_a_weight_still_rewrites_the_file(tmp_path):
+    target = tmp_path / "llms.toml"
+    target.write_text("")
+    await sync_file(_NEW, target, source="freetier", secrets=DictSecrets({}))
+    reweighted = _NEW.replace(
+        'api_key_ref = "GEMINI_API_KEY"\n\n',
+        'api_key_ref = "GEMINI_API_KEY"\nweight = 0.75\n\n',
+    )
+    outcome = await sync_file(reweighted, target, source="freetier", secrets=DictSecrets({}))
+    assert outcome.changed is True
+    assert "weight = 0.75" in target.read_text()
+
+
 async def test_a_file_broker_reports_no_change_at_debug(tmp_path, caplog, monkeypatch):
     monkeypatch.setattr(upstream, "fetch_preset_text", lambda _name: _NEW)
     target = tmp_path / "llms.toml"
@@ -154,6 +167,20 @@ async def test_a_real_change_still_applies_and_logs_at_info(tmp_path, caplog):
     finally:
         await broker.aclose()
     assert any(r.levelno == logging.INFO and "sync" in r.message for r in caplog.records)
+
+
+async def test_a_reweighted_lineup_is_a_change_to_the_registry_target(tmp_path):
+    """The registry branch compares entries by name, so a new persisted field joins
+    that comparison by itself — a weight-only edit must not read as a no-op."""
+    broker = _broker(tmp_path)
+    try:
+        await broker.sync(_preset(tmp_path, _UNSORTED))
+        reweighted = _UNSORTED.replace('api_key_ref = "Z_KEY"', 'api_key_ref = "Z_KEY"\nweight=0.8')
+        with patch.object(Catalog, "apply", new=AsyncMock()) as apply:
+            await broker.sync(_preset(tmp_path, reweighted, "reweighted.toml"))
+        assert apply.await_count == 1
+    finally:
+        await broker.aclose()
 
 
 async def test_an_unchanged_sync_still_bootstraps_a_key_that_arrived(tmp_path, monkeypatch):

@@ -581,6 +581,8 @@ def _entry_dict(cfg: LLMConfig) -> dict:
         entry["parallel"] = cfg.parallel
     if not cfg.pooled:
         entry["pool"] = False
+    if cfg.weight:
+        entry["weight"] = cfg.weight
     return entry
 
 

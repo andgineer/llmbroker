@@ -1,11 +1,16 @@
 # Curated free-tier LLM pool (all OpenAI-compatible).
 # Fill the api_key_ref env vars: `python -m llmbroker env presets/freetier.toml > .env`
+#
+# `weight` is the curated prior on the quality rating each entry is expected to earn
+# (0..1, mandatory on every row) — row order carries no priority. See the rubric in
+# specs/reference/freetier-providers.md.
 
 [[llms]]
 name        = "groq-gpt-oss-120b"
 base_url    = "https://api.groq.com/openai/v1"
 model       = "openai/gpt-oss-120b"
 api_key_ref = "GROQ_API_KEY"
+weight      = 0.55
 
 # Two OpenRouter entries on purpose: they resolve to different upstreams (Nvidia,
 # Poolside), so a key held alone still has somewhere to fail over to.
@@ -14,18 +19,21 @@ name        = "openrouter-nemotron-3-ultra"
 base_url    = "https://openrouter.ai/api/v1"
 model       = "nvidia/nemotron-3-ultra-550b-a55b:free"
 api_key_ref = "OPENROUTER_API_KEY"
+weight      = 0.72
 
 [[llms]]
 name        = "openrouter-laguna-s-2.1"
 base_url    = "https://openrouter.ai/api/v1"
 model       = "poolside/laguna-s-2.1:free"
 api_key_ref = "OPENROUTER_API_KEY"
+weight      = 0.7
 
 [[llms]]
 name        = "google-gemini-3.5-flash-lite"
 base_url    = "https://generativelanguage.googleapis.com/v1beta/openai"
 model       = "gemini-3.5-flash-lite"
 api_key_ref = "GEMINI_API_KEY"
+weight      = 0.75
 
 # Per-provider onboarding: how to get the key, how hard it is (effort), and how
 # good the model it unlocks is (value). See specs/reference/freetier-providers.md

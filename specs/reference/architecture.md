@@ -104,7 +104,7 @@ disguise:
 - **It is budget-relative.** A caller with a larger budget, or none at all,
   ignores the bound entirely. So the signal can reorder a pool but never
   overturn one: when nobody can meet a budget, every candidate carries a bound,
-  the term is equal for all, and curated order stands. It can only ever express
+  the term is equal for all, and the curated ranking stands. It can only ever express
   "this one is slower than its siblings".
 - **It never withdraws a model.** Ordering only — a bounded model is still
   selected when it is the last candidate standing, which is exactly when a
@@ -365,10 +365,16 @@ Per table:
   read is an indexed scan on every SQL backend.
 - **Registry** (`llmbroker_registry`) — hybrid: `name`, `base_url`, `model`,
   `api_key_ref` stay columns (identity, plus stable human-meaningful config);
-  nested/open-ended per-LLM config (e.g. `parallel`) lives in the `metadata`
-  JSON column. The registry is global (no scope column) and holds the merged
-  lineup (see "Syncing the lineup") — nothing but `sync` writes it, and it holds
-  no learned data.
+  nested/open-ended per-LLM config (e.g. `parallel`, the curated weight) lives in
+  the `metadata` JSON column. The registry is global (no scope column) and holds
+  the merged lineup (see "Syncing the lineup") — nothing but `sync` writes it, and
+  it holds no learned data.
+
+  **The registry stores no ordering.** Every backend returns its rows in its own
+  order — by the table key, in practice by entry name — so an entry's standing in
+  the pool is data on the entry (its weight, see [`optimizer.md`](optimizer.md)),
+  never its row position. A backend author must not assume otherwise, and nothing
+  downstream may read priority out of the order `load()` happens to return.
 - **Disabled** (`llmbroker_disabled`) — the admin disabled-verdict map: a flat
   `name -> disabled` mapping, one row per model name. Written only by
   `set_disabled` or seeded (missing names only, `disabled: false`) by `sync`/

@@ -163,6 +163,65 @@ def test_llmconfig_alias_metadata_round_trip():
     )
 
 
+# ── weight ───────────────────────────────────────────────────────────────────
+
+
+def test_load_weight_on_llms_and_custom_entries(tmp_path):
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[llms]]\nname="a"\nbase_url="https://a/v1"\nmodel="m"\napi_key_ref="K"\nweight=0.7\n'
+        '[[custom]]\nname="c"\nbase_url="https://c/v1"\nmodel="m"\napi_key_ref="K"\nweight=0.25\n'
+        '[[llms]]\nname="b"\nbase_url="https://b/v1"\nmodel="m"\napi_key_ref="K"\n'
+    )
+    configs = {c.name: c for c in asyncio.run(Registry(f).load())}
+    assert configs["a"].weight == 0.7
+    assert configs["c"].weight == 0.25
+    assert configs["b"].weight == 0.0
+
+
+@pytest.mark.parametrize("raw", ["1.5", "-0.1", '"high"', "true"])
+def test_load_bad_weight_raises_naming_the_entry(tmp_path, raw):
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        f'[[llms]]\nname="bad-entry"\nbase_url="https://a/v1"\nmodel="m"'
+        f'\napi_key_ref="K"\nweight={raw}\n'
+    )
+    with pytest.raises(ValueError, match="bad-entry"):
+        asyncio.run(Registry(f).load())
+
+
+def test_llmconfig_weight_metadata_round_trip():
+    cfg = LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", weight=0.7)
+    metadata = cfg.to_metadata()
+    assert metadata == {"weight": 0.7}
+    assert (
+        LLMConfig.from_metadata(
+            name=cfg.name,
+            base_url=cfg.base_url,
+            model=cfg.model,
+            api_key_ref=cfg.api_key_ref,
+            metadata=metadata,
+        )
+        == cfg
+    )
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [(1.5, 1.0), (-0.1, 0.0), ("high", 0.0), (True, 0.0), (None, 0.0), (1, 1.0)],
+)
+def test_stored_weight_is_clamped_not_raised(stored, expected):
+    """A malformed row in a shared database must not stop a broker building its pool."""
+    cfg = LLMConfig.from_metadata(
+        name="g",
+        base_url="u",
+        model="m",
+        api_key_ref="K",
+        metadata={"weight": stored},
+    )
+    assert cfg.weight == expected
+
+
 # ── SQLite registry tests ─────────────────────────────────────────────────────
 
 
@@ -301,6 +360,20 @@ async def test_mutable_registry_parallel_round_trip(mutable_registry):
     await mutable_registry.mirror([cfg])
     result = {c.name: c for c in await mutable_registry.load()}
     assert result["p1"].parallel == 3
+
+
+async def test_mutable_registry_weight_round_trip(mutable_registry):
+    """The defect this weight exists to fix: a registry stores no ordering, so the
+    entry's standing in the pool has to be data on the entry. Mirrored in one order,
+    handed back in the backend's own — every weight must still be there."""
+    weights = {"zeta": 0.9, "alpha": 0.1, "mid": 0.5}
+    lineup = [
+        LLMConfig(name=name, base_url="https://x/v1", model="m", api_key_ref="K", weight=weight)
+        for name, weight in weights.items()
+    ]
+    await mutable_registry.mirror(list(reversed(lineup)))
+    loaded = await mutable_registry.load()
+    assert {c.name: c.weight for c in loaded} == weights
 
 
 async def test_mutable_registry_alias_round_trip(mutable_registry):

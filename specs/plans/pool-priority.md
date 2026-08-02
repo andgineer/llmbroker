@@ -343,3 +343,96 @@ async def main():
 asyncio.run(main())
 EOF
 ```
+
+---
+
+## Handover
+
+### Done
+
+All three batches of the work order, §1 through §8.
+
+- **§1 `models.py`** — `weight: float = 0.0` on `LLMConfig` (after `alias`), the docstring line,
+  `to_metadata`/`from_metadata` with the plan's doctest, `check_weight` beside `check_score`, and
+  `_weight_from_metadata`, which clamps a stored value and logs the clamp at WARNING naming the
+  entry (`llmbroker.registry` logger — `models.py` had none before).
+- **§2 round trip** — `config_from_entry` parses and validates `weight` for `[[llms]]` and
+  `[[custom]]` alike; `_entry_dict` emits it so a file-target sync stops stripping it. `ports.py`
+  needed no change, as predicted.
+- **§3 + §4** — `Optimizer.prior_strength = 10.0`, `Optimizer.quality_score()` (with the fading
+  prior described below), `LLMPool._priority()`, and `-self._priority(s, operation)` in the
+  acquisition key between the demotion verdict and `s.order`.
+- **§5** — every `presets/freetier.toml` row carries the plan's weight, rows left where they were, a
+  header comment saying row order carries no priority; the refresh runbook gained the weight axis in
+  §2, the mandatory-weight rule, and the §6 range check.
+- **§7** — `optimizer.md` Selection rewritten, including "the weight decides where a model starts,
+  never where it stays", "Why the blend, and not the Wilson bound", and a new
+  "The two axes, and the invariant that keeps them apart"; `architecture.md` records that the
+  registry stores no ordering; `freetier-providers.md` gained a "Weight axis" section with the rubric
+  and the basis of each shipped value.
+- **§8** — `usage.md` en + ru: a "Which model is tried first" section under the config-file text, and
+  a clause in the quality section tying `record_quality()` to displacing the weight.
+
+### Done differently from the plan
+
+- **§3's formula gained a fading prior, so that §6's expectations hold.** As written — a constant
+  `prior_strength` — the formula could not deliver two of §6's rows, because `n` is bounded by
+  `quality_window`: the weight kept a permanent `10/40` share, so a fully-rated entry could never
+  move more than 0.75 against its curated start, and a catastrophic window still scored above a
+  weightless entry. That contradicts the point of the field: ratings must be able to reorder the
+  pool against the curated order, not merely nudge it. The prior's strength now fades with the
+  evidence — `prior_strength · (1 − n / quality_window)` — so an empty window leaves the weight
+  untouched, a full one leaves the observed mean alone, and every rating in between moves the score
+  monotonically toward the mean. `prior_strength = 10.0` keeps its stated meaning and its
+  justification: the weight loses its majority at 7.5 ratings, still "about where a demotion verdict
+  becomes expressible". Both §6 rows now pass as the plan wrote them, and the plan's §3 text is the
+  one thing in it this implementation does not follow literally.
+- **The DB round-trip regression lives in `tests/test_registry.py`, not `test_store_backends.py`.**
+  The latter is parametrized on the *store* (journal) fixture and has no registry handle;
+  `test_registry.py` already carries the `mutable_registry` fixture over sqlite/postgres/mongodb and
+  the sibling `parallel`/`alias` round-trip tests. Same coverage, correct file.
+- **§6's "a full window of 0.0 falls below a weightless entry" holds through the key, not through the
+  priority term alone.** Both entries measure 0.0 — the bottom of the scale — and the demotion
+  verdict one term above is what separates proven-bad from never-tried; without it the earlier
+  `order` would still hand the traffic to the fallen entry. The test asserts the acquisition order
+  *and* the mechanism, so a later change to either cannot pass it silently.
+- **The failure-invariant test drives the real journal path** (`_LearningHook.record` on failed calls
+  + `maybe_rebuild(force=True)` over a sqlite store) rather than poking the optimizer, since the
+  rebuild is where an auto-generated score would realistically leak in.
+- **`_weight_from_entry` reaches `check_weight` through a `try`/`except ValueError`** that re-raises
+  naming the entry, and types are rejected in the same place. A bare `isinstance` guard raising
+  `ValueError` trips ruff's TRY004 (it wants `TypeError`), and a `TypeError` would break the
+  registry's "a config error is a `ValueError`" contract every other parse error in that file keeps.
+- **One phrase in `architecture.md`** ("curated order stands" under the budget-miss term) became "the
+  curated ranking stands" — with priority in the key, the sentence was no longer accurate.
+
+### Deliberately left out
+
+- The paid catalog and `add-model` gain nothing, per §5's explicit non-goal.
+- `snapshot()` does not expose the weight or the blended priority. Nothing asked for it, and it would
+  be a new public read-model surface.
+
+### Decisions taken during implementation
+
+- The clamp path logs on a bad *type* as well as an out-of-range number, and treats a missing key
+  silently — `metadata.get("weight") is None` is the ordinary case for every unweighted entry.
+- `bool` is rejected in both paths (it is an `int` subclass): clamped to `0.0` with a warning when
+  stored, refused outright in a file.
+
+### Gate
+
+`. ./activate.sh` first; run after each batch and at the end:
+
+- `invoke pre` — all checks passed, pyrefly 0 errors.
+- `python -m pytest` — **1109 passed**, zero skips, zero errors (Docker up; postgres/mongodb
+  testcontainers ran).
+- The plan's manual verification ran against the shipped preset mirrored into sqlite in reverse
+  order: rows come back alphabetical, every weight intact (0.75 / 0.55 / 0.70 / 0.72).
+- Version not bumped.
+
+### Unrelated fix carried in this branch
+
+`tests/test_upstream.py::test_write_atomic_keeps_the_targets_permissions` failed on Windows CI
+(`438 != 420`): Windows honors only the read-only bit, so `chmod(0o644)` lands as `0o666`. The test
+now asserts that the mode the OS actually *granted* survives the write, which is the property
+`write_atomic` promises on every platform.

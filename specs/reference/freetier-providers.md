@@ -86,6 +86,36 @@ provider may expose ten models yet only one is genuinely usable).
 
 ---
 
+## Weight axis
+
+Unlike `effort` and `value`, which are onboarding guidance for a human, `weight`
+is read by the router: it is the curated prior on the quality rating an entry is
+expected to earn, on the same `0..1` scale as a host rating, and it sets where the
+entry starts in the pool until an installation's own ratings replace it entirely
+(see "Selection" in [`optimizer.md`](optimizer.md)). Every `[[llms]]` row carries
+one — an entry without a weight starts at the bottom of the pool, which is a
+silent curation failure.
+
+| weight | meaning |
+|---|---|
+| 0.8–1.0 | frontier-class |
+| 0.6–0.8 | strong general-purpose |
+| 0.4–0.6 | usable, clearly behind the leaders |
+| < 0.4 | niche or weak |
+
+It is a judgement informed by benchmarks, not equal to any of them: benchmarks
+measure a task, the weight predicts how a host will rate an ordinary answer. The
+shipped values rest on the evidence recorded under "Curated providers" below —
+Gemini 3.5 Flash-Lite `0.75` (Artificial Analysis intelligence index 50),
+Nemotron 3 Ultra `0.72` (AA 47.7, the highest US open-weight model), Laguna S 2.1
+`0.70` (SWE-Bench Multilingual 78.5%, general answers sound), gpt-oss-120b `0.55`
+(AA 33.3).
+
+The paid catalog carries no weight: its entries land direct-only, outside the
+routed pool, so nothing would read one.
+
+---
+
 ## Curated providers
 
 Last refreshed 2026-08-01.

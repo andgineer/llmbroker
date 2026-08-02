@@ -5,11 +5,14 @@ imports — safe to import from anywhere in the package.
 """
 
 import hashlib
+import logging
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Protocol, runtime_checkable
+
+logger = logging.getLogger("llmbroker.registry")
 
 # Two providers is what "failover" means: one is a single quota with nothing to
 # fall back to. It describes the feature, not a tuning knob.
@@ -43,6 +46,20 @@ class KeyInfo:
     extra: dict[str, str]
 
 
+def _weight_from_metadata(raw: object, name: str) -> float:
+    """Read a stored weight, clamping instead of raising: a malformed row in a shared
+    database must not take a running broker down at pool build. The file parser, where
+    a human is looking, raises instead."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        if raw is not None:
+            logger.warning("entry %s: ignoring non-numeric weight %r — using 0.0", name, raw)
+        return 0.0
+    weight = min(1.0, max(0.0, float(raw)))
+    if weight != raw:
+        logger.warning("entry %s: weight %r out of [0.0, 1.0] — clamped to %s", name, raw, weight)
+    return weight
+
+
 @dataclass(frozen=True, slots=True)
 class LLMConfig:
     """Pure stored config for one LLM — no secret, safe to expose.
@@ -62,6 +79,9 @@ class LLMConfig:
     ``alias`` is the entry's eternal handle, set only on custom entries: ``name``
     carries the model version and is rewritten by a catalog refresh, the alias
     never is.
+
+    ``weight`` is a curated prior on the quality rating this entry is expected to
+    earn, on the same ``0..1`` scale as a host rating — not a routing hard-order.
     """
 
     name: str
@@ -72,6 +92,7 @@ class LLMConfig:
     pooled: bool = True
     custom: bool = False
     alias: str | None = None
+    weight: float = 0.0
 
     def to_metadata(self) -> dict[str, object]:
         """Structured optional config, serialized for the registry's JSON column.
@@ -86,6 +107,8 @@ class LLMConfig:
         >>> followed = LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", alias="opus")
         >>> followed.to_metadata()
         {'alias': 'opus'}
+        >>> LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", weight=0.7).to_metadata()
+        {'weight': 0.7}
         """
         metadata: dict[str, object] = {}
         if self.parallel is not None:
@@ -96,6 +119,8 @@ class LLMConfig:
             metadata["custom"] = True
         if self.alias is not None:
             metadata["alias"] = self.alias
+        if self.weight:
+            metadata["weight"] = self.weight
         return metadata
 
     @classmethod
@@ -127,6 +152,7 @@ class LLMConfig:
             pooled=pooled,
             custom=custom,
             alias=alias,
+            weight=_weight_from_metadata(metadata.get("weight"), name),
         )
 
 
@@ -340,6 +366,13 @@ def check_score(score: float) -> None:
     derives from the window is only defined on that interval."""
     if not 0.0 <= score <= 1.0:
         raise ValueError(f"quality score must be within [0.0, 1.0], got {score}")
+
+
+def check_weight(weight: float) -> None:
+    """Reject a curated weight outside ``[0, 1]`` — it is a prior on the same scale as
+    a host quality rating, and blends with one."""
+    if not 0.0 <= weight <= 1.0:
+        raise ValueError(f"weight must be within [0.0, 1.0], got {weight}")
 
 
 def check_unique_aliases(configs: "list[LLMConfig]") -> None:

@@ -21,6 +21,31 @@ inactive, it is not an error. The broker reads the `.env` sitting next to
 own endpoints. For a provider that cannot handle parallel requests on one key,
 set `parallel = 1` on its entry.
 
+### Which model is tried first {#weight}
+
+Row order does not decide it — `weight` does:
+
+```toml
+[[llms]]
+name        = "google-gemini-3.5-flash-lite"
+base_url    = "https://generativelanguage.googleapis.com/v1beta/openai"
+model       = "gemini-3.5-flash-lite"
+api_key_ref = "GEMINI_API_KEY"
+weight      = 0.75
+```
+
+A weight is a number from 0 to 1 — how good you expect this model's answers to
+be, on the same scale as the ratings you record. Higher goes first. The default
+is `0.0`, so an entry you add without one is tried after every weighted model:
+give your own entries a weight if you want them competing on merit.
+
+It is a starting point, not a fixed order. Every rating you record through
+[`record_quality()`](#quality) moves the model off its weight and toward what it
+actually earns, and once you have rated it enough times the weight stops counting
+altogether — the order is then whatever your ratings say, however you ranked the
+models to begin with. A model nobody has rated yet still starts where you put it,
+instead of at the bottom where it could never earn its way up.
+
 !!! tip "Keys do not have to live in `.env`"
     AWS Secrets Manager, Vault, a DB or your own storage — see [API keys](secrets.md).
 
@@ -203,7 +228,8 @@ reply.record_quality(0.9)   # 1.0 — good reply, 0.0 — bad; outside [0, 1] is
 ```
 
 Ratings accumulate per `(model, operation)` pair: a model consistently weak at a
-given operation sinks to the back of the queue. Demotion is soft — if no other
+given operation sinks to the back of the queue, displacing the [weight](#weight)
+it started from as they add up. Demotion is soft — if no other
 models are left, it still answers — and it lifts with new good ratings; there is
 no separate "reset". Calls without `operation=` share one common bucket.
 

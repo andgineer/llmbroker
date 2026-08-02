@@ -4,11 +4,27 @@ import json
 import tomllib
 from pathlib import Path
 
-from llmbroker.models import KeyInfo, LLMConfig, check_unique_aliases
+from llmbroker.models import KeyInfo, LLMConfig, check_unique_aliases, check_weight
 
 
 def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) else None
+
+
+def _weight_from_entry(raw: object, name: object) -> float:
+    """A weight the curator wrote by hand: refuse a bad one loudly, unlike a stored
+    row, which is clamped so one malformed record cannot stop a broker starting."""
+    if raw is None:
+        return 0.0
+    # bool is an int subclass, and `weight = true` says nothing about quality.
+    numeric = float(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) else None
+    try:
+        if numeric is None:
+            raise ValueError(f"weight must be a number, got {raw!r}")
+        check_weight(numeric)
+    except ValueError as exc:
+        raise ValueError(f"Registry: entry {name!r}: {exc}") from exc
+    return numeric
 
 
 def config_from_entry(entry: dict, *, custom: bool) -> LLMConfig | None:
@@ -32,6 +48,7 @@ def config_from_entry(entry: dict, *, custom: bool) -> LLMConfig | None:
         pooled=raw_pool if isinstance(raw_pool, bool) else True,
         custom=custom,
         alias=str(alias) if alias is not None else None,
+        weight=_weight_from_entry(entry.get("weight"), name),
     )
 
 

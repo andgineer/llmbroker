@@ -29,7 +29,7 @@ class _Slot:
     cooldown_until: datetime | None = None  # aware UTC
     fail_count: int = 0
     disabled: bool = False  # manual admin verdict
-    order: int = 0  # curated priority: registry/preset position, lower is better
+    order: int = 0  # tiebreaker only: registry/preset position, lower is better
     unmet_budget: float | None = None  # largest answer budget recently missed, seconds
     unmet_until: datetime | None = None  # aware UTC; while set, the bound above is fresh
 
@@ -130,6 +130,13 @@ class LLMPool:
 
     def _is_demoted(self, name: str, operation: str | None) -> bool:
         return self._optimizer is not None and self._optimizer.is_demoted(name, operation)
+
+    def _priority(self, slot: _Slot, operation: str | None) -> float:
+        """The curated weight, shrunk toward host ratings as they accumulate. Falls
+        back to the raw weight with no optimizer."""
+        if self._optimizer is None:
+            return slot.config.weight
+        return self._optimizer.quality_score(slot.config.name, operation, slot.config.weight)
 
     def note_unmet_budget(self, config: LLMConfig, budget: float) -> None:
         """Record that this LLM did not answer within ``budget`` seconds.
@@ -240,6 +247,7 @@ class LLMPool:
                         key=lambda s: (
                             self._over_budget(s, remaining, now),
                             self._is_demoted(s.config.name, operation),
+                            -self._priority(s, operation),
                             s.order,
                         ),
                     )

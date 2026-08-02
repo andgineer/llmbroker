@@ -474,8 +474,11 @@ def test_write_atomic_keeps_the_targets_permissions(tmp_path):
     target = tmp_path / "llms.toml"
     target.write_text("a = 1\n")
     target.chmod(0o644)
+    # Windows honors only the read-only bit, so 0o644 lands there as 0o666. Assert the
+    # mode the OS actually granted survives the write, not the one that was requested.
+    granted = stat.S_IMODE(target.stat().st_mode)
     write_atomic(target, "a = 2\n")
-    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    assert stat.S_IMODE(target.stat().st_mode) == granted
 
 
 def test_write_atomic_creates_a_missing_target_without_reading_a_mode(tmp_path):
@@ -556,6 +559,22 @@ async def test_sync_file_keeps_a_dropped_entry_without_a_usable_replacement(tmp_
     assert [e["name"] for e in data["llms"]] == ["gemini", "groq-old"]
     assert data["keys"]["GROQ_API_KEY"]["help"] == "groq help"
     assert outcome.report.kept == ("groq-old",)
+
+
+async def test_sync_file_rewrites_the_weights_of_kept_and_custom_entries(tmp_path):
+    """A kept entry is re-emitted from its config, so a weight the curator wrote is
+    stripped unless the writer emits it too."""
+    target = _write_current(
+        tmp_path,
+        '[[llms]]\nname="groq-old"\nbase_url="https://groq/v1"\nmodel="m"'
+        '\napi_key_ref="GROQ_API_KEY"\nweight=0.55\n'
+        '[[custom]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="m"'
+        '\napi_key_ref="MY_KEY"\nweight=0.4\n',
+    )
+    await sync_file(_NEW, target, source="freetier", secrets=DictSecrets({}))
+    data = tomllib.loads(target.read_text())
+    weights = {e["name"]: e.get("weight") for e in (*data["llms"], *data["custom"])}
+    assert weights == {"gemini": None, "groq-old": 0.55, "mine": 0.4}
 
 
 async def test_sync_file_removes_it_once_the_arrivals_key_is_there(tmp_path):

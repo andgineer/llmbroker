@@ -48,6 +48,22 @@ For each candidate provider/model, using the taxonomies fixed in
 - **`value`** — whether the provider exposes at least one genuinely useful
   model and how good it is: `high` / `good` / `niche`, judged from current
   benchmarks/rankings, not from the number of models offered.
+- **`weight`** — mandatory on every `[[llms]]` row: the curated prior on the
+  quality rating the entry is expected to earn, `0..1` on the same scale as a
+  host rating. The router ranks on it until real ratings outweigh it, so a row
+  left without one sinks to the bottom of every pool that adopts the refresh.
+  Row order carries no priority; the weight is the only thing that does.
+
+  | weight | meaning |
+  |---|---|
+  | 0.8–1.0 | frontier-class |
+  | 0.6–0.8 | strong general-purpose |
+  | 0.4–0.6 | usable, clearly behind the leaders |
+  | < 0.4 | niche or weak |
+
+  Informed by benchmarks, not equal to any of them — the number predicts how a
+  host will rate an ordinary answer. Justify each one from the same sources as
+  the axes above.
 
 ## 3. Apply the curation rules
 
@@ -108,8 +124,8 @@ For each candidate provider/model, using the taxonomies fixed in
 ## 5. Regenerate the outputs
 
 - Rewrite `presets/freetier.toml`: one `[[llms]]` row per curated model
-  (with `rate_limit`), one `[keys.<API_KEY_REF>]` sub-table per provider
-  (with `effort`, `value`, `help`).
+  (with `rate_limit` and `weight`), one `[keys.<API_KEY_REF>]` sub-table per
+  provider (with `effort`, `value`, `help`).
 - Update `specs/reference/freetier-providers.md`: the curated-providers
   table, the candidate-providers list, the per-provider notes, the sources
   list, and the refresh date.
@@ -120,6 +136,9 @@ For each candidate provider/model, using the taxonomies fixed in
   and confirm every `[[llms]]` row parses into an `LLMConfig` with a
   `rate_limit`, and every `[keys.*]` row parses into a `KeyInfo` with a
   recognized `effort` and `value` (not `None`).
+- Confirm every `[[llms]]` row carries a `weight` within `[0, 1]`. The parser
+  refuses a malformed one, but it accepts a missing one as `0.0` — so this is a
+  check to run, not one to rely on the loader for.
 - Cross-check `presets/paid-catalog.toml`: no `[[llms]]` `name` may equal a
   `<provider id>-<model id>` pair from the catalog.
 - `invoke pre` and `python -m pytest` are green.
