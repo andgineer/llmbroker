@@ -355,6 +355,18 @@ Line estimates for the design as built (pre-simplification `src` ≈ 6000).
   verdict in the store disabled-doc; learning writes nowhere.
 - **An explicit quality-reset operation** — rehabilitation happens through
   new scores, the window displaces the old ones.
+- **An LLM-as-judge scoring the pool's own replies.** Quality ratings stay
+  host-supplied. A host that cares about quality already holds a better signal
+  than a judge could infer — whether the JSON parsed, whether extraction
+  validated, whether the user accepted the answer — and `record_quality()` is
+  public for exactly that. A judge is a proxy for a signal the host usually
+  has, and a weaker model judging a stronger one's reply is a poor proxy.
+  It is also unaffordable where it would be needed: quality windows are
+  per `(model, operation)` and need ten ratings apiece, so a small pool
+  sampling a fraction of its traffic reaches a verdict slower than its free
+  models are retired or delisted upstream — and every judge call spends the
+  scarce quota the pool exists to conserve. Curated per-entry weights order
+  the pool without any of that.
 - **The state store entirely** (protocol, port, a dedicated table,
   reconcile, a short-TTL cache) — shared cooldown is derived from the
   journal: a failing row is already written, the state store duplicated

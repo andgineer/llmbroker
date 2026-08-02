@@ -18,7 +18,7 @@ Statuses as of 2026-08-02: none of the plans below is started.
 | 1 | `pool-lifecycle.md` | — | — | Must ship in the same release as the preset-sync change already on main |
 | 2 | `preset-autorefresh.md` | — | #1 | Small; finishes the spec position #1 leaves half-stated |
 | 3 | `pool-priority.md` | — | #2 | Fixes a live defect: curated priority is discarded by every DB registry |
-| 4 | `llm-judge.md` | #8 | — | Largest new feature, no waiting consumer |
+| 4 | `fileless-broker.md` | — | #2, #3 | `Broker()` with no config file; `direct=` for paid models; fixes a second live defect |
 
 ## Why this order
 
@@ -43,16 +43,20 @@ replaces the positional index with a weight stored on the entry, which is why it
 changes that comparison. It should not trail #2 far either — once a refresh runs unattended on a
 daily clock, installations adopt curated weights with no admin reading them.
 
-**#4, the judge,** is the largest purely-new feature and nothing external waits for it. It
-carries one prerequisite of its own: the `operation` filter can select a named operation but not
-the unlabelled bucket, which stops being harmless as soon as the judge journals traffic under
-`llmbroker.judge`. The plan states what must close.
+**#4 removes the config file from the common path, and carries the second live defect.** A paid
+`[[custom]]` alias is re-pointed at the catalog's current model only on the file branch of `sync`,
+so every database installation sits on the model id it was first synced with, forever and silently.
+That is the same catalog-following machinery `direct=` needs, so it is fixed here rather than
+separately. It follows #3 because both touch `LLMConfig` — #3 adds a persisted weight, #4 deletes
+`pooled` — and #3's defect is the more expensive one: a wrong routing order affects every request
+of every DB installation, while a frozen paid model version affects only installations that declare
+one.
 
 Two rules established by shipped work and binding on what follows:
 
 - **Journal reads never provision.** The journal does not depend on the registry, and a visibility
-  call must survive an empty or stale one. Recorded in `architecture.md`; #1 and #3 each add a
-  journal-read capability and must not diverge from it.
+  call must survive an empty or stale one. Recorded in `architecture.md`; #1 adds a journal-read
+  capability and must not diverge from it.
 - **A latency budget is per call, never per model.** `wait` bounds slot acquisition and the
   in-flight attempt; there is no per-LLM timeout knob and will not be one — see
   `architecture.md`.

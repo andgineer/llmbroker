@@ -128,6 +128,7 @@ Any request to implement a plan — "выполни очередной план"
     functions belong in a named module, and every caller imports from that exact module.
 
 ### Plan and spec files
+- **Before proposing anything in a plan, read `specs/reference/decisions.md` — both "Decisions accepted" and "What was dropped".** A mechanism listed there was already weighed and rejected, and the recorded reason is usually the counter-argument the new proposal is about to hand-wave. Proposing it again wastes a review round. If the recorded decision is genuinely wrong now, say so explicitly in the plan and argue against the recorded reason — never re-propose in silence.
 - Never reference plan file paths or step numbers inside code comments or docstrings.
 - Specs in `specs/` capture architectural decisions and business requirements only — not implementation details (no function signatures, field names, or internal class structure).
 - Specs describe current state only, including in `decisions.md`-style rationale docs: never narrate what a removed class/parameter/field used to be called (e.g. "the `Stack` classes, `stack=`, go away") — state the current shape and, if useful, *why* it's shaped that way. Old names belong to git history, not to a living spec.

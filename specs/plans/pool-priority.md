@@ -1,11 +1,11 @@
-# Pool priority: a curated weight that survives storage, blended with learned quality and live availability
+# Pool priority: a curated weight that survives storage, shrunk toward host quality ratings
 
 **Depends on `preset-autorefresh.md` and ships after it.** Two of its results decide this plan's
 shape. Its identity gate defines when a fetched lineup "changes nothing" — this plan adds a
 persisted field to `LLMConfig`, so the comparison must account for it, and doing that once, after
 the gate exists, is one edit instead of a rebase. And once a refresh runs unattended on a daily
 clock, a curated weight is something an installation adopts without an admin reading it, which
-raises the bar on §6's rubric and on the validation in §7. `pool-lifecycle.md` (#1) rewrites the
+raises the bar on §5's rubric and on the validation in §6. `pool-lifecycle.md` (#1) rewrites the
 merge rule in `broker/upstream.py` that decides what reaches the registry at all; both land first.
 
 Line anchors below are current-main numbers; #1 and #2 move them.
@@ -62,16 +62,14 @@ quota resets in ten hours is tried and rejected roughly ten more times that day.
    `(n·mean + m·weight) / (n + m)`. At `n = 0` the value is exactly the weight, so a strong new
    model starts where the curator put it instead of at the bottom where it could never earn its
    way up. The prior never expires; it is outweighed.
-5. **Availability multiplies the blend** as a third, independent axis — expected quality times the
-   chance the call lands.
-6. **The three axes stay separate on purpose,** and availability specifically must never feed the
-   quality window. Demotion has no time-based recovery: an outage long enough to push ten zeros
-   into the window would demote a model permanently, and a demoted model gets no traffic, so no new
-   ratings, so no way back. Availability is time-varying and self-healing; quality is sticky.
-   Merging them converts a transient outage into an irreversible one.
-7. **Cooldown keeps exclusive ownership of hard exclusion.** Availability only reorders models that
-   are already callable right now; `availability_floor` stops the rank from ever amounting to
-   exclusion.
+5. **Availability stays out of this entirely.** Cooldown already owns it: the wait scales as
+   `backoff_factor ** consecutive_fails` and resets on success, so a degrading model is excluded
+   for longer and a recovering one returns at once. `decisions.md` already rejected ranking on a
+   usable rate as bandit machinery that duplicates exponential cooldown, and that judgement holds.
+6. **Nothing but a host rating may enter the quality window.** Demotion has no time-based recovery,
+   so anything auto-generated — a failure count, an outage, a synthetic score — would demote a
+   model permanently: demoted means no traffic, no traffic means no new ratings, no new ratings
+   means no way back. This is the invariant a later change is most likely to break.
 
 ## 1. The `weight` field — `models.py`
 
@@ -134,13 +132,13 @@ if cfg.weight:
 
 **`backends/ports.py` — no change.** `mirror()` already writes `cfg.to_metadata()` and `load()`
 already reconstructs through `from_metadata`, so §1 carries the weight through every database
-backend by itself. This section is nonetheless a required *test* (§7): the round trip is the exact
+backend by itself. This section is nonetheless a required *test* (§6): the round trip is the exact
 defect this plan exists to fix, and it must have a regression test on a real backend, not a
 reasoned assurance.
 
 **`preset-autorefresh.md` §2's identity gate** must treat a changed weight as a change. Confirm
 against that plan's implementation, which lands first; if it compares rendered TOML, §2's
-`_entry_dict` edit covers it for free, and the test in §7 says so either way.
+`_entry_dict` edit covers it for free, and the test in §6 says so either way.
 
 ## 3. Blending prior with evidence — `optimizer.py`
 
@@ -174,69 +172,19 @@ def quality_score(self, llm_name: str, operation: str | None, weight: float) -> 
 is right for its job — refusing to demote on thin evidence — and wrong for ranking: at equal true
 quality it sits *lower* for the model with more samples, and the model with more samples is the
 leader, so the leader would demote itself, yield, recover, and oscillate. Wilson keeps answering
-"is this definitely bad"; the blend answers "which is better". Record this split in the spec (§8).
+"is this definitely bad"; the blend answers "which is better". Record this split in the spec (§7).
 
-## 4. Availability — `optimizer.py` + `broker/learning.py`
-
-Three more knobs on `Optimizer`:
-
-```python
-availability_window: int = 20     # recent outcomes kept per model
-availability_min_count: int = 5   # below this, no penalty is applied
-availability_floor: float = 0.1   # rank never amounts to exclusion
-```
-
-State mirroring `_scores` exactly, so there is no second pattern to learn:
-
-```python
-_outcomes: dict[str, deque] = field(default_factory=dict, init=False, repr=False)
-```
-
-```python
-def record_outcome(self, llm_name: str, ok: bool) -> None:
-    """Fold one call outcome into the model's rolling availability window."""
-
-def availability(self, llm_name: str) -> float:
-    """Share of recent calls that succeeded; 1.0 until availability_min_count
-    outcomes exist, floored at availability_floor."""
-
-def load_availability(self, outcomes: dict[str, list[bool]]) -> None:
-    """Replace every window wholesale — the journal-rebuild counterpart of load_scores."""
-```
-
-"No evidence, no penalty" is the same stance `quality_min_count` already takes, and it is what stops
-a single unlucky failure from burying a freshly added model.
-
-**Live feed — `learning.py:118`, `_drive(call)`.** It already branches on every call's status to
-drive the streak counter; add the outcome fold in the same branches: `CallStatus.OK` → `ok=True`,
-`RATE_LIMITED` / `UNAVAILABLE` / `ERROR` → `ok=False`. Own outcomes must apply immediately, before
-any rebuild, exactly as own ratings already do.
-
-**Rebuild — `learning.py:173`, `_apply_scores_and_metrics`.** It already receives the newest-first
-tail. `stats_from_calls` (`broker/stats.py`) keeps `by_status` per model, which is precisely the raw
-material; `metrics_from_calls` then throws it away. Call `stats_from_calls(rows)` once, derive both
-the metrics cache and the per-model outcome lists from that single pass, and hand the latter to
-`load_availability`.
-
-**Known limit, stated not fixed:** the rebuild tail (`quality_rebuild_limit`, default 300) is shared
-across all models, so a chatty model crowds out a quiet one's history. The spec already accepts this
-for quality windows and names the limit as the knob. For availability it bites differently — a
-rarely-routed model may have no rows at all — which is why the min-count guard returns a clean 1.0
-rather than a penalty. A time-windowed variant is possible later (`Call.ts` is journaled) and is
-explicitly **not** in this plan.
-
-## 5. The selection key — `broker/pool.py`
+## 4. The selection key — `broker/pool.py`
 
 Add beside `_is_demoted` (line 129), matching its `optimizer is None` handling:
 
 ```python
 def _priority(self, slot: _Slot, operation: str | None) -> float:
-    """Expected quality × chance the call lands. Falls back to the curated weight
-    with no optimizer."""
+    """The curated weight, shrunk toward host ratings as they accumulate.
+    Falls back to the raw weight with no optimizer."""
     if self._optimizer is None:
         return slot.config.weight
-    blended = self._optimizer.quality_score(slot.config.name, operation, slot.config.weight)
-    return blended * self._optimizer.availability(slot.config.name)
+    return self._optimizer.quality_score(slot.config.name, operation, slot.config.weight)
 ```
 
 The acquisition key (line 238) gains one term:
@@ -255,7 +203,7 @@ choice must still be deterministic. Nothing above `_priority` moves — budget a
 precedence, and the `avail` filter (line 229) keeps excluding cooling, capped and disabled slots
 before any of this runs.
 
-## 6. The shipped preset and the runbook
+## 5. The shipped preset and the runbook
 
 `presets/freetier.toml` — weight every `[[llms]]` row. The scale is a curator's prior on the rating
 a host would give an answer, informed by benchmarks but not equal to any of them:
@@ -287,7 +235,7 @@ the bottom of the pool, which is a silent curation failure and must be caught at
 Catalog entries land `pooled=False` (direct-only), so they are not in the selection order at all; a
 user who deliberately pools one can write `weight` into their own file by hand.
 
-## 7. Tests
+## 6. Tests
 
 `tests/test_pool_priority.py` (new) — the blend and the key.
 
@@ -304,17 +252,9 @@ user who deliberately pools one can write `weight` into their own file by hand.
 | over-budget high-priority slot | budget still outranks priority |
 | `optimizer=None` pool | priority is the raw weight, nothing raises |
 
-Availability, same file:
-
-| scenario | expected |
-|---|---|
-| fewer than `availability_min_count` outcomes | `availability` is 1.0, no penalty |
-| all recent outcomes OK | 1.0 |
-| half failing | ≈0.5, and the slot sorts below an equally-weighted healthy one |
-| every outcome failing | `availability_floor`, never 0 — the slot is still acquirable when alone |
-| failures aging out under fresh successes | priority returns to the weight as `n` of ratings stays 0 |
-| a `RATE_LIMITED` call | recorded as not-OK, and the existing cooldown behavior is unchanged |
-| rebuild from a journal tail | `load_availability` reproduces what the live folds produced |
+One case guards the invariant of design summary 6, because it is the one a later change breaks:
+a run of failed calls (`RATE_LIMITED`, `UNAVAILABLE`, `ERROR`) on a model leaves its quality window
+untouched and its priority unchanged — failures cool a model, they never rate it.
 
 `tests/test_registry.py` — parsing:
 
@@ -337,18 +277,18 @@ is a weight is *not* treated as unchanged by the identity gate.
 
 No `pytest.skip`, no `importorskip` — testcontainers cover the database backends.
 
-## 8. Specs (same batch as the behavior)
+## 7. Specs (same batch as the behavior)
 
 `specs/reference/optimizer.md`:
 
 - **Selection** — rewrite. Curated position is not the priority carrier; the carrier is the entry's
-  weight, shrunk toward observed ratings and scaled by recent availability, with position surviving
-  only as the tiebreaker.
-- **New section, the three axes** — cooldown (provider-driven, self-healing, hard exclusion),
-  availability (journal-driven, self-healing, soft rank), quality (host-driven, sticky, demotion).
-  State the invariant that keeps them apart: *availability never enters the quality window, because
-  demotion has no time-based recovery and would make an outage permanent.* This is the load-bearing
-  rule of the whole design and the one a future change is most likely to break.
+  weight, shrunk toward observed host ratings, with position surviving only as the tiebreaker.
+- **New section, the two axes** — cooldown (provider-driven, self-healing, hard exclusion) and
+  quality (host-driven, sticky, demotion). State the invariant that keeps them apart: *nothing but a
+  host rating enters the quality window, because demotion has no time-based recovery and an
+  auto-generated score would make a transient failure permanent.* This is the load-bearing rule of
+  the whole design and the one a future change is most likely to break — availability ranking was
+  proposed and rejected on it, alongside the entry `decisions.md` already carries.
 - **Quality demotion** — one line recording that the Wilson bound answers "definitely bad" while the
   blended mean answers "which is better", and why the bound must not be used for ranking.
 
@@ -358,7 +298,7 @@ away.
 
 `specs/reference/freetier-providers.md` — the weight rubric and what the shipped weights rest on.
 
-## 9. Docs (`docs/src/en/` + `docs/src/ru/`)
+## 8. Docs (`docs/src/en/` + `docs/src/ru/`)
 
 `usage.md` (or wherever the config file is documented): `weight` on an entry, the 0..1 scale, the
 default of 0.0 and its consequence, and one sentence that a rating recorded through
@@ -371,11 +311,10 @@ Each batch ends green on `invoke pre` + `python -m pytest` (`. ./activate.sh` fi
 1. §1 + §2, the field and its round trip, with the `test_store_backends.py` regression and the
    parser tests. Valuable and reviewable on its own: it closes the lost-priority defect even before
    anything consults the value.
-2. §3 + §5, the blend and the sort key, with tests; `optimizer.md`'s rewritten Selection section in
-   the same batch, so the spec is never left asserting the position rule this replaces.
-3. §4, availability, with tests; the three-axis spec section — including the invariant — in the
-   same batch.
-4. §6 preset weights and runbook rubric; §8 remaining specs; §9 docs en + ru.
+2. §3 + §4, the blend and the sort key, with tests; `optimizer.md`'s rewritten Selection section and
+   the two-axis invariant in the same batch, so the spec is never left asserting the position rule
+   this replaces.
+3. §5 preset weights and runbook rubric; §7 remaining specs; §8 docs en + ru.
 
 Version bump: none (the maintainer does it by hand).
 
