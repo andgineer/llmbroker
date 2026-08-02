@@ -12,18 +12,29 @@ import tempfile
 import tomllib
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from http import HTTPStatus
+from http.client import HTTPException
 from pathlib import Path
+from types import MappingProxyType
 
 import tomli_w
 
 from llmbroker.broker.catalog import resolve_key
 from llmbroker.exceptions import SyncRefusedError
-from llmbroker.models import KeyInfo, LLMConfig, PendingKey, SyncReport
+from llmbroker.models import (
+    Call,
+    CallStatus,
+    KeyInfo,
+    LLMConfig,
+    PendingKey,
+    Retirement,
+    SyncReport,
+)
 from llmbroker.protocols.registry import KeyInfoProtocol, RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
+from llmbroker.protocols.store import QueryableStoreProtocol, StoreProtocol
 from llmbroker.standalone.registry import Registry, config_from_entry, key_info_from_entry
 
 logger = logging.getLogger("llmbroker.broker")
@@ -31,9 +42,17 @@ logger = logging.getLogger("llmbroker.broker")
 PRESET_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 _PRESET_URL = "https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/{name}.toml"
 _FETCH_TIMEOUT = 10
+_PERMANENT_FAILURES = frozenset(
+    {HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN, HTTPStatus.NOT_FOUND},
+)
+# The tail the broker already reads for stats. A busy pool may push a once-a-day
+# failure out of it; then there is no evidence and the entry stays.
+_EVIDENCE_LIMIT = 1000
+_NO_EVIDENCE: Mapping[str, Retirement] = MappingProxyType({})
 _KEPT_HEADER = (
-    "# Kept from your previous lineup: upstream dropped these and no replacement you\n"
-    "# can call arrived. The next sync removes them once one does. Generated block."
+    "# Kept from your previous lineup: the curated lineup no longer carries these\n"
+    "# providers, and you still hold their keys. They keep routing until they stop\n"
+    "# working. Generated block."
 )
 
 
@@ -67,9 +86,11 @@ class SyncSource:
 
 @dataclass(frozen=True, slots=True)
 class FileSyncOutcome:
-    """The result of syncing into a ``.toml`` file: the report plus the alias-refresh lines."""
+    """The result of syncing into a ``.toml`` file: the report, what was written,
+    and the alias-refresh lines."""
 
     report: SyncReport
+    configs: tuple[LLMConfig, ...] = ()
     notices: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
 
@@ -88,19 +109,22 @@ def fetch_preset_text(name: str) -> str:
             f"invalid preset name '{name}' (use letters, digits, hyphens, underscores)",
         )
     url = _PRESET_URL.format(name=name)
+    # The read and the decode share the connect phase's try: a body that dies
+    # mid-stream raises TimeoutError/IncompleteRead, and a caller that treats a
+    # fetch failure as best-effort catches ValueError only.
     try:
         with urllib.request.urlopen(url, timeout=_FETCH_TIMEOUT) as resp:  # noqa: S310 - validated
-            content = resp.read()
+            text = resp.read().decode()
     except urllib.error.HTTPError as exc:
         if exc.code == HTTPStatus.NOT_FOUND:
             raise ValueError(f"preset '{name}' not found in catalog") from exc
         raise ValueError(f"HTTP {exc.code} fetching {url}") from exc
     except urllib.error.URLError as exc:
         raise ValueError(str(exc.reason)) from exc
-    try:
-        text = content.decode()
     except UnicodeDecodeError as exc:
         raise ValueError(f"downloaded content for '{name}' is not valid UTF-8") from exc
+    except (OSError, HTTPException) as exc:
+        raise ValueError(f"failed reading {url}: {exc!r}") from exc
     try:
         tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
@@ -179,6 +203,31 @@ def refresh_alias_entries(
 # ── Which refs we have a key for ─────────────────────────────────────────────
 
 
+def declared_refs(have_keys: bool | Sequence[str]) -> set[str]:
+    """The refs ``have_keys`` names outright."""
+    if isinstance(have_keys, bool):
+        return set()
+    if isinstance(have_keys, str):
+        return {have_keys}
+    return set(have_keys)
+
+
+def keys_are_visible(
+    present: set[str],
+    *,
+    scope: str | None,
+    have_keys: bool | Sequence[str],
+) -> bool:
+    """Absence of a key is evidence only where the probe could have found one.
+
+    Per-user keys behind ``scope`` are one such place; a probe that resolved
+    nothing at all is the other — the keys live in a store this merge site cannot
+    reach, and "no key anywhere" is indistinguishable from "not my keys".
+    """
+    declared = have_keys is True or bool(declared_refs(have_keys))
+    return bool(present) and (scope is None or declared)
+
+
 async def present_refs(
     refs: Iterable[str],
     secrets: SecretsProtocol,
@@ -188,17 +237,90 @@ async def present_refs(
 ) -> set[str]:
     """The subset of ``refs`` a key exists for — resolvable, or declared via ``have_keys``.
 
-    A declared ref counts as present only here, for paying removals; it never
+    A declared ref counts as present only here, for weighing a removal; it never
     makes a model routable.
     """
     wanted = {ref for ref in refs if ref}
     if have_keys is True:
         return wanted
-    present = set() if have_keys is False else wanted & set(have_keys)
+    # A bare string is a Sequence[str]: taken apart into characters it would
+    # declare nothing and silently lose the caller's promise.
+    declared = declared_refs(have_keys)
+    present = wanted & declared
     for ref in wanted - present:
         if await resolve_key(secrets, ref, scope) is not None:
             present.add(ref)
     return present
+
+
+# ── Death evidence, read from this installation's own journal ────────────────
+
+
+def retirement_candidates(
+    new_configs: list[LLMConfig],
+    current_configs: list[LLMConfig],
+    present: set[str],
+    *,
+    keys_visible: bool = True,
+) -> list[str]:
+    """The entries the merge would otherwise keep, and only those: managed, with
+    name and provider both absent from the arriving lineup, that a missing key does
+    not already remove.
+
+    Empty on every ordinary sync, which is why the journal is normally not read.
+    Where a missing key proves nothing — per-user keys, a probe that resolved
+    nothing — every dropped entry is a candidate, since "nobody could call it" is
+    the only evidence such an installation can ever produce.
+    """
+    new_managed = [c for c in new_configs if not c.custom]
+    names = {c.name for c in new_managed}
+    refs = {c.api_key_ref for c in new_managed if c.api_key_ref}
+    return [
+        c.name
+        for c in current_configs
+        if not c.custom
+        and c.name not in names
+        and c.api_key_ref not in refs
+        and (c.api_key_ref in present or not keys_visible)
+    ]
+
+
+async def dead_entries(
+    names: Iterable[str],
+    store: StoreProtocol | None,
+    *,
+    limit: int = _EVIDENCE_LIMIT,
+) -> dict[str, Retirement]:
+    """Those of ``names`` whose journal tail proves them unusable here, each with
+    the evidence that condemned it.
+
+    Dead means at least one permanent client failure and no success at all in the
+    window; a bad week — 429s, 5xx — proves nothing. No key-hash condition: in a
+    scoped installation the rule reads as "nobody could call it", which is the
+    evidence wanted there. Reads nothing when there is nothing to decide.
+    """
+    wanted = set(names)
+    if not wanted or not isinstance(store, QueryableStoreProtocol):
+        return {}
+    rows = await store.calls(limit=limit, kind="call")
+    latest: dict[str, Call] = {}
+    oldest: dict[str, Call] = {}
+    alive: set[str] = set()
+    for row in rows:
+        if row.llm_name not in wanted:
+            continue
+        if row.status is CallStatus.OK:
+            alive.add(row.llm_name)
+        elif row.http_status in _PERMANENT_FAILURES:
+            # Newest first: the status is what the provider answers now, the
+            # timestamp is how far back the run of failures reaches.
+            latest.setdefault(row.llm_name, row)
+            oldest[row.llm_name] = row
+    return {
+        name: Retirement(name=name, http_status=row.http_status, since=oldest[name].ts)
+        for name, row in latest.items()
+        if name not in alive
+    }
 
 
 # ── The merge ────────────────────────────────────────────────────────────────
@@ -230,32 +352,51 @@ def _check_name_clash(merged: list[LLMConfig]) -> None:
 
 def _removal_plan(
     dropped: list[LLMConfig],
-    arrived: list[LLMConfig],
+    lineup_refs: set[str],
     present: set[str],
-) -> tuple[list[LLMConfig], list[LLMConfig]]:
-    """Pairs, then budget: which dropped entries are paid for, and which stay.
+    dead: Mapping[str, Retirement],
+    *,
+    keys_visible: bool,
+) -> tuple[list[LLMConfig], list[LLMConfig], list[Retirement]]:
+    """The provider is the unit: which dropped entries go, which stay, which retire.
 
-    An arrival carrying a dropped entry's ref *is* its replacement and needs no
-    key lookup at all; every other arrival pays for one removal only if we have
-    its key. Entries whose own key is absent are spent first — they are inactive
-    already, so the callable count stays as high as possible.
+    Two entries on one ``api_key_ref`` are one quota and one failure domain, so the
+    decision is about the ref, never about counting entries. Depends only on the
+    state of the world, which is what makes repeated syncs converge.
     """
-    remaining = list(dropped)
     removed: list[LLMConfig] = []
-    paid: set[str] = set()
-    for arrival in arrived:
-        if not arrival.api_key_ref:
-            continue
-        match = next((d for d in remaining if d.api_key_ref == arrival.api_key_ref), None)
-        if match is not None:
-            removed.append(match)
-            remaining.remove(match)
-            paid.add(arrival.name)
-    budget = sum(1 for a in arrived if a.name not in paid and a.api_key_ref in present)
-    order = [d for d in remaining if d.api_key_ref not in present]
-    order += [d for d in remaining if d.api_key_ref in present]
-    removed.extend(order[:budget])
-    return removed, order[budget:]
+    kept: list[LLMConfig] = []
+    retired: list[Retirement] = []
+    for entry in dropped:
+        if entry.api_key_ref in lineup_refs:
+            # The lineup's models for that provider replace it: same key, same
+            # quota, so no key lookup is needed at all.
+            removed.append(entry)
+        elif keys_visible and entry.api_key_ref not in present:
+            removed.append(entry)
+        elif entry.name in dead:
+            removed.append(entry)
+            retired.append(dead[entry.name])
+        else:
+            kept.append(entry)
+    return removed, kept, retired
+
+
+def _distinct_refs(entries: Iterable[LLMConfig]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(c.api_key_ref for c in entries if c.api_key_ref))
+
+
+def _orphan_refs(
+    removed: list[LLMConfig],
+    merged: list[LLMConfig],
+    present: set[str],
+) -> tuple[str, ...]:
+    """Refs whose key exists here and which nothing in the merged lineup references
+    any more. ``[[custom]]`` counts as a reference, which is what keeps a paid direct
+    model's key out of the "revoke it" advice; a ref with no key behind it is nothing
+    to revoke and would be pure noise on the commonest removal of all."""
+    still_used = {c.api_key_ref for c in merged if c.api_key_ref}
+    return tuple(ref for ref in _distinct_refs(removed) if ref not in still_used and ref in present)
 
 
 def _pending_keys(
@@ -286,8 +427,14 @@ def merge_upstream(  # noqa: PLR0913
     present: set[str],
     *,
     source: str,
+    dead: Mapping[str, Retirement] = _NO_EVIDENCE,
+    keys_visible: bool = True,
+    keys_scoped: bool = False,
 ) -> tuple[list[LLMConfig], dict[str, KeyInfo], SyncReport]:
     """Merge an arriving lineup into the current one. Pure — no I/O, no secrets.
+
+    ``dead`` names entries this installation's journal proved unusable; the two
+    ``keys_*`` flags say how much a missing key proves at this merge site.
 
     Raises ``ValueError`` on a model-identity change or a name carried twice;
     the caller has written nothing at that point.
@@ -301,9 +448,16 @@ def merge_upstream(  # noqa: PLR0913
     _check_model_identity(new_managed, current_by_name)
 
     new_names = {c.name for c in new_managed}
+    lineup_refs = {c.api_key_ref for c in new_managed if c.api_key_ref}
     dropped = [c for c in current_managed if c.name not in new_names]
     arrived = [c for c in new_managed if c.name not in current_by_name]
-    removed, kept = _removal_plan(dropped, arrived, present)
+    removed, kept, retired = _removal_plan(
+        dropped,
+        lineup_refs,
+        present,
+        dead,
+        keys_visible=keys_visible,
+    )
 
     arriving_custom = {c.name for c in new_custom}
     custom = [*new_custom, *(c for c in current_custom if c.name not in arriving_custom)]
@@ -326,9 +480,14 @@ def merge_upstream(  # noqa: PLR0913
         ),
         removed=tuple(c.name for c in removed),
         kept=tuple(c.name for c in kept),
+        kept_refs=_distinct_refs(kept),
+        retired=tuple(retired),
+        orphan_refs=_orphan_refs(removed, merged, present),
         pending_keys=_pending_keys(merged, keys, present),
         active_before=sum(1 for c in current_configs if c.api_key_ref in present),
         active_after=sum(1 for c in merged if c.api_key_ref in present),
+        keys_visible=keys_visible,
+        keys_scoped=keys_scoped,
     )
     return merged, keys, report
 
@@ -397,6 +556,10 @@ def render_merged_toml(
 def write_atomic(target: Path, text: str) -> None:
     """Write through a sibling temp file and rename, so a crash mid-write cannot
     truncate the config the user already has."""
+    # NamedTemporaryFile creates at 0600 and os.replace carries that onto the
+    # target, so a runtime sync would lock everyone but its own user out of the
+    # config it just rewrote.
+    mode = target.stat().st_mode & 0o777 if target.exists() else None
     with tempfile.NamedTemporaryFile(
         "w",
         encoding="utf-8",
@@ -409,6 +572,8 @@ def write_atomic(target: Path, text: str) -> None:
         os.fsync(fh.fileno())
         tmp = Path(fh.name)
     try:
+        if mode is not None:
+            tmp.chmod(mode)
         os.replace(tmp, target)
     except OSError:
         tmp.unlink(missing_ok=True)
@@ -485,18 +650,6 @@ async def load_sync_source(source: RegistryProtocol | str | Path) -> SyncSource:
     )
 
 
-def render_lineup(configs: list[LLMConfig], keys: dict[str, KeyInfo]) -> str:
-    """A lineup as TOML text — the stand-in for a source that has no file of its own."""
-    parts = [
-        entry_block("custom" if cfg.custom else "llms", _entry_dict(cfg))
-        for cfg in sorted(configs, key=lambda c: c.custom)
-    ]
-    table = {ref: {"help": info.help, **info.extra} for ref, info in keys.items()}
-    if table:
-        parts.append(tomli_w.dumps({"keys": table}).rstrip("\n"))
-    return "\n\n".join(parts) + "\n" if parts else ""
-
-
 def _read_toml(target: Path) -> dict:
     if not target.exists():
         return {}
@@ -526,6 +679,23 @@ def _keys_tail(
     return tail
 
 
+def _check_render_faithful(rendered: str, merged: list[LLMConfig]) -> None:
+    """Belt and braces before the one write that can destroy a live config: what is
+    about to replace it must parse, and carry exactly the merge's entries."""
+    try:
+        written = [c.name for c in configs_from_data(tomllib.loads(rendered))]
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(
+            f"sync: the merged file would not parse ({exc}) — nothing written",
+        ) from exc
+    expected = [c.name for c in merged]
+    if sorted(written) != sorted(expected):
+        raise ValueError(
+            f"sync: the merged file would carry {sorted(written)} instead of"
+            f" {sorted(expected)} — nothing written",
+        )
+
+
 async def sync_file(  # noqa: PLR0913
     new_text: str,
     target: Path,
@@ -534,6 +704,7 @@ async def sync_file(  # noqa: PLR0913
     secrets: SecretsProtocol,
     scope: str | None = None,
     have_keys: bool | Sequence[str] = False,
+    dead: Mapping[str, Retirement] = _NO_EVIDENCE,
     fetch_catalog: Callable[[], str] | None = None,
 ) -> FileSyncOutcome:
     """Merge ``new_text`` into the ``.toml`` at ``target`` and write it atomically.
@@ -568,6 +739,9 @@ async def sync_file(  # noqa: PLR0913
         key_infos_from_data(data),
         present,
         source=source,
+        dead=dead,
+        keys_visible=keys_are_visible(present, scope=scope, have_keys=have_keys),
+        keys_scoped=scope is not None,
     )
     check_not_emptying(merged, current_configs, report)
 
@@ -579,5 +753,12 @@ async def sync_file(  # noqa: PLR0913
         data.get("keys", {}),
         refresh.key_help,
     )
-    write_atomic(target, render_merged_toml(new_text, kept, custom_entries, tail))
-    return FileSyncOutcome(report=report, notices=refresh.notices, warnings=refresh.warnings)
+    rendered = render_merged_toml(new_text, kept, custom_entries, tail)
+    _check_render_faithful(rendered, merged)
+    write_atomic(target, rendered)
+    return FileSyncOutcome(
+        report=report,
+        configs=tuple(merged),
+        notices=refresh.notices,
+        warnings=refresh.warnings,
+    )

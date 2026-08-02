@@ -5,10 +5,9 @@ shape. Its identity gate defines when a fetched lineup "changes nothing" — thi
 persisted field to `LLMConfig`, so the comparison must account for it, and doing that once, after
 the gate exists, is one edit instead of a rebase. And once a refresh runs unattended on a daily
 clock, a curated weight is something an installation adopts without an admin reading it, which
-raises the bar on §5's rubric and on the validation in §6. `pool-lifecycle.md` (#1) rewrites the
-merge rule in `broker/upstream.py` that decides what reaches the registry at all; both land first.
+raises the bar on §5's rubric and on the validation in §6.
 
-Line anchors below are current-main numbers; #1 and #2 move them.
+Line anchors below are current-main numbers; `preset-autorefresh.md` moves them.
 
 ## The problem
 

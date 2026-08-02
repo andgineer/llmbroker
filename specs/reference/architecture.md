@@ -651,8 +651,10 @@ host could never retire anything.
 
 **A retirement shows its evidence.** Deleting an entry from the installation's
 own configuration is the one destructive thing a sync does, so the report carries
-the permanent status that condemned it and how far back the failures run in the
-window that was read. An admin can check the verdict without opening the journal.
+the permanent status the provider answers now and how far back the run of
+failures reaches in the window that was read — the code an admin is sent to check
+has to be the one they will see. An admin can check the verdict without opening
+the journal.
 
 **A key exists or it does not.** A key exists when the secrets store returns a
 **non-empty** value for its ref (an empty or whitespace-only value is no key,
