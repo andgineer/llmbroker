@@ -9,31 +9,21 @@ over a stale plan, gate on `invoke pre` + `pytest` after every batch, never bump
 never commit unasked, and leave the plan file in place for review. Nothing needs to be restated in
 the request. The plan and its row here are removed only after review and merge, on request.
 
-Statuses as of 2026-08-02: neither plan below is started.
+Statuses as of 2026-08-02: the plan below is not started.
 
 ## Order
 
 | # | Plan | Issue | Blocked by | Notes |
 |---|---|---|---|---|
-| 1 | `pool-priority.md` | — | — | Fixes a live defect: curated priority is discarded by every DB registry |
-| 2 | `fileless-broker.md` | — | #1 | `Broker()` with no config file; `direct=` for paid models; fixes a second live defect |
+| 1 | `fileless-broker.md` | — | — | `Broker()` with no config file; `direct=` for paid models; fixes a live defect |
 
 ## Why this order
 
-**#1 carries a defect fix that is already live.** Curated priority is written by `sync` and then
-discarded by every database registry — rows come back sorted by entry name, so the pool's order is
-an accident of naming, and `optimizer.md` currently claims otherwise. The fix replaces the
-positional index with a weight stored on the entry. It should not wait: a refresh now runs
-unattended on a daily clock, so installations adopt curated weights with no admin reading them.
-
-**#2 removes the config file from the common path, and carries the second live defect.** A paid
+**It removes the config file from the common path, and carries a live defect.** A paid
 `[[custom]]` alias is re-pointed at the catalog's current model only on the file branch of `sync`,
 so every database installation sits on the model id it was first synced with, forever and silently.
 That is the same catalog-following machinery `direct=` needs, so it is fixed here rather than
-separately. It follows #1 because both touch `LLMConfig` — #1 adds a persisted weight, #2 deletes
-`pooled` — and #1's defect is the more expensive one: a wrong routing order affects every request
-of every DB installation, while a frozen paid model version affects only installations that declare
-one.
+separately.
 
 Three rules established by shipped work and binding on what follows:
 
