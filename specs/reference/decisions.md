@@ -80,27 +80,46 @@ resulting cost estimate. The current behavior rules themselves live in
   purge command. The store holds no derived data: the journal is raw
   material, verdicts are manual input, everything derivable is computed at
   read time.
-- **The preset file alone determines the model list; sync is a total
-  mirror.** The registry is a pure projection of the file: nothing but
-  `sync` ever writes to it (admin verdicts live in the store
-  disabled-doc); there is no separate CRUD path, merge rule, or registry
-  cloning — admin runtime actions (`set_disabled`, editing keys) never
-  touch the registry; a host with its own models keeps its own file (a
-  preset is "your model list," not necessarily a file from the repo). The
-  optimizer and learning never write to the registry. There is no implicit
-  seed-on-start: it would be unworkable in a cluster — every node would
-  coerce the registry to its own local copy of the TOML, and diverging
-  copies would flip-flop the registry. `sync` is called explicitly — a
-  fresh preset was downloaded, initialize the app's DB; mirror semantics:
-  add new entries, update existing ones, **delete ones that disappeared**
-  (there is nothing to lose — keys live separately in the secrets store,
-  statistics are derived from the journal, the journal does not cascade; a
-  model returning to the preset is simply re-added, and its old scores and
-  verdicts are picked back up); sync also
+- **The lineup determines the model list; `sync` is the only path that
+  writes it.** The registry is a projection of the arriving lineup merged
+  with what is already there: nothing but `sync` ever writes to it (admin
+  verdicts live in the store disabled-doc); there is no separate CRUD path
+  or registry cloning — admin runtime actions (`set_disabled`, editing
+  keys) never touch the registry; a host with its own models keeps its own
+  lineup (a preset is "your model list," not necessarily a file from the
+  repo). The optimizer and learning never write to the registry. What a
+  node must never do is coerce the shared registry to a **local copy** of
+  its own: diverging copies would flip-flop it in a cluster. An implicit
+  refresh follows the one shared upstream instead, so nodes converge — the
+  premise being that one registry means one secrets store, so every node
+  resolves the same keys and computes the same merge. The merge itself
+  adds new entries and updates existing ones, and removes a dropped one
+  only under the rule in [`architecture.md`](architecture.md) (same
+  provider replaces it, no key for it here, or the journal proves it
+  dead) — nothing is lost by a removal that does happen: keys live in the
+  secrets store, statistics derive from the journal, and a model that
+  returns is re-added with its old scores and verdicts. `sync` also
   appends missing model names to the store disabled-doc (`disabled:
   false`) without touching existing values; refusing to change a model's
   identity is a call error (protecting the binding between statistics and
   the model name), not an alert.
+- **The curated lineup keeps itself current, unconditionally.** A pinned
+  free-tier lineup is a decaying one — providers retire free endpoints
+  without notice — so a broker following the curated preset re-checks it
+  on an interval, gated by time (one monotonic comparison per call, one
+  small GET per node per day) and by identity (zero writes and no log line
+  when the merged result is what is already stored). The check is lazy on
+  activity rather than timed, so an idle process performs no I/O and the
+  library still needs no service of its own. There is no off switch: what
+  an off switch appears to protect against — an unreviewed lineup change —
+  is already bounded by the removal rule, and what it buys is a pool that
+  decays to nothing. The cost accepted with it: the catalog's default
+  branch is live configuration everywhere. Pinning the fetch to the
+  installed version's tag would close that and is rejected — a preset fix
+  would then reach nobody until a release of llmbroker, which is the
+  problem the refresh exists to remove. A fetched lineup must carry
+  `https://` endpoints, which removes plaintext key transmission as an
+  accident without pretending to defend against a compromised catalog.
 - **Manual blocking is an admin verdict in the store, not a registry
   field.** Demotion is soft (to the back of the queue; a last resort still
   gets traffic), and that is not enough for a truly useless model: hard
@@ -347,7 +366,10 @@ Line estimates for the design as built (pre-simplification `src` ≈ 6000).
   consistent shared store of scores.
 - **Bandit machinery**: ε-exploration, usable_rate floors, latency ranking,
   auto-retirement (duplicates exponential cooldown).
-- **Implicit seeding on startup** — replaced by an explicit `sync(source)`.
+- **Seeding the registry from a node's own local copy** — a node never
+  coerces the shared registry to a copy of its own; the refresh follows the
+  one shared upstream, and an explicit `sync(source)` is what mirrors a
+  vendored file into a database registry.
 - **A deprecation-tier field** — an entry a lineup drops is either removed
   (and nothing is lost: keys live in the secrets store, statistics derive
   from the journal) or kept as it is, routing exactly as before. There is no

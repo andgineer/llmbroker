@@ -1,4 +1,11 @@
-"""The ``sync=`` constructor knob: refresh once before provisioning, never raise."""
+"""The ``sync=`` constructor argument: which lineup this broker follows, and the
+guarantee that following it never breaks a start.
+
+An empty registry is filled before provisioning, blocking, because provisioning an
+empty registry raises. A registry that already has a lineup is provisioned from
+what it holds and refreshed afterwards, off the request path — so a test that reads
+what the refresh did waits for it with ``_settle``.
+"""
 
 import http.client
 import logging
@@ -37,6 +44,12 @@ def _broker(tmp_path, **kwargs):
         store=InMemoryStore(),
         **kwargs,
     )
+
+
+async def _settle(broker) -> None:
+    """Wait out the background refresh a non-empty registry schedules."""
+    if broker._refresh_task is not None:
+        await broker._refresh_task
 
 
 async def test_the_knob_populates_a_fresh_registry_before_provisioning(tmp_path):
@@ -109,6 +122,7 @@ async def test_a_fetch_failure_keeps_the_existing_config_and_logs(tmp_path, monk
     )
     with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
         async with _broker(tmp_path, sync="freetier") as broker:
+            await _settle(broker)
             assert await broker.count() == 1
             assert (await broker.get("old")).config.name == "old"
             assert broker.last_sync_report is None
@@ -140,6 +154,7 @@ async def test_a_truncated_response_does_not_stop_the_broker_from_starting(
     )
     with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
         async with _broker(tmp_path, sync="freetier") as broker:
+            await _settle(broker)
             assert await broker.count() == 1
     assert any("failed reading" in r.message for r in caplog.records)
 
@@ -157,6 +172,7 @@ async def test_a_refusal_stashes_the_report_and_continues(tmp_path, monkeypatch,
     )
     with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
         async with _broker(tmp_path, sync="freetier") as broker:
+            await _settle(broker)
             assert await broker.count() == 1
             assert broker.last_sync_report is refused
     assert any("refused" in r.message for r in caplog.records)

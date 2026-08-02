@@ -42,18 +42,38 @@ report = llms.sync("freetier")       # a preset name — the only call that goes
 print(report)                        # or forward it to your own admin channel
 ```
 
-To refresh automatically on the first call of a process, pass it to the
-constructor:
+You rarely need to. **The curated lineup keeps itself current on its own**, with
+no argument and no job to schedule: providers retire free endpoints without
+notice, so a lineup that stops updating slowly stops working. The broker
+re-checks it about once a day, lazily — the check happens on a call you were
+making anyway, never on a timer, so an idle process does nothing at all.
+
+It is best-effort: if the catalog is unreachable, the broker logs a warning and
+carries on with the config it already has. The explicit `llms.sync(...)` call
+raises instead — you asked for it, so you get to handle it.
+
+**A check that changes nothing touches nothing.** Your `llms.toml` is rewritten
+only when the curated lineup genuinely moved, so a file under version control
+stays byte-identical — and untouched mtime — on every check that found no news.
+
+To follow your own lineup instead of ours, name it; to follow nothing, say so:
 
 ```python
-llms = llmbroker.Broker("llms.toml", sync="freetier")
+llmbroker.Broker("llms.toml", sync="my-lineup.toml")   # yours, kept current
+llmbroker.Broker("llms.toml", sync=None)               # nothing is refreshed
+llmbroker.Broker("llms.toml", sync_interval=3600)      # check hourly instead
 ```
 
-The knob is best-effort: if the catalog is unreachable, the broker logs a warning
-and starts on the config you already have. The explicit `llms.sync(...)` call
-raises instead — you asked for it, so you get to handle it. On a file registry
-the knob rewrites that file on disk at the first call — usually the one under
-version control, so expect it in your diffs.
+### Where llmbroker keeps its own state
+
+Outside your config, llmbroker caches a little of its own: the fetched preset, the
+paid catalog, and when it last checked for an update. That lives in one machine
+directory — `~/Library/Caches/llmbroker` on macOS, `$XDG_CACHE_HOME/llmbroker` on
+Linux, `%LOCALAPPDATA%\llmbroker` on Windows. Point it elsewhere with
+`$LLMBROKER_HOME`, or per broker with `home=`, which is how two projects on one
+machine keep entirely separate state. Nothing in there is authoritative: delete
+it, or run where nothing is writable, and the broker still works — it just
+re-fetches.
 
 A `.toml` config is synced from a curated preset only. To roll a vendored config
 out to a database registry instead, see

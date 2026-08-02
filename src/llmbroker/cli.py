@@ -20,6 +20,7 @@ from pathlib import Path
 
 import tomli_w
 
+from llmbroker.broker.stamps import write_stamp
 from llmbroker.broker.upstream import (
     PRESET_NAME_RE,
     FileSyncOutcome,
@@ -35,6 +36,7 @@ from llmbroker.broker.upstream import (
     write_atomic,
 )
 from llmbroker.exceptions import SyncRefusedError
+from llmbroker.home import home_dir
 from llmbroker.models import KeyInfo, LLMConfig
 from llmbroker.standalone.registry import Registry, key_info_from_entry
 from llmbroker.standalone.secrets import Secrets
@@ -169,6 +171,9 @@ def _sync_preset_into(text: str, name: str, raw_target: str) -> int:
     except (SyncRefusedError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    # Written, never read: an explicitly typed command always does the thing, but
+    # an application on this host shares the clock it just advanced.
+    write_stamp(home_dir(), f"{name} {target.resolve()}")
     for warning in outcome.warnings:
         print(f"warning: {warning}", file=sys.stderr)
     for notice in outcome.notices:

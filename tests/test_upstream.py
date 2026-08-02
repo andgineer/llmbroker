@@ -762,3 +762,51 @@ def test_a_url_error_still_reports_its_reason(monkeypatch):
     monkeypatch.setattr(upstream.urllib.request, "urlopen", boom)
     with pytest.raises(ValueError, match="name resolution failed"):
         fetch_preset_text("freetier")
+
+
+# ── A fetched lineup may not send keys in the clear ──────────────────────────
+
+
+def _served(text: str):
+    class _Ok(_Response):
+        def read(self):
+            return text.encode()
+
+    return lambda *_a, **_k: _Ok(None)
+
+
+_HTTPS_PRESET = '[[llms]]\nname="a"\nbase_url="https://a/v1"\nmodel="m"\napi_key_ref="A"\n'
+
+
+def test_a_fetched_preset_with_a_plaintext_base_url_is_refused(monkeypatch):
+    plaintext = _HTTPS_PRESET.replace("https://a/v1", "http://a/v1")
+    monkeypatch.setattr(upstream.urllib.request, "urlopen", _served(plaintext))
+    with pytest.raises(ValueError, match="non-https base_url"):
+        fetch_preset_text("freetier")
+
+
+def test_a_plaintext_provider_in_the_paid_catalog_is_refused(monkeypatch):
+    catalog = (
+        '[[provider]]\nid="p"\nbase_url="http://p/v1"\napi_key_ref="P"\n'
+        '[[provider.models]]\nalias="x"\nmodel="m"\n'
+    )
+    monkeypatch.setattr(upstream.urllib.request, "urlopen", _served(catalog))
+    with pytest.raises(ValueError, match="non-https base_url"):
+        fetch_preset_text("paid-catalog")
+
+
+def test_an_https_preset_passes(monkeypatch):
+    monkeypatch.setattr(upstream.urllib.request, "urlopen", _served(_HTTPS_PRESET))
+    assert fetch_preset_text("freetier") == _HTTPS_PRESET
+
+
+async def test_a_local_file_source_may_still_use_a_plaintext_url(tmp_path):
+    """The user's own config is not the catalog: a local gateway on http is theirs
+    to declare."""
+    target = tmp_path / "llms.toml"
+    target.write_text("")
+    local = (
+        '[[llms]]\nname="local"\nbase_url="http://127.0.0.1:8000/v1"\nmodel="m"\napi_key_ref="L"\n'
+    )
+    outcome = await sync_file(local, target, source="llms.toml", secrets=DictSecrets({"L": "sk"}))
+    assert outcome.report.added == ("local",)

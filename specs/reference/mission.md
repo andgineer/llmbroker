@@ -6,11 +6,11 @@ Zero-administration routing over a pool of 4-5 free-tier LLMs:
    `Retry-After`) and move on to the next model within the same request. The
    caller only sees an error once the whole pool is exhausted.
 2. **Zero administration**: a curated preset (TOML from the repository) that
-   mirrors itself into an installation via `sync(name)`, never shrinking what
-   the pool can call; a dead key is detected and disables itself; a model that
-   performs poorly for our tasks moves itself to the back of the queue. The one
-   irreducible admin act is obtaining a new provider key — and it is surfaced in
-   the sync report, never silently absorbed.
+   keeps itself current inside a running installation, with no admin act at all
+   and never shrinking what the pool can call; a dead key is detected and
+   disables itself; a model that performs poorly for our tasks moves itself to
+   the back of the queue. The one irreducible admin act is obtaining a new
+   provider key — and it is surfaced in the sync report, never silently absorbed.
 3. **Learning per (model, operation)**: tasks require different levels of
    model capability — quality scores (`record_quality`) accumulate per
    (model, operation) pair, demotion is per operation; no global verdict
@@ -58,7 +58,7 @@ covers it, and a change that erodes any one of these erodes the mission:
    from accumulated `record_quality` scores — a self-regulating pool, not a
    static priority list.
 4. **Zero administration as a feature, not a tutorial.** A curated free-tier
-   preset mirrored by `sync(name)`, dead keys that disable themselves,
+   preset that keeps itself current, dead keys that disable themselves,
    cooldowns that honor `Retry-After` — competitors leave all of this as
    configuration for the operator.
 5. **Per-user keys over one shared, learned pool.** Multi-user hosts get

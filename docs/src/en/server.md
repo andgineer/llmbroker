@@ -36,11 +36,14 @@ Note this is *not* `async with`: entering the broker provisions the pool, and a
 fresh registry is empty, so the context manager would raise `EmptyRegistryError`
 before the sync could fill it.
 
-The serving processes then take a plain broker with no `sync=` knob — the deploy
-job already did the work. Run it as a one-shot job (release phase, a Kubernetes
-Job, an init container), **not** as a per-node startup step: N nodes each
-reconciling the registry against their own copy is exactly the flip-flop this
-design avoids. A single-node app may put the sync in `lifespan` instead.
+Run it as a one-shot job (release phase, a Kubernetes Job, an init container).
+**Keeping the lineup current afterwards needs no job at all**: the serving
+processes re-check the curated lineup themselves, about once a day, on a call they
+were making anyway. N nodes checking is safe because they all compute the same
+merge from the same upstream and the same keys, so the first write settles it and
+every other node's check finds nothing to do. What the design avoids is a node
+reconciling the registry against a *local copy* of its own — which is why a
+vendored file belongs in the deploy job above, not in every node's startup.
 
 A vendored file or another registry as the source is a **database** target only.
 A `.toml` registry is synced from a curated preset name; anything else is refused

@@ -43,6 +43,13 @@ Rewrites the preset-managed models and their key hints in `llms.toml`, keeps you
 entry at what the paid catalog now recommends. Then it prints a report of what it
 did — on every run, no-ops included.
 
+This is the **reviewable** path, not the only one: a broker keeps the same file
+current by itself (see [Basic usage](usage.md#syncing)). The command is for when
+you want the change in a diff you approve — so it always fetches and always prints
+the report, whatever a broker on this host may have checked a minute ago. It does
+tell that broker it looked, so the two share one clock instead of each fetching
+on its own schedule. A run that finds no news leaves the file byte-identical.
+
 A model whose provider the preset dropped is removed only when you have no key
 for that provider, or when the journal next to your config proves the model dead
 (a 401/403/404 with no success). Otherwise it stays and keeps routing. So

@@ -420,14 +420,22 @@ async def test_a_pending_key_alone_is_not_a_warning(tmp_path, preset, caplog):
     assert "pending key GROQ" in records[0].message
 
 
-async def test_a_no_op_run_still_logs_its_one_line(tmp_path, preset, caplog):
+async def test_a_no_op_run_says_so_at_debug_and_nowhere_else(tmp_path, preset, caplog):
+    """A refresh that changes nothing is indistinguishable from no refresh at all:
+    a daily INFO line saying nothing is how a log stops being read."""
     preset["text"] = _PRESET_GROQ_NEW
     db = await _seeded_db(
         tmp_path,
         [LLMConfig(name="groq-new", base_url="https://groq/v1", model="m", api_key_ref="GROQ")],
     )
     broker = _broker(db, secrets=DictSecrets({"GROQ": "sk"}))
-    records = await _sync_and_capture(broker, caplog)
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="llmbroker.broker"):
+        report = await broker.sync("freetier")
     await broker.aclose()
-    assert [r.levelno for r in records] == [logging.INFO]
-    assert records[0].message.endswith("no changes")
+    records = [r for r in caplog.records if r.name == "llmbroker.broker"]
+    assert [r.levelno for r in records] == [logging.DEBUG]
+    assert records[0].message == "sync freetier: no change"
+    # The report is still produced and still stashed — only the log level moved.
+    assert broker.last_sync_report is report
+    assert str(report).endswith("no changes")

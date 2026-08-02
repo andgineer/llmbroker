@@ -2,6 +2,8 @@
 
 import contextlib
 import os
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 
 import aioboto3
@@ -16,6 +18,7 @@ from testcontainers.vault import VaultContainer
 
 from llmbroker.aws import Secrets as AwsSecrets
 from llmbroker.broker.broker import AsyncBroker
+from llmbroker.home import HOME_ENV_VAR
 from llmbroker.mongodb import Registry as MongoRegistry
 from llmbroker.mongodb import Secrets as MongoSecrets
 from llmbroker.mongodb import Store as MongoStore
@@ -38,6 +41,27 @@ from llmbroker.vault import Secrets as VaultSecrets
 # Docker Desktop cleans up containers itself, so Ryuk is not needed on macOS.
 if getattr(os, "uname", None) and os.uname().sysname == "Darwin":
     os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
+
+
+@pytest.fixture(autouse=True)
+def llmbroker_home(tmp_path_factory, monkeypatch):
+    """Every test gets its own llmbroker home. Without this the suite would write
+    into the developer's real cache directory and share stamps between tests."""
+    home = tmp_path_factory.mktemp("llmbroker_home")
+    monkeypatch.setenv(HOME_ENV_VAR, str(home))
+    return home
+
+
+@pytest.fixture(autouse=True)
+def offline_catalog(monkeypatch):
+    """No test reaches the real catalog. Following the curated preset is the
+    default, so every broker built here would otherwise fetch. Patched at the
+    socket seam so a test is free to patch either level above it."""
+
+    def _refuse(*_args, **_kwargs):
+        raise urllib.error.URLError("offline in tests")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _refuse)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

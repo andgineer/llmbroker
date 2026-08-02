@@ -571,13 +571,21 @@ curated lineup from the catalog: this is the only networked operation in the
 library. A *path* or *registry* (`sync("llms.toml")`) is offline. Both then run
 the identical merge, so the rules below hold whatever named the lineup.
 
-**The vendored config is a lockfile.** Refreshing it from upstream is an explicit
-repo or deploy action, like a lockfile upgrade. Start goes online only when asked
-to, via the `sync=` knob, and never fails when it does — a refresh that cannot be
-fetched or applied logs and leaves the existing configuration in place. This is
-also why seeding is never implicit at construction: in a
-cluster, every node reconciling the registry against its own copy would flip-flop
-it, so the refresh is one job, not a per-node startup step.
+**A lineup that stops updating decays into an unusable pool.** The pool is a list
+of free endpoints that providers retire without notice, so a broker following the
+curated preset keeps it current on an interval — checking lazily on activity, never
+on a timer — rather than waiting for an admin to run something. That is what makes
+the library work at all, so there is no off switch: an installation that must not
+follow our curation declares a lineup of its own instead, which is a different
+pool rather than a frozen copy of ours.
+
+Concurrent nodes are safe because the merge is a pure function of (arriving
+lineup, current lineup, resolved keys), and one registry means one secrets store,
+so every node computes the same result: the first write settles it and the
+identity gate turns every other node's check into a no-op. What a node must never
+do is coerce the shared registry to a *local copy* of its own — diverging copies
+would flip-flop it. An implicit refresh follows the one shared upstream, which is
+why nodes converge instead of oscillating.
 
 ### Two tiers, one merge site each
 
@@ -718,13 +726,24 @@ verdict resurface.
   they still need sit in the file, so a bot refresh is reviewable in the pull
   request diff itself, and the file's git history is the update record. The sync
   stores nothing of its own.
-- Every sync logs its outcome once at `info`, whatever called it — no-ops,
-  pending keys and kept entries included. Nothing in a sync outcome is
+- **A sync that changes nothing is indistinguishable from no sync at all.** The
+  merged result is compared with what is already stored, and when they are equal
+  nothing is written, nothing is applied to the live pool, and the outcome is
+  logged at `debug`. The comparison is on the bytes that would be written for a
+  file target, and on the entries keyed by name for a registry target — a
+  database hands its rows back in its own order, so position there is the
+  backend's and not the lineup's. What the gate covers is the lineup: secret
+  bootstrapping runs on every sync, since a key that has just appeared in the
+  environment is the reason a host calls one.
+- A sync that *did* change something logs its outcome once at `info`, whatever
+  called it, pending keys and kept entries included. Nothing in a sync outcome is
   admin-actionable: a kept entry is a working model that keeps routing, and a
   keyless entry is a normal documented state. What *is* actionable is a degraded
   pool, and the catalog owns that alarm. The log line and `last_sync_report` are
   both recorded before the pool is reconciled, so a reconcile that raises cannot
-  swallow the record of a change already applied.
+  swallow the record of a change already applied. `last_sync_report` is set on
+  every outcome, no-ops included, and the CLI prints the report on every run —
+  the reviewable path always shows its work.
 - The **journal** stays what it is — a stream of LLM calls and quality ratings. A
   sync is a registry operation and never writes there; it only *reads* the
   bounded tail, and only when a provider it might retire has a candidate entry.
@@ -769,21 +788,72 @@ common case — adds no registry I/O to a reconcile at all, and `snapshot()` nev
 performs any; a registry without key metadata yields empty help but correct refs
 and names.
 
-### The `sync=` knob
+### Keeping the lineup current
 
-`AsyncBroker(..., sync="freetier")` refreshes the lineup once, at the top of the
-first `ensure_pool()` and inside its lock — before provisioning, which is the only
-placement that works: entering the context manager provisions eagerly, and
-provisioning an empty registry raises, so a refresh running after it could never
-populate a fresh one. Running it first also serves callers who never enter a
-context manager, since every public operation funnels through `ensure_pool()`.
+`sync=` names the lineup an installation follows — the curated preset unless it
+says otherwise, `None` for a registry filled by other means. Two independent gates
+decide what a check costs:
+
+- the **time gate** decides whether to go to the network at all. It is a monotonic
+  comparison at the top of `ensure_pool()`, the funnel every public operation
+  already passes through, so an idle process performs no I/O and schedules no
+  wakeups: the library still needs no running service of its own. A background
+  timer was rejected for that reason — a process making no calls has no lineup to
+  keep fresh, and a sleeping coroutine would have to be owned, cancelled and
+  tested against every embedding.
+- the **identity gate** decides whether what arrived changes anything (see "A sync
+  that changes nothing" above). It also removes the need for a conditional GET,
+  which would save a kilobyte and no round trip while proving strictly less.
+
+**A check that just happened is remembered across process exits**, per
+(lineup, target), so a short-lived process does not pay a round trip per
+invocation and a rolling deploy does not fetch once per pod. The record only ever
+makes checks less frequent: it is not authoritative, a timestamp in the future
+counts as absent, and losing it costs one extra fetch. It is deliberately not
+shared across a cluster — with a daily interval, N nodes cost N small GETs a day,
+which is unmeasurable against the fleet's own LLM traffic, and the identity gate
+already makes concurrent application a no-op.
+
+**The refresh is off the critical path, with one exception.** An empty registry is
+filled before provisioning, blocking, because provisioning an empty registry
+raises and there is no alternative; a registry that already holds a lineup is
+provisioned from it and refreshed afterwards, so the first call of a fresh process
+does not wait on the network.
 
 It is **best-effort and never raises**: a fetch failure or a refusal logs a
-warning, stashes the report on `last_sync_report` where there is one, and
-continues on the existing configuration. Start never dies because of an update.
-The explicit `sync()` call always raises instead — that caller chose to sync and
-has a plan. The attempt is guarded by its own flag, so a provision that failed
-for another reason and is retried does not re-fetch.
+warning naming which check it was, stashes the report on `last_sync_report` where
+there is one, and continues on the existing configuration. Neither a start nor a
+request ever fails over a lineup refresh. The explicit `sync()` call raises
+instead — that caller chose to sync and has a plan. The start attempt is guarded
+by its own flag, so a provision that failed for another reason and is retried does
+not re-fetch.
+
+**A fetched lineup is cached, and the cache is a fallback rather than a source**:
+a successful fetch overwrites it, a failed one — offline, or throttled by the
+CDN's per-IP limit — falls back to it. Unlike the check record, the cache is
+correctly machine-global: what the catalog says today does not depend on which
+project is asking.
+
+Because the refresh is unconditional, the catalog's default branch is live
+configuration for every installation. A preset carries no code and entry names are
+immutable, and the removal rule bounds what a merge can take away — but a
+`base_url` decides where an installation's API keys are sent, so a config built
+from a *fetched preset* must carry `https://` ones. Pinning the fetch to the
+installed version's tag would close the exposure further and is rejected: a preset
+fix would then reach nobody until a release of llmbroker, which is the problem the
+refresh exists to remove.
+
+### The home directory
+
+Everything llmbroker caches or remembers on its own — the fetched preset text, the
+paid catalog, the check records — lives in one directory: machine-scoped by
+default, `home=` per broker, `$LLMBROKER_HOME` per machine, falling back to the
+platform cache directory and then to a per-user temp directory. Resolution never
+raises: each candidate that cannot be written falls through to the next, and
+nowhere writable is a supported outcome — the state then lives in process memory
+for that run. Nothing kept there is authoritative, which is what makes that
+degradation acceptable: a preset can be re-fetched, and a lost check record only
+costs one extra check.
 
 ### What sync also does
 

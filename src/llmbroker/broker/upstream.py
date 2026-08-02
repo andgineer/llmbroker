@@ -86,10 +86,11 @@ class SyncSource:
 
 @dataclass(frozen=True, slots=True)
 class FileSyncOutcome:
-    """The result of syncing into a ``.toml`` file: the report, what was written,
-    and the alias-refresh lines."""
+    """The result of syncing into a ``.toml`` file: the report, whether the target
+    was rewritten, what was written, and the alias-refresh lines."""
 
     report: SyncReport
+    changed: bool
     configs: tuple[LLMConfig, ...] = ()
     notices: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
@@ -126,15 +127,63 @@ def fetch_preset_text(name: str) -> str:
     except (OSError, HTTPException) as exc:
         raise ValueError(f"failed reading {url}: {exc!r}") from exc
     try:
-        tomllib.loads(text)
+        data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         raise ValueError(f"downloaded content for '{name}' is not valid TOML") from exc
+    _check_fetched_urls(name, data)
     return text
+
+
+def _check_fetched_urls(name: str, data: dict) -> None:
+    """A fetched lineup decides where this installation's API keys are sent, so the
+    whole file is refused before any merge sees it. Not a defence against a
+    compromised catalog — that one would serve ``https://`` too — it removes
+    plaintext key transmission as an accident."""
+    for section in ("llms", "custom", "provider"):
+        for entry in data.get(section, []):
+            url = entry.get("base_url") if isinstance(entry, dict) else None
+            if url is not None and not str(url).startswith("https://"):
+                raise ValueError(
+                    f"preset '{name}' carries a non-https base_url ({url})"
+                    " — refusing the whole file",
+                )
 
 
 def paid_catalog_text() -> str:
     """The paid catalog. Kept here so every network read goes through one seam."""
     return fetch_preset_text("paid-catalog")
+
+
+def _cache_path(cache_dir: Path, name: str) -> Path:
+    return cache_dir / "presets" / f"{name}.toml"
+
+
+def cached_preset_text(name: str, cache_dir: Path | None = None) -> str:
+    """Fetch, keeping a copy beside it.
+
+    The copy is a fallback and never a source: a successful fetch overwrites it, a
+    failed one — offline, or throttled by the CDN's per-IP limit — falls back to it,
+    which is what keeps such an installation running on what it last saw.
+    """
+    try:
+        text = fetch_preset_text(name)
+    except ValueError as exc:
+        if cache_dir is None:
+            raise
+        try:
+            cached = _cache_path(cache_dir, name).read_text(encoding="utf-8")
+        except OSError:
+            raise exc from None
+        logger.debug("preset %s: %s — falling back to the cached copy", name, exc)
+        return cached
+    if cache_dir is not None:
+        target = _cache_path(cache_dir, name)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            write_atomic(target, text)
+        except OSError as exc:
+            logger.debug("preset %s: cannot cache into %s (%s)", name, target, exc)
+    return text
 
 
 # ── Alias-following custom entries, refreshed from the paid catalog ──────────
@@ -615,13 +664,17 @@ def resolve_sync_source(source: str) -> tuple[str, bool]:
     )
 
 
-async def load_sync_source(source: RegistryProtocol | str | Path) -> SyncSource:
+async def load_sync_source(
+    source: RegistryProtocol | str | Path,
+    *,
+    cache_dir: Path | None = None,
+) -> SyncSource:
     """Load whatever was named into the lineup to merge. Only a preset name goes
     to the network, and it does so off the event loop."""
     if isinstance(source, str):
         name, is_preset = resolve_sync_source(source)
         if is_preset:
-            text = await asyncio.to_thread(fetch_preset_text, name)
+            text = await asyncio.to_thread(cached_preset_text, name, cache_dir)
             data = tomllib.loads(text)
             return SyncSource(
                 label=name,
@@ -648,6 +701,11 @@ async def load_sync_source(source: RegistryProtocol | str | Path) -> SyncSource:
         ),
         preset=False,
     )
+
+
+def _current_text(target: Path) -> str:
+    """What the target holds now, ``""`` when it does not exist yet."""
+    return target.read_text(encoding="utf-8") if target.exists() else ""
 
 
 def _read_toml(target: Path) -> dict:
@@ -754,10 +812,15 @@ async def sync_file(  # noqa: PLR0913
         refresh.key_help,
     )
     rendered = render_merged_toml(new_text, kept, custom_entries, tail)
-    _check_render_faithful(rendered, merged)
-    write_atomic(target, rendered)
+    # Compared on the exact bytes that would be written, so an upstream change
+    # carrying only a comment still counts: the file's git history is the record.
+    changed = rendered != _current_text(target)
+    if changed:
+        _check_render_faithful(rendered, merged)
+        write_atomic(target, rendered)
     return FileSyncOutcome(
         report=report,
+        changed=changed,
         configs=tuple(merged),
         notices=refresh.notices,
         warnings=refresh.warnings,

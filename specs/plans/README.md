@@ -9,7 +9,8 @@ over a stale plan, gate on `invoke pre` + `pytest` after every batch, never bump
 never commit unasked, and leave the plan file in place for review. Nothing needs to be restated in
 the request. The plan and its row here are removed only after review and merge, on request.
 
-Statuses as of 2026-08-02: none of the plans below is started.
+Statuses as of 2026-08-02: #1 is implemented and awaiting review (see its `## Handover`); #2 and #3
+are not started.
 
 ## Order
 

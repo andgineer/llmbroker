@@ -462,3 +462,88 @@ python -m pytest
 python -m llmbroker preset freetier --sync /tmp/llms-check.toml   # report, exit 0, stamp written
 python -m llmbroker preset freetier --sync /tmp/llms-check.toml   # byte-identical file, exit 0
 ```
+
+## Handover
+
+Implemented in full: §1 (+§1.2), §2.1–2.4, §3.1–3.4, §4, §5, §6, §7, §8, §9 (en + ru).
+Version bump skipped, per the repo rule. The plan file and its README row stay for review.
+
+### The one thing the plan did not decide, and how it was decided
+
+**§2.1 never says what `sync` defaults to.** It is the normative constructor section — it fixes
+`sync_interval`, its validation, the three new attributes, and that `_sync_attempted` stays — and it
+is silent on the change everything else rests on. Design summary 1 ("no `sync=` opt-in and no off
+switch"), §5, §8's `mission.md` line and three §9 bullets ("the refresh is automatic and needs no
+argument", "it is now the default behavior", "delete the pinned-deployment stance") are only true if
+the default moves; the refresh has no source other than `self._sync_source`, so with `None` the
+whole mechanism would be dead code for anyone who did not opt in — exactly the opt-in design summary
+1 abolishes.
+
+Implemented as **`sync: str | Path | None = "freetier"`**. `None` stays accepted and is what a
+registry filled by other means passes (`registry.mirror()`, a vendored file the app cannot name);
+it is not documented as a deployment stance, which is what §8 rejects. `sync_interval` follows it,
+`< 0` raises.
+
+Consequence the plan did not cover: with the default on, every broker in the suite would reach the
+catalog. `tests/conftest.py` gains two autouse fixtures — an isolated `$LLMBROKER_HOME` per test,
+and `urllib.request.urlopen` refusing with `URLError`. The socket seam, not `fetch_preset_text`:
+tests patch both levels above it and must keep winning.
+
+### Where the code disagreed with the plan
+
+- **§3.2's registry-side gate compares by name, not as lists.** The plan's `merged != current` is
+  order-sensitive, and every DB registry returns rows ordered by name (`backends/driver.py`
+  `fetch`), so a no-op sync of a curated lineup reports "changed" every time — the gate would be
+  defeated exactly where §3.3's cluster argument needs it. Proven: mirroring `[zeta, alpha]` and
+  loading it back yields `[alpha, zeta]`, list-equal `False`, name-keyed `True`. When
+  `pool-priority.md` adds a persisted weight to `LLMConfig`, the dict comparison picks it up with no
+  further change — which is what the queue README means by "a new persisted field changes that
+  comparison". Regression test:
+  `test_sync_identity_gate.py::test_the_gate_ignores_the_order_a_registry_returns_rows_in`.
+- **Secret seeding stays outside the gate.** §3.2 moves it behind `changed` and then states a new
+  env key is still "picked up by a restart or an explicit `sync()`" — neither is true, since a
+  restart does not bootstrap secrets (`test_sync_info_logs.py`) and the explicit `sync()` is the
+  call the gate is inside. It also contradicts a live `architecture.md` clause the plan does not
+  schedule for removal. Behind the gate now: the registry write, `seed_disabled`, `resync`, the INFO
+  line. Regression test:
+  `test_sync_identity_gate.py::test_an_unchanged_sync_still_bootstraps_a_key_that_arrived`.
+- **§2.2 vs §4 on when the armed refresh fires.** §2.2 calls `_maybe_schedule_refresh()` only on
+  `ensure_pool`'s fast path, so §4's "reaches its fast path immediately after the lock releases, on
+  the same call" does not hold — the call returns instead, and the refresh would wait for the next
+  public operation. The scheduling call was moved after the lock so both paths reach it.
+- **§3.1 names `_verify_entry_names`; the function is `_check_render_faithful`.** Stale name from
+  the plan #1 that shipped before this one.
+
+### Decisions taken during implementation
+
+- **The CLI writes the stamp but does not read the preset cache** (§3.4 does not say either way).
+  `preset --sync` and `preset` print or write what they fetched; a silent fall back to a stale
+  cached copy would put stale content on stdout or into the user's file. "An explicitly typed
+  command must always do the thing" (§8) reads as: always fetch, and fail loudly when it cannot.
+  The broker path uses the cache as specified.
+- **Stamp target identity**: a file registry's resolved path; otherwise the string source the broker
+  was constructed with (a sqlite path or a DSN); otherwise the home directory. A registry *object*
+  passed directly (`AsyncBroker(SqliteRegistry(...))`) therefore has no stable identity and falls
+  back to home, so two such brokers in one process on one home share a check. The cost is a delayed
+  check for the second target, never a wrong lineup, and `home=` separates them. Giving every
+  backend a public identity would mean touching the `Driver` protocol and its conformance suite —
+  scope this plan did not ask for.
+- **The stamp is written on a completed check only**, not on a failed fetch: an offline installation
+  must not have a failure gate it for a day. The in-process deadline advances either way, so a
+  failing broker still checks at most once per interval.
+- **§5's no-op DEBUG line changed a shipped test.** `test_a_no_op_run_still_logs_its_one_line`
+  asserted the INFO line the plan removes; rewritten as
+  `test_a_no_op_run_says_so_at_debug_and_nowhere_else`, and `architecture.md`'s "every sync logs at
+  info" clause was rewritten with it — §8 did not list that clause, but leaving it would have made
+  the spec contradict §5.
+- **Test placement**: the identity gate got its own file (`tests/test_sync_identity_gate.py`) rather
+  than being split between `test_sync_roundtrip.py` and `test_upstream.py` as §7 suggests — it is
+  one behavior with two targets, and the byte-identity case reads better next to the registry one.
+
+### Gate
+
+`. ./activate.sh` first; `invoke pre` — all checks passed, pyrefly 0 errors; `python -m pytest` —
+**1077 passed**, zero failures, zero skips (docker tests included). The plan's manual verification
+was run: two consecutive `preset freetier --sync` runs, exit 0 both times, the second leaving the
+file byte-identical with an unchanged mtime, and `sync-stamps.json` written under the home
+directory.

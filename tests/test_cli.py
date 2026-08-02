@@ -566,7 +566,7 @@ def test_add_model_does_not_duplicate_existing_key(tmp_path):
 
 
 _SHORT_CATALOG = (
-    b'[[provider]]\nid="h"\nlabel="H"\nbase_url="http://h"\napi_key_ref="K"\n'
+    b'[[provider]]\nid="h"\nlabel="H"\nbase_url="https://h"\napi_key_ref="K"\n'
     b'key_help="hh"\n  [[provider.models]]\n  alias="m"\n  model="m"\n'
     b'  label="M"\n  verified="u"\n'
 )

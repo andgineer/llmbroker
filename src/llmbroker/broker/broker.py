@@ -20,6 +20,7 @@ raw state or hook the ``llmbroker`` logger.
 """
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import AsyncIterator, Mapping, Sequence
@@ -36,6 +37,7 @@ from llmbroker.broker.pool_view import PoolView
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.broker.router import Router
 from llmbroker.broker.source import resolve_source
+from llmbroker.broker.stamps import stamp_age, write_stamp
 from llmbroker.broker.stats import stats_from_calls
 from llmbroker.broker.upstream import (
     SyncSource,
@@ -58,6 +60,7 @@ from llmbroker.exceptions import (
     SyncRefusedError,
     UnknownModelError,
 )
+from llmbroker.home import home_dir
 from llmbroker.models import (
     AsyncResourceProtocol,
     Call,
@@ -86,6 +89,8 @@ from llmbroker.standalone.store import FileStore
 logger = logging.getLogger("llmbroker.broker")
 
 _DEFAULT_STATS_LIMIT = 1000
+_DEFAULT_SYNC_INTERVAL = 86_400.0  # seconds
+_DEFAULT_SYNC_SOURCE = "freetier"
 
 
 def _default_secrets(registry: RegistryProtocol) -> SecretsProtocol:
@@ -155,6 +160,19 @@ def _find_custom(configs: list[LLMConfig], alias: str | None, name: str | None) 
     raise UnknownModelError(f"no model named {name!r} in the registry")
 
 
+def _check_broker_args(
+    scope: str | None,
+    sync_interval: float,
+    registry: RegistryProtocol | str | Path | None,
+) -> None:
+    if scope == "":
+        raise ValueError("scope must not be empty string; use None for unscoped")
+    if sync_interval < 0:
+        raise ValueError("sync_interval must not be negative")
+    if registry is None:
+        raise ValueError("AsyncBroker requires a `registry` source")
+
+
 class AsyncBroker:
     """Façade over the LLM pool: route completions, inspect state, edit the catalog.
 
@@ -163,9 +181,15 @@ class AsyncBroker:
     production. It is a promise, and it counts only when a sync weighs whether an
     entry is still callable here: it never makes a model routable.
 
-    ``sync`` refreshes the lineup once, just before the pool is first provisioned,
-    and never raises — see ``_sync_on_start``. The outcome is on
-    ``last_sync_report``.
+    ``sync`` names the lineup this installation follows — the curated preset by
+    default — and it is kept current on the ``sync_interval`` clock: a time gate
+    decides whether to go to the network at all, an identity gate decides whether
+    what arrived changes anything. The check is lazy on activity, so an idle broker
+    performs no I/O; it never raises, and its outcome is on ``last_sync_report``.
+    ``sync=None`` follows nothing, for a registry filled by other means.
+
+    ``home`` overrides where this broker keeps what llmbroker caches on its own;
+    two brokers given different ones share nothing.
     """
 
     def __init__(  # noqa: PLR0913
@@ -177,16 +201,16 @@ class AsyncBroker:
         optimize: bool | Optimizer = True,
         scope: str | None = None,
         have_keys: bool | Sequence[str] = False,
-        sync: str | Path | None = None,
+        sync: str | Path | None = _DEFAULT_SYNC_SOURCE,
+        sync_interval: float = _DEFAULT_SYNC_INTERVAL,
+        home: str | Path | None = None,
     ) -> None:
-        if scope == "":
-            raise ValueError("scope must not be empty string; use None for unscoped")
-        if registry is None:
-            raise ValueError("AsyncBroker requires a `registry` source")
-
+        _check_broker_args(scope, sync_interval, registry)
         source_secrets: SecretsProtocol | None = None
         source_store: StoreProtocol | None = None
+        source_label: str | None = None
         if isinstance(registry, (str, Path)):
+            source_label = str(registry)
             registry, source_secrets, source_store = resolve_source(registry)
 
         secrets = (
@@ -230,8 +254,14 @@ class AsyncBroker:
         self._router = Router(pool, effective_store, scope=scope, optimizer=self._optimizer)
         self._pool_view = PoolView(pool, effective_store, lambda: self._catalog.health)
 
+        self._home = home_dir(home)
+        self._source_label = source_label
         self._sync_source = sync
+        self._sync_interval = sync_interval
         self._sync_attempted = False
+        # Monotonic deadline for the next check; inf until the first one lands.
+        self._next_refresh = float("inf")
+        self._refresh_task: asyncio.Task[None] | None = None
         self.last_sync_report: SyncReport | None = None
 
         self._provisioned = False
@@ -245,48 +275,93 @@ class AsyncBroker:
     # ------------------------------------------------------------------
 
     async def ensure_pool(self) -> None:
-        """Lazy idempotent initializer — provisions the pool exactly once.
+        """Lazy idempotent initializer — provisions the pool exactly once, and
+        schedules the lineup refresh when its interval has elapsed.
 
         Raises if the registry is empty and nothing filled it — sync a lineup in.
         """
-        if self._provisioned:
+        if not self._provisioned:
+            async with self._provision_lock:
+                if not self._provisioned:
+                    await self._sync_on_start()
+                    await self._catalog.provision()
+                    if self._learning_hook is not None:
+                        # warm start — provision() above already resynced the registry
+                        await self._learning_hook.maybe_rebuild(
+                            force=True,
+                            resync_registry=False,
+                        )
+                    self._provisioned = True
+        # Outside the lock on both paths: a refresh calls sync(), which touches the
+        # catalog, and inside the lock the catalog is mid-provision.
+        self._maybe_schedule_refresh()
+
+    def _maybe_schedule_refresh(self) -> None:
+        """Fire a background refresh when the interval has elapsed. Synchronous by
+        design: the hot path pays one monotonic comparison and nothing else."""
+        if time.monotonic() < self._next_refresh:
             return
-        async with self._provision_lock:
-            if self._provisioned:
-                return
-            await self._sync_on_start()
-            await self._catalog.provision()
-            if self._learning_hook is not None:
-                # warm start — provision() above already resynced the registry
-                await self._learning_hook.maybe_rebuild(force=True, resync_registry=False)
-            self._provisioned = True
+        if self._refresh_task is not None and not self._refresh_task.done():
+            return
+        # The deadline moves before the task exists, so a burst of concurrent calls
+        # schedules one refresh rather than one per call.
+        self._next_refresh = time.monotonic() + self._sync_interval
+        self._refresh_task = asyncio.create_task(self._attempt_sync("refresh"))
 
     async def _sync_on_start(self) -> None:
-        """The ``sync=`` knob: refresh once, before the pool is provisioned.
+        """Decide what the lineup needs before the pool is provisioned.
 
-        Best-effort by construction — an update that cannot be fetched or cannot
-        be applied logs and leaves the existing configuration in place, because a
-        process must not fail to start over a lineup refresh. The explicit
-        ``sync()`` call raises instead: that caller chose to sync and has a plan.
+        An empty registry is filled here, blocking: ``provision()`` on one raises,
+        so there is no alternative. A check already on record inside the interval
+        needs nothing, and its remainder carries into this process. Otherwise the
+        pool is provisioned from what is stored and the refresh runs afterwards, off
+        the request path.
         """
         if self._sync_source is None or self._sync_attempted:
             return
         self._sync_attempted = True
+        if not await self._registry.load():
+            await self._attempt_sync("start")
+            return
+        age = stamp_age(self._home, self._stamp_key(self._sync_source))
+        if age is not None and age < self._sync_interval:
+            self._next_refresh = time.monotonic() + (self._sync_interval - age)
+            return
+        self._next_refresh = 0.0
+
+    async def _attempt_sync(self, reason: str) -> None:
+        """Best-effort by construction: a refresh that cannot be fetched or cannot
+        be applied logs and leaves the running configuration alone. A process must
+        not fail to start, and a request must not fail, over a lineup refresh. The
+        explicit ``sync()`` call raises instead — that caller has a plan.
+        """
+        source = self._sync_source
+        if source is None:
+            return
         try:
-            await self.sync(self._sync_source)
+            await self.sync(source)
         except SyncRefusedError as exc:
             self.last_sync_report = exc.report
-            logger.warning(
-                "sync=%r refused, continuing on the current config: %s",
-                self._sync_source,
-                exc,
-            )
+            logger.warning("sync %s refused, continuing on the current config: %s", reason, exc)
         except (ValueError, OSError) as exc:
-            logger.warning(
-                "sync=%r failed, continuing on the current config: %s",
-                self._sync_source,
-                exc,
-            )
+            logger.warning("sync %s failed, continuing on the current config: %s", reason, exc)
+        finally:
+            self._next_refresh = time.monotonic() + self._sync_interval
+
+    def _stamp_key(self, source: RegistryProtocol | str | Path) -> str:
+        """What was checked, and for whom. Keyed by both because two projects on one
+        machine have two lineups to keep current, and one project's check must not
+        gate the other's."""
+        label = str(source) if isinstance(source, (str, Path)) else type(source).__name__
+        return f"{label} {self._target_identity()}"
+
+    def _target_identity(self) -> str:
+        if isinstance(self._registry, Registry):
+            return str(self._registry.path.resolve())
+        if self._source_label is not None:
+            return self._source_label
+        # No persistent identity of its own: the home directory is the identity.
+        return str(self._home)
 
     async def sync(self, source: RegistryProtocol | str | Path) -> SyncReport:
         """Merge a lineup into the registry and return what it did.
@@ -297,22 +372,27 @@ class AsyncBroker:
         drops is removed only when the same provider replaces it, when no key for
         it exists here, or when this installation's journal proves it dead — so a
         sync can never shrink the set of models this installation can actually
-        call. Explicit and idempotent; if the pool is already provisioned the
-        change takes effect immediately.
+        call. Explicit and idempotent: a merge whose result equals what is already
+        there writes nothing, applies nothing and logs at DEBUG. If the pool is
+        already provisioned a real change takes effect immediately.
         """
-        src = await load_sync_source(source)
+        src = await load_sync_source(source, cache_dir=self._home)
         if isinstance(self._registry, Registry):
-            report = await self._sync_file_target(src, _file_target_path(self._registry))
+            report, changed = await self._sync_file_target(src, _file_target_path(self._registry))
         else:
-            report = await self._sync_registry_target(src)
-        if isinstance(self._base_store, DisabledMapProtocol):
+            report, changed = await self._sync_registry_target(src)
+        if changed and isinstance(self._base_store, DisabledMapProtocol):
             configs = await self._registry.load()
             await self._base_store.seed_disabled([c.name for c in configs])
         # Both land before the resync: a resync that raises must not swallow the
         # record of a change already applied.
-        logger.info("%s", report)
+        if changed:
+            logger.info("%s", report)
+        else:
+            logger.debug("sync %s: no change", report.source)
         self.last_sync_report = report
-        if self._provisioned:
+        write_stamp(self._home, self._stamp_key(source))
+        if changed and self._provisioned:
             await self._catalog.resync()
         return report
 
@@ -341,7 +421,7 @@ class AsyncBroker:
         )
         return await dead_entries(candidates, self._base_store)
 
-    async def _sync_file_target(self, src: SyncSource, target: Path) -> SyncReport:
+    async def _sync_file_target(self, src: SyncSource, target: Path) -> tuple[SyncReport, bool]:
         if not src.preset or src.text is None:
             raise ValueError(
                 f"cannot sync {src.label} into the file registry {target}: a .toml registry"
@@ -361,14 +441,16 @@ class AsyncBroker:
             dead=await self._dead(src.configs, current, present),
             fetch_catalog=paid_catalog_text,
         )
+        # Outside the identity gate: a key that arrived in the environment is
+        # bootstrapped by a sync whether or not the lineup itself moved.
         await self._catalog.seed_secrets(list(outcome.configs))
         for notice in outcome.notices:
             logger.info("sync %s: %s", src.label, notice)
         for warning in outcome.warnings:
             logger.warning("sync %s: %s", src.label, warning)
-        return outcome.report
+        return outcome.report, outcome.changed
 
-    async def _sync_registry_target(self, src: SyncSource) -> SyncReport:
+    async def _sync_registry_target(self, src: SyncSource) -> tuple[SyncReport, bool]:
         current = await self._registry.load()
         current_keys = (
             await self._registry.key_info() if isinstance(self._registry, KeyInfoProtocol) else {}
@@ -386,10 +468,23 @@ class AsyncBroker:
             keys_scoped=self._scope is not None,
         )
         check_not_emptying(merged, current, report)
-        await self._catalog.apply(merged)
-        return report
+        # Keyed by name rather than compared as lists: a database registry hands
+        # its rows back ordered by name, so position here is the backend's, not
+        # the lineup's, and would report every no-op sync as a change.
+        changed = {c.name: c for c in merged} != {c.name: c for c in current}
+        if changed:
+            await self._catalog.apply(merged)
+        else:
+            await self._catalog.seed_secrets(merged)
+        return report, changed
 
     async def aclose(self) -> None:
+        # Before the ports: a refresh in flight would otherwise write through a
+        # registry whose driver is closing.
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._refresh_task
         await self._router.aclose()
         if self._direct_http is not None:
             await self._direct_http.aclose()

@@ -13,7 +13,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from llmbroker.broker.broker import _DEFAULT_STATS_LIMIT, AsyncBroker
+from llmbroker.broker.broker import (
+    _DEFAULT_STATS_LIMIT,
+    _DEFAULT_SYNC_INTERVAL,
+    _DEFAULT_SYNC_SOURCE,
+    AsyncBroker,
+)
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.direct import DirectClient
 from llmbroker.models import (
@@ -110,7 +115,9 @@ class Broker:
         optimize: bool | Optimizer = True,
         scope: str | None = None,
         have_keys: bool | Sequence[str] = False,
-        sync: str | Path | None = None,
+        sync: str | Path | None = _DEFAULT_SYNC_SOURCE,
+        sync_interval: float = _DEFAULT_SYNC_INTERVAL,
+        home: str | Path | None = None,
     ) -> None:
         self._async = AsyncBroker(
             registry,
@@ -120,6 +127,8 @@ class Broker:
             scope=scope,
             have_keys=have_keys,
             sync=sync,
+            sync_interval=sync_interval,
+            home=home,
         )
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
