@@ -1,19 +1,20 @@
 # Pool lifecycle: provider retirement, death evidence, degradation visibility
 
-Follows `preset-sync.md`, which is implemented in the working tree but not merged. This plan
-replaces that plan's removal rule and part of its report, and closes what it left open: what
-happens to a provider the curated lineup retires while the installation still holds its key, and
-how an installation notices that its pool has degraded. **The two ship in one release** — a
-reviewer reads them together.
+Follows the preset-sync change, implemented in the working tree but not merged; its own plan file
+goes once this one carries everything that change's review found, so the rules below stand on
+their own. This plan replaces that change's removal rule and part of its report, and closes what
+it left open: what happens to a provider the curated lineup retires while the installation still
+holds its key, and how an installation notices that its pool has degraded. **The two ship in one
+release** — a reviewer reads them as one change.
 
 ## What this replaces
 
-| `preset-sync.md` | replaced by |
+| in the tree today | replaced by |
 |---|---|
-| §3.2 rule 3, "pairs, then budget" — arrivals pay for removals | §1: the provider is the unit; no budget, no ordering |
-| §2, the `kept` sentence "set REF and the next sync removes it" | §1.4: unachievable as written, and verified false — see below |
-| §4 step 7, WARNING when an entry is kept | §3: a kept entry asks nothing of an admin; a degraded pool does |
-| §3.3, the file writer fed any source text | §4.1: a `.toml` target is synced from a curated preset only |
+| `_removal_plan`'s "pairs, then budget" — arrivals pay for removals | §1: the provider is the unit; no budget, no ordering |
+| the `kept` sentence "set REF and the next sync removes it", and `SyncReport.unlocking_refs` behind it | §1.4: unachievable as written, and verified false — see below |
+| `AsyncBroker.sync`'s WARNING when an entry is kept | §3: a kept entry asks nothing of an admin; a degraded pool does |
+| the file writer fed any source text, via `render_lineup` | §4.1: a `.toml` target is synced from a curated preset only |
 
 Why the budget rule cannot stand: it pays for removals out of *this run's arrivals*, but the
 merged result contains both the arrival and the entry it could not pay for, so on the next run
@@ -79,15 +80,39 @@ def merge_upstream(
     *,
     source: str,
     dead: frozenset[str] = frozenset(),   # entry names the journal proved unusable
-    keys_visible: bool = True,            # a failed probe is evidence here
+    keys_visible: bool = True,            # only then does a missing key mean anything
 ) -> tuple[list[LLMConfig], dict[str, KeyInfo], SyncReport]
 ```
 
 ```python
-def keys_are_visible(*, scope: str | None, have_keys: bool | Sequence[str]) -> bool:
-    """Per-user keys the broker cannot probe make absence meaningless."""
-    return scope is None or bool(have_keys)
+def keys_are_visible(
+    present: set[str],
+    *,
+    scope: str | None,
+    have_keys: bool | Sequence[str],
+) -> bool:
+    """Absence of a key is evidence only where the probe could have found one.
+
+    Per-user keys behind ``scope`` are one such place; a probe that resolved
+    nothing at all is the other — the keys live in a store this merge site
+    cannot reach, and "no key anywhere" is indistinguishable from "not my keys".
+    """
+    return bool(present) and (scope is None or bool(have_keys))
 ```
+
+**Why the empty-probe clause is not optional.** Under the rule this plan replaces, a merge site
+that cannot see the keys was merely over-conservative: nothing was paid for, so nothing was
+removed. Under §1.2 absence *deletes*, and the CLI merge site resolves `os.environ` plus the
+target's sibling `.env` and nothing else — while "registry in `llms.toml`, secrets in
+Vault/AWS/a DB" is a supported combination (it is the same one §4.3 exists for). Without the
+clause, `llmbroker preset freetier --sync llms.toml` on such an installation removes every entry
+of a retired provider that production can still call, which is exactly what invariant 4 forbids.
+`broker.sync(...)` is unaffected — it probes the broker's own secrets backend, which is the
+application's. The clause also reads correctly for onboarding: a fresh install with no keys yet
+proves nothing about anything and keeps its whole lineup.
+
+Not a tunable threshold: the clause fires only on a probe that resolved *nothing*, and `have_keys`
+remains the way an installation that knows better overrides it.
 
 ### 1.2 The rule
 
@@ -149,14 +174,18 @@ sync freetier: applied — 3 -> 2 entries with a key
       https://aistudio.google.com/apikey
 ```
 
-With `keys_visible=False` the `kept` line reads "…keys are per user here, so no probe can prove
-one missing" instead.
+With `keys_visible=False` the `kept` line says why no probe could have proven the key missing —
+"keys are per user here" when `scope` is set, "no key resolved here at all, so they are not the
+keys this lineup runs on" when the probe came back empty.
 
 ### 1.4 Logging
 
 `AsyncBroker.sync` logs the report at `INFO`, always. The WARNING branch goes: nothing in a sync
 outcome is admin-actionable any more — degradation is, and §3 owns it. The alias-refresh WARNING
 for an alias the catalog no longer knows stays as it is.
+
+The log line and `last_sync_report` both land **before** `_catalog.resync()`, not after it as
+today: a resync that raises must not swallow the record of a change already applied.
 
 ## 2. Death evidence — `broker/upstream.py` + `broker/broker.py`
 
@@ -246,7 +275,7 @@ and a DB registry without key info yields empty help but correct refs and names.
 
 `Broker.snapshot()` returns the same object; its annotation changes.
 
-## 4. Defects carried over from the review of `preset-sync.md`
+## 4. Defects carried over from the review of the preset-sync implementation
 
 ### 4.1 A `.toml` target is synced from a preset only
 
@@ -275,6 +304,45 @@ declaration is lost. `present_refs` normalizes a `str` to a one-element list.
 secrets in a DB/Vault" never picks up a new key from `.env`. The file branch calls
 `catalog.seed_secrets(...)` after the write, like the registry branch does.
 
+`architecture.md` already states this unconditionally ("Beyond writing the lineup, `sync`
+bootstraps secrets…"), so the fix makes the spec true and the spec needs no edit.
+
+### 4.4 A fetch failure is a `ValueError` — including one that happens mid-read
+
+`fetch_preset_text` catches `HTTPError` and `URLError`, which cover the connect phase only.
+Anything raised inside `resp.read()` or the decode — `TimeoutError`, `ConnectionResetError`,
+`http.client.IncompleteRead` — passes through, though the function's own docstring promises
+"every failure is a `ValueError` carrying an admin-readable message". Two live consequences,
+both reproduced:
+
+- the CLI (`except (SyncRefusedError, ValueError)`) prints a traceback instead of `error: …`;
+- the `sync=` knob stops being best-effort. `_sync_on_start` catches `(ValueError, OSError)`, and
+  `IncompleteRead` is an `HTTPException`, so a truncated response from the catalog **kills process
+  start** — the exact failure §5 of the replaced plan existed to prevent ("Never raises", "start
+  never dies because of an update").
+
+Fix: wrap the read and decode in the same `try`, raising `ValueError` for `OSError` and
+`http.client.HTTPException` alike; add `OSError` to the CLI's `except`, which also turns the
+writer's own failures (`--sync out/llms.toml` with no `out/` directory currently tracebacks with
+`FileNotFoundError`) into exit 1 with a message.
+
+### 4.5 `write_atomic` resets the target's permissions
+
+`tempfile.NamedTemporaryFile` creates at `0600` and `os.replace` carries that onto the config
+file: `0644` before a sync, `0600` after. Harmless while only the CLI wrote files; now a server
+does it at runtime, and a deploy job running as one user can lock the serving process out of its
+own config. Copy the existing target's mode onto the temp file before the rename when the target
+exists.
+
+### 4.6 A `.json` registry can never be synced
+
+`Registry` accepts `.toml` and `.json`; `sync_file` refuses anything but `.toml`, so
+`broker.sync(...)` on a `.json`-configured broker raises `ValueError: sync target must be a .toml
+file` — and under the `sync=` knob that is swallowed into a warning, leaving an installation that
+silently never updates. §4.1 already narrows what a file target accepts; state the extension there
+too and reject a non-`.toml` file registry at dispatch, so the message names the registry rather
+than a target the caller never passed.
+
 ## 5. Tests
 
 `tests/test_upstream.py` — the rule table is rewritten around providers:
@@ -287,13 +355,26 @@ secrets in a DB/Vault" never picks up a new key from `.env`. The file branch cal
 | provider gone, key present | kept, `kept_refs` names the ref |
 | provider gone, key present, name in `dead` | removed, listed in `retired` |
 | provider gone, `keys_visible=False` | kept regardless of `present` |
+| provider gone, key absent, but the probe resolved nothing at all | kept — `keys_are_visible` is false |
 | provider gone, key present, `[[custom]]` uses the same ref | kept; ref not in `orphan_refs` |
 | provider gone, no key, ref used by nothing else | removed; ref in `orphan_refs` |
 | removal leaves the lineup empty over a non-empty registry | `SyncRefusedError`, registry untouched |
 | the same merge repeated three times | identical result, no duplicates, no drift |
 
 Plus: convergence — a kept entry is removed by the next sync once its name enters `dead`; the
-report's `__str__` for each new line, including the per-user wording.
+report's `__str__` for each new line, including both `keys_visible=False` wordings.
+
+**A convergence test feeds the previous merge's result back in as `current`.** The rule this plan
+replaces shipped green with a report that promised a cleanup the next run could not perform,
+because the test for it handed the second merge a fresh arrival instead of the state the first
+merge produced. Any test whose name says "the next sync" chains the merges.
+
+The carried-over defects of §4 get their own tests, all in `tests/test_upstream.py` unless noted:
+a `urlopen` whose `read()` raises (`TimeoutError`, `IncompleteRead`) surfaces as `ValueError`,
+exits 1 from the CLI (`tests/test_cli.py`) and does not stop `sync=` from starting the broker
+(`tests/test_broker_sync_knob.py`); a `--sync` target whose parent directory is missing exits 1;
+a `0644` target is still `0644` after a sync; a `.json` file registry is refused by name;
+`have_keys="GEMINI_API_KEY"` declares that one ref rather than its characters.
 
 `tests/test_upstream_evidence.py` (new) — `dead_entries`: permanent failure with no success →
 dead; a success anywhere in the tail → alive; 429/503 only → alive; empty journal → alive;
@@ -320,6 +401,14 @@ nothing logged while the pool stays healthy (via `caplog`).
   while any entry — `[[custom]]` included — references it. New short section on pool health: the
   measure, why one provider is degraded, where the ERROR is emitted and that `snapshot()` carries
   the same predicate.
+- `architecture.md`, the two-tier table: tier 1 is a file registry **on its default env/`.env`
+  secrets**. A file registry paired with a Vault/AWS/DB secrets backend is tier 2 and syncs from
+  code, because only the broker can see those keys — the reason §1.1's empty-probe clause exists.
+  The current text claims what the CLI decides is what the application would have decided; that
+  holds only under the qualifier.
+- `architecture.md`, the lockfile paragraph: "Start is therefore never online" contradicts the
+  `sync=` section two screens below, which goes online at the first `ensure_pool()`. Qualify the
+  first — start goes online only when asked to via `sync=`, and never fails when it does.
 - `mission.md`: no change to item 2 (the invariant it states remains true); item 5 gains the pool
   as a first-class object of visibility.
 - `freetier-providers.md`: the curation rules change — dropping a provider now *does* prune
@@ -335,19 +424,25 @@ nothing logged while the pool stays healthy (via `caplog`).
   a key has become unused. New subsection "Watching the pool": the `snapshot()` example from the
   design (counts, `degraded`, `missing_keys` with where to get each key) and the two ERROR lines to
   alert on.
+- `usage.md`, the `sync=` paragraph: one sentence that on a file registry the knob rewrites that
+  file on disk at the first call — the recipe it shows is `Broker("llms.toml", sync="freetier")`,
+  and the file is usually the one under version control.
 - `server.md`: the admin-screen and alerting half of the same story for a host with a UI.
 - `cli.md`: `--sync` takes a preset name and a file target; a DB target and a file source are both
-  refused, each with its one-line reason.
+  refused, each with its one-line reason. One sentence on the key assumption: `--sync` decides
+  removals from the environment and the target's sibling `.env`, so a config whose keys live in
+  Vault/AWS/a DB is refreshed by `broker.sync("freetier")` from the application instead.
 - `index.md`: unchanged.
 
 ## Work order
 
 Each batch ends green on `invoke pre` + `python -m pytest` (activate the venv first).
 
-1. §4.1–4.3, the carried-over defects — small, independent, and they stop the file-corruption path
-   before anything else moves.
-2. §1, the merge rule and the report, with tests; `architecture.md` and `freetier-providers.md` in
-   the same batch.
+1. §4.1–4.6, the carried-over defects — small, independent, and they stop the file-corruption path
+   and the start-time crash before anything else moves.
+2. §1, the merge rule and the report, with tests — §1.1's empty-probe clause lands **with** the
+   rule that makes absence delete, never in a later batch; `architecture.md` (including its two
+   qualifiers) and `freetier-providers.md` in the same batch.
 3. §2, death evidence, with tests.
 4. §3, `PoolSnapshot` and the degradation ERROR, with tests; `architecture.md` health section.
 5. §7, docs en + ru.

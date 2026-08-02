@@ -56,6 +56,33 @@ def test_env_secrets_missing_raises(monkeypatch):
         asyncio.run(Secrets().resolve("NOPE"))
 
 
+def test_env_secrets_empty_value_counts_as_unset(monkeypatch):
+    monkeypatch.setenv("BLANK_KEY", "")
+    with pytest.raises(KeyError):
+        asyncio.run(Secrets().resolve("BLANK_KEY"))
+
+
+def test_env_secrets_whitespace_value_counts_as_unset(monkeypatch):
+    monkeypatch.setenv("BLANK_KEY", "   \t ")
+    with pytest.raises(KeyError):
+        asyncio.run(Secrets().resolve("BLANK_KEY"))
+
+
+def test_env_file_fills_in_for_a_blank_export(tmp_path, monkeypatch):
+    monkeypatch.setenv("BLANK_KEY", "")
+    env = tmp_path / ".env"
+    env.write_text("BLANK_KEY=from-file\n")
+    assert asyncio.run(Secrets(env).resolve("BLANK_KEY")) == "from-file"
+
+
+def test_env_file_whitespace_value_counts_as_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv("BLANK_KEY", raising=False)
+    env = tmp_path / ".env"
+    env.write_text('BLANK_KEY="   "\n')
+    with pytest.raises(KeyError):
+        asyncio.run(Secrets(env).resolve("BLANK_KEY"))
+
+
 def test_dict_secrets_resolves():
     assert asyncio.run(DictSecrets({"K": "v"}).resolve("K")) == "v"
 

@@ -21,6 +21,17 @@ Fill in whichever keys are easy to get: a model without a key simply stays
 inactive. When a model hits its rate limit, the broker cools it down and switches
 to the next one — you get an answer, not an error, as long as any model is up.
 
+The curated preset keeps evolving. Refresh your file whenever you like — it is a
+command, not code:
+
+```bash
+llmbroker preset freetier --sync llms.toml
+```
+
+Your `[[custom]]` models and your keys survive, and a model whose provider left
+the preset stays in the file until a replacement you can actually call arrives —
+so an update never leaves you with fewer working models than you had.
+
 ## Where to go next
 
 | Your scenario | Read |

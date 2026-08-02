@@ -24,6 +24,53 @@ set `parallel = 1` on its entry.
 !!! tip "Keys do not have to live in `.env`"
     AWS Secrets Manager, Vault, a DB or your own storage — see [API keys](secrets.md).
 
+### Keeping the pool fresh {#sync}
+
+Providers come and go, and the curated preset follows them. Refreshing your file
+is one command:
+
+```bash
+llmbroker preset freetier --sync llms.toml
+```
+
+It rewrites the managed models and their key hints, keeps your `[[custom]]`
+entries, and prints a report of what it did. From code the same operation is
+`llms.sync("freetier")`, and it returns that report:
+
+```python
+report = llms.sync("freetier")       # a preset name — the only call that goes online
+print(report)                        # or forward it to your own admin channel
+```
+
+To refresh automatically on the first call of a process, pass it to the
+constructor:
+
+```python
+llms = llmbroker.Broker("llms.toml", sync="freetier")
+```
+
+The knob is best-effort: if the catalog is unreachable, the broker logs a warning
+and starts on the config you already have. The explicit `llms.sync(...)` call
+raises instead — you asked for it, so you get to handle it.
+
+Two things in the report are worth understanding:
+
+- **A pending key** is a model waiting for a key you have not set. Harmless: it
+  stays inactive and the pool routes over the rest. The report prints where to
+  get the key.
+- **A kept entry** is a model the preset dropped that llmbroker did *not* remove,
+  because nothing arrived that you can actually call in its place. It keeps
+  working. The report names the key that would let the next sync clean it up:
+
+  ```
+  kept: groq-llama-3.3-70b — upstream dropped it and no replacement is usable;
+  set GEMINI_API_KEY and the next sync removes it
+  ```
+
+That is the whole rule: an update never shrinks the set of models you can call.
+A model is only removed when its replacement inherits the very same key, or when
+you have a key for one of the new arrivals.
+
 ## Calling the broker {#calling}
 
 ```python

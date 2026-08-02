@@ -2,6 +2,7 @@
 
 import asyncio
 import gc
+import tomllib
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -270,10 +271,18 @@ def test_broker_sync_reconciles_registry_to_preset(tmp_path):
             broker.get("extra")
 
 
-def test_broker_sync_with_readonly_source_registry_raises(tmp_path):
-    broker = Broker(registry=_registry(tmp_path), store=InMemoryStore())
-    with pytest.raises(TypeError, match="does not support mutations"):
-        broker.sync(_seed_registry(tmp_path))
+def test_broker_sync_into_a_file_registry_returns_the_report(tmp_path):
+    """The sync wrapper mirrors the async one: a file target is rewritten in place
+    and the report comes back through the blocking call."""
+    registry = _registry(tmp_path)
+    broker = Broker(registry=registry, store=InMemoryStore())
+    try:
+        report = broker.sync(_seed_registry(tmp_path, "p2"))
+    finally:
+        broker.close()
+    assert report.applied is True
+    assert (report.added, report.removed) == (("p2",), ("p1",))  # same ref: a replacement
+    assert [e["name"] for e in tomllib.loads(registry.path.read_text())["llms"]] == ["p2"]
 
 
 def test_broker_scope_forwarded_to_async_broker(tmp_path):

@@ -83,7 +83,7 @@ def test_registry_satisfies_key_info_protocol(tmp_path):
 
 def test_shipped_freetier_preset_configs_load():
     configs = asyncio.run(Registry("presets/freetier.toml").load())
-    assert len(configs) == 3
+    assert len(configs) == 4
 
 
 def test_shipped_freetier_preset_key_info_extra_passthrough():
@@ -91,4 +91,4 @@ def test_shipped_freetier_preset_key_info_extra_passthrough():
     assert len(info) == 3
     assert info["GEMINI_API_KEY"].extra == {"effort": "oauth", "value": "high"}
     assert info["GROQ_API_KEY"].extra == {"effort": "signup", "value": "good"}
-    assert info["OPENROUTER_API_KEY"].extra == {"effort": "signup", "value": "good"}
+    assert info["OPENROUTER_API_KEY"].extra == {"effort": "signup", "value": "high"}

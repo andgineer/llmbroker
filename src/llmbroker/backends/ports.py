@@ -50,9 +50,8 @@ class DriverRegistry:
 
     async def mirror(self, configs: list[LLMConfig]) -> None:
         """Total mirror: add new, update existing, delete stored entries absent
-        from ``configs`` — the only registry write path. The synced file is the
-        whole truth (``[[llms]]`` and ``[[custom]]`` alike); user models survive a
-        pool refresh because ``preset --merge`` keeps ``[[custom]]`` in the file."""
+        from ``configs``. What may be absent is decided before this call, in
+        ``broker.upstream``; here the merged lineup is simply written."""
         source_names = {c.name for c in configs}
         existing = {str(row["name"]) for row in await self._driver.fetch("registry")}
         for name in existing - source_names:

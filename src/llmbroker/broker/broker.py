@@ -4,8 +4,8 @@
 lazily provisions the live ``LLMPool`` once, and delegates each operation to
 the collaborator that owns it:
 
-* ``Catalog``       — pool membership in sync with the registry; ``sync(preset)``
-  mirrors a preset into it (the only registry write path)
+* ``Catalog``       — pool membership in sync with the registry; ``apply``
+  writes a merged lineup into it (the only registry write path)
 * ``Router``        — routing a completion over the pool with failover
 * ``PoolView``       — read-only views of current pool state
 * ``_LearningHook`` — quality windows, dead-key drops, and the debounced
@@ -22,7 +22,7 @@ raw state or hook the ``llmbroker`` logger.
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import aclosing
 from datetime import datetime
 from pathlib import Path
@@ -37,12 +37,23 @@ from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.broker.router import Router
 from llmbroker.broker.source import resolve_source
 from llmbroker.broker.stats import stats_from_calls
+from llmbroker.broker.upstream import (
+    SyncSource,
+    check_not_emptying,
+    load_sync_source,
+    merge_upstream,
+    paid_catalog_text,
+    present_refs,
+    render_lineup,
+    sync_file,
+)
 from llmbroker.chat import make_client
 from llmbroker.direct import AsyncDirectClient
 from llmbroker.exceptions import (
     MissingKeyError,
     NoLLMAvailableError,
     PoolModelError,
+    SyncRefusedError,
     UnknownModelError,
 )
 from llmbroker.models import (
@@ -52,12 +63,13 @@ from llmbroker.models import (
     LLMConfig,
     LLMSnapshot,
     LLMStats,
+    SyncReport,
     check_limit,
     check_score,
     to_utc,
 )
 from llmbroker.optimizer import Optimizer
-from llmbroker.protocols.registry import RegistryProtocol
+from llmbroker.protocols.registry import KeyInfoProtocol, RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
 from llmbroker.protocols.store import (
     DisabledMapProtocol,
@@ -130,7 +142,17 @@ def _find_custom(configs: list[LLMConfig], alias: str | None, name: str | None) 
 
 
 class AsyncBroker:
-    """Façade over the LLM pool: route completions, inspect state, edit the catalog."""
+    """Façade over the LLM pool: route completions, inspect state, edit the catalog.
+
+    ``have_keys`` declares refs this installation has a key for but the broker
+    cannot probe — per-user keys behind ``scope``, a secret injected only in
+    production. It is a promise, and it counts only when a sync weighs whether an
+    arrival can pay for removing an entry: it never makes a model routable.
+
+    ``sync`` refreshes the lineup once, just before the pool is first provisioned,
+    and never raises — see ``_sync_on_start``. The outcome is on
+    ``last_sync_report``.
+    """
 
     def __init__(  # noqa: PLR0913
         self,
@@ -140,6 +162,8 @@ class AsyncBroker:
         store: StoreProtocol | None = None,
         optimize: bool | Optimizer = True,
         scope: str | None = None,
+        have_keys: bool | Sequence[str] = False,
+        sync: str | Path | None = None,
     ) -> None:
         if scope == "":
             raise ValueError("scope must not be empty string; use None for unscoped")
@@ -169,6 +193,7 @@ class AsyncBroker:
         self._secrets = secrets
         self._base_store = store
         self._scope = scope
+        self._have_keys = have_keys
 
         pool = LLMPool(optimizer=self._optimizer)
         self._pool = pool
@@ -191,6 +216,10 @@ class AsyncBroker:
         self._router = Router(pool, effective_store, scope=scope, optimizer=self._optimizer)
         self._pool_view = PoolView(pool, effective_store)
 
+        self._sync_source = sync
+        self._sync_attempted = False
+        self.last_sync_report: SyncReport | None = None
+
         self._provisioned = False
         self._provision_lock = asyncio.Lock()
         self._last_underprov_alert: float = float("-inf")
@@ -204,33 +233,113 @@ class AsyncBroker:
     async def ensure_pool(self) -> None:
         """Lazy idempotent initializer — provisions the pool exactly once.
 
-        Raises if the registry is empty — call ``sync(preset)`` first.
+        Raises if the registry is empty and nothing filled it — sync a lineup in.
         """
         if self._provisioned:
             return
         async with self._provision_lock:
             if self._provisioned:
                 return
+            await self._sync_on_start()
             await self._catalog.provision()
             if self._learning_hook is not None:
                 # warm start — provision() above already resynced the registry
                 await self._learning_hook.maybe_rebuild(force=True, resync_registry=False)
             self._provisioned = True
 
-    async def sync(self, preset: RegistryProtocol | str | Path) -> None:
-        """Mirror ``preset`` into the registry: add new entries, update existing
-        ones, delete entries absent from the preset. Explicit and idempotent —
-        call it once to initialize a fresh DB, or again whenever the preset changes.
-        If the pool is already provisioned, the change takes effect immediately.
+    async def _sync_on_start(self) -> None:
+        """The ``sync=`` knob: refresh once, before the pool is provisioned.
+
+        Best-effort by construction — an update that cannot be fetched or cannot
+        be applied logs and leaves the existing configuration in place, because a
+        process must not fail to start over a lineup refresh. The explicit
+        ``sync()`` call raises instead: that caller chose to sync and has a plan.
         """
-        if isinstance(preset, (str, Path)):
-            preset = Registry(preset)
-        await self._catalog.sync(preset)
+        if self._sync_source is None or self._sync_attempted:
+            return
+        self._sync_attempted = True
+        try:
+            await self.sync(self._sync_source)
+        except SyncRefusedError as exc:
+            self.last_sync_report = exc.report
+            logger.warning(
+                "sync=%r refused, continuing on the current config: %s",
+                self._sync_source,
+                exc,
+            )
+        except (ValueError, OSError) as exc:
+            logger.warning(
+                "sync=%r failed, continuing on the current config: %s",
+                self._sync_source,
+                exc,
+            )
+
+    async def sync(self, source: RegistryProtocol | str | Path) -> SyncReport:
+        """Merge a lineup into the registry and return what it did.
+
+        ``source`` is a curated preset name (``"freetier"`` — the only networked
+        operation in the library), or the path of a config file, or a registry.
+        An entry the lineup drops is removed only when an arrival pays for it —
+        with the same key, or one of its own — so a sync can never shrink the set
+        of models this installation can actually call. Explicit and idempotent;
+        if the pool is already provisioned the change takes effect immediately.
+        """
+        src = await load_sync_source(source)
+        if isinstance(self._registry, Registry):
+            report = await self._sync_file_target(src, self._registry.path)
+        else:
+            report = await self._sync_registry_target(src)
         if isinstance(self._base_store, DisabledMapProtocol):
             configs = await self._registry.load()
             await self._base_store.seed_disabled([c.name for c in configs])
         if self._provisioned:
             await self._catalog.resync()
+        # An entry kept for lack of a paid replacement is the one outcome that
+        # wants an admin; everything else, no-ops and pending keys included, is
+        # a normal state that still reports itself once per run.
+        logger.log(logging.WARNING if report.kept else logging.INFO, "%s", report)
+        self.last_sync_report = report
+        return report
+
+    async def _sync_file_target(self, src: SyncSource, target: Path) -> SyncReport:
+        text = src.text if src.text is not None else render_lineup(src.configs, src.keys)
+        outcome = await sync_file(
+            text,
+            target,
+            source=src.label,
+            secrets=self._secrets,
+            scope=self._scope,
+            have_keys=self._have_keys,
+            fetch_catalog=paid_catalog_text if src.preset else None,
+        )
+        for notice in outcome.notices:
+            logger.info("sync %s: %s", src.label, notice)
+        for warning in outcome.warnings:
+            logger.warning("sync %s: %s", src.label, warning)
+        return outcome.report
+
+    async def _sync_registry_target(self, src: SyncSource) -> SyncReport:
+        current = await self._registry.load()
+        current_keys = (
+            await self._registry.key_info() if isinstance(self._registry, KeyInfoProtocol) else {}
+        )
+        present = await present_refs(
+            [c.api_key_ref for c in (*src.configs, *current)],
+            self._secrets,
+            scope=self._scope,
+            have_keys=self._have_keys,
+        )
+        merged, _keys, report = merge_upstream(
+            src.configs,
+            src.keys,
+            current,
+            current_keys,
+            present,
+            source=src.label,
+        )
+        check_not_emptying(merged, current, report)
+        await self._catalog.apply(merged)
+        return report
 
     async def aclose(self) -> None:
         await self._router.aclose()

@@ -46,7 +46,7 @@ class Secrets:
 
     ``env_file`` adds a fallback consulted only when the real environment has no
     such variable — an exported value always wins, and a missing file is simply
-    an empty fallback. An unfilled ``KEY=`` line counts as absent.
+    an empty fallback. A blank value, exported or in the file, counts as absent.
     """
 
     def __init__(self, env_file: str | Path | None = None) -> None:
@@ -78,10 +78,12 @@ class Secrets:
         return self._file_mapping(self._env_file).get(ref) or None
 
     async def resolve(self, ref: str) -> str:
+        # A blank export is as unset as no export at all — key presence authorizes
+        # removals in a preset sync, so it must never be satisfied by whitespace.
         value = os.environ.get(ref)
-        if value is None:
+        if value is None or not value.strip():
             value = self._from_file(ref)
-        if value is None:
+        if value is None or not value.strip():
             raise KeyError(f"Secrets: env var {ref!r} is not set")
         return value
 

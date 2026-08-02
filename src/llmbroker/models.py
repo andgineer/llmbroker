@@ -43,8 +43,8 @@ class KeyInfo:
 class LLMConfig:
     """Pure stored config for one LLM — no secret, safe to expose.
 
-    The registry is a pure mirror of the preset (see ``sync``): nothing else
-    writes it, so there is no provenance/curation marker to carry here.
+    Nothing but ``sync`` writes the registry, and which entries a sync keeps is
+    recomputed every time — so there is no retention or curation marker here.
 
     Two orthogonal flags carry the entry's role:
 
@@ -124,6 +124,83 @@ class LLMConfig:
             custom=custom,
             alias=alias,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class PendingKey:
+    """One ``api_key_ref`` a synced lineup wants and the secrets store does not have,
+    with the entries it holds back inactive until it resolves."""
+
+    api_key_ref: str
+    help: str
+    entry_names: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SyncReport:
+    """What one sync did, as raw facts — no severity verdict, the host derives that.
+
+    ``kept`` names entries the new lineup dropped that no arrival paid to remove;
+    they stay callable and are recomputed on every sync, never stored.
+    """
+
+    source: str
+    applied: bool
+    added: tuple[str, ...] = ()
+    updated: tuple[str, ...] = ()
+    removed: tuple[str, ...] = ()
+    kept: tuple[str, ...] = ()
+    pending_keys: tuple[PendingKey, ...] = ()
+    active_before: int = 0
+    active_after: int = 0
+
+    def unlocking_refs(self) -> tuple[str, ...]:
+        """The refs whose keys would pay for removing the ``kept`` entries: the
+        arrivals nothing could be spent on because their own key is missing."""
+        added = set(self.added)
+        return tuple(
+            pending.api_key_ref
+            for pending in self.pending_keys
+            if added.intersection(pending.entry_names)
+        )
+
+    def _kept_line(self) -> str:
+        subject = "it" if len(self.kept) == 1 else "them"
+        refs = self.unlocking_refs()
+        if not refs:
+            tail = f"upstream dropped {subject} and nothing arrived to replace {subject}"
+        else:
+            setting = refs[0] if len(refs) == 1 else f"any of {', '.join(refs)}"
+            tail = (
+                f"upstream dropped {subject} and no replacement is usable;"
+                f" set {setting} and the next sync removes {subject}"
+            )
+        return f"  kept: {', '.join(self.kept)} — {tail}"
+
+    def __str__(self) -> str:
+        verb = "applied" if self.applied else "refused"
+        lines = [
+            f"sync {self.source}: {verb}"
+            f" — {self.active_before} -> {self.active_after} entries with a key",
+        ]
+        for label, names in (
+            ("added", self.added),
+            ("updated", self.updated),
+            ("removed", self.removed),
+        ):
+            if names:
+                lines.append(f"  {label}: {', '.join(names)}")
+        if self.kept:
+            lines.append(self._kept_line())
+        for pending in self.pending_keys:
+            lines.append(
+                f"  pending key {pending.api_key_ref}"
+                f" — holds back {', '.join(pending.entry_names)}",
+            )
+            lines.extend(f"      {line}" for line in pending.help.splitlines() if line.strip())
+        if len(lines) == 1:
+            lines.append("  no changes")
+        return "\n".join(lines)
 
 
 class CallStatus(Enum):

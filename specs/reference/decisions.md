@@ -324,7 +324,8 @@ Line estimates for the design as built (pre-simplification `src` ≈ 6000).
 | Store: journal + disabled-doc | 5, 3 | insert per call; a score is a separate record everywhere (the journal is strictly append-only); verdicts — a tiny "name → bool" doc; automatic 3-month journal retention | in the ports | 1 insert |
 | Cluster shared cooldown | 6 | from the journal: a failing row carries `cooldown_until`; same tail read + on one's own failure | ~0 (in rebuild) | 0 extra |
 | Picking up admin/cluster edits | 2, 4 | registry and disabled-doc re-read on the same debounce | ~10 | 1 tiny read / 60s of activity |
-| Explicit `sync(preset)` + secrets bootstrap | 2 | total mirror of the preset: add/update/**delete**; changing `model` identity is an error | 80 (catalog) | on call |
+| Explicit `sync(source)` + secrets bootstrap | 2 | add/update, and a removal only when an arrival pays for it (same ref, or a key of its own); changing `model` identity is an error | 80 (catalog) | on call |
+| Merge engine + `SyncReport` | 2, 5 | pairs-then-budget rule, key-presence probe, file/registry writers; raw facts back to the caller and one log line per run | 400 (upstream) | 0 outside an explicit sync |
 | Snapshot: raw fields + metrics | 5 | pull via `snapshot()`: `disabled`, `has_key`, `cooldown_until`, `demoted_operations`; metrics from the cached tail; events go to the log | 50 | 0 |
 | Sync wrapper | 6 | background loop thread, direct construction | 200 | — |
 | Models/protocols/exceptions | — | dataclasses + to/from dict | 350 | — |
@@ -344,10 +345,11 @@ Line estimates for the design as built (pre-simplification `src` ≈ 6000).
   consistent shared store of scores.
 - **Bandit machinery**: ε-exploration, usable_rate floors, latency ranking,
   auto-retirement (duplicates exponential cooldown).
-- **Implicit seeding on startup** — replaced by an explicit `sync(preset)`.
-- **A deprecation-tier field** — sync deletes preset entries that
-  disappeared: there is nothing to lose (keys live in the secrets store,
-  statistics are derived from the journal).
+- **Implicit seeding on startup** — replaced by an explicit `sync(source)`.
+- **A deprecation-tier field** — an entry a lineup drops is either removed
+  (an arrival paid for it, and nothing is lost: keys live in the secrets
+  store, statistics derive from the journal) or kept as it is. There is no
+  third, demoted state to represent.
 - **A registry-stored learning profile that llmbroker itself wrote** (a
   profile column with learning snapshots) — manual blocking is an admin
   verdict in the store disabled-doc; learning writes nowhere.
@@ -386,10 +388,9 @@ Line estimates for the design as built (pre-simplification `src` ≈ 6000).
   string: a key-reference prefix plus journal-row attribution; the
   registry and learning are always shared; quota follows the key (a key
   hash in failing rows).
-- **Direct model CRUD and registry cloning/merge operations** — the model
-  list is determined only by the preset file, sync is a mirror that
-  preserves `disabled`; the admin's runtime verbs are disable/enable and
-  keys.
+- **Direct model CRUD** — the model list is determined by the lineup a sync
+  merges in, and `disabled` is preserved across it; the admin's runtime verbs
+  are disable/enable and keys.
 - **Stitching quality records to call rows via `call_id`** — a score is
   self-contained (model, operation, score); as a side effect, scores whose
   calls have already fallen out of the readable journal tail stop being
@@ -401,10 +402,9 @@ wrapper, the set of batteries, snapshot metrics, and slot waiting
 (`wait=`/`Condition` in the pool) were decided to be kept).
 
 No open questions remain: a string scope instead of a typed `user_id` —
-decided (see the scope point above). A strictly read-only file registry —
-decided: nobody writes the config (including llmbroker itself), admin
-verdicts live in the store disabled-doc, no sibling-JSON overlay
-exists.
+decided (see the scope point above). What may write the config file —
+decided: only a sync writes it, and only the lineup it merged; admin verdicts
+live in the store disabled-doc, and no sibling-JSON overlay exists.
 
 The public signature `ask(prompt, operation=, trace_id=, wait=)` keeps its
 shape — `operation` is optional (decided): scores for calls without a

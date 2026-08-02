@@ -18,15 +18,53 @@ llmbroker.Broker("mongodb://host/db")       # mongodb
 Each variant needs its extra — see [Installation](installation.md). Any part can
 be overridden explicitly via `registry=` / `secrets=` / `store=`.
 
-The DB starts empty — load a preset into it once, e.g. on deploy:
+### Filling the DB: a deploy job, not a startup step {#sync}
 
-```bash
-llmbroker sync llms.toml "postgresql://host/db"
+The DB starts empty. Sync it from your own code, in the same deploy step that
+runs `alembic upgrade` — built by the factory your application already uses, so
+the DSN and its secrets live in exactly one place:
+
+```python
+llms = build_broker()                     # your app's own factory
+try:
+    print(await llms.sync("freetier"))    # or a vendored file: llms.sync("llms.toml")
+finally:
+    await llms.aclose()
 ```
 
-A repeated `sync` is a full synchronization with the file: it adds, updates and
-deletes entries; deletion loses no accumulated model history. The same from
-code: `await llms.sync(llmbroker.Registry("llms.toml"))`.
+Note this is *not* `async with`: entering the broker provisions the pool, and a
+fresh registry is empty, so the context manager would raise `EmptyRegistryError`
+before the sync could fill it.
+
+The serving processes then take a plain broker with no `sync=` knob — the deploy
+job already did the work. Run it as a one-shot job (release phase, a Kubernetes
+Job, an init container), **not** as a per-node startup step: N nodes each
+reconciling the registry against their own copy is exactly the flip-flop this
+design avoids. A single-node app may put the sync in `lifespan` instead.
+
+`sync` never shrinks what the pool can call. A model the new lineup drops is
+removed only when an arrival pays for it — by carrying the same `api_key_ref`, or
+by having a key of its own — and is otherwise kept, still working. The returned
+`SyncReport` says which, on every run including no-ops. A non-zero exit from the
+job and its log are the admin channel your failed migrations already use; hosts
+that forward elsewhere can read `llms.last_sync_report`.
+
+### Per-user keys: `have_keys` {#have-keys}
+
+With `scope=`, keys belong to users, so a sync has no shared key to probe and
+therefore removes almost nothing — it keeps every entry it cannot prove is
+replaceable. If you know this installation has a key for some ref, say so:
+
+```python
+llms = llmbroker.AsyncBroker("postgresql://host/db", have_keys=["OPENAI_API_KEY"])
+```
+
+Declared refs count only when a sync weighs whether an arrival can pay for a
+removal; `have_keys` never makes a model routable — the pool still needs a real
+key value. It is a promise, with an honest failure mode both ways: omit it and
+your lineup keeps entries it could have pruned; declare a ref you never actually
+provision and the pool degrades, since old entries get removed while their
+replacements stay inactive. There is nothing else to declare anywhere.
 
 ## SQLite: sharing and WAL {#sqlite}
 
@@ -64,6 +102,9 @@ usually wants to treat them differently:
 
 - `EmptyRegistryError` — nothing has been synced into the registry yet. Benign:
   the installation is unconfigured, not broken.
+- `SyncRefusedError` — raised by `sync()` when applying its result would leave a
+  working registry with no entries at all. Nothing was written; `report` carries
+  what the merge would have done.
 - `SchemaVersionError` — the store holds a schema version this release cannot
   use. Fatal and operator-actionable: drop the `llmbroker_*` tables and restart
   (export registry/secrets/calls first if you need them). `found` and `expected`

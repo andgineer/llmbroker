@@ -49,68 +49,53 @@ def _cfg(name, url="https://x/v1", model="m"):
     return LLMConfig(name=name, base_url=url, model=model, api_key_ref="K")
 
 
-# ── sync(): total mirror semantics ───────────────────────────────────────────
+# ── apply(): writes the merged lineup, exactly as given ──────────────────────
 
 
-def test_sync_adds_new_entries():
+def test_apply_adds_new_entries():
     async def run():
         registry = _MutableRegistry()
         pool = LLMPool()
         catalog = Catalog(registry, _NoSecrets(), pool, scope=None)
-        await catalog.sync(_ReadOnlyRegistry([_cfg("p1"), _cfg("p2")]))
+        await catalog.apply([_cfg("p1"), _cfg("p2")])
         assert {c.name for c in await registry.load()} == {"p1", "p2"}
 
     asyncio.run(run())
 
 
-def test_sync_updates_existing_entries():
+def test_apply_updates_existing_entries():
     async def run():
         registry = _MutableRegistry([_cfg("p1", "https://old/v1")])
         pool = LLMPool()
         catalog = Catalog(registry, _NoSecrets(), pool, scope=None)
-        await catalog.sync(_ReadOnlyRegistry([_cfg("p1", "https://new/v1")]))
+        await catalog.apply([_cfg("p1", "https://new/v1")])
         loaded = {c.name: c for c in await registry.load()}
         assert loaded["p1"].base_url == "https://new/v1"
 
     asyncio.run(run())
 
 
-def test_sync_deletes_entries_absent_from_preset():
+def test_apply_deletes_entries_absent_from_the_merged_lineup():
+    """apply() is the write half and mirrors what it is handed — deciding what may
+    leave is the merge engine's job, not this one's."""
+
     async def run():
         registry = _MutableRegistry([_cfg("stale")])
         pool = LLMPool()
         catalog = Catalog(registry, _NoSecrets(), pool, scope=None)
-        await catalog.sync(_ReadOnlyRegistry([_cfg("p1")]))
+        await catalog.apply([_cfg("p1")])
         names = {c.name for c in await registry.load()}
         assert names == {"p1"}
 
     asyncio.run(run())
 
 
-def test_sync_refuses_changed_model_under_existing_name():
-    async def run():
-        registry = _MutableRegistry([_cfg("p1", model="model-a")])
-        pool = LLMPool()
-        catalog = Catalog(registry, _NoSecrets(), pool, scope=None)
-        try:
-            await catalog.sync(_ReadOnlyRegistry([_cfg("p1", model="model-b")]))
-        except ValueError as exc:
-            assert "model-a" in str(exc)
-            assert "model-b" in str(exc)
-        else:
-            raise AssertionError("expected ValueError")
-        loaded = {c.name: c for c in await registry.load()}
-        assert loaded["p1"].model == "model-a"  # entry intact — untouched
-
-    asyncio.run(run())
-
-
-def test_sync_requires_mutable_registry():
+def test_apply_requires_mutable_registry():
     async def run():
         pool = LLMPool()
         catalog = Catalog(_ReadOnlyRegistry([]), _NoSecrets(), pool, scope=None)
         try:
-            await catalog.sync(_ReadOnlyRegistry([_cfg("p1")]))
+            await catalog.apply([_cfg("p1")])
         except TypeError as exc:
             assert "does not support mutations" in str(exc)
         else:
@@ -141,7 +126,7 @@ def test_provision_raises_on_empty_registry():
         try:
             await catalog.provision()
         except EmptyRegistryError as exc:
-            assert "sync(preset)" in str(exc)
+            assert 'broker.sync("freetier")' in str(exc)
         else:
             raise AssertionError("expected EmptyRegistryError")
 
@@ -215,6 +200,76 @@ def test_resolve_key_falls_back_to_shared_ref_without_own_key():
     asyncio.run(run())
 
 
+# ── An empty value is no key, whatever backend produced it ──────────────────
+
+
+class _BlankSecrets:
+    """A backend that answers every ref with a blank value (Vault/AWS/DB can)."""
+
+    def __init__(self, value=""):
+        self._value = value
+
+    async def resolve(self, ref, user_id=None):
+        return self._value
+
+
+@pytest.mark.parametrize("blank", ["", "   \n"])
+def test_blank_backend_value_leaves_the_slot_keyless(blank):
+    async def run():
+        pool = LLMPool()
+        catalog = Catalog(_MutableRegistry([_cfg("p1")]), _BlankSecrets(blank), pool, scope=None)
+        await catalog.provision()
+        assert not pool.has_key("p1")
+
+    asyncio.run(run())
+
+
+def test_blank_scope_prefixed_value_falls_back_to_the_shared_ref():
+    async def run():
+        pool = LLMPool()
+        secrets = DictSecrets({"K": "shared", "alice/K": "  "})
+        catalog = Catalog(_MutableRegistry([_cfg("p1")]), secrets, pool, scope="alice")
+        await catalog.provision()
+        assert pool.resolved_key("p1") == "shared"
+
+    asyncio.run(run())
+
+
+class _RecordingSecrets:
+    """Mutable backend recording every ``set`` — the seed's observable effect."""
+
+    def __init__(self, initial=None):
+        self._store = dict(initial or {})
+        self.written: list[tuple[str, str]] = []
+
+    async def resolve(self, ref, user_id=None):
+        if ref not in self._store:
+            raise KeyError(ref)
+        return self._store[ref]
+
+    async def set(self, ref, value, user_id=None):
+        self.written.append((ref, value))
+        self._store[ref] = value
+
+
+async def test_seed_does_not_copy_a_blank_bootstrap_value(monkeypatch):
+    monkeypatch.setenv("K", "  ")
+    secrets = _RecordingSecrets()
+    catalog = Catalog(_MutableRegistry(), secrets, LLMPool(), scope=None)
+    await catalog.apply([_cfg("p1")])
+    assert secrets.written == []
+
+
+async def test_seed_replaces_a_blank_existing_value(monkeypatch):
+    """A blank stored value is not "already resolvable — preserve": it is absent,
+    so the env-resolvable key seeds over it."""
+    monkeypatch.setenv("K", "from-env")
+    secrets = _RecordingSecrets({"K": ""})
+    catalog = Catalog(_MutableRegistry(), secrets, LLMPool(), scope=None)
+    await catalog.apply([_cfg("p1")])
+    assert secrets.written == [("K", "from-env")]
+
+
 # ── Broker-level: AsyncBroker.sync() end to end ─────────────────────────────
 
 
@@ -246,7 +301,7 @@ async def test_broker_provision_without_sync_raises(tmp_path):
     try:
         await broker.count()
     except EmptyRegistryError as exc:
-        assert "sync(preset)" in str(exc)
+        assert 'broker.sync("freetier")' in str(exc)
     else:
         raise AssertionError("expected EmptyRegistryError")
 

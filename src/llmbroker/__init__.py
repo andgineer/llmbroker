@@ -17,10 +17,11 @@ from llmbroker.exceptions import (
     ProviderError,
     RateLimitError,
     StreamInterruptedError,
+    SyncRefusedError,
     ToolLoopLimitError,
     UnknownModelError,
 )
-from llmbroker.models import LifecyclePhase
+from llmbroker.models import LifecyclePhase, PendingKey, SyncReport
 from llmbroker.optimizer import Optimizer
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets, Secrets
@@ -49,10 +50,13 @@ __all__ = [
     "MissingKeyError",
     "NoLLMAvailableError",
     "Optimizer",
+    "PendingKey",
     "PoolModelError",
     "ProviderError",
     "RateLimitError",
     "StreamInterruptedError",
+    "SyncRefusedError",
+    "SyncReport",
     "ToolLoopLimitError",
     "UnknownModelError",
     "Registry",

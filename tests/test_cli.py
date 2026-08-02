@@ -6,6 +6,8 @@ import tomllib
 import urllib.error
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.cli import main
 from llmbroker.sqlite import Store as SqliteStore
@@ -137,7 +139,7 @@ def test_preset_invalid_name_returns_1(capsys):
     assert "invalid preset name" in capsys.readouterr().err
 
 
-# --- preset --merge ---
+# --- preset --sync ---
 
 _FRESH_PRESET = (
     b'[[llms]]\nname="groq-new"\nbase_url="https://groq/v1"\nmodel="new"\napi_key_ref="GROQ_API_KEY"\n'
@@ -145,7 +147,7 @@ _FRESH_PRESET = (
 )
 
 
-def test_preset_merge_refreshes_llms_and_keeps_custom(tmp_path):
+def test_preset_sync_refreshes_llms_and_keeps_custom(tmp_path):
     f = tmp_path / "llms.toml"
     f.write_text(
         '[[llms]]\nname="groq-old"\nbase_url="https://old/v1"\nmodel="old"\napi_key_ref="GROQ_API_KEY"\n'
@@ -153,7 +155,7 @@ def test_preset_merge_refreshes_llms_and_keeps_custom(tmp_path):
         '[keys.MY_KEY]\nhelp = "my custom key"\n'
     )
     with patch("urllib.request.urlopen", return_value=_mock_urlopen(_FRESH_PRESET)):
-        rc = main(["preset", "freetier", "--merge", str(f)])
+        rc = main(["preset", "freetier", "--sync", str(f)])
     assert rc == 0
     data = tomllib.loads(f.read_text())
     assert [e["name"] for e in data["llms"]] == ["groq-new"]  # old managed entry gone
@@ -163,23 +165,23 @@ def test_preset_merge_refreshes_llms_and_keeps_custom(tmp_path):
     assert data["keys"]["MY_KEY"]["help"] == "my custom key"  # custom key preserved
 
 
-def test_preset_merge_creates_file_when_absent(tmp_path):
+def test_preset_sync_creates_file_when_absent(tmp_path):
     f = tmp_path / "new.toml"
     with patch("urllib.request.urlopen", return_value=_mock_urlopen(_FAKE_TOML)):
-        rc = main(["preset", "freetier", "--merge", str(f)])
+        rc = main(["preset", "freetier", "--sync", str(f)])
     assert rc == 0
     data = tomllib.loads(f.read_text())
     assert [e["name"] for e in data["llms"]] == ["x"]
     assert "custom" not in data
 
 
-def test_preset_merge_keeps_a_short_custom_entry_out_of_the_keys_table(tmp_path):
+def test_preset_sync_keeps_a_short_custom_entry_out_of_the_keys_table(tmp_path):
     """A custom entry short enough for tomli_w to render inline must still land as a
     top-level [[custom]] entry, not inside the preset's trailing [keys.*] table."""
     f = tmp_path / "llms.toml"
     f.write_text('[[custom]]\nname="l"\nbase_url="http://h/v1"\nmodel="m"\napi_key_ref="K"\n')
     with patch("urllib.request.urlopen", return_value=_mock_urlopen(_FRESH_PRESET)):
-        rc = main(["preset", "freetier", "--merge", str(f)])
+        rc = main(["preset", "freetier", "--sync", str(f)])
     assert rc == 0
     data = tomllib.loads(f.read_text())
     assert [e["name"] for e in data["custom"]] == ["l"]
@@ -212,13 +214,13 @@ def _alias_file(tmp_path, extra: str = "") -> object:
     return f
 
 
-def test_preset_merge_refreshes_alias_entry(tmp_path, capsys):
+def test_preset_sync_refreshes_alias_entry(tmp_path, capsys):
     f = _alias_file(tmp_path)
     with patch(
         "urllib.request.urlopen",
         side_effect=_mock_fetch(_FRESH_PRESET, _REFRESH_CATALOG),
     ):
-        rc = main(["preset", "freetier", "--merge", str(f)])
+        rc = main(["preset", "freetier", "--sync", str(f)])
     assert rc == 0
     out = capsys.readouterr().out
     assert "opus: claude-opus-4-8 -> claude-opus-5" in out
@@ -230,7 +232,7 @@ def test_preset_merge_refreshes_alias_entry(tmp_path, capsys):
     assert entry["pool"] is False
 
 
-def test_preset_merge_leaves_pinned_entry_byte_identical(tmp_path):
+def test_preset_sync_leaves_pinned_entry_byte_identical(tmp_path):
     pin = (
         '[[custom]]\nname="frontier"\nmodel="claude-opus-4-8"'
         '\nbase_url="https://api.anthropic.com/v1"\napi_key_ref="ANTHROPIC_API_KEY"\npool=false\n'
@@ -241,13 +243,13 @@ def test_preset_merge_leaves_pinned_entry_byte_identical(tmp_path):
         "urllib.request.urlopen",
         side_effect=_mock_fetch(_FRESH_PRESET, _REFRESH_CATALOG),
     ):
-        rc = main(["preset", "freetier", "--merge", str(f)])
+        rc = main(["preset", "freetier", "--sync", str(f)])
     assert rc == 0
     after = next(e for e in tomllib.loads(f.read_text())["custom"] if e["name"] == "frontier")
     assert after == before
 
 
-def test_preset_merge_unknown_alias_warns_and_keeps_entry(tmp_path, capsys):
+def test_preset_sync_unknown_alias_warns_and_keeps_entry(tmp_path, capsys):
     f = tmp_path / "llms.toml"
     f.write_text(
         '[[custom]]\nalias="ghost"\nname="x-y"\nmodel="y"\nbase_url="https://x/v1"'
@@ -257,14 +259,14 @@ def test_preset_merge_unknown_alias_warns_and_keeps_entry(tmp_path, capsys):
         "urllib.request.urlopen",
         side_effect=_mock_fetch(_FRESH_PRESET, _REFRESH_CATALOG),
     ):
-        rc = main(["preset", "freetier", "--merge", str(f)])
+        rc = main(["preset", "freetier", "--sync", str(f)])
     assert rc == 0
     assert "alias 'ghost' is not in the paid catalog" in capsys.readouterr().err
     (entry,) = tomllib.loads(f.read_text())["custom"]
     assert entry["model"] == "y"
 
 
-def test_preset_merge_without_alias_entries_fetches_no_catalog(tmp_path):
+def test_preset_sync_without_alias_entries_fetches_no_catalog(tmp_path):
     f = tmp_path / "llms.toml"
     f.write_text(
         '[[custom]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="big"'
@@ -277,13 +279,13 @@ def test_preset_merge_without_alias_entries_fetches_no_catalog(tmp_path):
         return _mock_urlopen(_FRESH_PRESET)
 
     with patch("urllib.request.urlopen", side_effect=urlopen):
-        rc = main(["preset", "freetier", "--merge", str(f)])
+        rc = main(["preset", "freetier", "--sync", str(f)])
     assert rc == 0
     assert len(fetches) == 1
     assert "paid-catalog" not in fetches[0]
 
 
-def test_preset_merge_new_api_key_ref_brings_its_keys_help(tmp_path):
+def test_preset_sync_new_api_key_ref_brings_its_keys_help(tmp_path):
     """A refresh that moves an alias onto another provider carries the new ref's help."""
     catalog = (
         b'[[provider]]\nid="other"\nlabel="Other"\nbase_url="https://other/v1"\n'
@@ -293,14 +295,14 @@ def test_preset_merge_new_api_key_ref_brings_its_keys_help(tmp_path):
     )
     f = _alias_file(tmp_path)
     with patch("urllib.request.urlopen", side_effect=_mock_fetch(_FRESH_PRESET, catalog)):
-        rc = main(["preset", "freetier", "--merge", str(f)])
+        rc = main(["preset", "freetier", "--sync", str(f)])
     assert rc == 0
     data = tomllib.loads(f.read_text())
     assert data["custom"][0]["api_key_ref"] == "OTHER_API_KEY"
     assert data["keys"]["OTHER_API_KEY"]["help"] == "get a key at other.example"
 
 
-def test_preset_merge_reports_a_changed_api_key_ref(tmp_path, capsys):
+def test_preset_sync_reports_a_changed_api_key_ref(tmp_path, capsys):
     """A catalog that only re-spells a provider's ref moves nothing else, so there
     is no model line to notice — and the file quietly starts wanting a new env var."""
     catalog = (
@@ -311,7 +313,7 @@ def test_preset_merge_reports_a_changed_api_key_ref(tmp_path, capsys):
     )
     f = _alias_file(tmp_path)
     with patch("urllib.request.urlopen", side_effect=_mock_fetch(_FRESH_PRESET, catalog)):
-        rc = main(["preset", "freetier", "--merge", str(f)])
+        rc = main(["preset", "freetier", "--sync", str(f)])
     assert rc == 0
     out = capsys.readouterr().out
     assert "opus: api_key_ref ANTHROPIC_API_KEY -> CLAUDE_API_KEY" in out
@@ -320,7 +322,7 @@ def test_preset_merge_reports_a_changed_api_key_ref(tmp_path, capsys):
     assert (entry["model"], entry["name"]) == ("claude-opus-4-8", "anthropic-claude-opus-4-8")
 
 
-def test_preset_merge_duplicate_catalog_alias_is_an_error(tmp_path, capsys):
+def test_preset_sync_duplicate_catalog_alias_is_an_error(tmp_path, capsys):
     catalog = _REFRESH_CATALOG + (
         b'[[provider]]\nid="dup"\nlabel="Dup"\nbase_url="https://dup/v1"\napi_key_ref="D_KEY"\n'
         b'  [[provider.models]]\n  alias="opus"\n  model="dup-1"\n  label="D"\n  verified="u"\n'
@@ -328,13 +330,13 @@ def test_preset_merge_duplicate_catalog_alias_is_an_error(tmp_path, capsys):
     f = _alias_file(tmp_path)
     original = f.read_text()
     with patch("urllib.request.urlopen", side_effect=_mock_fetch(_FRESH_PRESET, catalog)):
-        rc = main(["preset", "freetier", "--merge", str(f)])
+        rc = main(["preset", "freetier", "--sync", str(f)])
     assert rc == 1
     assert "alias 'opus' is used twice" in capsys.readouterr().err
     assert f.read_text() == original  # nothing written
 
 
-def test_preset_merge_refuses_to_rename_an_alias_onto_a_pool_entry(tmp_path, capsys):
+def test_preset_sync_refuses_to_rename_an_alias_onto_a_pool_entry(tmp_path, capsys):
     """The refreshed name lands on a preset [[llms]] name: writing that file would
     lose one of the two entries at the next sync, so nothing is written."""
     preset = (
@@ -344,16 +346,16 @@ def test_preset_merge_refuses_to_rename_an_alias_onto_a_pool_entry(tmp_path, cap
     f = _alias_file(tmp_path)
     original = f.read_text()
     with patch("urllib.request.urlopen", side_effect=_mock_fetch(preset, _REFRESH_CATALOG)):
-        rc = main(["preset", "freetier", "--merge", str(f)])
+        rc = main(["preset", "freetier", "--sync", str(f)])
     assert rc == 1
     assert "two entries named 'anthropic-claude-opus-5'" in capsys.readouterr().err
     assert f.read_text() == original
 
 
-def test_preset_merge_rejects_non_toml(tmp_path, capsys):
+def test_preset_sync_rejects_non_toml(tmp_path, capsys):
     f = tmp_path / "llms.json"
     with patch("urllib.request.urlopen", return_value=_mock_urlopen(_FAKE_TOML)):
-        rc = main(["preset", "freetier", "--merge", str(f)])
+        rc = main(["preset", "freetier", "--sync", str(f)])
     assert rc == 1
     assert ".toml" in capsys.readouterr().err
 
@@ -667,36 +669,97 @@ def test_preset_timeout_returns_1(capsys):
     assert "timed out" in capsys.readouterr().err
 
 
-# --- sync command ---
+# --- the report the CLI prints, and the keys that drive it ---
+
+_GEMINI_PRESET = (
+    b'[[llms]]\nname="gemini"\nbase_url="https://g/v1"\nmodel="m"\napi_key_ref="GEMINI_KEY"\n'
+)
 
 
-def test_sync_seeds_disabled_map_on_the_target_db_via_source_dispatch(tmp_path, monkeypatch):
-    """sync must dispatch on the db argument (source dispatch), so `llmbroker_disabled`
-    is seeded on the target DB — not on a stray `./store` sibling under the CWD."""
-    monkeypatch.chdir(tmp_path)
-    preset = _write_toml(tmp_path, [("a", "KEY_A"), ("b", "KEY_B")])
-    db = str(tmp_path / "x.db")
+def _with_old_entry(tmp_path):
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        '[[llms]]\nname="groq-old"\nbase_url="https://groq/v1"\nmodel="m"\napi_key_ref="GROQ_KEY"\n'
+    )
+    return f
 
-    rc = main(["sync", preset, db])
+
+def test_sync_prints_the_report_on_a_no_op_run(tmp_path, capsys, monkeypatch):
+    """Nothing changed, and it still says so — a pending key must keep nagging in
+    every deploy log until someone sets it."""
+    monkeypatch.delenv("K", raising=False)
+    f = tmp_path / "llms.toml"
+    f.write_text(_FAKE_TOML.decode())
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_FAKE_TOML)):
+        rc = main(["preset", "freetier", "--sync", str(f)])
+    out = capsys.readouterr().out
     assert rc == 0
-
-    disabled = asyncio.run(SqliteStore(db).disabled_map())
-    assert disabled == {"a": False, "b": False}
-    assert not (tmp_path / "store").exists()
+    assert "sync freetier: applied" in out
+    assert "pending key K" in out
 
 
-def test_sync_missing_file_returns_1(tmp_path, capsys):
-    rc = main(["sync", str(tmp_path / "nope.toml"), str(tmp_path / "x.db")])
-    assert rc == 1
-    assert "error" in capsys.readouterr().err
+def test_sync_removes_the_dropped_entry_when_the_arrivals_key_is_set(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("GEMINI_KEY", "sk-real")
+    f = _with_old_entry(tmp_path)
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_GEMINI_PRESET)):
+        rc = main(["preset", "freetier", "--sync", str(f)])
+    assert rc == 0
+    assert "removed: groq-old" in capsys.readouterr().out
+    assert [e["name"] for e in tomllib.loads(f.read_text())["llms"]] == ["gemini"]
+
+
+def test_an_empty_key_does_not_pay_for_the_removal(tmp_path, capsys, monkeypatch):
+    """A blank export is as unset as no export at all."""
+    monkeypatch.setenv("GEMINI_KEY", "")
+    f = _with_old_entry(tmp_path)
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_GEMINI_PRESET)):
+        rc = main(["preset", "freetier", "--sync", str(f)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "kept: groq-old" in out
+    assert "set GEMINI_KEY and the next sync removes it" in out
+    assert [e["name"] for e in tomllib.loads(f.read_text())["llms"]] == ["gemini", "groq-old"]
+
+
+def test_the_sibling_env_file_counts_as_a_key(tmp_path, capsys, monkeypatch):
+    """The CLI resolves what the application will: env plus the config's own .env."""
+    monkeypatch.delenv("GEMINI_KEY", raising=False)
+    f = _with_old_entry(tmp_path)
+    (tmp_path / ".env").write_text("GEMINI_KEY=sk-from-file\n")
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_GEMINI_PRESET)):
+        rc = main(["preset", "freetier", "--sync", str(f)])
+    assert rc == 0
+    assert "removed: groq-old" in capsys.readouterr().out
+
+
+# --- a DB target belongs to the application, not the CLI ---
+
+
+def test_sync_into_a_db_target_is_refused_with_a_pointer(tmp_path, capsys):
+    """The CLI writes files only: a DSN here would duplicate connection config the
+    application already owns, and force DB credentials into the CLI's environment."""
+    for target in ("broker.db", "x.sqlite", "postgresql://h/db", "mongodb://h/db"):
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(_FAKE_TOML)):
+            rc = main(["preset", "freetier", "--sync", target])
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "broker.sync" in err
+
+
+def test_the_sync_subcommand_is_gone(capsys):
+    """Mirroring into a registry is the host's own entrypoint now."""
+    with pytest.raises(SystemExit):
+        main(["sync", "preset.toml", "broker.db"])
+    assert "invalid choice: 'sync'" in capsys.readouterr().err
 
 
 # --- env -> sync -> ask round trip (mission #2) ---
 
 
 def test_env_sync_ask_round_trip(tmp_path, capsys, monkeypatch):
-    """A preset's api_key_ref surfaces through `env`, `sync` mirrors it into a DB
-    registry, and a broker built over that DB routes a real call."""
+    """A preset's api_key_ref surfaces through `env`, the app's own entrypoint syncs
+    it into a DB registry, and a broker built over that DB routes a real call."""
+    monkeypatch.chdir(tmp_path)
     f = tmp_path / "preset.toml"
     f.write_text(
         '[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n'
@@ -713,11 +776,18 @@ def test_env_sync_ask_round_trip(tmp_path, capsys, monkeypatch):
 
     monkeypatch.setenv("KEY_A", "test-key")
 
-    rc = main(["sync", preset, db])
-    assert rc == 0
-
     async def run():
+        broker = AsyncBroker(db)
+        try:
+            report = await broker.sync(preset)
+        finally:
+            await broker.aclose()
+        assert report.added == ("p1",)
+
         async with AsyncBroker(db) as broker:
+            # seeded on the target DB (source dispatch), not a stray ./store sibling
+            assert await SqliteStore(db).disabled_map() == {"p1": False}
+            assert not (tmp_path / "store").exists()
             with patch(
                 "llmbroker.broker.router.call_provider",
                 new=AsyncMock(return_value=("hi", None, None)),

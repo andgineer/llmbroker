@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import tomllib
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -546,17 +547,35 @@ def test_broker_record_quality_unknown_llm_does_not_raise(tmp_path):
     asyncio.run(run())
 
 
-def test_sync_with_readonly_source_registry_raises(tmp_path):
-    """sync() into a read-only (file) registry raises — a mutable registry is required."""
+def test_sync_into_a_file_registry_rewrites_the_file(tmp_path):
+    """A file registry is a legitimate sync target: the merged lineup is written back
+    to the .toml, which is what makes a file-configured broker self-updating."""
 
     async def run():
         other = tmp_path / "other.toml"
         other.write_text(
             '[[llms]]\nname="p2"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
         )
-        broker = AsyncBroker(registry=_registry(tmp_path), store=InMemoryStore())
+        target = _registry(tmp_path).path
+        broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore())
+        report = await broker.sync(FileRegistry(other))
+        assert report.added == ("p2",)
+        assert [e["name"] for e in tomllib.loads(target.read_text())["llms"]] == ["p2"]
+
+    asyncio.run(run())
+
+
+def test_sync_into_a_registry_that_can_neither_be_written_nor_named_raises(tmp_path):
+    """A read-only registry object has no file to rewrite and no mirror to call."""
+
+    class _ReadOnly:
+        async def load(self):
+            return []
+
+    async def run():
+        broker = AsyncBroker(registry=_ReadOnly(), store=InMemoryStore())
         with pytest.raises(TypeError, match="does not support mutations"):
-            await broker.sync(FileRegistry(other))
+            await broker.sync(_registry(tmp_path))
 
     asyncio.run(run())
 

@@ -11,11 +11,6 @@ from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.standalone.secrets import DictSecrets
 
 
-class _EmptySource:
-    async def load(self) -> list[LLMConfig]:
-        return []
-
-
 class _OneConfigSource:
     def __init__(self, cfg: LLMConfig) -> None:
         self._cfg = cfg
@@ -122,7 +117,10 @@ async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path):
         await broker.disable_llm("p1")
         assert broker._pool.is_disabled("p1")
 
-        await broker.sync(_EmptySource())
+        # A same-key arrival is what pays for a removal, so this is how an entry
+        # actually leaves the registry — and then comes back under its old name.
+        await broker.sync(_OneConfigSource(_cfg("p2")))
+        assert "p1" not in broker._pool
 
         await broker.sync(_OneConfigSource(_cfg()))
         assert not broker._pool.is_disabled("p1")

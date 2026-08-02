@@ -1,32 +1,37 @@
 """python -m llmbroker <command>.
 
-Subcommands: env (emit .env skeleton), preset (download curated preset TOML,
-or --merge it into a file, refreshing alias-following custom entries from the
-paid catalog), add-model (append a paid model from the catalog), sync (mirror a
-preset TOML into a DB registry — DB-init workflow).
+Subcommands: env (emit .env skeleton), preset (download curated preset TOML, or
+--sync it into a config file, refreshing alias-following custom entries from the
+paid catalog), add-model (append a paid model from the catalog).
+
+The CLI writes files only. Mirroring a lineup into a DB registry is the host's
+own entrypoint calling `broker.sync(...)`, so the connection config and its
+secrets stay in one place.
 """
 
 import argparse
 import asyncio
 import os
-import re
 import sys
 import tempfile
 import tomllib
-import urllib.error
-import urllib.request
 from collections.abc import Callable
-from http import HTTPStatus
 from pathlib import Path
 
 import tomli_w
 
-from llmbroker.broker.broker import AsyncBroker
+from llmbroker.broker.upstream import (
+    PRESET_NAME_RE,
+    entry_block,
+    fetch_preset_text,
+    paid_catalog_text,
+    sync_file,
+    write_atomic,
+)
+from llmbroker.exceptions import SyncRefusedError
 from llmbroker.models import KeyInfo, LLMConfig
 from llmbroker.standalone.registry import Registry, key_info_from_entry
-
-_PRESET_URL = "https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/{name}.toml"
-_PRESET_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+from llmbroker.standalone.secrets import Secrets
 
 
 async def _env_data(reg: Registry) -> tuple[list[LLMConfig], dict[str, KeyInfo]]:
@@ -39,14 +44,16 @@ def _env_source_data(source: str) -> tuple[list[LLMConfig], dict[str, KeyInfo]] 
     path = Path(source)
     if path.exists():
         return asyncio.run(_env_data(Registry(path)))
-    if not _PRESET_NAME_RE.match(source):
+    if not PRESET_NAME_RE.match(source):
         print(
             f"error: no such file: {path} (and {source!r} is not a valid preset name)",
             file=sys.stderr,
         )
         return None
-    text = _fetch_preset_file(source)
-    if text is None:
+    try:
+        text = fetch_preset_text(source)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return None
     with tempfile.TemporaryDirectory() as tmp:
         staged = Path(tmp) / f"{source}.toml"
@@ -80,240 +87,60 @@ def _cmd_env(args: argparse.Namespace) -> int:
     return 0
 
 
-def _fetch_preset_file(name: str) -> str | None:
-    """Download ``presets/<name>.toml`` from the repo; ``None`` (with a message on
-    stderr) on any failure. Shared by ``preset`` and ``add-model``."""
-    if not _PRESET_NAME_RE.match(name):
-        print(
-            f"error: invalid preset name '{name}' (use letters, digits, hyphens, underscores)",
-            file=sys.stderr,
-        )
-        return None
-    url = _PRESET_URL.format(name=name)
-    try:
-        with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310 - name validated above
-            content = resp.read()
-    except urllib.error.HTTPError as exc:
-        if exc.code == HTTPStatus.NOT_FOUND:
-            print(f"error: preset '{name}' not found in catalog", file=sys.stderr)
-        else:
-            print(f"error: HTTP {exc.code} fetching {url}", file=sys.stderr)
-        return None
-    except urllib.error.URLError as exc:
-        print(f"error: {exc.reason}", file=sys.stderr)
-        return None
-    try:
-        text = content.decode()
-    except UnicodeDecodeError:
-        print(f"error: downloaded content for '{name}' is not valid UTF-8", file=sys.stderr)
-        return None
-    try:
-        tomllib.loads(text)
-    except tomllib.TOMLDecodeError:
-        print(f"error: downloaded content for '{name}' is not valid TOML", file=sys.stderr)
-        return None
-    return text
-
-
 def _cmd_preset(args: argparse.Namespace) -> int:
-    text = _fetch_preset_file(args.name)
-    if text is None:
+    try:
+        text = fetch_preset_text(args.name)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
-    if args.merge is not None:
-        return _merge_preset(text, args.name, Path(args.merge))
+    if args.sync is not None:
+        return _sync_preset_into(text, args.name, args.sync)
     sys.stdout.write(text)
     return 0
 
 
-def _catalog_alias_index(catalog: dict) -> dict[str, tuple[dict, dict]] | None:
-    """Map every catalog alias to its ``(provider, model)`` pair.
+_DB_TARGET_SUFFIXES = (".db", ".sqlite")
+_DB_TARGET_SCHEMES = ("sqlite://", "postgresql://", "mongodb://")
 
-    ``None`` (with a message) when the catalog is invalid: an alias names exactly
-    one model, so a duplicate makes the whole file unusable.
+
+def _sync_preset_into(text: str, name: str, raw_target: str) -> int:
+    """Merge the fetched preset into the target file and print what it did.
+
+    Keys come from the target's own environment and sibling ``.env`` — the same
+    pair a file-configured broker resolves — so what this decides is what the
+    application would have decided.
     """
-    index: dict[str, tuple[dict, dict]] = {}
-    for prov in catalog.get("provider", []):
-        if not isinstance(prov, dict) or not (
-            prov.get("id") and prov.get("base_url") and prov.get("api_key_ref")
-        ):
-            continue
-        for model in prov.get("models", []):
-            if not isinstance(model, dict) or not (model.get("alias") and model.get("model")):
-                continue
-            alias = str(model["alias"])
-            if alias in index:
-                print(
-                    f"error: paid catalog is invalid — alias '{alias}' is used twice",
-                    file=sys.stderr,
-                )
-                return None
-            index[alias] = (prov, model)
-    return index
-
-
-def _refresh_alias_entries(
-    entries: list[dict],
-    index: dict[str, tuple[dict, dict]],
-) -> dict[str, str]:
-    """Re-point every alias entry at what the catalog now recommends, in place.
-
-    Returns the ``api_key_ref -> key_help`` pairs the refreshed entries need, so a
-    provider switch brings its onboarding help along.
-    """
-    key_help: dict[str, str] = {}
-    for entry in entries:
-        alias = entry.get("alias")
-        if not alias:
-            continue
-        found = index.get(str(alias))
-        if found is None:
-            print(
-                f"warning: alias '{alias}' is not in the paid catalog — entry left untouched",
-                file=sys.stderr,
-            )
-            continue
-        prov, model = found
-        was_model = entry.get("model")
-        was_ref = entry.get("api_key_ref")
-        entry["model"] = str(model["model"])
-        entry["name"] = f"{prov['id']}-{model['model']}"
-        entry["base_url"] = str(prov["base_url"])
-        entry["api_key_ref"] = str(prov["api_key_ref"])
-        if prov.get("key_help"):
-            key_help[str(prov["api_key_ref"])] = str(prov["key_help"])
-        if was_model != entry["model"]:
-            print(f"{alias}: {was_model} -> {entry['model']}")
-        if was_ref != entry["api_key_ref"]:
-            # The one change that needs the user to do something. It can arrive
-            # without a model change at all — a catalog that re-spells a provider's
-            # ref refreshes to a file that silently wants an env var nobody set.
-            print(
-                f"{alias}: api_key_ref {was_ref} -> {entry['api_key_ref']}"
-                f" — set {entry['api_key_ref']} before the next call",
-            )
-    return key_help
-
-
-def _merged_name_clash(preset_text: str, custom_entries: list[dict]) -> str | None:
-    """The error for a name the merged file would carry twice, or ``None``.
-
-    A refreshed alias entry takes a machine-formed name in the preset's own
-    convention, so a catalog move can land it on a preset pool entry. Shipping
-    that file would lose one of the two at the next sync, which keys on the name.
-    """
-    seen: set[str] = set()
-    preset_llms = tomllib.loads(preset_text).get("llms", [])
-    for entry in [*preset_llms, *custom_entries]:
-        if not isinstance(entry, dict) or not entry.get("name"):
-            continue
-        name = str(entry["name"])
-        if name in seen:
-            return (
-                f"error: the merged file would carry two entries named '{name}' —"
-                " rename the [[custom]] entry if it is pinned; an alias entry's name is"
-                " machine-formed again on every refresh, so renaming it will not stick"
-                " — drop its 'alias' to pin it instead"
-            )
-        seen.add(name)
-    return None
-
-
-def _custom_key_tail(
-    custom_entries: list[dict],
-    existing_keys: dict,
-    preset_key_refs: set,
-    new_key_help: dict[str, str],
-) -> dict:
-    """The ``[keys]`` the re-emitted ``[[custom]]`` tail must carry: whatever the
-    file already had for its own refs, plus catalog help for a ref new to it."""
-    refs: list[str] = []
-    for entry in custom_entries:
-        ref = entry.get("api_key_ref")
-        if ref and str(ref) not in refs:
-            refs.append(str(ref))
-    keys: dict = {}
-    for ref in refs:
-        if ref in preset_key_refs:
-            continue
-        if ref in existing_keys:
-            keys[ref] = existing_keys[ref]
-        elif ref in new_key_help:
-            keys[ref] = {"help": new_key_help[ref]}
-    return keys
-
-
-def _custom_block(entry: dict) -> str:
-    """One ``[[custom]]`` section. The header is written here rather than left to
-    ``tomli_w``, which renders a short array of tables as an inline top-level key —
-    written after a trailing ``[keys.*]`` table that parses as a member of that table."""
-    return f"[[custom]]\n{tomli_w.dumps(entry).rstrip()}"
-
-
-def _write_atomic(target: Path, text: str) -> None:
-    """Write through a sibling temp file and rename, so a crash mid-write cannot
-    truncate the config the user already has."""
-    with tempfile.NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        dir=target.parent,
-        prefix=f".{target.name}.",
-        delete=False,
-    ) as fh:
-        fh.write(text)
-        fh.flush()
-        os.fsync(fh.fileno())
-        tmp = Path(fh.name)
+    # The raw argument, not a Path: Path() collapses the "//" of a DSN.
+    if raw_target.endswith(_DB_TARGET_SUFFIXES) or raw_target.startswith(_DB_TARGET_SCHEMES):
+        print(
+            f"error: --sync writes a config file, and {raw_target} is a database."
+            " A registry is synced from your own code: build the broker with the factory"
+            f' your application already uses and call `await broker.sync("{name}")`'
+            " — that keeps the connection config and its secrets in one place",
+            file=sys.stderr,
+        )
+        return 1
+    target = Path(raw_target)
     try:
-        os.replace(tmp, target)
-    except OSError:
-        tmp.unlink(missing_ok=True)
-        raise
-
-
-def _merge_preset(preset_text: str, name: str, target: Path) -> int:
-    """Refresh the managed ``[[llms]]`` + ``[keys]`` in ``target`` from a fresh preset,
-    keeping the user's ``[[custom]]`` models and their keys. A custom entry carrying an
-    ``alias`` also follows the paid catalog, so its provider fields are rewritten too.
-    Managed comments come from the preset verbatim; the re-emitted ``[[custom]]`` tail
-    loses inline comments. Atomic: any error leaves ``target`` untouched."""
-    if target.suffix.lower() != ".toml":
-        print(f"error: --merge target must be a .toml file, got {target}", file=sys.stderr)
+        outcome = asyncio.run(
+            sync_file(
+                text,
+                target,
+                source=name,
+                secrets=Secrets(target.parent / ".env"),
+                fetch_catalog=paid_catalog_text,
+            ),
+        )
+    except (SyncRefusedError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
-    try:
-        existing = tomllib.loads(target.read_text(encoding="utf-8")) if target.exists() else {}
-    except (tomllib.TOMLDecodeError, OSError) as exc:
-        print(f"error: cannot read existing {target}: {exc}", file=sys.stderr)
-        return 1
-
-    custom_entries = [e for e in existing.get("custom", []) if isinstance(e, dict)]
-    new_key_help: dict[str, str] = {}
-    if any(e.get("alias") for e in custom_entries):
-        catalog_text = _fetch_preset_file("paid-catalog")
-        if catalog_text is None:
-            return 1
-        index = _catalog_alias_index(tomllib.loads(catalog_text))
-        if index is None:
-            return 1
-        new_key_help = _refresh_alias_entries(custom_entries, index)
-
-    clash = _merged_name_clash(preset_text, custom_entries)
-    if clash is not None:
-        print(clash, file=sys.stderr)
-        return 1
-
-    custom_keys = _custom_key_tail(
-        custom_entries,
-        existing.get("keys", {}),
-        set(tomllib.loads(preset_text).get("keys", {})),
-        new_key_help,
-    )
-
-    parts = [preset_text.rstrip("\n")]
-    parts.extend(_custom_block(entry) for entry in custom_entries)
-    if custom_keys:
-        parts.append(tomli_w.dumps({"keys": custom_keys}).rstrip("\n"))
-    _write_atomic(target, "\n\n".join(parts) + "\n")
-    print(f"merged preset '{name}' into {target} (kept {len(custom_entries)} [[custom]] entries)")
+    for warning in outcome.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    for notice in outcome.notices:
+        print(notice)
+    # Printed on every run, no-ops included: a kept entry and a missing key stay
+    # visible in each deploy log until an admin resolves them.
+    print(outcome.report)
     return 0
 
 
@@ -408,8 +235,10 @@ def _cmd_add_model(args: argparse.Namespace) -> int:  # noqa: PLR0911
             file=sys.stderr,
         )
         return 1
-    text = _fetch_preset_file("paid-catalog")
-    if text is None:
+    try:
+        text = paid_catalog_text()
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
     providers = [p for p in tomllib.loads(text).get("provider", []) if isinstance(p, dict)]
     if not providers:
@@ -505,14 +334,14 @@ def _append_custom_entry(  # noqa: PLR0913
             "pool": pooled,
         },
     )
-    parts = [_custom_block(entry)]
+    parts = [entry_block("custom", entry)]
     if ref not in existing.get("keys", {}) and prov.get("key_help"):
         keys = {ref: {"help": str(prov["key_help"])}}
         parts.append(tomli_w.dumps({"keys": keys}).rstrip("\n"))
 
     if target.exists():
         parts.insert(0, target.read_text(encoding="utf-8").rstrip("\n"))
-    _write_atomic(target, "\n\n".join(parts) + "\n")
+    write_atomic(target, "\n\n".join(parts) + "\n")
 
     reach = f"direct({alias!r})" if alias is not None else f"direct(name={name!r})"
     print(f"added [[custom]] '{name}' ({model_id}) to {target} — reach it with {reach}")
@@ -527,28 +356,6 @@ def _prompt_name(default: str) -> str:
 def _prompt_yes_no(label: str, *, default: bool = False) -> bool:
     raw = input(f"{label} [{'Y/n' if default else 'y/N'}]: ").strip().lower()
     return default if not raw else raw in ("y", "yes")
-
-
-def _cmd_sync(args: argparse.Namespace) -> int:
-    preset_path = Path(args.preset)
-    if not preset_path.exists():
-        print(f"error: no such file: {preset_path}", file=sys.stderr)
-        return 1
-
-    async def run() -> None:
-        broker = AsyncBroker(args.db)
-        try:
-            await broker.sync(Registry(preset_path))
-        finally:
-            await broker.aclose()
-
-    try:
-        asyncio.run(run())
-    except ImportError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    print(f"synced {preset_path} -> {args.db}")
-    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -573,16 +380,18 @@ def main(argv: list[str] | None = None) -> int:
         help="print a curated preset TOML to stdout",
         description=(
             "Print a curated preset TOML to stdout. To save: preset freetier > freetier.toml."
-            " With --merge FILE, refresh the [[llms]] and [keys] in FILE from the preset while"
+            " With --sync FILE, refresh the [[llms]] and [keys] in FILE from the preset while"
             " keeping your [[custom]] models and their keys; a [[custom]] entry carrying an"
-            " alias is also re-pointed at whatever the paid catalog now recommends."
+            " alias is also re-pointed at whatever the paid catalog now recommends. A model"
+            " the preset dropped stays in FILE until a replacement you can actually call"
+            " arrives, so an update never shrinks your pool."
         ),
     )
     preset_p.add_argument("name", help="preset name (e.g. freetier)")
     preset_p.add_argument(
-        "--merge",
+        "--sync",
         metavar="FILE",
-        help="merge into FILE: refresh [[llms]]/[keys], keep [[custom]] (instead of stdout)",
+        help="sync into FILE: refresh [[llms]]/[keys], keep [[custom]] (instead of stdout)",
     )
     preset_p.set_defaults(func=_cmd_preset)
 
@@ -593,7 +402,7 @@ def main(argv: list[str] | None = None) -> int:
             "Pick a paid provider and model from the curated catalog and append a [[custom]]"
             " entry to your config file. Interactive by default; pass --provider and --model"
             " to run non-interactively. The entry follows the catalog's alias — call it as"
-            " direct('opus') and `preset <name> --merge` keeps it on the current version."
+            " direct('opus') and `preset <name> --sync` keeps it on the current version."
         ),
     )
     addm_p.add_argument(
@@ -628,18 +437,6 @@ def main(argv: list[str] | None = None) -> int:
         help="add to the routed pool (default: direct-only, reached via broker.direct)",
     )
     addm_p.set_defaults(func=_cmd_add_model)
-
-    sync_p = sub.add_parser(
-        "sync",
-        help="mirror a preset TOML into a DB registry (DB-init workflow)",
-        description=(
-            "Mirror a preset TOML into a DB registry: add new entries, update"
-            " existing ones, delete entries absent from the preset."
-        ),
-    )
-    sync_p.add_argument("preset", help="path to the preset .toml file")
-    sync_p.add_argument("db", help="sqlite path or postgresql:// / mongodb:// URL")
-    sync_p.set_defaults(func=_cmd_sync)
 
     args = parser.parse_args(argv)
     try:

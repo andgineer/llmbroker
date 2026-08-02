@@ -90,23 +90,26 @@ alias onward, the call fails loudly instead of quietly running a newer model.
 Either way, `llmbroker env llms.toml >> .env` adds the key line with a hint.
 
 The file is the single source of truth: add a `[[custom]]` block to add a model,
-remove it to remove one, then `sync` mirrors the whole file into the DB. `sync`
-mirrors only the config (`base_url` / `model` / `api_key_ref`) — **never the key
-value**; the key is read from the env var or secrets backend at call time.
+then `sync` merges the file into the DB. It carries only the config (`base_url` /
+`model` / `api_key_ref`) — **never the key value**; the key is read from the env
+var or secrets backend at call time. Your `[[custom]]` entries are yours: a sync
+updates them from the file and never prunes them.
 
 ## Refresh without losing your models
 
 Do **not** overwrite the file with `preset freetier > llms.toml` — that would
-drop your `[[custom]]` block. Use `--merge` instead:
+drop your `[[custom]]` block. Use `--sync` instead:
 
 ```bash
-llmbroker preset freetier --merge llms.toml
+llmbroker preset freetier --sync llms.toml
 ```
 
-`--merge` does two things:
+`--sync` does three things:
 
 - rewrites the `[[llms]]` (preset-managed) entries and their `[keys]` from the
   fresh preset;
+- keeps every model the preset dropped for which nothing usable arrived, so a
+  refresh never costs you a working model;
 - re-points every **alias** entry at what the paid catalog now recommends —
   `model`, `name`, `base_url` and `api_key_ref` — printing one line per change:
 
@@ -115,13 +118,13 @@ opus: claude-opus-4-8 -> claude-opus-5
 ```
 
 Pinned entries (no alias) are never touched, and an alias the catalog no longer
-knows is a warning, not a rewrite. Then `sync` as usual.
+knows is a warning, not a rewrite.
 
 A refreshed entry gets a new `name`, so its learned quality stats start clean —
 what one version was good at says nothing about the next.
 
 The new `name` is machine-formed the same way pool entries are named, so it can
-occasionally land on one of them. `--merge` refuses that outright and writes
+occasionally land on one of them. `--sync` refuses that outright and writes
 nothing. Renaming your entry will not help — the next refresh forms the name
 again — so drop its `alias` to pin it instead.
 
@@ -132,8 +135,6 @@ too: set that env var before the next call.
 
 ```python
 async with llmbroker.AsyncBroker("llms.toml") as llms:
-    await llms.sync("llms.toml")   # mirror config into the registry/DB
-
     client = await llms.direct("opus")
 
     # streaming — an async iterator of text deltas

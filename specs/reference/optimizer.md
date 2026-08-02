@@ -128,12 +128,13 @@ the registry.
 
 ## Seeding
 
-The preset file is the only source of model definitions. `sync(preset)`
-mirrors it into the registry — add new entries, update existing ones, delete
-entries absent from the preset — and preserves the disabled map (sync only
+A curated lineup is the only source of model definitions. `sync(source)` merges
+it into the registry — adding, updating, and removing an entry only when an
+arrival pays for the removal (see "Syncing the lineup" in
+[`architecture.md`](architecture.md)) — and preserves the disabled map (it only
 seeds missing names, never changes existing values). There is no model CRUD;
-provisioning against an empty registry fails fast, telling the caller to
-call `sync(preset)` first.
+provisioning against an empty registry fails fast, naming the sync call that
+would fill it.
 
 ---
 

@@ -135,7 +135,7 @@ Every host plugs in up to three backends; only the registry is required:
 
 | Backend | Contract | Default (zero-dependency) | What it is |
 |---|---|---|---|
-| **config** | `RegistryProtocol` | `Registry(path)` (file: `.toml`/`.json`) | where LLM configurations are stored — a pure mirror of a preset, see "Provider seeding" |
+| **config** | `RegistryProtocol` | `Registry(path)` (file: `.toml`/`.json`) | where LLM configurations are stored — the merged lineup, see "Syncing the lineup" |
 | **secrets** | `SecretsProtocol` | `Secrets()` (env vars, optional `.env` fallback) | how `api_key_ref` names resolve to real keys |
 | **store** | `StoreProtocol` | `FileStore(path)` (`store/` dir) | append-only call journal plus the admin disabled-verdict map; see [`optimizer.md`](optimizer.md) |
 
@@ -210,14 +210,15 @@ object as the first argument (instead of a string) skips dispatch entirely.
   per-operation quality demotion. See [optimizer.md](optimizer.md) for the behavior
   spec.
 - `ensure_pool()` — lazy idempotent pool initializer with double-checked locking;
-  loads the registry into the pool, raising if it is empty (call `sync(preset)`
+  loads the registry into the pool, raising if it is empty (sync a lineup into it
   first). Called automatically by every method that routes or views the live pool
   (`ask`/`chat`, `snapshot`, `get`, `count`, `disable_llm`/`enable_llm`,
   `record_quality`, `__aenter__`) and by no journal read — see "Journal read
   path". Call it explicitly for eager fail-fast startup.
-- `sync(preset)` — mirrors a preset into the registry: add new entries, update
-  existing ones, delete entries absent from the preset. The only registry write
-  path; there is no `add`/`update`/`remove`. See "Provider seeding" below.
+- `sync(source)` — merges a lineup into the registry and returns a `SyncReport`.
+  `source` is a curated preset name, a config file path, or a registry. The only
+  registry write path; there is no `add`/`update`/`remove`. See "Syncing the
+  lineup" below.
 - Plain `KeyError` signals a missing LLM everywhere in the public API.
 - **Scoping** — an opaque `scope: str | None` string on the broker prefixes secret
   refs (own key, falling back to the shared ref) and attributes journal rows; the
@@ -242,18 +243,25 @@ object as the first argument (instead of a string) skips dispatch entirely.
   this command rather than a separate `setup`/`status` command, to keep the CLI
   surface small.
 - `python -m llmbroker preset <name>` — print a curated preset TOML to stdout
-  (redirect to save: `preset freetier > freetier.toml`), or `--merge FILE` to
+  (redirect to save: `preset freetier > freetier.toml`), or `--sync FILE` to
   refresh that file in place: the managed pool entries and their keys from the
   preset, and every alias-following custom entry from the paid catalog (see
-  "Direct model access and stable aliases").
+  "Direct model access and stable aliases"). It prints the `SyncReport` on every
+  run, no-ops included, and exits non-zero only on a failure — a pending key or a
+  kept entry is a valid state, not an error.
 - `python -m llmbroker add-model` — pick a paid provider and model from the
   curated catalog and append it as a custom entry. It follows the catalog's
   alias by default so later refreshes keep it current; `--pin` writes a
   version-pinned entry instead, which no refresh touches.
-- `python -m llmbroker sync <preset> <db>` — mirror a preset TOML into a DB
-  registry, `<db>` accepting any source dispatch form (sqlite path/URL,
-  `postgresql://…`, `mongodb://…`); a DB-init CLI touchpoint for the same
-  `sync(preset)` the broker exposes.
+
+**The CLI writes files only, and a DB-shaped `--sync` target is refused.**
+Mirroring a lineup into a registry is the application's own entrypoint calling
+`broker.sync(...)`, built by the same factory the application uses — the alembic
+`env.py` split: the library owns the operation, the host owns the connection. A
+CLI that took a DSN would duplicate connection config the application already
+owns (syncing one database while serving from another is a silent failure) and
+would force DB credentials into the CLI's environment, which an application
+fetching its DSN from Vault cannot supply.
 
 ### DB schema
 
@@ -358,8 +366,8 @@ Per table:
 - **Registry** (`llmbroker_registry`) — hybrid: `name`, `base_url`, `model`,
   `api_key_ref` stay columns (identity, plus stable human-meaningful config);
   nested/open-ended per-LLM config (e.g. `parallel`) lives in the `metadata`
-  JSON column. The registry is global (no scope column) and a pure mirror of a
-  preset (see "Provider seeding") — nothing but `sync` writes it, and it holds
+  JSON column. The registry is global (no scope column) and holds the merged
+  lineup (see "Syncing the lineup") — nothing but `sync` writes it, and it holds
   no learned data.
 - **Disabled** (`llmbroker_disabled`) — the admin disabled-verdict map: a flat
   `name -> disabled` mapping, one row per model name. Written only by
@@ -406,10 +414,11 @@ one genuinely useful model per provider rather than several ranked ones.
 When curation replaces a model with a strictly better sibling from the same
 provider, the old entry is removed rather than left alongside the new one:
 the two usually share one provider quota, and a still-endorsed old entry
-would keep spending that shared quota on worse answers. The next `sync(preset)`
-at any deployment already running the old entry deletes it — its ratings and
-verdicts are gone with it, since nothing survives outside the journal/disabled
-map that `sync` never touches (see "Provider seeding" below). See
+would keep spending that shared quota on worse answers. Downstream, the next
+sync pairs the arrival with the old entry by their shared `api_key_ref` and
+removes it with no key lookup at all — its ratings and verdicts are gone with it,
+since nothing survives outside the journal/disabled map that `sync` never touches
+(see "Syncing the lineup" below). See
 [`freetier-providers.md`](freetier-providers.md) for how the curated free-tier
 preset specifically is kept current.
 
@@ -467,12 +476,12 @@ carrying a name twice does not raise an ambiguity to resolve later, it loses an
 entry at the next sync. An alias entry's name is machine-formed in the same
 `<provider>-<model>` convention preset pool entries use, so a catalog move can
 land one on the other; that is refused where it would be introduced (loading a
-config, and `--merge` before it writes anything) rather than tolerated. When a
+config, and `--sync` before it writes anything) rather than tolerated. When a
 name does resolve, the user's own entry is what it means: `direct(name=…)`
 searches custom entries, and a pool entry of that name only decides which error
 comes back.
 
-**Refreshing is a file rewrite, never a runtime lookup.** `preset <name> --merge
+**Refreshing is a file rewrite, never a runtime lookup.** `preset <name> --sync
 FILE` re-points every alias entry in the file at what the catalog now
 recommends, printing one line per change; an alias the catalog no longer knows
 is a warning and its entry is left untouched. The file stays the single source
@@ -541,53 +550,162 @@ keys are present, and a config without a resolvable key simply stays inactive
 genuine alarm is **zero** keyed configs at all — see [`optimizer.md`](optimizer.md)
 for how that's detected and raised.
 
+**A key exists only when it is non-empty.** An env var exported blank, an unfilled
+`KEY=` line, a backend returning `""` — all count as unset everywhere, since key
+presence now also authorizes removals during a sync (see "Syncing the lineup").
+
 There is no background key re-resolve loop: a key added to the environment
 after startup takes effect at the next `ensure_pool()` call (fresh process, or
-an explicit re-provision) or immediately if the host calls `sync(preset)` again
+an explicit re-provision) or immediately if the host calls `sync` again
 (it re-bootstraps any newly resolvable secrets) — never via a polling task.
 
 ---
 
-## Provider seeding
+## Syncing the lineup
 
-The preset file is the only source of model definitions; the registry is its
-pure mirror. Seeding is an explicit call, never implicit at construction —
-implicit seed-on-start is unsound in a cluster, since every node would reconcile
-the registry against its own local copy and diverging copies would flip-flop it.
+`sync(source)` is the only registry write path — there is no `add`/`update`/
+`remove` — and it returns a `SyncReport` describing what it did.
 
-```python
-llms = llmbroker.AsyncBroker(
-    registry=llmbroker.sqlite.Registry("broker.db"),
-    secrets=llmbroker.sqlite.Secrets("broker.db"),
-)
-await llms.sync(llmbroker.Registry(".deploy/llms.toml"))  # once, e.g. at deploy
-await llms.ensure_pool()   # eager init at startup
-```
+**One verb, two sources.** A *preset name* (`sync("freetier")`) fetches the
+curated lineup from the catalog: this is the only networked operation in the
+library. A *path* or *registry* (`sync("llms.toml")`) is offline. Both then run
+the identical merge, so the rules below hold whatever named the lineup.
 
-`sync(preset)` is a total mirror: add new entries, update existing ones, delete
-entries absent from the preset — nothing is lost by a delete, since keys live in
-the secrets store, learned state derives from the journal, and admin verdicts
-live in the store disabled map (a model returning to the preset is simply
-re-added, and its old ratings and verdict resurface). The synced file is the
-whole truth, both the `[[llms]]` (pool) and `[[custom]]` (user-owned, flagged
-`custom`, orthogonal to pool membership) arrays; the DB is its pure mirror. A
-user's own models survive a pool refresh not through DB-side protection but at
-the file level: `llmbroker preset <name> --merge <file>` rewrites only the
-managed `[[llms]]`/`[keys]` in the file and keeps `[[custom]]` intact. Refusing
-a `model`-identity
-change under an existing entry name is a synchronous error — entry identity is
-immutable, a model bump must be a new entry name; this protects the binding
-between a model's learned quality stats and its name. There is no other model
-CRUD — no `add`/`update`/`remove` — `sync(preset)` is the only registry write
-path. Provisioning against an empty registry fails fast, telling the caller to
-call `sync(preset)` first.
+**The vendored config is a lockfile.** Refreshing it from upstream is an explicit
+repo or deploy action, like a lockfile upgrade — never something application
+start does. Start is therefore never online and never fails because a preset
+moved on. This is also why seeding is never implicit at construction: in a
+cluster, every node reconciling the registry against its own copy would flip-flop
+it, so the refresh is one job, not a per-node startup step.
 
-`sync` also bootstraps secrets: for each provider config whose `api_key_ref`
-cannot be resolved by the configured `secrets=` backend, it tries
+### Two tiers, one merge site each
+
+|  | tier 1 (the common case) | tier 2 |
+|---|---|---|
+| registry / secrets | `llms.toml` + `.env` | DB / Vault / AWS, possibly per-user (`scope`) |
+| who merges | the CLI, into the file | `broker.sync(...)` |
+| key visibility | `os.environ` + the file's sibling `.env` | the broker's own secrets backend |
+
+Each tier has exactly one merge site, and that site sees the same keys the
+application will. In tier 1 the CLI resolves through the same env-plus-sibling
+`.env` pair a file-configured broker uses, so what the CLI decides is what the
+application would have decided. Tier 2 never merges from the CLI at all. That is
+what makes a key-aware merge safe: no merge ever runs blind to the keys the
+program that consumes its output will have.
+
+### The removal rule: pairs, then budget
+
+Only managed entries whose name is absent from the arriving lineup are candidates
+for removal. An entry still present is updated in place, and `[[custom]]` entries
+are never pruned.
+
+1. An arriving entry carrying a dropped entry's `api_key_ref` **is** its
+   replacement: the pair is removed with no key lookup at all — same quota,
+   nothing is lost.
+2. Each remaining arrival whose `api_key_ref` we have a key for pays for the
+   removal of one remaining dropped entry. Entries whose own key is absent are
+   spent first: they are inactive already.
+3. Everything else stays — "kept".
+
+Hence the invariant that is the whole safety story:
+
+> **The number of callable entries can never decrease as a result of a sync** —
+> every removal is paid for by an arrival that either inherits the same key or
+> has one of its own.
+
+A consequence worth stating: a lineup that drops a provider without adding one
+prunes nothing downstream. That is intended. It also means a path source is not a
+blind mirror — an operator who deletes an entry from the vendored file gets it
+removed only once the rule pays for it, and the report says why it was kept. The
+escape hatch for a forced lineup is `registry.mirror(configs)` directly.
+
+**A key exists or it does not.** A key exists when the secrets store returns a
+**non-empty** value for its ref (an empty or whitespace-only value is no key,
+whatever backend produced it), or when the ref is declared in `have_keys`.
+Absence is never evidence of anything: keys only ever *authorize* a removal,
+never demand one. That single asymmetry is why no "unknown key" state is needed,
+and why per-user (`scope`) secrets degrade to maximal conservatism with no
+configuration at all — nothing resolves, so nothing but a same-key replacement is
+ever removed.
+
+**`have_keys` only lowers conservatism.** `have_keys=["OPENAI_API_KEY"]` (or
+`True`) declares refs the broker cannot probe — per-user keys behind `scope`, a
+secret injected only in production. Declared refs count as present when paying
+for removals, and only there: `have_keys` never makes a model routable, the pool
+still needs a real key value. It is a promise — declare a ref and fail to
+provision it, and the pool degrades (old entries removed, replacements inactive).
+Omit it and nothing breaks; the lineup just keeps entries a better-informed run
+would have pruned.
+
+**Retention is recomputed, never stored.** Which entries are kept follows from
+(arriving lineup, current lineup, keys) on every merge, so a persisted flag would
+be an output masquerading as an input. Nothing in `LLMConfig` or the TOML records
+it; the file writer groups kept entries under a generated comment, and the report
+names them on every run, including no-ops.
+
+**Model identity is immutable.** The same name with a different `model` is a
+synchronous error — a model bump must be a new entry name. This protects the
+binding between a model's learned quality stats and its name.
+
+**One structural guard.** Applying a result with zero entries over a registry that
+has some is refused with `SyncRefusedError`, carrying the report; an empty
+registry accepts anything, which is onboarding. The rule above cannot produce
+that situation — a removal needs an arrival and an arrival is itself in the
+result — so the guard is a backstop on the invariant, not a workflow.
+
+Nothing is lost by a removal that does happen: keys live in the secrets store,
+learned state derives from the journal, and admin verdicts live in the store
+disabled map, so a model returning later is re-added and its old ratings and
+verdict resurface.
+
+### Visibility: raw facts, admin-facing
+
+- **`SyncReport`** is returned by every sync and printed by the CLI on every run
+  *including no-ops*, so kept entries and missing keys nag in each deploy log
+  until resolved. `last_sync_report` lets a host forward it to its own admin
+  channel. The report carries no severity enum — the host derives criticality.
+- **The committed config file is the durable state**: kept entries and the keys
+  that would unlock their removal sit in the file, so a bot refresh is reviewable
+  in the pull request diff itself, and the file's git history is the update
+  record. The sync stores nothing of its own.
+- Every sync logs its outcome once, whatever called it: a warning when it needs
+  something from an admin (an entry kept for lack of a paid replacement), info
+  otherwise — including no-ops and pending keys, since a keyless entry is a
+  normal documented state and under per-user secrets every shared probe fails by
+  design.
+- The **journal** stays what it is — a stream of LLM calls and quality ratings. A
+  sync is a registry operation and never writes there. `snapshot()` likewise
+  stays runtime state for the application's own UI, not part of the admin story.
+
+### The `sync=` knob
+
+`AsyncBroker(..., sync="freetier")` refreshes the lineup once, at the top of the
+first `ensure_pool()` and inside its lock — before provisioning, which is the only
+placement that works: entering the context manager provisions eagerly, and
+provisioning an empty registry raises, so a refresh running after it could never
+populate a fresh one. Running it first also serves callers who never enter a
+context manager, since every public operation funnels through `ensure_pool()`.
+
+It is **best-effort and never raises**: a fetch failure or a refusal logs a
+warning, stashes the report on `last_sync_report` where there is one, and
+continues on the existing configuration. Start never dies because of an update.
+The explicit `sync()` call always raises instead — that caller chose to sync and
+has a plan. The attempt is guarded by its own flag, so a provision that failed
+for another reason and is retried does not re-fetch.
+
+### What sync also does
+
+Beyond writing the lineup, `sync` bootstraps secrets: for each config whose
+`api_key_ref` cannot be resolved by the configured `secrets=` backend, it tries
 `llmbroker.Secrets()` (env vars) and, if found, persists the value via
 `secrets.set()`. Existing secrets are never overwritten — admin-edited values
 win. It also seeds the store disabled map with any missing model names
 (`disabled: false`), never touching existing verdict values.
+
+A file registry is a legitimate target: the merged lineup is written back to the
+`.toml`, preserving its comments and `[[custom]]` entries, which is what lets a
+file-configured broker keep itself current. Provisioning against an empty
+registry still fails fast, naming the sync call that would fill it.
 
 ---
 
@@ -620,6 +738,11 @@ rejected — use `None` for unscoped) is the one knob:
 - **A broker instance is one scope's view.** The broker never multiplexes
   scopes internally — resolved keys and the per-LLM slot table are per-instance.
   `scope=None` (the default) is exactly the single-tenant behavior.
+- **A sync here probes almost nothing, by design.** With per-user keys there is
+  no shared value to resolve, so the key probe finds nothing — which is exactly
+  why absence authorizes nothing: the sync keeps every entry it cannot prove is
+  replaceable. `have_keys` is how an installation that knows better says so, and
+  it is the only reason that parameter exists.
 
 ---
 

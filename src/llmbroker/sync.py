@@ -8,7 +8,7 @@ concurrency persists across calls.
 import asyncio
 import threading
 import weakref
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,7 +16,15 @@ from typing import Any
 from llmbroker.broker.broker import _DEFAULT_STATS_LIMIT, AsyncBroker
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.direct import DirectClient
-from llmbroker.models import Call, LLMConfig, LLMMetrics, LLMSnapshot, LLMState, LLMStats
+from llmbroker.models import (
+    Call,
+    LLMConfig,
+    LLMMetrics,
+    LLMSnapshot,
+    LLMState,
+    LLMStats,
+    SyncReport,
+)
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.registry import RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
@@ -101,6 +109,8 @@ class Broker:
         store: StoreProtocol | None = None,
         optimize: bool | Optimizer = True,
         scope: str | None = None,
+        have_keys: bool | Sequence[str] = False,
+        sync: str | Path | None = None,
     ) -> None:
         self._async = AsyncBroker(
             registry,
@@ -108,6 +118,8 @@ class Broker:
             store=store,
             optimize=optimize,
             scope=scope,
+            have_keys=have_keys,
+            sync=sync,
         )
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
@@ -193,8 +205,12 @@ class Broker:
     def snapshot(self) -> Mapping[str, LLMSnapshot]:
         return self._run(self._async.snapshot())
 
-    def sync(self, preset: RegistryProtocol | str | Path) -> None:
-        self._run(self._async.sync(preset))
+    def sync(self, source: RegistryProtocol | str | Path) -> SyncReport:
+        return self._run(self._async.sync(source))
+
+    @property
+    def last_sync_report(self) -> SyncReport | None:
+        return self._async.last_sync_report
 
     def disable_llm(self, name: str) -> None:
         self._run(self._async.disable_llm(name))

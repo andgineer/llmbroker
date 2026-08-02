@@ -1,8 +1,8 @@
 """Catalog: keep the live pool's membership in sync with the registry.
 
 Loads configs from the registry, resolves their API keys via the secrets
-backend, and reflects every change into the ``LLMPool``. The registry is a
-pure mirror of a preset (see ``sync``) — nothing else writes it.
+backend, and reflects every change into the ``LLMPool``. ``apply`` is the only
+registry write path; what it writes is decided in ``broker.upstream``.
 """
 
 import logging
@@ -17,6 +17,16 @@ from llmbroker.standalone.secrets import Secrets
 logger = logging.getLogger("llmbroker.broker")
 
 
+async def _resolve_non_empty(secrets: SecretsProtocol, ref: str) -> str | None:
+    """One backend lookup, with a blank value read as no value at all — any
+    backend can hand one back, and key presence authorizes preset removals."""
+    try:
+        value = await secrets.resolve(ref)
+    except KeyError:
+        return None
+    return value if value.strip() else None
+
+
 async def resolve_key(
     secrets: SecretsProtocol,
     api_key_ref: str,
@@ -24,14 +34,10 @@ async def resolve_key(
 ) -> str | None:
     """Resolve ``api_key_ref`` to a key: scope-prefixed (own) ref first, then shared."""
     if scope is not None:
-        try:
-            return await secrets.resolve(f"{scope}/{api_key_ref}")
-        except KeyError:
-            pass
-    try:
-        return await secrets.resolve(api_key_ref)
-    except KeyError:
-        return None
+        own = await _resolve_non_empty(secrets, f"{scope}/{api_key_ref}")
+        if own is not None:
+            return own
+    return await _resolve_non_empty(secrets, api_key_ref)
 
 
 class Catalog:
@@ -56,8 +62,9 @@ class Catalog:
         configs = await self._registry.load()
         if not configs:
             raise EmptyRegistryError(
-                "registry is empty — call sync(preset) to mirror a preset into it before"
-                " provisioning (e.g. `await broker.sync(preset)` or `python -m llmbroker sync`)",
+                "registry is empty — sync a lineup into it before provisioning, e.g."
+                ' `await broker.sync("freetier")` from your own entrypoint, or open the'
+                ' broker with AsyncBroker(..., sync="freetier")',
             )
         await self._reconcile(configs)
 
@@ -82,26 +89,15 @@ class Catalog:
         for order, cfg in enumerate(pooled):
             await self._pool.add(cfg, await self._resolve_key(cfg), order=order)
 
-    async def sync(self, preset: RegistryProtocol) -> None:
-        """Mirror ``preset`` into the registry: add new entries, update existing
-        ones, delete entries absent from the preset — the total mirror, nothing to
-        preserve. Refuses (raises) a ``model`` identity change under an existing
-        name, since that binds learned stats to the model name; a model bump must
-        land under a new entry name instead.
+    async def apply(self, configs: list[LLMConfig]) -> None:
+        """Mirror an already-merged lineup into the registry and seed its keys.
+
+        The merge decision — what the lineup should be — belongs to
+        ``broker.upstream``; this half only writes it.
         """
         registry = self._require_mutable_registry()
-        source_configs = await preset.load()
-        existing = {c.name: c for c in await registry.load()}
-        for cfg in source_configs:
-            current = existing.get(cfg.name)
-            if current is not None and current.model != cfg.model:
-                raise ValueError(
-                    f"sync: refusing to change model for {cfg.name!r}"
-                    f" (stored {current.model!r} vs preset {cfg.model!r}) — a model bump"
-                    " must be a new entry name",
-                )
-        await registry.mirror(source_configs)
-        await self._seed_secrets(source_configs)
+        await registry.mirror(configs)
+        await self.seed_secrets(configs)
 
     async def _resolve_key(self, cfg: LLMConfig) -> str | None:
         key = await resolve_key(self._secrets, cfg.api_key_ref, self._scope)
@@ -114,22 +110,17 @@ class Catalog:
             )
         return key
 
-    async def _seed_secrets(self, configs: list[LLMConfig]) -> None:
+    async def seed_secrets(self, configs: list[LLMConfig]) -> None:
         """Copy any env-resolvable keys into a mutable secrets backend, preserving existing."""
         if not isinstance(self._secrets, MutableSecretsProtocol):
             return
         bootstrap = Secrets()
         for cfg in configs:
-            try:
-                await self._secrets.resolve(cfg.api_key_ref)
+            if await _resolve_non_empty(self._secrets, cfg.api_key_ref) is not None:
                 continue  # already resolvable — preserve
-            except KeyError:
-                pass
-            try:
-                value = await bootstrap.resolve(cfg.api_key_ref)
-            except KeyError:
-                continue
-            await self._secrets.set(cfg.api_key_ref, value)
+            value = await _resolve_non_empty(bootstrap, cfg.api_key_ref)
+            if value is not None:
+                await self._secrets.set(cfg.api_key_ref, value)
 
     def _require_mutable_registry(self) -> MutableRegistryProtocol:
         if not isinstance(self._registry, MutableRegistryProtocol):

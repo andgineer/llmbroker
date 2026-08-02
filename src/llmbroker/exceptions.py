@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+from llmbroker.models import SyncReport
+
 
 class LLMBrokerError(RuntimeError):
     """Base: a lifecycle failure — provisioning or storage, not one request.
@@ -17,6 +19,18 @@ class EmptyRegistryError(LLMBrokerError):
     The request-time sibling is ``NoLLMAvailableError(reason="empty_pool")``:
     this one says nothing is configured, that one says nothing is usable now.
     """
+
+
+class SyncRefusedError(LLMBrokerError):
+    """A sync result was not applied — it would have emptied a working registry.
+
+    ``report`` carries what the merge would have done, so a caller can log or
+    forward the facts that led to the refusal.
+    """
+
+    def __init__(self, message: str, *, report: SyncReport) -> None:
+        super().__init__(message)
+        self.report = report
 
 
 class SchemaVersionError(LLMBrokerError):
