@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import tomllib
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -547,9 +546,10 @@ def test_broker_record_quality_unknown_llm_does_not_raise(tmp_path):
     asyncio.run(run())
 
 
-def test_sync_into_a_file_registry_rewrites_the_file(tmp_path):
-    """A file registry is a legitimate sync target: the merged lineup is written back
-    to the .toml, which is what makes a file-configured broker self-updating."""
+def test_sync_into_a_file_registry_takes_a_preset_only(tmp_path):
+    """A file registry is a legitimate sync target — from a curated preset, which is
+    what makes a file-configured broker self-updating. Any other source is refused
+    before the write, so the target keeps whatever it already had."""
 
     async def run():
         other = tmp_path / "other.toml"
@@ -557,10 +557,11 @@ def test_sync_into_a_file_registry_rewrites_the_file(tmp_path):
             '[[llms]]\nname="p2"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
         )
         target = _registry(tmp_path).path
+        original = target.read_text()
         broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore())
-        report = await broker.sync(FileRegistry(other))
-        assert report.added == ("p2",)
-        assert [e["name"] for e in tomllib.loads(target.read_text())["llms"]] == ["p2"]
+        with pytest.raises(ValueError, match="curated preset name only"):
+            await broker.sync(FileRegistry(other))
+        assert target.read_text() == original
 
     asyncio.run(run())
 

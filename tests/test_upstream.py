@@ -1,15 +1,21 @@
-"""The sync engine: the pairs-and-budget removal rule, key presence, the writers."""
+"""The sync engine: the removal rule, key presence, the fetch, the writers."""
 
+import http.client
+import stat
 import tomllib
+import urllib.error
+from datetime import UTC, datetime
 
 import pytest
 
+from llmbroker.broker import upstream
 from llmbroker.broker.upstream import (
     catalog_alias_index,
     check_not_emptying,
     configs_from_data,
     fetch_preset_text,
     key_infos_from_data,
+    keys_are_visible,
     merge_upstream,
     present_refs,
     refresh_alias_entries,
@@ -18,8 +24,10 @@ from llmbroker.broker.upstream import (
     write_atomic,
 )
 from llmbroker.exceptions import SyncRefusedError
-from llmbroker.models import KeyInfo, LLMConfig
+from llmbroker.models import KeyInfo, LLMConfig, Retirement
 from llmbroker.standalone.secrets import DictSecrets, Secrets
+
+_EVIDENCE_TS = datetime(2030, 7, 2, tzinfo=UTC)
 
 
 def _cfg(name, ref="K", *, model="m", url="https://x/v1", custom=False):
@@ -32,7 +40,17 @@ def _cfg(name, ref="K", *, model="m", url="https://x/v1", custom=False):
     )
 
 
-def _merge(new, current, present=frozenset(), *, new_keys=None, current_keys=None):
+def _merge(  # noqa: PLR0913
+    new,
+    current,
+    present=frozenset(),
+    *,
+    new_keys=None,
+    current_keys=None,
+    dead=frozenset(),
+    keys_visible=True,
+    keys_scoped=False,
+):
     return merge_upstream(
         list(new),
         dict(new_keys or {}),
@@ -40,14 +58,21 @@ def _merge(new, current, present=frozenset(), *, new_keys=None, current_keys=Non
         dict(current_keys or {}),
         set(present),
         source="freetier",
+        dead={n: Retirement(name=n, http_status=401, since=_EVIDENCE_TS) for n in dead},
+        keys_visible=keys_visible,
+        keys_scoped=keys_scoped,
     )
+
+
+def _retired(report):
+    return tuple(item.name for item in report.retired)
 
 
 # ── The removal rule, one test per row of the table ──────────────────────────
 
 
-def test_same_provider_replacement_needs_no_key_at_all():
-    """The arrival carries the dropped entry's ref: same quota, nothing is lost."""
+def test_the_lineup_carrying_the_provider_replaces_the_entry_with_no_key_involved():
+    """Same ref means same quota and same failure domain: nothing is lost."""
     merged, _keys, report = _merge([_cfg("groq-new", "GROQ")], [_cfg("groq-old", "GROQ")])
     assert [c.name for c in merged] == ["groq-new"]
     assert (report.removed, report.kept, report.added) == (
@@ -57,82 +82,118 @@ def test_same_provider_replacement_needs_no_key_at_all():
     )
 
 
-def test_cross_provider_swap_with_the_arrivals_key_present_removes():
+def test_two_old_entries_on_the_carried_ref_both_go():
+    """The unit is the provider, not the entry — there is nothing to count."""
+    merged, _keys, report = _merge(
+        [_cfg("new", "GROQ")],
+        [_cfg("old-a", "GROQ"), _cfg("old-b", "GROQ")],
+        present={"GROQ"},
+    )
+    assert report.removed == ("old-a", "old-b")
+    assert (report.kept, [c.name for c in merged]) == ((), ["new"])
+
+
+def test_a_provider_the_lineup_dropped_goes_when_no_key_exists_for_it():
     merged, _keys, report = _merge(
         [_cfg("gemini", "GEMINI")],
         [_cfg("groq-old", "GROQ")],
         present={"GEMINI"},
     )
     assert [c.name for c in merged] == ["gemini"]
-    assert report.removed == ("groq-old",)
-    assert report.kept == ()
+    assert (report.removed, report.kept, _retired(report)) == (("groq-old",), (), ())
 
 
-def test_cross_provider_swap_without_the_arrivals_key_keeps():
-    merged, _keys, report = _merge([_cfg("gemini", "GEMINI")], [_cfg("groq-old", "GROQ")])
+def test_a_provider_the_lineup_dropped_stays_while_its_key_is_here():
+    merged, _keys, report = _merge(
+        [_cfg("gemini", "GEMINI")],
+        [_cfg("groq-old", "GROQ")],
+        present={"GEMINI", "GROQ"},
+    )
     assert [c.name for c in merged] == ["gemini", "groq-old"]
-    assert report.kept == ("groq-old",)
-    assert report.removed == ()
+    assert (report.kept, report.kept_refs, report.removed) == (("groq-old",), ("GROQ",), ())
 
 
-def test_provider_dropped_with_nothing_arriving_keeps():
-    merged, _keys, report = _merge(
-        [_cfg("a", "A")],
-        [_cfg("a", "A"), _cfg("groq-old", "GROQ")],
-        present={"A", "GROQ"},
+def test_a_kept_entry_the_journal_proved_dead_is_retired():
+    _merged, _keys, report = _merge(
+        [_cfg("gemini", "GEMINI")],
+        [_cfg("groq-old", "GROQ")],
+        present={"GEMINI", "GROQ"},
+        dead={"groq-old"},
     )
-    assert [c.name for c in merged] == ["a", "groq-old"]
-    assert report.kept == ("groq-old",)
+    assert (report.removed, _retired(report), report.kept) == (("groq-old",), ("groq-old",), ())
 
 
-def test_a_shrinking_lineup_with_every_key_present_removes_nothing():
-    """No arrivals means no budget: five models down to three prunes nothing."""
-    current = [_cfg(n, n.upper()) for n in ("a", "b", "c", "d", "e")]
-    merged, _keys, report = _merge(
-        current[:3],
-        current,
-        present={"A", "B", "C", "D", "E"},
+def test_with_keys_invisible_the_entry_stays_whatever_present_says():
+    """A merge site that cannot see the keys must never read absence as evidence."""
+    _merged, _keys, report = _merge(
+        [_cfg("gemini", "GEMINI")],
+        [_cfg("groq-old", "GROQ")],
+        present={"GEMINI"},
+        keys_visible=False,
     )
-    assert [c.name for c in merged] == ["a", "b", "c", "d", "e"]
-    assert report.kept == ("d", "e")
-    assert report.removed == ()
+    assert (report.kept, report.removed) == (("groq-old",), ())
 
 
-def test_one_usable_arrival_pays_for_exactly_one_removal():
-    """And it spends the budget on the entry that is inactive anyway."""
-    merged, _keys, report = _merge(
-        [_cfg("new", "NEW")],
-        [_cfg("keyed", "KEYED"), _cfg("keyless", "ABSENT")],
-        present={"NEW", "KEYED"},
-    )
-    assert report.removed == ("keyless",)
-    assert report.kept == ("keyed",)
-    assert [c.name for c in merged] == ["new", "keyed"]
-
-
-def test_an_arrival_pays_only_once_even_when_two_entries_share_its_ref():
-    merged, _keys, report = _merge(
-        [_cfg("new", "GROQ")],
-        [_cfg("old-a", "GROQ"), _cfg("old-b", "GROQ")],
-        present={"GROQ"},
-    )
-    assert report.removed == ("old-a",)
-    assert report.kept == ("old-b",)
-    assert [c.name for c in merged] == ["new", "old-b"]
-
-
-def test_with_no_keys_at_all_only_same_ref_pairs_are_removed():
-    merged, _keys, report = _merge(
-        [_cfg("groq-new", "GROQ"), _cfg("gemini", "GEMINI")],
-        [_cfg("groq-old", "GROQ"), _cfg("openrouter-old", "OPENROUTER")],
+def test_a_probe_that_resolved_nothing_at_all_proves_nothing():
+    """The empty-probe clause: registry in llms.toml, secrets in Vault — absence here
+    says the keys live somewhere this merge site cannot reach."""
+    assert keys_are_visible(set(), scope=None, have_keys=False) is False
+    _merged, _keys, report = _merge(
+        [_cfg("gemini", "GEMINI")],
+        [_cfg("groq-old", "GROQ")],
         present=set(),
+        keys_visible=keys_are_visible(set(), scope=None, have_keys=False),
+    )
+    assert report.kept == ("groq-old",)
+
+
+def test_a_scoped_installation_needs_a_declaration_before_absence_counts():
+    assert keys_are_visible({"GEMINI"}, scope="alice", have_keys=False) is False
+    assert keys_are_visible({"GEMINI"}, scope="alice", have_keys=["GEMINI"]) is True
+    assert keys_are_visible({"GEMINI"}, scope=None, have_keys=False) is True
+
+
+def test_a_custom_entry_on_the_same_ref_keeps_it_out_of_the_orphan_advice():
+    """The paid direct model on the retired provider: the key is still in use."""
+    _merged, _keys, report = _merge(
+        [_cfg("gemini", "GEMINI")],
+        [_cfg("groq-old", "GROQ"), _cfg("groq-paid", "GROQ", custom=True)],
+        present={"GEMINI", "GROQ"},
+        dead={"groq-old"},
     )
     assert report.removed == ("groq-old",)
-    assert report.kept == ("openrouter-old",)
-    assert [c.name for c in merged] == ["groq-new", "gemini", "openrouter-old"]
+    assert report.orphan_refs == ()
 
 
-async def test_have_keys_pays_for_a_removal_without_a_resolvable_key():
+def test_a_ref_nothing_references_any_more_is_reported_as_unused():
+    """A key that is here and has just lost its last user: the one case where
+    revoking it at the provider is a real thing to do."""
+    _merged, _keys, report = _merge(
+        [_cfg("gemini", "GEMINI")],
+        [_cfg("groq-old", "GROQ")],
+        present={"GEMINI", "GROQ"},
+        dead={"groq-old"},
+    )
+    assert (_retired(report), report.orphan_refs) == (("groq-old",), ("GROQ",))
+
+
+def test_a_ref_with_no_key_behind_it_is_nothing_to_revoke():
+    """The commonest removal of all — curation drops a provider you never had a key
+    for. Advising a revocation there is noise in the one channel an admin reads."""
+    _merged, _keys, report = _merge(
+        [_cfg("gemini", "GEMINI")],
+        [_cfg("groq-old", "GROQ")],
+        present={"GEMINI"},
+    )
+    assert (report.removed, report.orphan_refs) == (("groq-old",), ())
+
+
+def test_a_replaced_providers_ref_is_not_an_orphan():
+    _merged, _keys, report = _merge([_cfg("groq-new", "GROQ")], [_cfg("groq-old", "GROQ")])
+    assert (report.removed, report.orphan_refs) == (("groq-old",), ())
+
+
+async def test_have_keys_declares_a_ref_the_backend_cannot_resolve():
     present = await present_refs(
         ["GEMINI", "GROQ"],
         DictSecrets({}),
@@ -148,6 +209,18 @@ async def test_have_keys_pays_for_a_removal_without_a_resolvable_key():
 
 
 # ── The invariant the rule exists for ────────────────────────────────────────
+
+
+def test_a_sync_never_takes_away_a_model_this_installation_can_call():
+    """Invariant 4: an entry with a key goes only when the same provider replaces it,
+    or when the journal says it does not work."""
+    current = [_cfg(n, n.upper()) for n in ("a", "b", "c", "d", "e")]
+    present = {"A", "B", "C", "D", "E"}
+    _merged, _keys, report = _merge(current[:3], current, present=present)
+    assert (report.kept, report.removed) == (("d", "e"), ())
+
+    _merged, _keys, report = _merge(current[:3], current, present=present, dead={"d"})
+    assert (report.removed, _retired(report), report.kept) == (("d",), ("d",), ("e",))
 
 
 @pytest.mark.parametrize(
@@ -168,25 +241,29 @@ def test_the_callable_count_never_decreases(present, new_names):
 # ── Kept entries are recomputed, never accumulated ───────────────────────────
 
 
-def test_kept_entries_survive_repeated_merges_without_duplicating():
+def test_the_same_merge_repeated_three_times_does_not_drift():
     current = [_cfg("groq-old", "GROQ")]
     new = [_cfg("gemini", "GEMINI")]
     for _ in range(3):
-        current, _keys, report = _merge(new, current)
+        current, _keys, report = _merge(new, current, present={"GEMINI", "GROQ"})
         assert [c.name for c in current] == ["gemini", "groq-old"]
         assert report.kept == ("groq-old",)
     assert report.added == ()  # gemini arrived on the first pass only
 
 
-def test_a_kept_entry_is_removed_once_a_replacement_becomes_usable():
-    merged, _keys, _report = _merge([_cfg("gemini", "GEMINI")], [_cfg("groq-old", "GROQ")])
-    merged, _keys, report = _merge(
-        [_cfg("gemini", "GEMINI"), _cfg("cerebras", "CEREBRAS")],
-        merged,
-        present={"CEREBRAS"},
-    )
-    assert report.removed == ("groq-old",)
-    assert [c.name for c in merged] == ["gemini", "cerebras"]
+def test_the_next_sync_removes_a_kept_entry_once_the_journal_condemns_it():
+    """Convergence, fed the previous merge's own result: the rule that this replaces
+    shipped green because its test handed the second merge a fresh arrival instead."""
+    new = [_cfg("gemini", "GEMINI")]
+    merged, _keys, report = _merge(new, [_cfg("groq-old", "GROQ")], present={"GEMINI", "GROQ"})
+    assert report.kept == ("groq-old",)
+
+    merged, _keys, report = _merge(new, merged, present={"GEMINI", "GROQ"}, dead={"groq-old"})
+    assert (report.removed, _retired(report)) == (("groq-old",), ("groq-old",))
+    assert [c.name for c in merged] == ["gemini"]
+
+    merged, _keys, report = _merge(new, merged, present={"GEMINI", "GROQ"})
+    assert (report.removed, report.kept, report.added) == ((), (), ())
 
 
 # ── Custom entries, keys, and the refusals ───────────────────────────────────
@@ -216,6 +293,7 @@ def test_key_help_for_a_kept_entry_is_carried_over():
     _merged, keys, report = _merge(
         [_cfg("gemini", "GEMINI")],
         [_cfg("groq-old", "GROQ")],
+        keys_visible=False,
         new_keys={"GEMINI": KeyInfo(api_key_ref="GEMINI", help="gemini help", extra={})},
         current_keys={"GROQ": KeyInfo(api_key_ref="GROQ", help="groq help", extra={})},
     )
@@ -227,7 +305,11 @@ def test_key_help_for_a_kept_entry_is_carried_over():
 
 
 def test_a_kept_entry_without_key_help_is_not_an_error():
-    _merged, _keys, report = _merge([_cfg("gemini", "GEMINI")], [_cfg("groq-old", "GROQ")])
+    _merged, _keys, report = _merge(
+        [_cfg("gemini", "GEMINI")],
+        [_cfg("groq-old", "GROQ")],
+        keys_visible=False,
+    )
     assert [(p.api_key_ref, p.help) for p in report.pending_keys] == [
         ("GEMINI", ""),
         ("GROQ", ""),
@@ -284,9 +366,17 @@ def test_an_empty_result_over_an_empty_registry_is_onboarding():
     check_not_emptying([], [], report)  # does not raise
 
 
-def test_the_rule_itself_never_produces_an_empty_lineup():
-    """Why the guard above is a backstop and not a workflow: a removal needs an
-    arrival, and an arrival is itself in the result — so nothing can empty it."""
+def test_an_empty_lineup_over_a_keyless_registry_reaches_the_guard():
+    """The guard is on the normal path now: nothing arrives, no key exists for
+    anything already there, so every entry is removable and the result is empty."""
+    current = [_cfg("a", "A"), _cfg("b", "B")]
+    merged, _keys, report = _merge([], current, present={"C"})
+    assert (merged, report.removed) == ([], ("a", "b"))
+    with pytest.raises(SyncRefusedError):
+        check_not_emptying(merged, current, report)
+
+
+def test_an_empty_lineup_over_a_keyed_registry_keeps_everything():
     current = [_cfg("a", "A"), _cfg("b", "B")]
     merged, _keys, report = _merge([], current, present={"A", "B"})
     assert [c.name for c in merged] == ["a", "b"]
@@ -322,6 +412,17 @@ async def test_present_refs_with_have_keys_true_declares_everything():
 async def test_present_refs_ignores_an_empty_ref():
     present = await present_refs(["", "A"], DictSecrets({"A": "v"}), scope=None, have_keys=True)
     assert present == {"A"}
+
+
+async def test_have_keys_as_a_bare_string_declares_that_one_ref():
+    """A str is a Sequence[str]; taken apart into characters it declares nothing."""
+    present = await present_refs(
+        ["GEMINI_API_KEY", "GROQ"],
+        DictSecrets({}),
+        scope=None,
+        have_keys="GEMINI_API_KEY",
+    )
+    assert present == {"GEMINI_API_KEY"}
 
 
 # ── Writers ──────────────────────────────────────────────────────────────────
@@ -365,6 +466,22 @@ def test_write_atomic_leaves_no_temp_files(tmp_path):
     write_atomic(target, "a = 1\n")
     assert target.read_text() == "a = 1\n"
     assert [p.name for p in tmp_path.iterdir()] == ["llms.toml"]
+
+
+def test_write_atomic_keeps_the_targets_permissions(tmp_path):
+    """The temp file is created 0600 and os.replace carries its mode over — a runtime
+    sync must not lock the serving process out of the config it just rewrote."""
+    target = tmp_path / "llms.toml"
+    target.write_text("a = 1\n")
+    target.chmod(0o644)
+    write_atomic(target, "a = 2\n")
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+
+
+def test_write_atomic_creates_a_missing_target_without_reading_a_mode(tmp_path):
+    target = tmp_path / "fresh.toml"
+    write_atomic(target, "a = 1\n")
+    assert target.read_text() == "a = 1\n"
 
 
 # ── The alias-following refresh ──────────────────────────────────────────────
@@ -502,6 +619,23 @@ async def test_sync_file_creates_a_missing_target(tmp_path):
     assert outcome.report.added == ("gemini",)
 
 
+async def test_sync_file_refuses_to_write_a_file_that_does_not_match_the_merge(tmp_path):
+    """The last guard before the one write that can destroy a live config: a source
+    carrying its own [[custom]] renders it twice, and the file stops parsing."""
+    target = _write_current(
+        tmp_path,
+        '[[custom]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="m"\napi_key_ref="MY_KEY"\n',
+    )
+    original = target.read_text()
+    source = (
+        _NEW + '\n[[custom]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="m"'
+        '\napi_key_ref="MY_KEY"\n'
+    )
+    with pytest.raises(ValueError, match="nothing written"):
+        await sync_file(source, target, source="lineup.toml", secrets=DictSecrets({}))
+    assert target.read_text() == original
+
+
 async def test_sync_file_rejects_a_non_toml_target(tmp_path):
     with pytest.raises(ValueError, match=".toml"):
         await sync_file(_NEW, tmp_path / "llms.json", source="freetier", secrets=DictSecrets({}))
@@ -574,3 +708,57 @@ def test_configs_and_keys_are_read_in_file_order():
 def test_fetch_preset_text_refuses_an_invalid_name():
     with pytest.raises(ValueError, match="invalid preset name"):
         fetch_preset_text("../etc/passwd")
+
+
+# ── Fetch failures are all ValueError, connect phase or not ──────────────────
+
+
+class _Response:
+    """A urlopen context manager whose body dies mid-read."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        raise self._exc
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        TimeoutError("timed out"),
+        ConnectionResetError("peer went away"),
+        http.client.IncompleteRead(b"partial"),
+    ],
+)
+def test_a_body_that_dies_mid_read_is_a_value_error(monkeypatch, exc):
+    """The docstring promises every failure is a ValueError; `sync=` and the CLI
+    both catch on that promise, and only the connect phase used to keep it."""
+    monkeypatch.setattr(upstream.urllib.request, "urlopen", lambda *a, **k: _Response(exc))
+    with pytest.raises(ValueError, match="failed reading"):
+        fetch_preset_text("freetier")
+
+
+def test_an_undecodable_body_is_a_value_error(monkeypatch):
+    class _Bytes(_Response):
+        def read(self):
+            return b"\xff\xfe not utf-8"
+
+    monkeypatch.setattr(upstream.urllib.request, "urlopen", lambda *a, **k: _Bytes(None))
+    with pytest.raises(ValueError, match="not valid UTF-8"):
+        fetch_preset_text("freetier")
+
+
+def test_a_url_error_still_reports_its_reason(monkeypatch):
+    def boom(*_a, **_k):
+        raise urllib.error.URLError("name resolution failed")
+
+    monkeypatch.setattr(upstream.urllib.request, "urlopen", boom)
+    with pytest.raises(ValueError, match="name resolution failed"):
+        fetch_preset_text("freetier")

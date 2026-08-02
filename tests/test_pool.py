@@ -32,11 +32,15 @@ async def test_add_existing_does_not_add_extra_slot():
     assert len(pool) == 1
 
 
-async def test_add_none_key_preserves_existing_key():
+async def test_add_none_key_withdraws_the_slot():
+    """A reconcile always passes what the ref resolves to now, so None means the key
+    is gone — keeping it would route real requests at a revoked key."""
     pool = LLMPool()
     await pool.add(_cfg(), "original")
-    await pool.add(_cfg(), None)  # None means "leave key intact"
-    assert pool.resolved_key("p1") == "original"
+    await pool.add(_cfg(), None)
+    assert pool.has_key("p1") is False
+    with pytest.raises(KeyError):
+        pool.resolved_key("p1")
 
 
 async def test_add_nonnone_key_overwrites_existing_key():

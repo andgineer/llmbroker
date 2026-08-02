@@ -21,7 +21,9 @@ Zero-administration routing over a pool of 4-5 free-tier LLMs:
    scoped to the key actually used, 5xx is shared).
 5. **Visibility from the host UI**: raw per-model facts (admin verdict, key
    presence, cooldown, per-operation demotions), a call journal, metrics —
-   the UI chooses the presentation.
+   and the pool itself as a first-class object: how many providers can serve a
+   request, which keys are missing, and whether the pool has degraded to a
+   single quota. One call answers all of it; the UI chooses the presentation.
 6. **One-liner and cluster**: a sync wrapper + TOML + env keys for scripts;
    the cluster's/stateless-server's shared cooldown is derived from the
    store journal.

@@ -146,11 +146,12 @@ resulting cost estimate. The current behavior rules themselves live in
   hang rather than "wait as long as needed."
 - **There is no alerts/events API**: the UI works by pulling — current state
   is visible from `snapshot()`'s raw fields (`disabled`, `has_key`,
-  `cooldown_until`, `demoted_operations`); there is no status enum or
-  priority rule — the UI chooses the presentation. Three important events
-  (dead key, demotion, "everything is cooling down") are
-  `logger.warning`/`error` lines instead; refusing to change a model is a
-  synchronous `sync` error.
+  `cooldown_until`, `demoted_operations`) plus the pool-wide provider counts
+  and `degraded` predicate on the same object; there is no status enum or
+  priority rule — the UI chooses the presentation. The important events
+  (dead key, demotion, "everything is cooling down", a pool degraded to one
+  quota or none) are `logger.warning`/`error` lines instead; refusing to
+  change a model is a synchronous `sync` error.
 - **Metrics stay in `snapshot()`** (`LLMMetrics`: count, last status,
   last-call time): this is the only stable API for reading the journal;
   computed from the cached journal tail, with no queries of its own. **The
@@ -323,10 +324,11 @@ Line estimates for the design as built (pre-simplification `src` ≈ 6000).
 | Learning per (model, op) + selection order | 2, 3 | score windows, Wilson bound; demoted-for-operation go to the back; verdicts from the journal tail on a 60s debounce | 170 (optimizer) | shared tail read / 60s of activity |
 | Store: journal + disabled-doc | 5, 3 | insert per call; a score is a separate record everywhere (the journal is strictly append-only); verdicts — a tiny "name → bool" doc; automatic 3-month journal retention | in the ports | 1 insert |
 | Cluster shared cooldown | 6 | from the journal: a failing row carries `cooldown_until`; same tail read + on one's own failure | ~0 (in rebuild) | 0 extra |
-| Picking up admin/cluster edits | 2, 4 | registry and disabled-doc re-read on the same debounce | ~10 | 1 tiny read / 60s of activity |
-| Explicit `sync(source)` + secrets bootstrap | 2 | add/update, and a removal only when an arrival pays for it (same ref, or a key of its own); changing `model` identity is an error | 80 (catalog) | on call |
-| Merge engine + `SyncReport` | 2, 5 | pairs-then-budget rule, key-presence probe, file/registry writers; raw facts back to the caller and one log line per run | 400 (upstream) | 0 outside an explicit sync |
-| Snapshot: raw fields + metrics | 5 | pull via `snapshot()`: `disabled`, `has_key`, `cooldown_until`, `demoted_operations`; metrics from the cached tail; events go to the log | 50 | 0 |
+| Picking up admin/cluster edits | 2, 4 | registry and disabled-doc re-read on the same debounce; the key table only when a pooled ref has no key | ~10 | 1 tiny read / 60s of activity, 2 while a key is missing |
+| Explicit `sync(source)` + secrets bootstrap | 2 | add/update, and a removal only when the same provider replaces it, no key for it exists here, or the journal proves it dead; changing `model` identity is an error | 80 (catalog) | on call |
+| Merge engine + `SyncReport` | 2, 5 | provider-unit retirement with journal evidence, key-presence probe, file/registry writers; raw facts back to the caller and one log line per run | 400 (upstream) | 0 outside an explicit sync; one bounded journal read only when a provider was retired |
+| Snapshot: raw fields + metrics + pool health | 5 | pull via `snapshot()`: `disabled`, `has_key`, `cooldown_until`, `demoted_operations`; metrics from the cached tail; provider counts and missing keys from the last reconcile, sharing the `degraded` predicate with the alarm; events go to the log | 60 | 0 |
+| Merge report | 2, 5 | raw facts the host renders: what moved, which entries were kept and why, which retirement the journal justified and on what evidence, which key has lost its last user | 120 (models) | 0 |
 | Sync wrapper | 6 | background loop thread, direct construction | 200 | — |
 | Models/protocols/exceptions | — | dataclasses + to/from dict | 350 | — |
 | Standalone (TOML/env/`store/`) | 6 | default: per-day journal in `store/calls/`, verdicts in `store/disabled.yml` (pre-populated with names), retention by deleting files | 330 | — |
@@ -347,8 +349,8 @@ Line estimates for the design as built (pre-simplification `src` ≈ 6000).
   auto-retirement (duplicates exponential cooldown).
 - **Implicit seeding on startup** — replaced by an explicit `sync(source)`.
 - **A deprecation-tier field** — an entry a lineup drops is either removed
-  (an arrival paid for it, and nothing is lost: keys live in the secrets
-  store, statistics derive from the journal) or kept as it is. There is no
+  (and nothing is lost: keys live in the secrets store, statistics derive
+  from the journal) or kept as it is, routing exactly as before. There is no
   third, demoted state to represent.
 - **A registry-stored learning profile that llmbroker itself wrote** (a
   profile column with learning snapshots) — manual blocking is an admin
@@ -407,6 +409,24 @@ Line estimates for the design as built (pre-simplification `src` ≈ 6000).
   self-contained (model, operation, score); as a side effect, scores whose
   calls have already fallen out of the readable journal tail stop being
   lost.
+- **A `pool = false` marker on a key** (or any TOML field declaring "this key
+  is not for the pool") — the state it describes is derivable, and the case
+  it was invented for (a key kept for paid direct calls) is served by the
+  unused-key report line plus death evidence.
+- **A key-deletion path in the secrets protocol** — a key that cannot be
+  deleted, because it still pays for direct calls, is the common case, so
+  deletion could never be the retirement mechanism. llmbroker reports the
+  orphaned ref and a human decides.
+- **`sync(..., exact=True)`** — indistinguishable from `registry.mirror(configs)`,
+  which already exists as the escape hatch for a forced lineup.
+- **"Two callable providers" as a pruning threshold** — a policy constant that
+  would discard working free quota. The same number survives only as the
+  *degradation* criterion, where it describes the failover feature rather than
+  deleting anything.
+- **Probing the provider (`GET {base_url}/models`) for death evidence** —
+  deferred; the journal is the evidence. Revisit only if it proves too thin.
+- **An `llm_name` filter on the journal's `calls` query** — the bounded tail is
+  enough for a handful of candidates, and a filter would touch every backend.
 
 No candidates for further savings remain — all have been considered and
 closed by the decisions above (what was dropped stays dropped; the sync

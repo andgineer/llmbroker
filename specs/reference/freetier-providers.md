@@ -155,17 +155,17 @@ it (see "Syncing the lineup" in [`architecture.md`](architecture.md)).
 
 - **A same-provider replacement removes the old entry.** The two usually share
   one provider quota, and a still-endorsed old model would keep spending it on
-  worse answers. Downstream this is free: the arrival carries the old entry's
-  `api_key_ref`, so the sync pairs them and removes it with no key involved.
-- **Dropping the last entry of a provider is a removal downstream installations
-  follow only when the same update gives them a usable replacement.** A provider
-  therefore leaves the preset when it is no longer worth a slot; installations
-  that cannot use the newcomer keep a working model instead of losing one, and
-  the sync report names it on every run so an admin can act.
-- **Consequently a curated update that drops a provider without adding one
-  prunes nothing downstream.** That is intended, not a gap to close: the
-  alternative is an update that silently shrinks a pool. A future curator should
-  not try to "fix" it by dropping more.
+  worse answers. Downstream this is free: the lineup still carries that
+  `api_key_ref`, so the sync removes the old entry with no key involved.
+- **Dropping the last entry of a provider prunes downstream for every
+  installation that has no key for it**, and for every installation whose own
+  journal proves the model dead. Elsewhere the entry stays and keeps routing
+  until one of those becomes true. A provider therefore leaves the preset when it
+  is no longer worth a slot: installations that can still call it lose nothing,
+  and those that never could stop carrying a dead name.
+- **Dropping a provider is not a way to force anyone off it.** An installation
+  holding a working key keeps the model for as long as it works; curation says
+  what is worth recommending, not what a host may call.
 - **A model bump is a new entry name**, never an in-place `model` change — a
   sync refuses that, since learned quality is bound to the entry name.
 

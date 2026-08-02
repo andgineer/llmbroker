@@ -51,25 +51,83 @@ llms = llmbroker.Broker("llms.toml", sync="freetier")
 
 The knob is best-effort: if the catalog is unreachable, the broker logs a warning
 and starts on the config you already have. The explicit `llms.sync(...)` call
-raises instead — you asked for it, so you get to handle it.
+raises instead — you asked for it, so you get to handle it. On a file registry
+the knob rewrites that file on disk at the first call — usually the one under
+version control, so expect it in your diffs.
 
-Two things in the report are worth understanding:
+A `.toml` config is synced from a curated preset only. To roll a vendored config
+out to a database registry instead, see
+[Servers & clusters](server.md).
+
+Four things in the report are worth understanding:
 
 - **A pending key** is a model waiting for a key you have not set. Harmless: it
   stays inactive and the pool routes over the rest. The report prints where to
   get the key.
-- **A kept entry** is a model the preset dropped that llmbroker did *not* remove,
-  because nothing arrived that you can actually call in its place. It keeps
-  working. The report names the key that would let the next sync clean it up:
+- **A kept entry** is a model whose provider left the curated lineup while you
+  still hold a key for it. Nothing happens to it: it keeps routing exactly as
+  before, and it disappears by itself once it stops working.
 
   ```
-  kept: groq-llama-3.3-70b — upstream dropped it and no replacement is usable;
-  set GEMINI_API_KEY and the next sync removes it
+  kept: openrouter-nemotron — the lineup no longer carries OPENROUTER_API_KEY
+  and this installation has a key for it, so it stays
   ```
+- **A retired entry** is that same model after your own call journal proved it
+  dead — at least one 401/403/404 and not one success. A bad week of 429s and
+  5xx proves nothing and changes nothing. Removing an entry from your config is
+  the one destructive thing a sync does, so the line shows the evidence:
 
-That is the whole rule: an update never shrinks the set of models you can call.
-A model is only removed when its replacement inherits the very same key, or when
-you have a key for one of the new arrivals.
+  ```
+  retired: groq-llama-3.3-70b — 401 since 2026-07-02, no successful call since;
+  the lineup dropped it too
+  ```
+- **An unused key** is a key you actually have that nothing in your config
+  references any more. Whether to revoke it at the provider is your call, and a
+  `[[custom]]` entry still using it keeps it out of that advice. A provider you
+  never had a key for just disappears quietly — there is nothing to revoke.
+
+That is the whole rule: a sync never takes away a model you can call, unless the
+same provider replaces it or your journal says it does not work.
+
+### Watching the pool {#pool-health}
+
+One call answers "is this pool healthy?" — per-model facts and the pool-wide
+picture come off the same object:
+
+```python
+snap = llms.snapshot()
+
+print(f"{snap.providers_usable} of {snap.providers_total} providers usable")
+if snap.degraded:
+    print("one quota left — nothing to fail over to")
+
+for key in snap.missing_keys:
+    print(f"{key.api_key_ref} holds back {', '.join(key.entry_names)}")
+    print(key.help)                      # where to get it
+
+for name, llm in snap.items():           # still a mapping of name -> per-model facts
+    print(name, llm.has_key, llm.cooldown_until)
+```
+
+The unit is the provider, not the model: two entries sharing one API key are one
+quota and count once. A pool with one usable provider is **degraded** — it can
+still answer, but a rate limit has nowhere to spill. Revoke or rotate a key and
+the count follows on the next reconcile, so the numbers never lag behind your
+keys. Models you disabled yourself still count their provider; that verdict is on
+the per-model rows above.
+
+llmbroker logs the same verdict, so you can alert on it without polling. Both
+lines are `ERROR`, and you get one each time the state changes — including
+falling from the first to the second:
+
+```
+pool degraded, no failover left: 1 of 3 providers usable — no key for GEMINI_API_KEY, GROQ_API_KEY
+pool cannot serve any request: no provider has a key — no key for ...
+```
+
+A recovery logs one `INFO` (`pool recovered: 3 of 3 providers usable`); gaining a
+further provider after that is not worth a line. Missing keys on their own are
+never an alarm — two providers may be all you want.
 
 ## Calling the broker {#calling}
 

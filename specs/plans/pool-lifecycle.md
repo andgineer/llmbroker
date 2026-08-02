@@ -457,3 +457,232 @@ invoke pre
 python -m pytest
 python -m llmbroker preset freetier --sync /tmp/llms-check.toml   # prints the report, exits 0
 ```
+
+---
+
+## Handover
+
+All five batches of the work order are implemented. Gate after each batch and at the end:
+`invoke pre` clean (ruff, ruff-format, pyrefly, hygiene hooks), `python -m pytest` → **1022
+passed**, zero skips, zero errors (Docker up, testcontainers included). The §Verification CLI
+command prints the report and exits 0.
+
+### Done, by section
+
+- **§4.1–4.6** all fixed. `render_lineup` is gone with its call site; `AsyncBroker.sync` refuses a
+  non-preset source into a `.toml` registry and a non-`.toml` file registry at dispatch (each with
+  its own message); `sync_file` parses the rendered text and compares entry names against the merge
+  result before `write_atomic`; `present_refs` normalizes a bare `str` in `have_keys`; the file
+  branch seeds secrets; `fetch_preset_text` wraps read+decode and converts `OSError`/`HTTPException`
+  to `ValueError`; the CLI catches `OSError`; `write_atomic` copies the target's mode.
+- **§1** the pairs-and-budget machinery is gone. `_removal_plan` is the provider rule,
+  `keys_are_visible` is the empty-probe/scope clause, the report gained `kept_refs`, `retired`,
+  `orphan_refs`, `keys_visible`; `unlocking_refs()` and the "set REF" sentence are gone. The sync
+  WARNING branch is gone — one `INFO` per run — and both the log line and `last_sync_report` land
+  before `_catalog.resync()`.
+- **§2** `dead_entries` + `retirement_candidates` in `upstream.py`, wired into both broker branches
+  and into the CLI (which opens `FileStore(<target dir>/store)` when that directory exists).
+- **§3** `PoolHealth` + `PoolSnapshot` in `models.py`, measured in `Catalog._reconcile`, ERROR/INFO
+  on the transition only, `snapshot()` returns `PoolSnapshot` (exported from the package root).
+- **§6 specs** and **§7 docs (en + ru)** written in their batches.
+
+### Done differently from the plan, and why
+
+1. **`SyncReport` carries two booleans, not one.** The plan lists `keys_visible: bool` but §1.3/§5
+   also require the `kept` line to render *both* `keys_visible=False` wordings ("keys are per user
+   here" vs "no key resolved here at all"). One bool cannot discriminate them, and deriving it from
+   `active_before` would be fragile. Added `keys_scoped: bool` alongside — two plain facts, each
+   meaning one thing, no enum machinery.
+2. **`PoolSnapshot` holds a `PoolHealth` and exposes the three fields as properties**, rather than
+   duplicating them as dataclass fields. The plan's demand was "one definition, two consumers"; the
+   catalog measures once into `PoolHealth`, the alarm and `snapshot()` both read it, and the
+   `degraded` predicate exists in exactly one place. The public read surface is identical to the
+   plan's (`snap.providers_usable`, `.degraded`, `.missing_keys`).
+3. **`_EVIDENCE_LIMIT` is its own constant in `upstream.py`, not a reuse of
+   `broker._DEFAULT_STATS_LIMIT`.** Importing it would be circular (`broker.py` imports
+   `upstream.py`). Same value (1000), with a comment; they are also genuinely different knobs — the
+   stats window is a public default, the evidence window is not.
+4. **`_sync_file_target` loads the current lineup and probes keys once more** to compute the
+   retirement candidates, so `sync_file` receives a ready `dead` set exactly as the plan specifies.
+   That is one extra file read plus one secrets probe per file sync — a deploy-path cost, not a hot
+   path. The alternative (threading a probe callback into `sync_file`) buys nothing and complicates
+   a pure-ish function.
+5. **`FileSyncOutcome` gained `configs`.** §4.3 needs the merged lineup for `seed_secrets`; carrying
+   it out beats re-reading the file the sync just wrote.
+6. **The kept/retired/unused-key report lines are not hand-wrapped.** The plan's §1.3 sample shows
+   6-space continuation lines; wrapping makes substring assertions brittle for no operational gain,
+   so each fact is one (long) log line. Content matches the sample.
+7. **`_mock_urlopen` in `tests/test_cli.py` had `__exit__ = MagicMock()`**, which returns a truthy
+   mock and silently swallowed anything raised inside the `with`. Harmless while the decode happened
+   outside it; §4.4 moves the read inside, so the helper now returns `False`. Worth knowing: that
+   helper was masking exceptions in every CLI fetch test.
+
+### Decisions taken that the plan did not make
+
+- **`decisions.md` records §8's rejections, not just the one row the plan named.** `CLAUDE.md`
+  requires reading "What was dropped" before proposing a mechanism; six weighed-and-rejected ideas
+  (`pool = false`, key deletion in the secrets protocol, `exact=True`, two-providers-as-threshold,
+  provider probing, an `llm_name` journal filter) belong there or the next plan re-proposes them.
+- **`optimizer.md` §Seeding and `architecture.md` §Preset distribution were also corrected** — both
+  stated the pairs-and-budget rule in passing. Not named in §6, but they would have been left
+  asserting a rule that no longer exists.
+- **Wording of the degradation ERROR**: `"pool degraded, no failover left: 1 of N providers
+  usable — no key for REF, REF"` and `"pool cannot serve any request: no provider has a key — …"`.
+  The plan fixed the semantics, not the strings.
+- **`missing_keys` lists only refs no pooled entry can use.** Two entries on one ref where the ref
+  resolves means the provider is usable, so nothing is held back — consistent with the provider
+  being the unit everywhere else.
+
+### Deliberately left out
+
+- **Nothing from the plan's scope.** §8's rejected items stay rejected (now recorded).
+- **`LLMPool.add` still leaves a prior key intact on a `None` key**, so a key *removed* from the
+  secrets backend does not deactivate a live slot until the process restarts. Pre-existing,
+  documented behavior of the pool, outside this plan; it means the degradation ERROR fires on
+  membership changes and on keys appearing, but not on a key being deleted at runtime. Worth a look
+  if pool health is meant to be a live signal — flagged, not changed.
+
+### Tests
+
+New: `tests/test_upstream_evidence.py` (13), `tests/test_pool_health.py` (13). The §5 rule table
+rewrote `tests/test_upstream.py`'s removal-rule section one test per row, including the convergence
+test that feeds the previous merge's own result back in. Tests that documented the replaced rule
+were rewritten around the new one rather than deleted: `test_sync_roundtrip.py` (two providers
+instead of two entries on one ref), `test_broker_sync_upstream.py` (kept/removed/scoped/log-level),
+`test_models.py` (the report's new lines), `test_broker.py` + `test_sync.py` (a file source into a
+file registry is now a refusal).
+
+---
+
+## Post-review changes
+
+A review of the implementation above found six things worth changing. All were
+fixed; the gate after them is `invoke pre` clean and `python -m pytest` → **1031
+passed**, zero skips, zero errors. Two of the six go outside what this plan asked
+for, and are called out as such below.
+
+### Defects fixed
+
+1. **The degradation alarm was keyed on the log level, so the 1 → 0 transition
+   was silent.** Both degraded states are `ERROR`, so a pool that had already
+   reported "no failover left" said nothing at all when its last provider went —
+   the outage itself. The catalog now remembers the *state* (0 usable, 1 usable,
+   or healthy-whatever-the-count), which also keeps a fourth provider from being
+   worth a line. §3.2's own wording ("the catalog remembers the last level it
+   reported") is what led there; the three states it lists are the real contract.
+
+2. **`providers_usable` counted keys that no longer resolve — and the pool kept
+   routing at them.** `LLMPool.add` treated a `None` key as "leave the prior key
+   intact", so a revoked or rotated key stayed live in its slot until the journal
+   condemned it, burning real requests on guaranteed 401s. That guard protected no
+   caller: `Catalog._reconcile` is the only one, and it always passes a freshly
+   resolved value. Removing it fixes routing, `snapshot()[name].has_key` and the
+   provider count from one source of truth.
+
+   **Outside this plan's diff** (`broker/pool.py`), and the original handover
+   deliberately flagged it as out of scope. Taken anyway: §3.3 publishes the count
+   as an admin-facing API, and shipping a number known to be wrong in exactly the
+   "a key died" case it exists for is worse than not shipping it. The test that
+   documented the old contract was rewritten around the new one, not deleted.
+
+3. **"unused key REF — revoke it at the provider" fired for keys that never
+   existed.** `orphan_refs` did not consider whether a key was actually there, so
+   the commonest curated change of all — a provider dropped that this installation
+   had no key for — told every admin to go revoke something they never had. Now
+   filtered on `present`. §1.5's case (a retirement whose key is still here) is
+   unchanged, and `[[custom]]` still keeps a paid model's key out of the advice.
+
+4. **A retirement did not show its evidence.** §1.3's sample line reads `401 since
+   2026-07-02, no successful call since`; the implementation rendered only "the
+   journal holds only permanent failures", which an admin cannot check without
+   querying the journal themselves — for the one action that deletes an entry from
+   their own version-controlled config. `dead_entries` now returns the evidence it
+   already had in hand, `SyncReport.retired` is a tuple of `Retirement`
+   (name/http_status/since, exported from the package root alongside `PendingKey`),
+   and the rendered line matches the plan's sample. `since` is the oldest failure
+   in the window, so "since" means what it says.
+
+5. **A scoped installation could never retire anything.** §2.1 defines a candidate
+   as "key present", but §2.2 promises that under per-user keys the rule reads as
+   "nobody could call it — exactly the evidence wanted there". Both cannot hold:
+   with `scope` set and no `have_keys`, `present` is empty, so there were no
+   candidates and the journal was never read. `retirement_candidates` now takes
+   `keys_visible` and, where a missing key proves nothing, treats every dropped
+   entry as a candidate.
+
+   **This contradicts §2.1 as written**, deliberately: journal evidence ("someone
+   called it and got a 401, and nobody ever succeeded") is strictly stronger than
+   key absence, so it is safe exactly where key absence is not. Without it the
+   per-user mode — a first-class mode per `mission.md` item 4 — gets no benefit
+   from this whole plan. The correct definition of a candidate is "an entry the
+   removal rule would otherwise keep", which is what the code now computes.
+
+6. **The key table was re-read on every reconcile.** `registry.key_info()` ran on
+   each debounced resync purely to have help text ready for missing keys that
+   usually do not exist. It is now read only when a pooled ref actually has no key,
+   so a healthy pool adds no registry I/O at all. `decisions.md`'s cost row was
+   updated to match, and gained a row for the merge report.
+
+### Reviewed and deliberately not changed
+
+- **Managed entries with no `api_key_ref` are removed unconditionally.** Checked
+  `LLMPool.acquire`: it filters on `slot.key is not None`, so such an entry can
+  never be routed at under any circumstances. "Never shrinking what the pool can
+  call" is not violated, and §1.2 allows for it explicitly.
+- **A newly created config file gets `0600`.** §4.5 fixed the existing-target
+  case; the create path is pre-existing behavior, is covered by a test that asserts
+  no mode is read, and no mission requirement bears on it. Changing it would be
+  picking a permissions policy without a reason to.
+
+### Specs and docs
+
+`architecture.md` gained the candidate rule, the retirement-evidence requirement,
+the state-not-severity wording for the alarm, the paragraph on what the measure
+is, and the narrowed orphan advice. `decisions.md` cost rows updated. `usage.md`
+and `server.md` (en + ru) carry the new `retired:` sample, the narrowed unused-key
+wording, and the corrected alerting contract.
+
+---
+
+## Second review round
+
+Three fixes; the gate after them is `invoke pre` clean and `python -m pytest` →
+**1034 passed**, zero skips, zero errors.
+
+1. **A registry that pools nothing raised `ERROR pool cannot serve any request: no
+   provider has a key` at every provision.** `pool = false` entries are a
+   supported shape — reachable through `direct`, never pool members — so a
+   registry made only of them measures `0` of `0` and fell into the zero-usable
+   branch, naming a cause that was not the case: the key was right there. An empty
+   pool is now its own state in the alarm's state machine — silent, and silent on
+   the way out too, since losing the last pooled entry is a membership change and
+   not a repair to announce. `PoolHealth.degraded` is false there for the same
+   reason, so the log and `snapshot()` still read one measurement.
+
+   Worth knowing for `fileless-broker.md`: deleting `pooled` does not remove this
+   case, it renames it — a registry of only `[[custom]]` entries lands in exactly
+   the same place, and `Broker(direct=[...])` with no curated lineup is a shape
+   that plan actively builds toward.
+
+2. **A retirement showed the oldest status in the window, not the current one.**
+   `dead_entries` kept one row per name and let the newest-first scan overwrite it
+   to the end, so a provider answering `401` today after a `404` months ago was
+   reported as `404 since <then>`. The date was right — that is where the run
+   starts — but the code an admin is sent to go and check has to be the one they
+   will see. Status now comes from the newest permanent failure, `since` still
+   from the oldest.
+
+3. **`architecture.md` claimed the counts and the routing decision "always
+   agree".** They do not: `LLMPool.acquire` also excludes administratively
+   disabled slots, so a pool disabled down to nothing reports itself healthy. The
+   measure is plan-conformant (§3.1 defines it on key presence) — the sentence was
+   not, and with `preset-autorefresh.md` making refresh unattended this alarm
+   becomes the signal that a sync broke something. The paragraph now says what the
+   measure is (key presence, never lagging behind the keys) and states the
+   disabled case outright; `usage.md` and `server.md` (en + ru) carry the same
+   correction.
+
+   The behavioral question — whether a disabled entry should keep counting its
+   provider — is deliberately **not** settled here. It changes the meaning of a
+   published `snapshot()` field, and `fileless-broker.md` §3 already reopens the
+   measure's definition; a line there asks that plan to settle it once.

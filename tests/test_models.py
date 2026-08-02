@@ -1,9 +1,11 @@
 """Tests for onboarding DTOs: KeyInfo, SyncReport."""
 
+from datetime import UTC, datetime
+
 import llmbroker
 import pytest
 
-from llmbroker.models import KeyInfo, PendingKey, SyncReport, key_hash
+from llmbroker.models import KeyInfo, PendingKey, Retirement, SyncReport, key_hash
 
 
 def test_key_info_full():
@@ -83,62 +85,116 @@ def test_refused_report_says_refused():
     )
 
 
-def test_kept_sentence_with_one_unlocking_ref():
+def _kept_line(report: SyncReport) -> str:
+    return next(line for line in str(report).splitlines() if line.startswith("  kept:"))
+
+
+def test_kept_sentence_names_the_provider_and_the_key_that_holds_the_entry():
     report = SyncReport(
         source="freetier",
         applied=True,
-        added=("gemini-2.0-flash",),
-        kept=("groq-llama-3.3-70b",),
-        pending_keys=(_pending("GEMINI_API_KEY", ["gemini-2.0-flash"]),),
+        kept=("openrouter-nemotron",),
+        kept_refs=("OPENROUTER_API_KEY",),
     )
-    assert report.unlocking_refs() == ("GEMINI_API_KEY",)
-    kept_line = next(line for line in str(report).splitlines() if line.startswith("  kept:"))
-    assert kept_line == (
-        "  kept: groq-llama-3.3-70b — upstream dropped it and no replacement is usable;"
-        " set GEMINI_API_KEY and the next sync removes it"
+    assert _kept_line(report) == (
+        "  kept: openrouter-nemotron — the lineup no longer carries OPENROUTER_API_KEY"
+        " and this installation has a key for it, so it stays"
     )
 
 
-def test_kept_sentence_with_several_unlocking_refs():
+def test_kept_sentence_for_several_entries_and_providers():
     report = SyncReport(
         source="freetier",
         applied=True,
-        added=("gem", "openr"),
-        kept=("groq-a", "groq-b"),
-        pending_keys=(
-            _pending("GEMINI_API_KEY", ["gem"]),
-            _pending("OPENROUTER_API_KEY", ["openr"]),
-        ),
+        kept=("groq-a", "openr-b"),
+        kept_refs=("GROQ_API_KEY", "OPENROUTER_API_KEY"),
     )
-    assert report.unlocking_refs() == ("GEMINI_API_KEY", "OPENROUTER_API_KEY")
-    kept_line = next(line for line in str(report).splitlines() if line.startswith("  kept:"))
-    assert kept_line == (
-        "  kept: groq-a, groq-b — upstream dropped them and no replacement is usable;"
-        " set any of GEMINI_API_KEY, OPENROUTER_API_KEY and the next sync removes them"
+    assert _kept_line(report) == (
+        "  kept: groq-a, openr-b — the lineup no longer carries GROQ_API_KEY,"
+        " OPENROUTER_API_KEY and this installation has keys for them, so they stay"
     )
 
 
-def test_kept_sentence_without_any_unlocking_ref():
-    """A provider left and nothing arrived: no key would change the outcome, so the
-    sentence must not offer one."""
-    report = SyncReport(source="freetier", applied=True, kept=("groq-llama-3.3-70b",))
-    assert report.unlocking_refs() == ()
-    kept_line = next(line for line in str(report).splitlines() if line.startswith("  kept:"))
-    assert kept_line == (
-        "  kept: groq-llama-3.3-70b — upstream dropped it and nothing arrived to replace it"
-    )
-
-
-def test_a_kept_entrys_own_missing_key_does_not_unlock_it():
-    """Only an arrival's key pays for a removal — the dropped entry's own ref
-    resolving would change nothing."""
+def test_kept_sentence_when_keys_are_per_user():
+    """A scoped installation resolves no shared key by design, so absence proves
+    nothing — and the report must say which of the two blind spots this is."""
     report = SyncReport(
         source="freetier",
         applied=True,
         kept=("groq-old",),
-        pending_keys=(_pending("GROQ_API_KEY", ["groq-old"]),),
+        kept_refs=("GROQ_API_KEY",),
+        keys_visible=False,
+        keys_scoped=True,
     )
-    assert report.unlocking_refs() == ()
+    assert _kept_line(report) == (
+        "  kept: groq-old — the lineup no longer carries GROQ_API_KEY, and keys are per"
+        " user here so a missing one proves nothing — it stays"
+    )
+
+
+def test_kept_sentence_when_the_probe_resolved_nothing_at_all():
+    report = SyncReport(
+        source="freetier",
+        applied=True,
+        kept=("groq-old",),
+        kept_refs=("GROQ_API_KEY",),
+        keys_visible=False,
+    )
+    assert _kept_line(report) == (
+        "  kept: groq-old — the lineup no longer carries GROQ_API_KEY, and no key resolved"
+        " here at all so these are not the keys this lineup runs on — it stays"
+    )
+
+
+def test_a_retired_entry_shows_the_evidence_that_condemned_it():
+    """A sync deleting an entry from the user's config has to justify itself in the
+    one line an admin reads, or the verdict is uncheckable without the journal."""
+    report = SyncReport(
+        source="freetier",
+        applied=True,
+        removed=("groq-llama-3.3-70b",),
+        retired=(
+            Retirement(
+                name="groq-llama-3.3-70b",
+                http_status=401,
+                since=datetime(2026, 7, 2, tzinfo=UTC),
+            ),
+        ),
+    )
+    line = next(line for line in str(report).splitlines() if line.startswith("  retired:"))
+    assert line == (
+        "  retired: groq-llama-3.3-70b — 401 since 2026-07-02, no successful call since;"
+        " the lineup dropped it too"
+    )
+
+
+def test_a_retirement_without_a_timestamp_still_renders():
+    """``Call.ts`` is optional, so a journal row that never carried one must not
+    break the report the removal is announced in."""
+    report = SyncReport(
+        source="freetier",
+        applied=True,
+        retired=(Retirement(name="groq-old"),),
+    )
+    line = next(line for line in str(report).splitlines() if line.startswith("  retired:"))
+    assert line == (
+        "  retired: groq-old — a permanent failure, no successful call since;"
+        " the lineup dropped it too"
+    )
+
+
+def test_an_orphaned_ref_is_reported_as_revocable():
+    report = SyncReport(
+        source="freetier",
+        applied=True,
+        removed=("groq-old",),
+        orphan_refs=("GROQ_API_KEY",),
+    )
+    line = next(line for line in str(report).splitlines() if line.startswith("  unused key"))
+    assert line == (
+        "  unused key GROQ_API_KEY — nothing here uses it any more;"
+        " revoke it at the provider if you do not need it"
+    )
 
 
 def test_pending_key_renders_its_help():

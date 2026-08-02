@@ -22,9 +22,15 @@ import tomli_w
 
 from llmbroker.broker.upstream import (
     PRESET_NAME_RE,
+    FileSyncOutcome,
+    configs_from_data,
+    dead_entries,
     entry_block,
     fetch_preset_text,
+    keys_are_visible,
     paid_catalog_text,
+    present_refs,
+    retirement_candidates,
     sync_file,
     write_atomic,
 )
@@ -32,6 +38,7 @@ from llmbroker.exceptions import SyncRefusedError
 from llmbroker.models import KeyInfo, LLMConfig
 from llmbroker.standalone.registry import Registry, key_info_from_entry
 from llmbroker.standalone.secrets import Secrets
+from llmbroker.standalone.store import FileStore
 
 
 async def _env_data(reg: Registry) -> tuple[list[LLMConfig], dict[str, KeyInfo]]:
@@ -103,6 +110,42 @@ _DB_TARGET_SUFFIXES = (".db", ".sqlite")
 _DB_TARGET_SCHEMES = ("sqlite://", "postgresql://", "mongodb://")
 
 
+async def _sync_target(text: str, name: str, target: Path) -> FileSyncOutcome:
+    """The CLI's own merge site: env plus the target's sibling ``.env`` for keys,
+    and the sibling ``store/`` for death evidence when the broker put one there."""
+    secrets = Secrets(target.parent / ".env")
+    store_dir = target.parent / "store"
+    store = FileStore(store_dir) if store_dir.is_dir() else None
+    current = configs_from_data(_read_config(target))
+    new_configs = configs_from_data(tomllib.loads(text))
+    present = await present_refs(
+        [c.api_key_ref for c in (*new_configs, *current)],
+        secrets,
+        scope=None,
+        have_keys=False,
+    )
+    candidates = retirement_candidates(
+        new_configs,
+        current,
+        present,
+        keys_visible=keys_are_visible(present, scope=None, have_keys=False),
+    )
+    return await sync_file(
+        text,
+        target,
+        source=name,
+        secrets=secrets,
+        dead=await dead_entries(candidates, store),
+        fetch_catalog=paid_catalog_text,
+    )
+
+
+def _read_config(target: Path) -> dict:
+    if not target.exists():
+        return {}
+    return tomllib.loads(target.read_text(encoding="utf-8"))
+
+
 def _sync_preset_into(text: str, name: str, raw_target: str) -> int:
     """Merge the fetched preset into the target file and print what it did.
 
@@ -122,16 +165,8 @@ def _sync_preset_into(text: str, name: str, raw_target: str) -> int:
         return 1
     target = Path(raw_target)
     try:
-        outcome = asyncio.run(
-            sync_file(
-                text,
-                target,
-                source=name,
-                secrets=Secrets(target.parent / ".env"),
-                fetch_catalog=paid_catalog_text,
-            ),
-        )
-    except (SyncRefusedError, ValueError) as exc:
+        outcome = asyncio.run(_sync_target(text, name, target))
+    except (SyncRefusedError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     for warning in outcome.warnings:

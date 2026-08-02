@@ -156,6 +156,12 @@ shape; this adds the overlay as a third source they must consider.
 - `pool-lifecycle.md` §3.1 shipped the degradation measure as "distinct `api_key_ref` among
   **pooled** entries"; that code and the `architecture.md` sentence it produced become "among
   **managed** entries". Same set, one definition.
+- **Decide here whether an administratively disabled entry still counts its provider.** It does
+  today, and `architecture.md` says so: the alarm reports the keys an installation holds, while
+  `LLMPool.acquire` also excludes disabled slots — so a pool disabled down to nothing raises no
+  ERROR. Defensible (the host set those verdicts and reads them per model in `snapshot()`), but
+  this plan is the one place that reopens the measure's definition, so settle it rather than
+  leaving two readings of "usable" in the codebase.
 
 A `pool = true` left in a hand-written `[[custom]]` block is ignored rather than rejected: it is a
 field that no longer exists, and there are no published users to migrate (CLAUDE.md).

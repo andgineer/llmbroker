@@ -40,11 +40,13 @@ from llmbroker.broker.stats import stats_from_calls
 from llmbroker.broker.upstream import (
     SyncSource,
     check_not_emptying,
+    dead_entries,
+    keys_are_visible,
     load_sync_source,
     merge_upstream,
     paid_catalog_text,
     present_refs,
-    render_lineup,
+    retirement_candidates,
     sync_file,
 )
 from llmbroker.chat import make_client
@@ -61,8 +63,9 @@ from llmbroker.models import (
     Call,
     LifecyclePhase,
     LLMConfig,
-    LLMSnapshot,
     LLMStats,
+    PoolSnapshot,
+    Retirement,
     SyncReport,
     check_limit,
     check_score,
@@ -101,6 +104,17 @@ def _default_store(registry: RegistryProtocol) -> StoreProtocol:
     if isinstance(registry, Registry):
         return FileStore(registry.path.parent / "store")
     return FileStore(Path("store"))
+
+
+def _file_target_path(registry: Registry) -> Path:
+    """A file registry is rewritten as TOML, so only a ``.toml`` config can be synced."""
+    if registry.path.suffix.lower() != ".toml":
+        raise ValueError(
+            f"registry {registry.path} cannot be synced: a file registry is rewritten as"
+            " TOML, so only a .toml config is a sync target — convert it, or move the"
+            " lineup into a database registry",
+        )
+    return registry.path
 
 
 _POOL_MODEL_HINT = (
@@ -147,7 +161,7 @@ class AsyncBroker:
     ``have_keys`` declares refs this installation has a key for but the broker
     cannot probe — per-user keys behind ``scope``, a secret injected only in
     production. It is a promise, and it counts only when a sync weighs whether an
-    arrival can pay for removing an entry: it never makes a model routable.
+    entry is still callable here: it never makes a model routable.
 
     ``sync`` refreshes the lineup once, just before the pool is first provisioned,
     and never raises — see ``_sync_on_start``. The outcome is on
@@ -214,7 +228,7 @@ class AsyncBroker:
 
         self._store = effective_store
         self._router = Router(pool, effective_store, scope=scope, optimizer=self._optimizer)
-        self._pool_view = PoolView(pool, effective_store)
+        self._pool_view = PoolView(pool, effective_store, lambda: self._catalog.health)
 
         self._sync_source = sync
         self._sync_attempted = False
@@ -278,40 +292,76 @@ class AsyncBroker:
         """Merge a lineup into the registry and return what it did.
 
         ``source`` is a curated preset name (``"freetier"`` — the only networked
-        operation in the library), or the path of a config file, or a registry.
-        An entry the lineup drops is removed only when an arrival pays for it —
-        with the same key, or one of its own — so a sync can never shrink the set
-        of models this installation can actually call. Explicit and idempotent;
-        if the pool is already provisioned the change takes effect immediately.
+        operation in the library), or the path of a config file, or a registry;
+        a ``.toml`` file registry takes the preset form only. An entry the lineup
+        drops is removed only when the same provider replaces it, when no key for
+        it exists here, or when this installation's journal proves it dead — so a
+        sync can never shrink the set of models this installation can actually
+        call. Explicit and idempotent; if the pool is already provisioned the
+        change takes effect immediately.
         """
         src = await load_sync_source(source)
         if isinstance(self._registry, Registry):
-            report = await self._sync_file_target(src, self._registry.path)
+            report = await self._sync_file_target(src, _file_target_path(self._registry))
         else:
             report = await self._sync_registry_target(src)
         if isinstance(self._base_store, DisabledMapProtocol):
             configs = await self._registry.load()
             await self._base_store.seed_disabled([c.name for c in configs])
+        # Both land before the resync: a resync that raises must not swallow the
+        # record of a change already applied.
+        logger.info("%s", report)
+        self.last_sync_report = report
         if self._provisioned:
             await self._catalog.resync()
-        # An entry kept for lack of a paid replacement is the one outcome that
-        # wants an admin; everything else, no-ops and pending keys included, is
-        # a normal state that still reports itself once per run.
-        logger.log(logging.WARNING if report.kept else logging.INFO, "%s", report)
-        self.last_sync_report = report
         return report
 
+    async def _present_refs(self, *lineups: list[LLMConfig]) -> set[str]:
+        return await present_refs(
+            [c.api_key_ref for lineup in lineups for c in lineup],
+            self._secrets,
+            scope=self._scope,
+            have_keys=self._have_keys,
+        )
+
+    def _keys_visible(self, present: set[str]) -> bool:
+        return keys_are_visible(present, scope=self._scope, have_keys=self._have_keys)
+
+    async def _dead(
+        self,
+        new_configs: list[LLMConfig],
+        current: list[LLMConfig],
+        present: set[str],
+    ) -> dict[str, Retirement]:
+        candidates = retirement_candidates(
+            new_configs,
+            current,
+            present,
+            keys_visible=self._keys_visible(present),
+        )
+        return await dead_entries(candidates, self._base_store)
+
     async def _sync_file_target(self, src: SyncSource, target: Path) -> SyncReport:
-        text = src.text if src.text is not None else render_lineup(src.configs, src.keys)
+        if not src.preset or src.text is None:
+            raise ValueError(
+                f"cannot sync {src.label} into the file registry {target}: a .toml registry"
+                ' takes a curated preset name only (e.g. broker.sync("freetier")). A file or'
+                " registry source syncs into a database registry — the vendored-lockfile"
+                " deploy path",
+            )
+        current = await self._registry.load()
+        present = await self._present_refs(src.configs, current)
         outcome = await sync_file(
-            text,
+            src.text,
             target,
             source=src.label,
             secrets=self._secrets,
             scope=self._scope,
             have_keys=self._have_keys,
-            fetch_catalog=paid_catalog_text if src.preset else None,
+            dead=await self._dead(src.configs, current, present),
+            fetch_catalog=paid_catalog_text,
         )
+        await self._catalog.seed_secrets(list(outcome.configs))
         for notice in outcome.notices:
             logger.info("sync %s: %s", src.label, notice)
         for warning in outcome.warnings:
@@ -323,12 +373,7 @@ class AsyncBroker:
         current_keys = (
             await self._registry.key_info() if isinstance(self._registry, KeyInfoProtocol) else {}
         )
-        present = await present_refs(
-            [c.api_key_ref for c in (*src.configs, *current)],
-            self._secrets,
-            scope=self._scope,
-            have_keys=self._have_keys,
-        )
+        present = await self._present_refs(src.configs, current)
         merged, _keys, report = merge_upstream(
             src.configs,
             src.keys,
@@ -336,6 +381,9 @@ class AsyncBroker:
             current_keys,
             present,
             source=src.label,
+            dead=await self._dead(src.configs, current, present),
+            keys_visible=self._keys_visible(present),
+            keys_scoped=self._scope is not None,
         )
         check_not_emptying(merged, current, report)
         await self._catalog.apply(merged)
@@ -515,7 +563,7 @@ class AsyncBroker:
         await self.ensure_pool()
         return self._pool_view.count()
 
-    async def snapshot(self) -> Mapping[str, LLMSnapshot]:
+    async def snapshot(self) -> PoolSnapshot:
         await self.ensure_pool()
         return await self._pool_view.snapshot()
 

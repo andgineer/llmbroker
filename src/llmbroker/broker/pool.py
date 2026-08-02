@@ -75,7 +75,7 @@ class LLMPool:
     # ------------------------------------------------------------------
 
     async def add(self, cfg: LLMConfig, key: str | None, order: int | None = None) -> None:
-        """Register/refresh a config. A ``None`` key leaves any prior key intact.
+        """Register/refresh a config and the key it currently resolves to.
 
         Upserts in place so an existing slot's live state (cooldown, fail count,
         in-flight, disabled) survives a config refresh. ``order`` defaults to
@@ -90,8 +90,10 @@ class LLMPool:
             else:
                 slot.config = cfg
                 slot.order = resolved_order
-                if key is not None:
-                    slot.key = key
+                # A key that no longer resolves withdraws the slot immediately.
+                # Keeping the old value would route real requests at a revoked
+                # key until the journal condemned it.
+                slot.key = key
             self._cond.notify_all()
 
     async def drop(self, name: str) -> None:

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from llmbroker.broker import upstream
 from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
 from llmbroker.sqlite import Store as SqliteStore
@@ -271,18 +272,35 @@ def test_broker_sync_reconciles_registry_to_preset(tmp_path):
             broker.get("extra")
 
 
-def test_broker_sync_into_a_file_registry_returns_the_report(tmp_path):
-    """The sync wrapper mirrors the async one: a file target is rewritten in place
-    and the report comes back through the blocking call."""
+def test_broker_sync_into_a_file_registry_returns_the_report(tmp_path, monkeypatch):
+    """The sync wrapper mirrors the async one: a file target is rewritten from the
+    curated preset and the report comes back through the blocking call."""
+    monkeypatch.setattr(
+        upstream,
+        "fetch_preset_text",
+        lambda _name: '[[llms]]\nname="p2"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n',
+    )
     registry = _registry(tmp_path)
     broker = Broker(registry=registry, store=InMemoryStore())
     try:
-        report = broker.sync(_seed_registry(tmp_path, "p2"))
+        report = broker.sync("freetier")
     finally:
         broker.close()
     assert report.applied is True
     assert (report.added, report.removed) == (("p2",), ("p1",))  # same ref: a replacement
     assert [e["name"] for e in tomllib.loads(registry.path.read_text())["llms"]] == ["p2"]
+
+
+def test_broker_sync_into_a_file_registry_refuses_a_file_source(tmp_path):
+    """The one path that could render an arbitrary source into a live .toml."""
+    registry = _registry(tmp_path)
+    broker = Broker(registry=registry, store=InMemoryStore())
+    try:
+        with pytest.raises(ValueError, match="curated preset name only"):
+            broker.sync(_seed_registry(tmp_path, "p2"))
+    finally:
+        broker.close()
+    assert [e["name"] for e in tomllib.loads(registry.path.read_text())["llms"]] == ["p1"]
 
 
 def test_broker_scope_forwarded_to_async_broker(tmp_path):

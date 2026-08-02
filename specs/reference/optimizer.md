@@ -129,8 +129,9 @@ the registry.
 ## Seeding
 
 A curated lineup is the only source of model definitions. `sync(source)` merges
-it into the registry — adding, updating, and removing an entry only when an
-arrival pays for the removal (see "Syncing the lineup" in
+it into the registry — adding, updating, and removing an entry only when the same
+provider replaces it, no key for it exists here, or the journal proves it dead
+(see "Syncing the lineup" in
 [`architecture.md`](architecture.md)) — and preserves the disabled map (it only
 seeds missing names, never changes existing values). There is no model CRUD;
 provisioning against an empty registry fails fast, naming the sync call that

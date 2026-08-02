@@ -20,9 +20,9 @@ from llmbroker.models import (
     Call,
     LLMConfig,
     LLMMetrics,
-    LLMSnapshot,
     LLMState,
     LLMStats,
+    PoolSnapshot,
     SyncReport,
 )
 from llmbroker.optimizer import Optimizer
@@ -202,7 +202,7 @@ class Broker:
     ) -> None:
         self._run(self._async.record_quality(llm_name, operation, score, call_id=call_id))
 
-    def snapshot(self) -> Mapping[str, LLMSnapshot]:
+    def snapshot(self) -> PoolSnapshot:
         return self._run(self._async.snapshot())
 
     def sync(self, source: RegistryProtocol | str | Path) -> SyncReport:

@@ -9,12 +9,22 @@ import logging
 
 from llmbroker.broker.pool import LLMPool
 from llmbroker.exceptions import EmptyRegistryError
-from llmbroker.models import LLMConfig
-from llmbroker.protocols.registry import MutableRegistryProtocol, RegistryProtocol
+from llmbroker.models import KeyInfo, LLMConfig, PendingKey, PoolHealth
+from llmbroker.protocols.registry import (
+    KeyInfoProtocol,
+    MutableRegistryProtocol,
+    RegistryProtocol,
+)
 from llmbroker.protocols.secrets import MutableSecretsProtocol, SecretsProtocol
 from llmbroker.standalone.secrets import Secrets
 
 logger = logging.getLogger("llmbroker.broker")
+
+# Every provider count that is not degraded is one state: recovery is worth a
+# line, gaining a fourth provider is not. Both sentinels are negative, so a
+# non-negative remembered state is exactly "was degraded".
+_HEALTHY = -1
+_NO_POOL = -2
 
 
 async def _resolve_non_empty(secrets: SecretsProtocol, ref: str) -> str | None:
@@ -55,6 +65,18 @@ class Catalog:
         self._secrets = secrets
         self._pool = pool
         self._scope = scope
+        self._health = PoolHealth()
+        self._key_info: dict[str, KeyInfo] = {}
+        self._reported_state: int | None = None
+
+    @property
+    def health(self) -> PoolHealth:
+        """The pool-wide counts from the last reconcile — the same numbers the
+        degradation alarm uses, so log and admin UI cannot diverge."""
+        return self._health
+
+    def key_help(self, ref: str) -> str:
+        return self._key_info[ref].help if ref in self._key_info else ""
 
     async def provision(self) -> None:
         """Reconcile the pool with the registry. The caller serializes this
@@ -88,6 +110,69 @@ class Catalog:
                 await self._pool.drop(name)
         for order, cfg in enumerate(pooled):
             await self._pool.add(cfg, await self._resolve_key(cfg), order=order)
+        self._health = await self._measure(pooled)
+        self._report_health()
+
+    async def _measure(self, pooled: list[LLMConfig]) -> PoolHealth:
+        usable: set[str] = set()
+        missing: dict[str, list[str]] = {}
+        total: set[str] = set()
+        for cfg in pooled:
+            if not cfg.api_key_ref:
+                continue
+            total.add(cfg.api_key_ref)
+            if self._pool.has_key(cfg.name):
+                usable.add(cfg.api_key_ref)
+            else:
+                missing.setdefault(cfg.api_key_ref, []).append(cfg.name)
+        held_back = {ref: names for ref, names in missing.items() if ref not in usable}
+        # Help text is read only for a ref that is missing, so a fully-keyed pool
+        # — the common case — costs no registry read at all.
+        if held_back and isinstance(self._registry, KeyInfoProtocol):
+            self._key_info = await self._registry.key_info()
+        return PoolHealth(
+            providers_usable=len(usable),
+            providers_total=len(total),
+            missing_keys=tuple(
+                PendingKey(api_key_ref=ref, help=self.key_help(ref), entry_names=tuple(names))
+                for ref, names in held_back.items()
+            ),
+        )
+
+    def _report_health(self) -> None:
+        """One line per transition only: a healthy log carries none of these, and a
+        broken one carries exactly one per change."""
+        health = self._health
+        # Keyed on the state, not on the log level: 0 and 1 usable providers are
+        # both ERROR but different states, and the 1 -> 0 step is the outage.
+        if health.providers_total == 0:
+            state = _NO_POOL
+        else:
+            state = health.providers_usable if health.degraded else _HEALTHY
+        previous = self._reported_state
+        if state == previous:
+            return
+        self._reported_state = state
+        refs = ", ".join(k.api_key_ref for k in health.missing_keys)
+        tail = f" — no key for {refs}" if refs else ""
+        if state == _NO_POOL:
+            # No pooled entry names a provider: there is no pool to degrade, and
+            # "no provider has a key" would name a cause that is not the case.
+            return
+        if health.providers_usable == 0:
+            logger.error("pool cannot serve any request: no provider has a key%s", tail)
+        elif health.degraded:
+            logger.error(
+                "pool degraded, no failover left: 1 of %d providers usable%s",
+                health.providers_total,
+                tail,
+            )
+        elif previous is not None and previous >= 0:
+            logger.info(
+                "pool recovered: %d of %d providers usable",
+                health.providers_usable,
+                health.providers_total,
+            )
 
     async def apply(self, configs: list[LLMConfig]) -> None:
         """Mirror an already-merged lineup into the registry and seed its keys.

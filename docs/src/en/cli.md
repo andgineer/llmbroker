@@ -43,19 +43,30 @@ Rewrites the preset-managed models and their key hints in `llms.toml`, keeps you
 entry at what the paid catalog now recommends. Then it prints a report of what it
 did — on every run, no-ops included.
 
-A model the preset dropped is removed only when a replacement you can actually
-call arrives; otherwise it stays and the report names the key that would let the
-next sync remove it. So refreshing never leaves you with fewer working models.
-Keys are read from the environment and from the `.env` next to the target file —
-the same pair the broker itself resolves.
+A model whose provider the preset dropped is removed only when you have no key
+for that provider, or when the journal next to your config proves the model dead
+(a 401/403/404 with no success). Otherwise it stays and keeps routing. So
+refreshing never leaves you with fewer working models.
+
+`--sync` takes a preset name and a **file** target. A database target and a file
+source are both refused, each for its own reason:
+
+- a DSN would duplicate connection config your application already owns, and
+  would need DB credentials in the CLI's environment — which an app that fetches
+  its DSN from Vault cannot provide;
+- rendering an arbitrary source into a live `.toml` duplicates its `[[custom]]`
+  blocks and leaves a file the broker cannot parse.
+
+Mirror into a registry from your own entrypoint instead: see
+[Servers & clusters](server.md#sync).
+
+**What the CLI can see.** Keys come from the environment and from the `.env` next
+to the target file — the same pair a file-configured broker resolves — and the
+death evidence from the `store/` directory next to it, when one exists. A config
+whose keys live in Vault, AWS or a database is therefore refreshed by
+`broker.sync("freetier")` from the application instead: only the application can
+see those keys, and a CLI that cannot see them would keep every entry.
 
 A pending key or a kept entry is a normal state and exits 0; only a real failure
-(catalog unreachable, a name the merged file would carry twice) exits non-zero.
-
-!!! note "The target is a file — a DB is synced from your code"
-    `--sync broker.db` (or a `postgresql://` URL) is refused on purpose. A CLI
-    taking a DSN would duplicate connection config your application already owns,
-    and would need DB credentials in the CLI's environment — which an app that
-    fetches its DSN from Vault cannot provide. Mirror into a registry from your
-    own entrypoint instead: see
-    [Servers & clusters](server.md#sync).
+(catalog unreachable, a name the merged file would carry twice, a target
+directory that does not exist) exits non-zero.

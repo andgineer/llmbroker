@@ -5,11 +5,15 @@ imports — safe to import from anywhere in the package.
 """
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Protocol, runtime_checkable
+
+# Two providers is what "failover" means: one is a single quota with nothing to
+# fall back to. It describes the feature, not a tuning knob.
+_MIN_USABLE_PROVIDERS = 2
 
 
 class LifecyclePhase(Enum):
@@ -137,11 +141,25 @@ class PendingKey:
 
 
 @dataclass(frozen=True, slots=True)
+class Retirement:
+    """One entry a sync deleted on the strength of this installation's own journal,
+    carrying the evidence: the permanent failure that condemned it and how far back
+    that failure runs in the window that was read."""
+
+    name: str
+    http_status: int | None = None
+    since: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SyncReport:
     """What one sync did, as raw facts — no severity verdict, the host derives that.
 
-    ``kept`` names entries the new lineup dropped that no arrival paid to remove;
-    they stay callable and are recomputed on every sync, never stored.
+    ``kept`` names entries whose provider the arriving lineup no longer carries and
+    that this installation can still call; they keep routing and are recomputed on
+    every sync, never stored. ``keys_visible`` says whether a missing key was
+    evidence at all at this merge site, and ``keys_scoped`` which of the two ways
+    it was not.
     """
 
     source: str
@@ -150,32 +168,46 @@ class SyncReport:
     updated: tuple[str, ...] = ()
     removed: tuple[str, ...] = ()
     kept: tuple[str, ...] = ()
+    kept_refs: tuple[str, ...] = ()
+    retired: tuple[Retirement, ...] = ()
+    orphan_refs: tuple[str, ...] = ()
     pending_keys: tuple[PendingKey, ...] = ()
     active_before: int = 0
     active_after: int = 0
-
-    def unlocking_refs(self) -> tuple[str, ...]:
-        """The refs whose keys would pay for removing the ``kept`` entries: the
-        arrivals nothing could be spent on because their own key is missing."""
-        added = set(self.added)
-        return tuple(
-            pending.api_key_ref
-            for pending in self.pending_keys
-            if added.intersection(pending.entry_names)
-        )
+    keys_visible: bool = True
+    keys_scoped: bool = False
 
     def _kept_line(self) -> str:
-        subject = "it" if len(self.kept) == 1 else "them"
-        refs = self.unlocking_refs()
-        if not refs:
-            tail = f"upstream dropped {subject} and nothing arrived to replace {subject}"
-        else:
-            setting = refs[0] if len(refs) == 1 else f"any of {', '.join(refs)}"
-            tail = (
-                f"upstream dropped {subject} and no replacement is usable;"
-                f" set {setting} and the next sync removes {subject}"
+        subject, verb = ("it", "stays") if len(self.kept) == 1 else ("they", "stay")
+        refs = ", ".join(self.kept_refs) or "their provider"
+        head = f"the lineup no longer carries {refs}"
+        if self.keys_visible:
+            held = "a key for it" if len(self.kept_refs) == 1 else "keys for them"
+            why = f"{head} and this installation has {held}, so {subject} {verb}"
+        elif self.keys_scoped:
+            why = (
+                f"{head}, and keys are per user here so a missing one proves nothing"
+                f" — {subject} {verb}"
             )
-        return f"  kept: {', '.join(self.kept)} — {tail}"
+        else:
+            why = (
+                f"{head}, and no key resolved here at all so these are not the keys this"
+                f" lineup runs on — {subject} {verb}"
+            )
+        return f"  kept: {', '.join(self.kept)} — {why}"
+
+    def _retired_lines(self) -> list[str]:
+        """One line each: a sync deleting an entry has to show its evidence, or an
+        admin cannot check the verdict without going to the journal themselves."""
+        lines = []
+        for item in self.retired:
+            status = item.http_status or "a permanent failure"
+            since = f" since {item.since:%Y-%m-%d}" if item.since is not None else ""
+            lines.append(
+                f"  retired: {item.name} — {status}{since}, no successful call since;"
+                " the lineup dropped it too",
+            )
+        return lines
 
     def __str__(self) -> str:
         verb = "applied" if self.applied else "refused"
@@ -190,8 +222,14 @@ class SyncReport:
         ):
             if names:
                 lines.append(f"  {label}: {', '.join(names)}")
+        lines.extend(self._retired_lines())
         if self.kept:
             lines.append(self._kept_line())
+        for ref in self.orphan_refs:
+            lines.append(
+                f"  unused key {ref} — nothing here uses it any more;"
+                " revoke it at the provider if you do not need it",
+            )
         for pending in self.pending_keys:
             lines.append(
                 f"  pending key {pending.api_key_ref}"
@@ -361,6 +399,60 @@ class LLMSnapshot:
     cooldown_until: datetime | None
     demoted_operations: tuple[str | None, ...]
     metrics: LLMMetrics | None
+
+
+@dataclass(frozen=True, slots=True)
+class PoolHealth:
+    """How much of the pool can actually serve a request, by provider.
+
+    The unit is the ``api_key_ref``: two entries on one ref are one quota and one
+    failure domain. ``missing_keys`` names only refs no pooled entry can use.
+    """
+
+    providers_usable: int = 0
+    providers_total: int = 0
+    missing_keys: tuple[PendingKey, ...] = ()
+
+    @property
+    def degraded(self) -> bool:
+        """One usable provider is a single quota with nothing to fail over to. A
+        registry that pools nothing has no pool to degrade."""
+        return bool(self.providers_total) and self.providers_usable < _MIN_USABLE_PROVIDERS
+
+
+@dataclass(frozen=True, slots=True)
+class PoolSnapshot(Mapping[str, LLMSnapshot]):
+    """Point-in-time view of the whole pool. Iterate it like a dict of
+    ``name -> LLMSnapshot``; the properties describe the pool as a whole and come
+    from the same measurement the degradation alarm uses."""
+
+    _llms: Mapping[str, LLMSnapshot]
+    _health: PoolHealth
+
+    @property
+    def providers_usable(self) -> int:
+        return self._health.providers_usable
+
+    @property
+    def providers_total(self) -> int:
+        return self._health.providers_total
+
+    @property
+    def missing_keys(self) -> tuple[PendingKey, ...]:
+        return self._health.missing_keys
+
+    @property
+    def degraded(self) -> bool:
+        return self._health.degraded
+
+    def __getitem__(self, name: str) -> LLMSnapshot:
+        return self._llms[name]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._llms)
+
+    def __len__(self) -> int:
+        return len(self._llms)
 
 
 @runtime_checkable

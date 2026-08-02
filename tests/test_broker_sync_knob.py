@@ -1,5 +1,6 @@
 """The ``sync=`` constructor knob: refresh once before provisioning, never raise."""
 
+import http.client
 import logging
 
 import pytest
@@ -112,6 +113,35 @@ async def test_a_fetch_failure_keeps_the_existing_config_and_logs(tmp_path, monk
             assert (await broker.get("old")).config.name == "old"
             assert broker.last_sync_report is None
     assert any("not found in catalog" in r.message for r in caplog.records)
+
+
+async def test_a_truncated_response_does_not_stop_the_broker_from_starting(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    """IncompleteRead is an HTTPException, not an OSError — unwrapped it escaped the
+    knob's own except and killed process start, the one thing the knob prevents."""
+
+    class _Truncated:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            raise http.client.IncompleteRead(b"partial")
+
+    monkeypatch.setattr(upstream.urllib.request, "urlopen", lambda *a, **k: _Truncated())
+    db = str(tmp_path / "b.db")
+    await SqliteRegistry(db).mirror(
+        [LLMConfig(name="old", base_url="https://x/v1", model="m", api_key_ref="GEMINI")],
+    )
+    with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
+        async with _broker(tmp_path, sync="freetier") as broker:
+            assert await broker.count() == 1
+    assert any("failed reading" in r.message for r in caplog.records)
 
 
 async def test_a_refusal_stashes_the_report_and_continues(tmp_path, monkeypatch, caplog):

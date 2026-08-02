@@ -61,23 +61,46 @@ async def test_sync_bootstraps_the_key_into_the_db_secrets(tmp_path, monkeypatch
         assert broker._pool.resolved_key("p1") == "sk-persisted"
 
 
-async def test_a_shrunk_lineup_keeps_the_dropped_entry(tmp_path, monkeypatch):
-    """Nothing arrived to pay for the removal, so the pool does not shrink — the
-    entry stays callable and the report names it on this run and every later one."""
+_TWO_PROVIDERS = (
+    '[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="RETIRED_KEY"\n'
+    '[[llms]]\nname="p2"\nbase_url="https://y/v1"\nmodel="m"\napi_key_ref="ROUNDTRIP_KEY"\n'
+)
+
+
+async def test_a_retired_provider_whose_key_is_here_keeps_routing(tmp_path, monkeypatch):
+    """The pool does not shrink while the models still work — the entry stays callable
+    and the report names it on this run and every later one."""
     db = str(tmp_path / "broker.db")
     monkeypatch.setenv("ROUNDTRIP_KEY", "sk-test")
-    await _sync_into(db, _preset(tmp_path))
+    monkeypatch.setenv("RETIRED_KEY", "sk-retired")
+    await _sync_into(db, _preset(tmp_path, _TWO_PROVIDERS))
 
     shrunk = (
         '[[llms]]\nname="p2"\nbase_url="https://y/v1"\nmodel="m"\napi_key_ref="ROUNDTRIP_KEY"\n'
     )
     report = await _sync_into(db, _preset(tmp_path, shrunk))
-    assert report.kept == ("p1",)
-    assert report.removed == ()
+    assert (report.kept, report.kept_refs, report.removed) == (("p1",), ("RETIRED_KEY",), ())
 
-    async with AsyncBroker(db, secrets=DictSecrets({"ROUNDTRIP_KEY": "sk-test"})) as broker:
+    secrets = DictSecrets({"ROUNDTRIP_KEY": "sk-test", "RETIRED_KEY": "sk-retired"})
+    async with AsyncBroker(db, secrets=secrets) as broker:
         assert await broker.count() == 2
         assert "p1" in broker._pool
+
+
+async def test_a_retired_provider_without_a_key_here_is_dropped(tmp_path, monkeypatch):
+    """The other half of the same rule: nothing is lost, because nothing could be
+    called through that ref in the first place."""
+    db = str(tmp_path / "broker.db")
+    monkeypatch.setenv("ROUNDTRIP_KEY", "sk-test")
+    monkeypatch.delenv("RETIRED_KEY", raising=False)
+    await _sync_into(db, _preset(tmp_path, _TWO_PROVIDERS))
+
+    shrunk = (
+        '[[llms]]\nname="p2"\nbase_url="https://y/v1"\nmodel="m"\napi_key_ref="ROUNDTRIP_KEY"\n'
+    )
+    report = await _sync_into(db, _preset(tmp_path, shrunk))
+    # No key was ever here, so there is none to revoke either.
+    assert (report.removed, report.kept, report.orphan_refs) == (("p1",), (), ())
 
 
 async def test_a_replacement_carrying_the_same_ref_removes_the_old_entry(tmp_path, monkeypatch):

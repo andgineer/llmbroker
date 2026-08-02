@@ -415,8 +415,8 @@ When curation replaces a model with a strictly better sibling from the same
 provider, the old entry is removed rather than left alongside the new one:
 the two usually share one provider quota, and a still-endorsed old entry
 would keep spending that shared quota on worse answers. Downstream, the next
-sync pairs the arrival with the old entry by their shared `api_key_ref` and
-removes it with no key lookup at all — its ratings and verdicts are gone with it,
+sync sees the lineup still carrying that `api_key_ref` and removes the old entry
+with no key lookup at all — its ratings and verdicts are gone with it,
 since nothing survives outside the journal/disabled map that `sync` never touches
 (see "Syncing the lineup" below). See
 [`freetier-providers.md`](freetier-providers.md) for how the curated free-tier
@@ -572,9 +572,10 @@ library. A *path* or *registry* (`sync("llms.toml")`) is offline. Both then run
 the identical merge, so the rules below hold whatever named the lineup.
 
 **The vendored config is a lockfile.** Refreshing it from upstream is an explicit
-repo or deploy action, like a lockfile upgrade — never something application
-start does. Start is therefore never online and never fails because a preset
-moved on. This is also why seeding is never implicit at construction: in a
+repo or deploy action, like a lockfile upgrade. Start goes online only when asked
+to, via the `sync=` knob, and never fails when it does — a refresh that cannot be
+fetched or applied logs and leaves the existing configuration in place. This is
+also why seeding is never implicit at construction: in a
 cluster, every node reconciling the registry against its own copy would flip-flop
 it, so the refresh is one job, not a per-node startup step.
 
@@ -582,60 +583,107 @@ it, so the refresh is one job, not a per-node startup step.
 
 |  | tier 1 (the common case) | tier 2 |
 |---|---|---|
-| registry / secrets | `llms.toml` + `.env` | DB / Vault / AWS, possibly per-user (`scope`) |
+| registry / secrets | `llms.toml` on its default env/`.env` secrets | DB / Vault / AWS, possibly per-user (`scope`) |
 | who merges | the CLI, into the file | `broker.sync(...)` |
 | key visibility | `os.environ` + the file's sibling `.env` | the broker's own secrets backend |
 
 Each tier has exactly one merge site, and that site sees the same keys the
 application will. In tier 1 the CLI resolves through the same env-plus-sibling
 `.env` pair a file-configured broker uses, so what the CLI decides is what the
-application would have decided. Tier 2 never merges from the CLI at all. That is
-what makes a key-aware merge safe: no merge ever runs blind to the keys the
-program that consumes its output will have.
+application would have decided. **A file registry paired with a Vault/AWS/DB
+secrets backend is tier 2, not tier 1**: only the broker can see those keys, so
+that installation refreshes from code even though its lineup lives in a file.
+Tier 2 never merges from the CLI at all. That is what makes a key-aware merge
+safe: no merge ever runs blind to the keys the program that consumes its output
+will have.
 
-### The removal rule: pairs, then budget
+A file target is written from a curated preset only. A file or registry source
+syncs into a database registry — the vendored-lockfile deploy path, where the
+merge dedupes `[[custom]]` entries; rendering an arbitrary source into a live
+`.toml` cannot.
+
+### The removal rule: the provider is the unit
 
 Only managed entries whose name is absent from the arriving lineup are candidates
 for removal. An entry still present is updated in place, and `[[custom]]` entries
 are never pruned.
 
-1. An arriving entry carrying a dropped entry's `api_key_ref` **is** its
-   replacement: the pair is removed with no key lookup at all — same quota,
-   nothing is lost.
-2. Each remaining arrival whose `api_key_ref` we have a key for pays for the
-   removal of one remaining dropped entry. Entries whose own key is absent are
-   spent first: they are inactive already.
-3. Everything else stays — "kept".
+**The unit of decision is the `api_key_ref`, not the entry.** Two entries on one
+ref are one quota and one failure domain; counting them as two of anything is
+wrong. For each dropped entry, in order:
+
+1. The arriving lineup still carries that `api_key_ref` — its models replace the
+   entry: same key, same quota, removed with no key lookup at all.
+2. Otherwise, if keys are visible here (below) and no key exists for that ref, the
+   entry is removed: nothing could call it anyway.
+3. Otherwise, if this installation's own journal proves the entry does not work,
+   it is removed and reported as **retired**.
+4. Otherwise it stays — "kept" — and keeps routing.
 
 Hence the invariant that is the whole safety story:
 
-> **The number of callable entries can never decrease as a result of a sync** —
-> every removal is paid for by an arrival that either inherits the same key or
-> has one of its own.
+> **A sync never takes away a model this installation can call**, except by
+> replacing it with the same provider's model, or when the journal says the model
+> does not work.
 
-A consequence worth stating: a lineup that drops a provider without adding one
-prunes nothing downstream. That is intended. It also means a path source is not a
-blind mirror — an operator who deletes an entry from the vendored file gets it
-removed only once the rule pays for it, and the report says why it was kept. The
-escape hatch for a forced lineup is `registry.mirror(configs)` directly.
+The rule depends only on the state of the world — which providers the lineup
+carries, which keys exist, what the journal recorded — which is what makes
+repeated syncs converge instead of oscillating.
+
+A path source is therefore not a blind mirror: an operator who deletes an entry
+from the vendored file gets it removed only under the rule above, and the report
+says why it was kept. The escape hatch for a forced lineup is
+`registry.mirror(configs)` directly.
+
+**Death is proven, never assumed.** An entry is dead when this installation's
+journal window holds at least one permanent client failure (401/403/404) and no
+successful call at all. A bad week — 429s, 5xx — proves nothing. The journal is
+read only when there is a candidate to decide about, which is never on an
+ordinary sync; a busy pool that pushes the failure out of the bounded tail leaves
+no evidence, and the entry stays. Conservative on purpose.
+
+A candidate is any entry the rule above would otherwise keep. Where a missing key
+*is* evidence that covers entries whose key is here; where it is not — per-user
+keys, a probe that resolved nothing — it covers every dropped entry, because
+"nobody could call it and lived" is then the only evidence that installation can
+produce, and it is strictly stronger than key absence. Without that, a per-user
+host could never retire anything.
+
+**A retirement shows its evidence.** Deleting an entry from the installation's
+own configuration is the one destructive thing a sync does, so the report carries
+the permanent status that condemned it and how far back the failures run in the
+window that was read. An admin can check the verdict without opening the journal.
 
 **A key exists or it does not.** A key exists when the secrets store returns a
 **non-empty** value for its ref (an empty or whitespace-only value is no key,
 whatever backend produced it), or when the ref is declared in `have_keys`.
-Absence is never evidence of anything: keys only ever *authorize* a removal,
-never demand one. That single asymmetry is why no "unknown key" state is needed,
-and why per-user (`scope`) secrets degrade to maximal conservatism with no
-configuration at all — nothing resolves, so nothing but a same-key replacement is
-ever removed.
+
+**Absence of a key is evidence only where the probe could have found one.** Two
+merge sites cannot prove absence, and at both of them a dropped provider's entry
+is kept regardless: an installation whose keys are per user behind `scope`, and
+one whose probe resolved *nothing at all* — there the keys live in a store this
+merge site cannot reach, and "no key anywhere" is indistinguishable from "not the
+keys this lineup runs on". `have_keys` is how an installation that knows better
+overrides either.
 
 **`have_keys` only lowers conservatism.** `have_keys=["OPENAI_API_KEY"]` (or
 `True`) declares refs the broker cannot probe — per-user keys behind `scope`, a
-secret injected only in production. Declared refs count as present when paying
-for removals, and only there: `have_keys` never makes a model routable, the pool
-still needs a real key value. It is a promise — declare a ref and fail to
+secret injected only in production. Declared refs count as present when the merge
+weighs a removal, and only there: `have_keys` never makes a model routable, the
+pool still needs a real key value. It is a promise — declare a ref and fail to
 provision it, and the pool degrades (old entries removed, replacements inactive).
 Omit it and nothing breaks; the lineup just keeps entries a better-informed run
 would have pruned.
+
+**A sync never deletes a secret.** A key that cannot be deleted — one kept for
+paid direct calls on the same provider — is the common case, so deletion could
+never be the retirement mechanism. When a removal leaves a ref whose key *is*
+here and that nothing in the merged lineup references any more, `[[custom]]`
+included, the report says the key is now unused and a human decides; `[keys.REF]`
+is kept while any entry still references it. A ref with no key behind it is
+nothing to revoke, and saying otherwise would put an invented admin act into the
+one channel that exists to surface the real ones — on the commonest removal of
+all, a curated lineup dropping a provider this installation never had a key for.
 
 **Retention is recomputed, never stored.** Which entries are kept follows from
 (arriving lineup, current lineup, keys) on every merge, so a persisted flag would
@@ -649,9 +697,9 @@ binding between a model's learned quality stats and its name.
 
 **One structural guard.** Applying a result with zero entries over a registry that
 has some is refused with `SyncRefusedError`, carrying the report; an empty
-registry accepts anything, which is onboarding. The rule above cannot produce
-that situation — a removal needs an arrival and an arrival is itself in the
-result — so the guard is a backstop on the invariant, not a workflow.
+registry accepts anything, which is onboarding. The rule above can reach it — an
+empty lineup over a registry whose entries are all keyless removes everything —
+so the guard is on the normal path, not a backstop.
 
 Nothing is lost by a removal that does happen: keys live in the secrets store,
 learned state derives from the journal, and admin verdicts live in the store
@@ -665,17 +713,59 @@ verdict resurface.
   until resolved. `last_sync_report` lets a host forward it to its own admin
   channel. The report carries no severity enum — the host derives criticality.
 - **The committed config file is the durable state**: kept entries and the keys
-  that would unlock their removal sit in the file, so a bot refresh is reviewable
-  in the pull request diff itself, and the file's git history is the update
-  record. The sync stores nothing of its own.
-- Every sync logs its outcome once, whatever called it: a warning when it needs
-  something from an admin (an entry kept for lack of a paid replacement), info
-  otherwise — including no-ops and pending keys, since a keyless entry is a
-  normal documented state and under per-user secrets every shared probe fails by
-  design.
+  they still need sit in the file, so a bot refresh is reviewable in the pull
+  request diff itself, and the file's git history is the update record. The sync
+  stores nothing of its own.
+- Every sync logs its outcome once at `info`, whatever called it — no-ops,
+  pending keys and kept entries included. Nothing in a sync outcome is
+  admin-actionable: a kept entry is a working model that keeps routing, and a
+  keyless entry is a normal documented state. What *is* actionable is a degraded
+  pool, and the catalog owns that alarm. The log line and `last_sync_report` are
+  both recorded before the pool is reconciled, so a reconcile that raises cannot
+  swallow the record of a change already applied.
 - The **journal** stays what it is — a stream of LLM calls and quality ratings. A
-  sync is a registry operation and never writes there. `snapshot()` likewise
-  stays runtime state for the application's own UI, not part of the admin story.
+  sync is a registry operation and never writes there; it only *reads* the
+  bounded tail, and only when a provider it might retire has a candidate entry.
+
+### Pool health
+
+**The measure is the provider, not the entry.** Of the distinct `api_key_ref`s
+among pooled entries, how many have a key: `providers_usable` of
+`providers_total`. Two entries on one ref are one quota and one failure domain,
+so they count once.
+
+**One usable provider is degraded**: a single quota with nothing to fail over to,
+which is the failover feature's own definition rather than a tuning knob. Zero is
+a dead pool. Missing keys are never an alarm on their own — two providers may be
+all a host wants. A registry that pools nothing is not a degraded pool but the
+absence of one: a host whose entries are all `[[custom]]` or unpooled asked for no
+failover and is told nothing about it.
+
+The alarm lives where membership is reconciled, so it covers provisioning, every
+resync and every sync in one place: `ERROR` on the transition into one usable
+provider ("no failover left") and into zero ("cannot serve any request"), naming
+the refs that are missing; one `INFO` on the way back. Transitions of *state*, not
+of severity — both of those are errors, and losing the step between them would
+mute the moment the pool stops answering at all. Every count that is not degraded
+is one state, so a healthy log carries none of these lines, gaining a further
+provider is not news, and a broken pool carries exactly one line per change.
+
+**The measure is key presence, and it never lags behind the keys.** A ref that
+stops resolving withdraws its slot on the next reconcile rather than keeping the
+value it had, so a revoked or rotated key leaves the count at once instead of
+after a run of requests that can only fail. The counts and `snapshot()`'s
+per-model `has_key` therefore always agree. An administratively disabled entry
+still counts its provider: the alarm reports the keys an installation holds, not
+verdicts the host set itself and already reads per model.
+
+`snapshot()` carries the same measurement — the per-LLM mapping it has always
+returned, plus the counts, the missing keys with their help text, and the same
+`degraded` predicate the ERROR uses. One definition, two consumers: an admin UI
+needs one call, and the log and the UI cannot diverge. The help text is read from
+the registry only when a key is actually missing, so a fully-keyed pool — the
+common case — adds no registry I/O to a reconcile at all, and `snapshot()` never
+performs any; a registry without key metadata yields empty help but correct refs
+and names.
 
 ### The `sync=` knob
 
@@ -702,10 +792,15 @@ Beyond writing the lineup, `sync` bootstraps secrets: for each config whose
 win. It also seeds the store disabled map with any missing model names
 (`disabled: false`), never touching existing verdict values.
 
-A file registry is a legitimate target: the merged lineup is written back to the
-`.toml`, preserving its comments and `[[custom]]` entries, which is what lets a
-file-configured broker keep itself current. Provisioning against an empty
-registry still fails fast, naming the sync call that would fill it.
+A file registry is a legitimate target for a curated preset: the merged lineup is
+written back to the `.toml`, preserving its comments and `[[custom]]` entries,
+which is what lets a file-configured broker keep itself current. Provisioning
+against an empty registry still fails fast, naming the sync call that would fill
+it.
+
+The write itself is atomic and preserves the target's permissions, and what is
+about to replace a live config is parsed and checked against the merge result
+first — this is the one code path that can destroy a user's configuration.
 
 ---
 

@@ -42,29 +42,80 @@ Job, an init container), **not** as a per-node startup step: N nodes each
 reconciling the registry against their own copy is exactly the flip-flop this
 design avoids. A single-node app may put the sync in `lifespan` instead.
 
-`sync` never shrinks what the pool can call. A model the new lineup drops is
-removed only when an arrival pays for it — by carrying the same `api_key_ref`, or
-by having a key of its own — and is otherwise kept, still working. The returned
-`SyncReport` says which, on every run including no-ops. A non-zero exit from the
-job and its log are the admin channel your failed migrations already use; hosts
-that forward elsewhere can read `llms.last_sync_report`.
+A vendored file or another registry as the source is a **database** target only.
+A `.toml` registry is synced from a curated preset name; anything else is refused
+before the write, because rendering an arbitrary source into a live config file
+duplicates its `[[custom]]` blocks.
+
+`sync` never takes away a model this installation can call. A model whose
+provider the new lineup drops is removed when the same provider replaces it, when
+this installation has no key for it, or when your own call journal proves it dead
+— otherwise it is kept and keeps routing. The returned `SyncReport` says which,
+on every run including no-ops, and names any key that has become unused. A
+non-zero exit from the job and its log are the admin channel your failed
+migrations already use; hosts that forward elsewhere can read
+`llms.last_sync_report`.
 
 ### Per-user keys: `have_keys` {#have-keys}
 
-With `scope=`, keys belong to users, so a sync has no shared key to probe and
-therefore removes almost nothing — it keeps every entry it cannot prove is
-replaceable. If you know this installation has a key for some ref, say so:
+With `scope=`, keys belong to users, so a missing shared key proves nothing about
+what this installation can call — and a sync therefore keeps every retired
+provider's entry. The same holds anywhere the probe resolves no key at all: a
+registry in a file with its secrets in Vault, AWS or a database. If you know this
+installation has a key for some ref, say so:
 
 ```python
 llms = llmbroker.AsyncBroker("postgresql://host/db", have_keys=["OPENAI_API_KEY"])
 ```
 
-Declared refs count only when a sync weighs whether an arrival can pay for a
-removal; `have_keys` never makes a model routable — the pool still needs a real
-key value. It is a promise, with an honest failure mode both ways: omit it and
-your lineup keeps entries it could have pruned; declare a ref you never actually
+Declared refs count only when a sync weighs whether an entry is still callable
+here; `have_keys` never makes a model routable — the pool still needs a real key
+value. It is a promise, with an honest failure mode both ways: omit it and your
+lineup keeps entries it could have pruned; declare a ref you never actually
 provision and the pool degrades, since old entries get removed while their
 replacements stay inactive. There is nothing else to declare anywhere.
+
+### Watching the pool from an admin screen {#pool-health}
+
+`snapshot()` is one call and answers the whole screen — the per-model rows plus
+the pool-wide verdict:
+
+```python
+snap = await llms.snapshot()
+
+health = {
+    "providers_usable": snap.providers_usable,
+    "providers_total": snap.providers_total,
+    "degraded": snap.degraded,
+    "missing_keys": [
+        {"ref": k.api_key_ref, "help": k.help, "holds_back": list(k.entry_names)}
+        for k in snap.missing_keys
+    ],
+}
+rows = [{"name": name, "has_key": llm.has_key} for name, llm in snap.items()]
+```
+
+The unit is the provider (`api_key_ref`), not the model: two entries on one key
+are one quota and one failure domain, so they count once. `degraded` is true at
+one usable provider — the pool answers, but a rate limit has nowhere to spill.
+
+**What to alert on.** llmbroker logs the same verdict, so alerting needs no
+polling. Both lines are `ERROR` on the `llmbroker.broker` logger, emitted once
+per change of state — the second fires even when the first already has, since
+losing your last provider is its own event — and both name the refs that are
+missing:
+
+```
+pool degraded, no failover left: 1 of 3 providers usable — no key for GEMINI_API_KEY
+pool cannot serve any request: no provider has a key — no key for ...
+```
+
+Recovery logs one `INFO`; further providers after that are silent. A pending key
+on its own is not an alarm; two working providers may be exactly what you
+provisioned. A key revoked in your secrets backend drops out of the count on the
+next reconcile, so the numbers never lag behind your keys. A model you disabled
+yourself still counts its provider — that verdict is already on the per-model
+rows, and the alarm is about keys.
 
 ## SQLite: sharing and WAL {#sqlite}
 

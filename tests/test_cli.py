@@ -1,16 +1,20 @@
 """Unit tests for the CLI (python -m llmbroker)."""
 
 import asyncio
+import http.client
 import socket
 import tomllib
 import urllib.error
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.cli import main
+from llmbroker.models import Call, CallStatus
 from llmbroker.sqlite import Store as SqliteStore
+from llmbroker.standalone.store import FileStore
 
 
 def _write_toml(tmp_path, entries):
@@ -98,7 +102,9 @@ def _mock_urlopen(content: bytes):
     resp = MagicMock()
     resp.read.return_value = content
     resp.__enter__ = lambda s: s
-    resp.__exit__ = MagicMock()
+    # A bare MagicMock __exit__ returns a truthy mock, which swallows whatever the
+    # body raises inside the `with`.
+    resp.__exit__ = lambda *_a: False
     return resp
 
 
@@ -137,6 +143,24 @@ def test_preset_invalid_name_returns_1(capsys):
     rc = main(["preset", "../secrets"])
     assert rc == 1
     assert "invalid preset name" in capsys.readouterr().err
+
+
+def test_preset_body_dying_mid_read_returns_1(capsys):
+    """A read that fails after the connect phase used to traceback out of the CLI."""
+    resp = _mock_urlopen(b"")
+    resp.read.side_effect = http.client.IncompleteRead(b"partial")
+    with patch("urllib.request.urlopen", return_value=resp):
+        rc = main(["preset", "freetier"])
+    assert rc == 1
+    assert "failed reading" in capsys.readouterr().err
+
+
+def test_preset_sync_into_a_missing_directory_returns_1(tmp_path, capsys):
+    """The writer's own OSError is an error message, not a traceback."""
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_FAKE_TOML)):
+        rc = main(["preset", "freetier", "--sync", str(tmp_path / "nodir" / "llms.toml")])
+    assert rc == 1
+    assert capsys.readouterr().err.startswith("error: ")
 
 
 # --- preset --sync ---
@@ -708,17 +732,64 @@ def test_sync_removes_the_dropped_entry_when_the_arrivals_key_is_set(tmp_path, c
     assert [e["name"] for e in tomllib.loads(f.read_text())["llms"]] == ["gemini"]
 
 
-def test_an_empty_key_does_not_pay_for_the_removal(tmp_path, capsys, monkeypatch):
-    """A blank export is as unset as no export at all."""
+def test_an_empty_key_makes_the_probe_blind_and_removes_nothing(tmp_path, capsys, monkeypatch):
+    """A blank export is as unset as no export at all — and a probe that resolved
+    nothing cannot tell 'no key anywhere' from 'not the keys this lineup runs on'."""
     monkeypatch.setenv("GEMINI_KEY", "")
+    monkeypatch.delenv("GROQ_KEY", raising=False)
     f = _with_old_entry(tmp_path)
     with patch("urllib.request.urlopen", return_value=_mock_urlopen(_GEMINI_PRESET)):
         rc = main(["preset", "freetier", "--sync", str(f)])
     out = capsys.readouterr().out
     assert rc == 0
     assert "kept: groq-old" in out
-    assert "set GEMINI_KEY and the next sync removes it" in out
+    assert "no key resolved here at all" in out
     assert [e["name"] for e in tomllib.loads(f.read_text())["llms"]] == ["gemini", "groq-old"]
+
+
+def test_the_sibling_store_supplies_the_retirement_evidence(tmp_path, capsys, monkeypatch):
+    """The CLI has no broker, so it opens the journal the same way one would — and
+    a provider whose key is still here goes only once that journal condemns it."""
+    monkeypatch.setenv("GEMINI_KEY", "sk-gem")
+    monkeypatch.setenv("GROQ_KEY", "sk-groq")
+    f = _with_old_entry(tmp_path)
+
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_GEMINI_PRESET)):
+        rc = main(["preset", "freetier", "--sync", str(f)])
+    assert rc == 0
+    assert "kept: groq-old" in capsys.readouterr().out
+
+    store = FileStore(tmp_path / "store")
+    asyncio.run(
+        store.record(
+            Call(
+                id="a",
+                llm_name="groq-old",
+                operation=None,
+                trace_id=None,
+                status=CallStatus.ERROR,
+                kind="call",
+                ts=datetime(2030, 1, 1, tzinfo=UTC),
+                http_status=401,
+            ),
+        ),
+    )
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_GEMINI_PRESET)):
+        rc = main(["preset", "freetier", "--sync", str(f)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "retired: groq-old" in out
+    assert [e["name"] for e in tomllib.loads(f.read_text())["llms"]] == ["gemini"]
+
+
+def test_without_a_sibling_store_nothing_is_retired(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("GEMINI_KEY", "sk-gem")
+    monkeypatch.setenv("GROQ_KEY", "sk-groq")
+    f = _with_old_entry(tmp_path)
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_GEMINI_PRESET)):
+        rc = main(["preset", "freetier", "--sync", str(f)])
+    assert rc == 0
+    assert "kept: groq-old" in capsys.readouterr().out
 
 
 def test_the_sibling_env_file_counts_as_a_key(tmp_path, capsys, monkeypatch):
