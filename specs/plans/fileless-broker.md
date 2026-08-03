@@ -606,10 +606,18 @@ cannot read the catalog — or finds an alias gone — logs and returns it. That
 the rule the stored `[[custom]]` half already followed. The first resolution
 still raises: a typo must be loud at start-up, and there is nothing to keep.
 
-`_attempt_sync` was widened to `except Exception` regardless. It runs as a
-detached task; catching by type list makes "does the refresh survive" a matter of
-which exception a new code path happens to pick, which is how this defect existed
-at all.
+`_attempt_sync` was widened regardless. It runs as a detached task; catching by
+type list makes "does the refresh survive" a matter of which exception a new code
+path happens to pick, which is how this defect existed at all. It catches in two
+branches, not one: `(ValueError, OSError)` — offline, a throttled CDN, a malformed
+body, an unwritable target — stays a plain warning, and anything else is logged
+with its traceback. A first pass flattened both into one warning line, which cost
+more than it bought: a bug carrying no message logged as `failed ... :` with
+nothing after the colon, and on the *start* path (`_sync_on_start` awaits this
+same call) it then resurfaced as `EmptyRegistryError` telling the reader to check
+network access for a cause that was not the network. Both were reproduced before
+the split and are covered by
+`test_a_refresh_that_raises_anything_at_all_keeps_the_broker_and_the_traceback`.
 
 ### Three corrections taken in the same pass
 

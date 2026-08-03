@@ -342,7 +342,8 @@ class AsyncBroker:
             if previous is None:
                 raise
             logger.warning(
-                "paid catalog: %s — declared models stay on the resolution already in use",
+                "direct= could not be re-resolved (%s) — declared models stay on the"
+                " resolution already in use",
                 exc,
             )
             return previous
@@ -455,12 +456,20 @@ class AsyncBroker:
         except SyncRefusedError as exc:
             self.last_sync_report = exc.report
             logger.warning("sync %s refused, continuing on the current config: %s", reason, exc)
-        # Broad on purpose: this runs as a detached task, so anything not caught
-        # here is lost as an unretrieved task exception and the refresh silently
-        # stops for the life of the process. Catching by type list made that a
-        # matter of which exception a new code path happened to pick.
-        except Exception as exc:  # noqa: BLE001 - a refresh may not fail the process
+        except (ValueError, OSError) as exc:
+            # What a refresh fails with in normal operation — offline, a throttled
+            # CDN, a malformed body, an unwritable target. No traceback to keep.
             logger.warning("sync %s failed, continuing on the current config: %s", reason, exc)
+        # Anything else is a bug, and it still may not stop the refresh: on the
+        # background path it would be lost as an unretrieved task exception, and on
+        # the start path it would surface as "registry is empty", naming the network
+        # for a cause that is not it. Logged with its traceback, because a one-line
+        # warning off a broad catch is how a bug becomes unreportable.
+        except Exception:  # noqa: BLE001 - a refresh may not fail the process
+            logger.exception(
+                "sync %s failed unexpectedly, continuing on the current config",
+                reason,
+            )
         finally:
             self._next_refresh = time.monotonic() + self._sync_interval
 

@@ -215,18 +215,22 @@ async def test_a_failed_refresh_warns_and_the_broker_keeps_serving(tmp_path, cap
     assert any("refresh failed" in r.message for r in caplog.records)
 
 
-async def test_a_refresh_that_raises_anything_at_all_still_only_warns(
+async def test_a_refresh_that_raises_anything_at_all_keeps_the_broker_and_the_traceback(
     tmp_path,
     caplog,
     monkeypatch,
 ):
-    """The refresh runs as a detached task, so an exception it does not catch is
-    lost as an unretrieved task exception and the refresh stops for the life of the
-    process — silently. Catching by type list made that a matter of which exception
-    a new code path happened to pick."""
+    """Two things at once, and the second is the one a broad catch usually loses.
+    The refresh runs as a detached task, so an exception it does not catch stops it
+    for the life of the process; but caught and flattened to one warning line, a bug
+    with no message becomes unreportable — and on the start path it resurfaces as
+    "registry is empty", naming the network for a cause that is not it."""
+
+    class Boom(Exception):
+        """A bug, not a network failure: carries no message at all."""
 
     def _fail(_name: str) -> str:
-        raise RuntimeError("something no caller listed")
+        raise Boom
 
     monkeypatch.setattr(upstream, "fetch_preset_text", _fail)
     await _seeded(tmp_path)
@@ -240,7 +244,12 @@ async def test_a_refresh_that_raises_anything_at_all_still_only_warns(
         assert await broker.count() == 1
     finally:
         await broker.aclose()
-    assert any("refresh failed" in r.message for r in caplog.records)
+
+    unexpected = [r for r in caplog.records if "failed unexpectedly" in r.message]
+    assert unexpected, "an unexpected failure must not be logged as an ordinary one"
+    assert unexpected[0].levelno == logging.ERROR
+    assert unexpected[0].exc_info is not None  # the traceback is what names the bug
+    assert "Boom" in caplog.text
 
 
 async def test_a_throttled_fetch_falls_back_to_the_cached_copy(
