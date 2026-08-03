@@ -9,7 +9,12 @@ import pytest
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.router import Router
-from llmbroker.exceptions import NoLLMAvailableError, StreamInterruptedError
+from llmbroker.direct import AsyncDirectClient
+from llmbroker.exceptions import (
+    InvalidProviderResponseError,
+    NoLLMAvailableError,
+    StreamInterruptedError,
+)
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets
@@ -317,6 +322,43 @@ def test_sse_framed_error_payload_cools_down_and_fails_over():
         ("b", CallStatus.OK),
     ]
     assert pool.state("a").phase is LifecyclePhase.COOLING
+
+
+def test_garbage_200_reads_the_same_from_the_router_and_the_direct_client():
+    """One reader decides what makes a body a chat-completion stream, so the pooled
+    path journals exactly the detail the direct client raises."""
+    garbage = b'data: {"error": {"message": "upstream rate limit"}}\n\ndata: [DONE]\n\n'
+    store = _RecordingStore()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "a":
+            return httpx.Response(
+                200, content=garbage, headers={"content-type": "text/event-stream"}
+            )
+        return httpx.Response(
+            200, content=_sse("ok"), headers={"content-type": "text/event-stream"}
+        )
+
+    async def run():
+        pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
+        router = Router(pool, store, scope=None)
+        _mount(router, handler)
+        await _drain(router)
+
+        client = AsyncDirectClient(
+            base_url="https://a/v1",
+            model="a",
+            api_key="k",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5.0),
+        )
+        with pytest.raises(InvalidProviderResponseError) as exc_info:
+            _ = [d async for d in client.stream("hi")]
+        await client.aclose()
+        return exc_info.value
+
+    err = asyncio.run(run())
+    assert "no chat-completion chunks decoded" in (err.detail or "")
+    assert store.calls[0].error_detail == err.detail
 
 
 def test_empty_completion_is_a_success_not_a_garbage_200():

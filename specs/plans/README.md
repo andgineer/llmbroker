@@ -10,8 +10,8 @@ never commit unasked, and leave the plan file in place for review. Nothing needs
 the request. The plan and its row here are removed only after review and merge, on request.
 
 Statuses as of 2026-08-03: a simplification pass over the implementation. No functionality is
-removed by any of them. **Plan 1 is implemented and reviewed — no defects; it is waiting only on
-the maintainer's merge. The next one to take is plan 2.** A row stays here, with its status, until
+removed by any of them. **Plans 1 and 2 are implemented and waiting on the maintainer — 1 is also
+reviewed, with no defects. The next one to take is plan 3.** A row stays here, with its status, until
 the maintainer asks for it to go after merge; "take the first row" means the first row still
 marked `queued`.
 
@@ -20,7 +20,7 @@ marked `queued`.
 | # | Plan | Status | Issue | Blocked by | Notes |
 |---|---|---|---|---|---|
 | 1 | [http-status-vocabulary](http-status-vocabulary.md) | **implemented, reviewed** | — | — | one module decides what a provider status means; five copies today |
-| 2 | [router-failover-and-sse](router-failover-and-sse.md) | queued | — | 1 *(implemented)* | `chat` and `stream` are one algorithm written twice; SSE reader written twice |
+| 2 | [router-failover-and-sse](router-failover-and-sse.md) | **implemented** | — | 1 *(implemented)* | `chat` and `stream` are one algorithm written twice; SSE reader written twice |
 | 3 | [learning-as-observer](learning-as-observer.md) | queued | — | — | the store wrapper makes `isinstance` lie; the unmet-budget bound moves to the journal. Schema bump 5 → 6 |
 | 4 | [store-retention-dedup](store-retention-dedup.md) | queued | — | — | retention declared in five files, quality record built in two |
 | 5 | [lineup-parser](lineup-parser.md) | queued | — | — | **fixes a divergence**: two parsers, different validation |
@@ -29,10 +29,12 @@ marked `queued`.
 | 8 | [models-purity](models-purity.md) | queued | — | 6 | **skeleton** — `models.py` logs, formats prose, and holds the validators |
 | 9 | [direct-client-seam](direct-client-seam.md) | queued | — | 2 | **skeleton** — the sync broker reaches a private method; two clients copy-pasted |
 | 10 | [declared-out-of-catalog](declared-out-of-catalog.md) | queued | — | 6 | **skeleton** — the `direct=` overlay is half of `Catalog` and owns a cycle back to the broker |
+| 11 | [sse-chunk-shape](sse-chunk-shape.md) | queued | — | 2 | **fixes a spec divergence**: a non-object SSE payload escapes the pool raw instead of failing over. Small |
 
 Plans 1-5 touch disjoint files and may be taken in any order subject to the
 Blocked-by column. Plans 6 and 7 must reach a release together: 7 extracts the
-seam 6 creates.
+seam 6 creates. Plan 11 is the only one here that is not a simplification — it
+came out of plan 2's review and fixes behavior, so it may be taken out of order.
 
 **Skeletons (7-10) carry findings, not routes.** The evidence in them is about
 today's code and stays valid; the work order is missing because their target

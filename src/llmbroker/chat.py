@@ -230,6 +230,28 @@ async def aiter_sse_chunks(response: httpx.Response) -> AsyncIterator[dict]:
             continue
 
 
+async def aiter_chat_chunks(resp: httpx.Response, model: str) -> AsyncIterator[dict]:
+    """Yield the decoded chunks of a chat-completion SSE body.
+
+    ``choices`` is what makes a chunk a chat completion, so a body that decodes
+    none — a proxy's error page, a plain JSON reply, a provider ignoring
+    ``stream``, an SSE-framed error payload — raises
+    ``InvalidProviderResponseError`` on exhaustion. Counting *deltas* instead
+    would reject a legitimately empty answer.
+    """
+    completions = 0
+    async for chunk in aiter_sse_chunks(resp):
+        completions += "choices" in chunk
+        yield chunk
+    if not completions:
+        raise InvalidProviderResponseError(
+            f"{model}: HTTP 200 body is not an OpenAI-compatible SSE stream",
+            model=model,
+            detail=f"content-type={resp.headers.get('content-type', '')!r},"
+            " no chat-completion chunks decoded",
+        )
+
+
 def stream_delta(chunk: dict) -> str:
     """Text delta carried by one OpenAI-compatible stream chunk (``""`` when none).
 

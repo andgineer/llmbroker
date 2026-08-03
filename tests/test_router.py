@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from contextlib import aclosing
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -9,7 +10,7 @@ import pytest
 
 from llmbroker.broker.learning import _LearningHook
 from llmbroker.broker.pool import LLMPool
-from llmbroker.broker.router import Router
+from llmbroker.broker.router import Router, _Outcome
 from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
@@ -60,6 +61,24 @@ def _router_with_optimizer(pool: LLMPool, opt: Optimizer) -> Router:
     """Wire _LearningHook like AsyncBroker does, so rl_fail_count/dead-key drop drive for real."""
     store = _LearningHook(opt, InMemoryStore(), pool, _noop_resync)
     return Router(pool, store, scope=None, optimizer=opt)
+
+
+async def _attempt(router: Router, cfg: LLMConfig) -> _Outcome:
+    """Run one attempt off the failover driver and return the outcome it reported."""
+    outcome = _Outcome()
+    gen = router._attempt(
+        cfg,
+        outcome,
+        None,
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        operation=None,
+        trace_id=None,
+    )
+    async with aclosing(gen) as results:
+        async for _ in results:
+            pass
+    return outcome
 
 
 def _spy_cool_down(pool: LLMPool) -> list[float]:
@@ -396,15 +415,9 @@ def test_first_429_in_streak_trusts_provider_number_verbatim():
         captured = _spy_cool_down(pool)
 
         with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(429, "100"))):
-            result = await router._attempt(
-                cfg,
-                [{"role": "user", "content": "hi"}],
-                None,
-                operation=None,
-                trace_id=None,
-            )
+            outcome = await _attempt(router, cfg)
 
-        assert result is None
+        assert outcome.verdict is None
         assert captured == [100]
 
     asyncio.run(run())
@@ -421,21 +434,9 @@ def test_second_consecutive_429_scales_its_own_number_not_the_first():
         captured = _spy_cool_down(pool)
 
         with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(429, "86400"))):
-            await router._attempt(
-                cfg,
-                [{"role": "user", "content": "hi"}],
-                None,
-                operation=None,
-                trace_id=None,
-            )
+            await _attempt(router, cfg)
         with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(429, "200"))):
-            await router._attempt(
-                cfg,
-                [{"role": "user", "content": "hi"}],
-                None,
-                operation=None,
-                trace_id=None,
-            )
+            await _attempt(router, cfg)
 
         assert captured == [86400, 200 * 2]
 
@@ -449,16 +450,15 @@ def test_success_resets_streak_so_later_429_trusted_verbatim_again():
         opt = Optimizer(backoff_factor=2.0, max_delay=999_999)
         router = _router_with_optimizer(pool, opt)
         captured = _spy_cool_down(pool)
-        kwargs = {"operation": None, "trace_id": None}
 
         with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(429, "100"))):
-            await router._attempt(cfg, [{"role": "user", "content": "hi"}], None, **kwargs)
+            await _attempt(router, cfg)
         with patch(_PATCH, new=AsyncMock(return_value=("ok", None, None))):
-            await router._attempt(cfg, [{"role": "user", "content": "hi"}], None, **kwargs)
+            await _attempt(router, cfg)
         assert opt.rl_fail_count(cfg.name) == 0
 
         with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(429, "50"))):
-            await router._attempt(cfg, [{"role": "user", "content": "hi"}], None, **kwargs)
+            await _attempt(router, cfg)
 
         assert captured == [100, 50]
 
@@ -474,13 +474,7 @@ def test_429_without_retry_after_falls_back_to_default_before_scaling():
         captured = _spy_cool_down(pool)
 
         with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(429))):
-            await router._attempt(
-                cfg,
-                [{"role": "user", "content": "hi"}],
-                None,
-                operation=None,
-                trace_id=None,
-            )
+            await _attempt(router, cfg)
 
         assert captured == [60]
 
@@ -496,13 +490,7 @@ def test_wait_time_capped_at_max_delay():
         captured = _spy_cool_down(pool)
 
         with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(429, "10000"))):
-            await router._attempt(
-                cfg,
-                [{"role": "user", "content": "hi"}],
-                None,
-                operation=None,
-                trace_id=None,
-            )
+            await _attempt(router, cfg)
 
         assert captured == [500.0]
 

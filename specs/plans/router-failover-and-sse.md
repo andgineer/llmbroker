@@ -95,3 +95,60 @@ the error contract; this plan changes none of them.
 
 `invoke pre` clean, `python -m pytest` green with the pre-existing count plus
 the one added test.
+
+## Handover
+
+### What is done
+
+**Part 1 — one SSE reader.** `chat.py` gained `aiter_chat_chunks(resp, model)`,
+which owns "what makes a body a chat-completion stream" and raises
+`InvalidProviderResponseError` on exhaustion. `router.py::_stream_deltas` keeps
+only the router's own concerns (the first-delta `asyncio.timeout` bound, the
+`reschedule(None)`, `parse_usage`); `direct.py` lost `_invalid_stream`, the
+counting loop and its now-unused `InvalidProviderResponseError` import. The
+status-floor check stayed at both call sites, as the plan specified.
+
+**Part 2 — one failover loop.** `_StreamRetry` is gone. Both attempts are async
+generators taking a shared `_Outcome` box: they settle their own slot, journal
+their own row, and leave either `answered=True` or a
+`_Failed | _BudgetExpired | None` verdict. `Router._route` is the single driver —
+it owns the acquire loop with `exclude`, the `"excluded"` → `last_client_error`
+re-raise, the `_BudgetExpired` → error-or-timeout decision, and the `_Failed`
+bookkeeping. `chat()` and `stream()` are thin shells over it; the *preferred*
+shape in the plan, not the fallback in §3.
+
+### Done differently from the plan
+
+1. **`aiter_chat_chunks` yields *every* decoded chunk, not only those carrying
+   `choices`.** The plan's wording would have dropped a usage-only chunk with no
+   `choices` key, and today's router calls `parse_usage` on every decoded chunk.
+   Only the *count* of chunks carrying `choices` decides the exhaustion error, so
+   the rule the plan wanted still lives in one place, and no usage is lost.
+2. **`chat()` is expressed as the plan's "single terminal item" variant.** The
+   attempt yields one `AsyncResult` and `chat` takes it with `anext`. The yield
+   sits in the `try`'s `else:` clause deliberately — a `GeneratorExit` at that
+   suspension point must not reach the `except BaseException` handler, which
+   would journal the attempt a second time. There is a comment on it.
+3. **Five call sites in `tests/test_router.py` were rewritten**, plus one
+   assertion. They call the private `_attempt` directly, whose signature this
+   plan changes by design; a local `_attempt(router, cfg)` helper now drives it
+   off the driver. The only assertion touched is `result is None` →
+   `outcome.verdict is None`, which is the same claim under the new protocol —
+   no behavior assertion changed. All other named test files pass unedited.
+4. **The pre-request budget check was extracted to `_spent_budget`.** Not in the
+   plan: it was four lines duplicated between the two attempts, carrying the
+   "an expired budget is never the model's fault" rule. Same duplication class
+   the plan targets; flagged here because it is scope the plan did not ask for.
+
+### Deliberately left out
+
+Nothing. `stream_delta` and `parse_usage` remain at both SSE call sites, as the
+plan says they should. No spec updates were needed — `rules/call-path.md`
+already states failover, the first-delta boundary and the error contract, and
+none of them changed.
+
+### Gate
+
+`invoke pre` — all checks passed, pyrefly 0 errors.
+`python -m pytest` — **1178 passed**, 0 skipped, 0 failed (1177 before this
+plan, plus the one added pinning test in `tests/test_router_stream.py`).
