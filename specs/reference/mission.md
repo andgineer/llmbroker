@@ -3,39 +3,48 @@
 Zero-administration routing over a pool of free-tier LLMs from several
 independent providers:
 
-1. **Routing with failover**: don't hammer 429/503 — back off (trusting
-   `Retry-After`) and move on to the next model within the same request. The
-   caller only sees an error once the whole pool is exhausted.
-2. **Zero administration**: a curated preset (TOML from the repository) that
-   keeps itself current inside a running installation, with no admin act beyond
-   the keys themselves and never costing the installation a provider it could
-   reach; a dead key is detected and disables itself; a model that performs
-   poorly for our tasks moves itself to the back of the queue. Obtaining a
-   provider key is the one irreducible admin act — a free tier is issued to a
-   person, not to a library — so a missing key is always surfaced to whoever has
-   to supply it, never silently absorbed.
-3. **Learning per (model, operation)**: tasks require different levels of
-   model capability — quality scores accumulate per (model, operation) pair,
-   demotion is per operation; no global verdict exists.
-4. **Keys optionally per-user, editable via the DB** (admin panel / personal
-   account), with fallback to the shared key; the model list and learning
-   are always shared; quota follows the key (429 and dead-key detection are
-   scoped to the key actually used, 5xx is shared).
-5. **Visibility from the host UI**: raw per-model facts (admin verdict, key
-   presence, cooldown, per-operation demotions), a call journal, metrics —
-   and the pool itself as a first-class object: how many providers can serve a
-   request, which keys are missing, and whether the pool has degraded to a
-   single quota. llmbroker serves the facts and never a verdict on them — the
-   UI chooses the presentation.
-6. **One-liner and cluster**: for a script, a sync wrapper plus env keys and
-   nothing else — a bare `Broker()` takes no configuration and leaves no file
-   to maintain; the cluster's/stateless-server's shared cooldown is derived
-   from the store journal.
+1. **Routing with failover**: a rate-limited or failing provider is backed off
+   and the next one tried within the same request; the caller sees an error only
+   once the whole pool is exhausted.
+2. **Zero administration**: the curated lineup keeps itself current inside a
+   running installation, and obtaining a provider key is the one irreducible
+   admin act — a free tier is issued to a person, not to a library.
+3. **Learning per task kind**: what counts as a good enough model depends on
+   what is being asked of it, so quality is tracked per (model, operation) and
+   no global verdict exists.
+4. **Keys optionally per-user**, with fallback to a shared key, over one shared
+   model list and one shared body of learning. Quota follows the key.
+5. **Visibility from the host UI**: every per-model fact, the call journal, and
+   the pool itself as a first-class object — how many providers can serve a
+   request, which keys are missing, whether failover is still possible.
+6. **One-liner and cluster**: a script gets a synchronous wrapper and env keys
+   and nothing else; a cluster of stateless processes shares what it learns
+   without a coordinator.
 7. **Batteries**: sqlite, postgres, mongodb (registry + store + secrets),
    aws/vault (secrets). A new backend is one driver file.
-8. **Cheap at low usage**: a bare broker makes zero DB calls; parallel calls
-   to the same LLM are allowed by default, restricted per model for finicky
-   providers.
+8. **Cheap at low usage**: a bare broker needs no database at all, and parallel
+   calls to one model are allowed by default and capped only where a provider
+   demands it.
+
+## What it is not
+
+The boundaries are as load-bearing as the requirements: each is a decision, not
+a gap waiting to be filled, and a proposal that crosses one is arguing with the
+mission rather than extending it.
+
+- **Only OpenAI-compatible endpoints are pooled.** Breadth of provider adapters
+  is the neighbouring product's offer, not ours; ours is that the endpoints in
+  one pool are interchangeable enough to fail over between mid-request, which a
+  translation layer per provider would not make more true.
+- **Cost is not an axis.** Nothing is routed by price, and no tokens or spend
+  are counted. The free pool has no prices to compare, and a host reaching its
+  own paid model by name already chose what it is paying for.
+- **Nothing wraps the request itself.** No prompt templates, no agent loop, no
+  embeddings, no retrieval. llmbroker decides who answers; what is asked and
+  what is done with the answer belong to the application.
+- **Free tiers are the provider's terms, not ours.** The keys are the caller's
+  own, and so is the agreement each provider issued them under; llmbroker
+  neither multiplies a quota nor conceals whose it is.
 
 ## Positioning: what keeps llmbroker unique
 
@@ -131,6 +140,14 @@ and no model judging another's answer. A host that has no quality signal gets
 curated ordering and loses nothing else; one that has it — did the JSON parse,
 did the user accept the answer — spends nothing to use it. Scores are per task
 kind, because a model good enough to classify may be too weak to summarize.
+
+**llmbroker serves facts and never a verdict on them.** What the host can see is
+raw: which models are cooling, which keys are missing, how many providers can
+still answer. There is no severity scale, no status enum and no alert stream,
+because how bad a fact is depends on the installation — two providers is a
+crisis for one host and the intended shape for another. The few genuinely
+human-actionable events are log lines; everything else the UI reads and judges
+for itself.
 
 **Errors are a contract, not prose.** One exception carries a machine-readable
 reason for "nothing could answer"; every other failure state a host must handle

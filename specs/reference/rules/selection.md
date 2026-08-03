@@ -90,15 +90,11 @@ the curated lineup does not carry starts below every curated one without needing
 a rule of its own.
 
 **The weight decides where a model starts, never where it stays.** Evidence
-displaces it by shrinkage rather than by a threshold: with no ratings the
-priority is exactly the weight; the weight counts for a fixed number of
-pseudo-ratings against an empty window and proportionally fewer as the window
-fills; a full window leaves the priority equal to the observed mean, with the
-weight contributing nothing. Ratings can therefore reorder the pool freely
-against the curated starting order — no curated position is beyond overturning,
-and a model rated badly enough measures down to the bottom of the scale however
-high it was placed. The fade is monotone: each rating moves the priority toward
-the window's mean and never back.
+displaces it by shrinkage rather than by a threshold — the weight fades as the
+window fills, monotonically, and a full window leaves it contributing nothing.
+So ratings reorder the pool freely against the curated order: no curated
+position is beyond overturning, and a model rated badly enough measures down to
+the bottom of the scale however high it was placed.
 
 Demotion is soft. A demoted slot with no alternative is still acquired, and so
 is a slot whose priority has collapsed: priority orders the pool, it never
