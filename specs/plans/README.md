@@ -9,22 +9,15 @@ over a stale plan, gate on `invoke pre` + `pytest` after every batch, never bump
 never commit unasked, and leave the plan file in place for review. Nothing needs to be restated in
 the request. The plan and its row here are removed only after review and merge, on request.
 
-Statuses as of 2026-08-02: the plan below is implemented and awaiting review — see its
-`## Handover`.
+Statuses as of 2026-08-03: the queue is empty.
 
 ## Order
 
 | # | Plan | Issue | Blocked by | Notes |
 |---|---|---|---|---|
-| 1 | `fileless-broker.md` | — | — | `Broker()` with no config file; `direct=` for paid models; fixes a live defect |
+| — | — | — | — | nothing queued |
 
-## Why this order
-
-**It removes the config file from the common path, and carries a live defect.** A paid
-`[[custom]]` alias is re-pointed at the catalog's current model only on the file branch of `sync`,
-so every database installation sits on the model id it was first synced with, forever and silently.
-That is the same catalog-following machinery `direct=` needs, so it is fixed here rather than
-separately.
+## Standing rules for whatever is queued next
 
 Three rules established by shipped work and binding on what follows:
 
