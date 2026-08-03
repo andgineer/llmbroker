@@ -29,10 +29,6 @@ _TOOL_LOOP_EXHAUSTED = (
 )
 
 
-def is_rate_limit(status_code: int) -> bool:
-    return status_code in (429, 503)
-
-
 def retry_after_seconds(headers: Mapping[str, str], default_sec: int) -> int:
     """Parse ``Retry-After`` as either delay-seconds or an HTTP-date, per RFC 9110."""
     raw = headers.get("Retry-After")

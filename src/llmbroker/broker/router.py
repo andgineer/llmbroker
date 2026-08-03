@@ -24,7 +24,6 @@ from llmbroker.chat import (
     aiter_sse_chunks,
     build_chat_request,
     call_provider,
-    is_rate_limit,
     parse_usage,
     retry_after_seconds,
     stream_delta,
@@ -34,22 +33,21 @@ from llmbroker.exceptions import (
     NoLLMAvailableError,
     StreamInterruptedError,
 )
+from llmbroker.http_status import (
+    DETAIL_SNIPPET,
+    ERROR_FLOOR,
+    is_auth_failure,
+    is_client_error,
+    is_rate_limit,
+    is_unavailable,
+)
 from llmbroker.models import Call, CallStatus, LLMConfig, Usage, key_hash
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.store import StoreProtocol
 
-HTTP_429 = 429
-HTTP_401 = 401
-HTTP_403 = 403
-_HTTP_ERROR_FLOOR = 400
 _DEFAULT_RATE_LIMIT_SEC = 60
-_DETAIL_SNIPPET = 300
 
 logger = logging.getLogger("llmbroker.broker")
-
-
-def _is_client_error(code: int) -> bool:
-    return 400 <= code < 500 and code not in (HTTP_429, HTTP_401, HTTP_403)  # noqa: PLR2004
 
 
 @dataclass(frozen=True)
@@ -119,7 +117,7 @@ async def _stream_deltas(
         asyncio.timeout(timeout) as bound,
         client.stream("POST", url, headers=headers, json=body) as resp,
     ):
-        if resp.status_code >= _HTTP_ERROR_FLOOR:
+        if resp.status_code >= ERROR_FLOOR:
             await resp.aread()
             resp.raise_for_status()
         completions = 0
@@ -169,12 +167,12 @@ _FAILOVER_ERRORS = (
 
 def _classify_status(exc: httpx.HTTPStatusError) -> _Verdict:
     code = exc.response.status_code
-    detail = exc.response.text[:_DETAIL_SNIPPET]
+    detail = exc.response.text[:DETAIL_SNIPPET]
     if is_rate_limit(code):
-        status = CallStatus.RATE_LIMITED if code == HTTP_429 else CallStatus.UNAVAILABLE
+        status = CallStatus.UNAVAILABLE if is_unavailable(code) else CallStatus.RATE_LIMITED
         base = retry_after_seconds(exc.response.headers, _DEFAULT_RATE_LIMIT_SEC)
         return _Verdict(status, detail, http_status=code, cool_base=base)
-    if code in (HTTP_401, HTTP_403):
+    if is_auth_failure(code):
         return _Verdict(
             CallStatus.ERROR,
             detail,
@@ -182,7 +180,7 @@ def _classify_status(exc: httpx.HTTPStatusError) -> _Verdict:
             cool_base=_DEFAULT_RATE_LIMIT_SEC,
             outcome=_Failed(error=None),
         )
-    if _is_client_error(code):
+    if is_client_error(code):
         return _Verdict(CallStatus.ERROR, detail, http_status=code, outcome=_Failed(error=exc))
     return _Verdict(CallStatus.ERROR, detail, http_status=code, cool_base=_DEFAULT_RATE_LIMIT_SEC)
 

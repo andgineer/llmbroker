@@ -15,6 +15,7 @@ from datetime import datetime
 
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.stats import stats_from_calls
+from llmbroker.http_status import is_auth_failure
 from llmbroker.models import Call, CallStatus, LLMMetrics, key_hash
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.store import (
@@ -27,8 +28,6 @@ logger = logging.getLogger("llmbroker.broker")
 
 _REBUILD_TTL = 60.0  # seconds — checked on activity, no background task
 _DEFAULT_QUALITY_REBUILD_LIMIT = 300
-_HTTP_UNAUTHORIZED = 401
-_HTTP_FORBIDDEN = 403
 
 
 def metrics_from_calls(rows: list[Call]) -> dict[str, LLMMetrics]:
@@ -127,7 +126,7 @@ class _LearningHook:
             # propagate, so it must not buy a forced journal re-read: a spent wait
             # budget is caller-triggered and would rebuild on every such call.
             shared = True
-            if call.http_status in (_HTTP_UNAUTHORIZED, _HTTP_FORBIDDEN):
+            if call.http_status is not None and is_auth_failure(call.http_status):
                 cfg = self._pool.configs.get(name)
                 ref = cfg.api_key_ref if cfg else "unknown"
                 await self._pool.drop(name)
@@ -201,7 +200,8 @@ class _LearningHook:
         shared by everyone; 429/401/403 quota failures only where the key hash matches."""
         is_quota_failure = row.status == CallStatus.RATE_LIMITED or (
             row.status == CallStatus.ERROR
-            and row.http_status in (_HTTP_UNAUTHORIZED, _HTTP_FORBIDDEN)
+            and row.http_status is not None
+            and is_auth_failure(row.http_status)
         )
         if not is_quota_failure:
             return True
@@ -220,7 +220,8 @@ class _LearningHook:
                 if current is None or row.cooldown_until > current:
                     cooldowns[row.llm_name] = row.cooldown_until
             if (
-                row.http_status in (_HTTP_UNAUTHORIZED, _HTTP_FORBIDDEN)
+                row.http_status is not None
+                and is_auth_failure(row.http_status)
                 and row.key_hash is not None
                 and row.key_hash == self._own_key_hash(row.llm_name)
             ):

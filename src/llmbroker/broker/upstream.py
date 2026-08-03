@@ -24,6 +24,7 @@ import tomli_w
 
 from llmbroker.broker.catalog import resolve_key
 from llmbroker.exceptions import SyncRefusedError, UnknownModelError
+from llmbroker.http_status import is_permanent
 from llmbroker.models import (
     Call,
     CallStatus,
@@ -46,9 +47,6 @@ _PRESET_URL = (
     "https://raw.githubusercontent.com/andgineer/llmbroker/main/src/llmbroker/presets/{name}.toml"
 )
 _FETCH_TIMEOUT = 10
-_PERMANENT_FAILURES = frozenset(
-    {HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN, HTTPStatus.NOT_FOUND},
-)
 # The tail the broker already reads for stats. A busy pool may push a once-a-day
 # failure out of it; then there is no evidence and the entry stays.
 _EVIDENCE_LIMIT = 1000
@@ -582,7 +580,7 @@ async def dead_entries(
             continue
         if row.status is CallStatus.OK:
             alive.add(row.llm_name)
-        elif row.http_status in _PERMANENT_FAILURES:
+        elif row.http_status is not None and is_permanent(row.http_status):
             # Newest first: the status is what the provider answers now, the
             # timestamp is how far back the run of failures reaches.
             latest.setdefault(row.llm_name, row)

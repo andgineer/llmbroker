@@ -13,7 +13,6 @@ from llmbroker.chat import (
     arun_tool_loop,
     build_chat_request,
     execute_tool_calls,
-    is_rate_limit,
     message_from_response,
     parse_tool_calls,
     parse_usage,
@@ -29,22 +28,6 @@ _CONFIG = LLMConfig(
     model="gpt-4o",
     api_key_ref="K",
 )
-
-
-def test_is_rate_limit_429():
-    assert is_rate_limit(429) is True
-
-
-def test_is_rate_limit_503():
-    assert is_rate_limit(503) is True
-
-
-def test_is_rate_limit_500():
-    assert is_rate_limit(500) is False
-
-
-def test_is_rate_limit_200():
-    assert is_rate_limit(200) is False
 
 
 def test_retry_after_seconds_from_header():

@@ -26,15 +26,10 @@ from llmbroker.exceptions import (
     ProviderError,
     RateLimitError,
 )
+from llmbroker.http_status import DETAIL_SNIPPET, ERROR_FLOOR, is_auth_failure, is_rate_limit
 from llmbroker.models import Usage
 
-_HTTP_ERROR_FLOOR = 400
-_HTTP_401 = 401
-_HTTP_403 = 403
-_HTTP_429 = 429
-_HTTP_503 = 503
 _DEFAULT_TIMEOUT = 60.0
-_DETAIL_SNIPPET = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,9 +51,9 @@ def _messages(prompt: str | None, messages: list[dict] | None) -> list[dict]:
 
 def _provider_error(status: int, detail: str, headers: Mapping[str, str]) -> ProviderError:
     """Map an error HTTP status onto the direct-client error hierarchy."""
-    if status in (_HTTP_401, _HTTP_403):
+    if is_auth_failure(status):
         return AuthError(f"provider rejected the key (HTTP {status})", status=status, detail=detail)
-    if status in (_HTTP_429, _HTTP_503):
+    if is_rate_limit(status):
         retry_after = None
         if headers.get("Retry-After") is not None:
             retry_after = retry_after_seconds(headers, 0)
@@ -85,8 +80,8 @@ def _invalid_stream(model: str, headers: Mapping[str, str]) -> InvalidProviderRe
 
 def _result(resp: httpx.Response, model: str) -> DirectResult:
     """Build a ``DirectResult`` from a completed response, raising on error status."""
-    if resp.status_code >= _HTTP_ERROR_FLOOR:
-        raise _provider_error(resp.status_code, resp.text[:_DETAIL_SNIPPET], resp.headers)
+    if resp.status_code >= ERROR_FLOOR:
+        raise _provider_error(resp.status_code, resp.text[:DETAIL_SNIPPET], resp.headers)
     text, _tool_calls, usage = completion_from_response(resp, model)
     return DirectResult(text=text, usage=usage)
 
@@ -170,8 +165,8 @@ class AsyncDirectClient:
                 json=body,
                 timeout=timeout or self._timeout,
             ) as resp:
-                if resp.status_code >= _HTTP_ERROR_FLOOR:
-                    detail = (await resp.aread()).decode(errors="replace")[:_DETAIL_SNIPPET]
+                if resp.status_code >= ERROR_FLOOR:
+                    detail = (await resp.aread()).decode(errors="replace")[:DETAIL_SNIPPET]
                     raise _provider_error(resp.status_code, detail, resp.headers)
                 completions = 0
                 async for chunk in aiter_sse_chunks(resp):

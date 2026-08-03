@@ -87,3 +87,81 @@ name is implementation detail and does not belong in a spec.
 
 `invoke pre` clean, `python -m pytest` with the same passed-count as before the
 change (no test is added to the count except `test_http_status.py`).
+
+## Handover
+
+### Done
+
+All seven work-order steps. `src/llmbroker/http_status.py` is the single vocabulary
+(`ERROR_FLOOR`, `DETAIL_SNIPPET`, and the predicates `is_rate_limit`, `is_unavailable`,
+`is_auth_failure`, `is_client_error`, `is_permanent`, each with boundary doctests). Every status
+number in the package now lives behind one of them. `chat.is_rate_limit` is gone;
+`router.py`, `direct.py`, `learning.py` and `upstream.py` no longer define status constants and
+read the predicates instead. Step 7's grep over `tests/`/`docs/` found only `tests/test_chat.py`;
+nothing in `docs/` referenced the deleted names.
+
+### Done differently from the plan
+
+- **`http.HTTPStatus` stays imported in `broker/upstream.py`.** The plan asked for its removal
+  along with `_PERMANENT_FAILURES`, but the import has a second, unrelated user: the preset fetch
+  maps `urllib.error.HTTPError.code == HTTPStatus.NOT_FOUND` onto "preset not found". That is a
+  *fetch* status, not a provider status, and belongs to no shared vocabulary. Only
+  `_PERMANENT_FAILURES` was deleted.
+
+- **A sixth predicate, `is_unavailable`, was added for router's inline split.** The plan keeps
+  router's `RATE_LIMITED` / `UNAVAILABLE` choice inline — correct, it is router's own mapping onto
+  a journal status — but the choice still has to test the code. Making that test a predicate
+  obeys the plan's own rule for naming (`is_auth_failure`, not `is_401`): the caller asks "is the
+  provider down, or is this key's quota spent", never "is this 503". A public numeric constant
+  would have been a number-named name in the module that exists to remove them.
+
+- **Predicates take `int`, so the four `Call.http_status` sites guard for `None`.** `http_status`
+  is `int | None`; the old `in (401, 403)` form absorbed `None` silently. Call sites now read
+  `row.http_status is not None and is_auth_failure(row.http_status)` — same truth value, and the
+  predicates stay total functions over an `int` as the plan specified.
+
+- **`tests/test_chat.py` was edited.** The plan says an edit to an existing test means the change
+  is not behavior-neutral — that reading does not hold here: the four `test_is_rate_limit_*` cases
+  imported a symbol step 2 deletes, so they had to move. They are re-covered in
+  `tests/test_http_status.py`. No other existing test changed.
+
+### Decisions taken during implementation
+
+- **`test_http_status.py` asserts over integer ranges inside a test, not by parametrizing over
+  them.** The partition properties (every 4xx is exactly one of the three; nothing outside 4xx is
+  a client error; `is_permanent` is exactly 401/403/404) are each one test that loops. Only the
+  plan's ten-code boundary set is parametrized. Parametrizing a `range()` yields one pytest node
+  per integer — hundreds of nodes asserting the same property, which inflates the suite count
+  without adding a case that could fail independently.
+
+### Deliberately left out
+
+Nothing. No spec update, per the plan's own "Spec updates: None" — `rules/call-path.md` already
+states which codes mean what, and a module name is not spec-worthy.
+
+### Gate
+
+- `invoke pre` — clean (ruff, ruff-format, pyrefly `0 errors`, hygiene hooks).
+- `python -m pytest` — **1177 passed**, zero failures, zero skips. Baseline was 1162: −4
+  (`test_chat.py`) +19 (`test_http_status.py`: 14 cases + 5 doctests). The plan expected an
+  unchanged count outside the new file; the −4 is the moved `is_rate_limit` coverage.
+
+### Review outcome
+
+Reviewed in the implementing session — a self-review, which is a weaker check than an independent
+pass, so it leaned on executable verification rather than inspection:
+
+- **No defects.** All five pre-change predicates were reimplemented verbatim from the parent commit
+  and diffed against the new module over every status in 100–599, together with router's
+  `CallStatus` split: zero divergences.
+- The one place a silent change could have hidden — `_PERMANENT_FAILURES` held `HTTPStatus` enum
+  members and is compared against plain `int`s from the journal — was checked directly: `IntEnum`
+  hashes as its integer value, so the old membership test was already true for 401/403/404 and the
+  rewrite changes no retirement verdict.
+- The only line whose *form* changed rather than its constants (the 429/503 split, condition and
+  branches both inverted) was mutation-tested: inverting it fails 10+ integration tests across all
+  six backend configurations. Covered, if indirectly.
+
+**One open decision for the maintainer:** whether `is_unavailable` should exist. It is a name the
+plan did not ask for, with one caller; it exists so `429` need not appear in `router.py`. The
+alternative is a public numeric constant. Either is defensible — reversing it is a two-line change.
