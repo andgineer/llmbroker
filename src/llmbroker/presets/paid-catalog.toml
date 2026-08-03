@@ -2,7 +2,7 @@
 # Consumed by `llmbroker add-model`.
 #
 # Model ids below were read from each provider's own authoritative docs on the
-# `verified` date. Re-run `presets/paid-catalog-refresh-prompt.md` to refresh
+# `verified` date. Re-run `src/llmbroker/presets/paid-catalog-refresh-prompt.md` to refresh
 # them and add more providers (Mistral, ...).
 # refreshed = "2026-08-01"
 

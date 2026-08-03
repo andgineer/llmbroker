@@ -5,7 +5,7 @@ from collections.abc import Callable
 from llmbroker.broker.learning import resolve_metrics_map
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.result import AsyncLLM
-from llmbroker.models import LLMSnapshot, PoolHealth, PoolSnapshot
+from llmbroker.models import LLMSnapshot, PendingKey, PoolHealth, PoolSnapshot
 from llmbroker.protocols.store import StoreProtocol
 
 
@@ -17,10 +17,12 @@ class PoolView:
         pool: LLMPool,
         store: StoreProtocol,
         health: Callable[[], PoolHealth],
+        direct_missing_keys: Callable[[], tuple[PendingKey, ...]],
     ) -> None:
         self._pool = pool
         self._store = store
         self._health = health
+        self._direct_missing_keys = direct_missing_keys
 
     def get(self, name: str) -> AsyncLLM:
         if name not in self._pool:
@@ -42,4 +44,4 @@ class PoolView:
                 demoted_operations=tuple(self._pool.demoted_operations(name)),
                 metrics=metrics_map.get(name),
             )
-        return PoolSnapshot(result, self._health())
+        return PoolSnapshot(result, self._health(), self._direct_missing_keys())

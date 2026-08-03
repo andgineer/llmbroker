@@ -1,7 +1,7 @@
 # Free-tier LLM provider landscape
 
 The curated knowledge llmbroker ships about the free LLM endpoints it pools. The
-preset TOML (`presets/freetier.toml`) is the source of truth for the live values
+preset TOML (`src/llmbroker/presets/freetier.toml`) is the source of truth for the live values
 that drive routing; this document records the surrounding knowledge — what the
 limit dimensions mean, how the `effort` and `value` axes are defined, and where
 to re-check the numbers when they drift.
@@ -12,7 +12,7 @@ from telemetry or crowdsourcing — the install base is too small for
 crowdsourced numbers to be representative, and there is no live-stats
 pipeline — so refreshing this document is a periodic, human-reviewed
 maintenance action, done by following
-[`../../presets/freetier-refresh-prompt.md`](../../presets/freetier-refresh-prompt.md)
+[`../../src/llmbroker/presets/freetier-refresh-prompt.md`](../../src/llmbroker/presets/freetier-refresh-prompt.md)
 (`invoke catalog-refresh` prints it).
 
 ---

@@ -1,5 +1,15 @@
 # CLI
 
+You need none of this to use llmbroker — `Broker()` fetches the pool itself. The
+commands are here for the key skeleton, and for a config file you want under
+version control.
+
+Every command works offline: a copy of both curated lists ships inside the
+package, so a machine with no network falls back to it rather than failing. That
+copy is frozen at the llmbroker release you installed, so when it is used the
+command says so on stderr — a file you keep should not be silently older than the
+curated list.
+
 ## preset — download a ready-made LLM list
 
 ```bash

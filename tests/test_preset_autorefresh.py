@@ -215,6 +215,34 @@ async def test_a_failed_refresh_warns_and_the_broker_keeps_serving(tmp_path, cap
     assert any("refresh failed" in r.message for r in caplog.records)
 
 
+async def test_a_refresh_that_raises_anything_at_all_still_only_warns(
+    tmp_path,
+    caplog,
+    monkeypatch,
+):
+    """The refresh runs as a detached task, so an exception it does not catch is
+    lost as an unretrieved task exception and the refresh stops for the life of the
+    process — silently. Catching by type list made that a matter of which exception
+    a new code path happened to pick."""
+
+    def _fail(_name: str) -> str:
+        raise RuntimeError("something no caller listed")
+
+    monkeypatch.setattr(upstream, "fetch_preset_text", _fail)
+    await _seeded(tmp_path)
+    broker = _broker(tmp_path)
+    try:
+        with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
+            await broker.ensure_pool()
+            await _settle(broker)
+        assert broker._refresh_task is not None
+        assert broker._refresh_task.exception() is None
+        assert await broker.count() == 1
+    finally:
+        await broker.aclose()
+    assert any("refresh failed" in r.message for r in caplog.records)
+
+
 async def test_a_throttled_fetch_falls_back_to_the_cached_copy(
     tmp_path,
     caplog,
@@ -243,6 +271,39 @@ async def test_a_throttled_fetch_falls_back_to_the_cached_copy(
         await broker.aclose()
     assert any("cached copy" in r.message for r in caplog.records)
     assert _sync_records(caplog, logging.WARNING) == []
+
+
+async def test_a_cold_offline_start_falls_back_to_the_bundled_preset(
+    tmp_path,
+    caplog,
+    bundled_presets,
+):
+    """No network, no cache: the copy in the wheel is the floor under the chain, and
+    it is what makes a first run offline provision at all."""
+    broker = _broker(tmp_path)  # empty registry — the start sync must fill it
+    try:
+        with caplog.at_level(logging.DEBUG, logger="llmbroker.broker"):
+            await broker.ensure_pool()
+        assert await broker.count() > 0
+    finally:
+        await broker.aclose()
+    assert any("bundled copy" in r.message for r in caplog.records)
+
+
+async def test_the_cache_still_wins_over_the_bundled_copy(
+    tmp_path, llmbroker_home, bundled_presets
+):
+    """The bundled preset is a floor, not a source: what the installation last saw
+    upstream is newer than what its wheel was built with."""
+    cache = llmbroker_home / "presets"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "freetier.toml").write_text(_GROWN)
+    broker = _broker(tmp_path)
+    try:
+        await broker.ensure_pool()
+        assert await broker.count() == 2
+    finally:
+        await broker.aclose()
 
 
 async def test_a_successful_fetch_fills_the_cache(tmp_path, fetches, llmbroker_home):

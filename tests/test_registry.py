@@ -78,17 +78,19 @@ def test_load_empty_llms_section(tmp_path):
     assert asyncio.run(Registry(f).load()) == []
 
 
-def test_load_custom_array_flags_and_pool(tmp_path):
+def test_load_custom_array_flags_provenance(tmp_path):
+    """The array an entry sits in is the whole verdict; a legacy `pool` key is a
+    field that no longer exists and loads without complaint."""
     f = tmp_path / "llms.toml"
     f.write_text(
         '[[llms]]\nname="m"\nbase_url="https://x/v1"\nmodel="a"\napi_key_ref="K"\n'
-        '[[custom]]\nname="c-pooled"\nbase_url="https://y/v1"\nmodel="b"\napi_key_ref="K"\n'
-        '[[custom]]\nname="c-direct"\nbase_url="https://z/v1"\nmodel="c"\napi_key_ref="K"\npool=false\n'
+        '[[custom]]\nname="c-plain"\nbase_url="https://y/v1"\nmodel="b"\napi_key_ref="K"\n'
+        '[[custom]]\nname="c-legacy"\nbase_url="https://z/v1"\nmodel="c"\napi_key_ref="K"\npool=true\n'
     )
     configs = {c.name: c for c in asyncio.run(Registry(f).load())}
-    assert (configs["m"].custom, configs["m"].pooled) == (False, True)
-    assert (configs["c-pooled"].custom, configs["c-pooled"].pooled) == (True, True)
-    assert (configs["c-direct"].custom, configs["c-direct"].pooled) == (True, False)
+    assert configs["m"].custom is False
+    assert configs["c-plain"].custom is True
+    assert configs["c-legacy"].custom is True
 
 
 # ── alias ────────────────────────────────────────────────────────────────────
@@ -145,12 +147,11 @@ def test_llmconfig_alias_metadata_round_trip():
         base_url="u",
         model="claude-opus-4-8",
         api_key_ref="K",
-        pooled=False,
         custom=True,
         alias="opus",
     )
     metadata = cfg.to_metadata()
-    assert metadata == {"pool": False, "custom": True, "alias": "opus"}
+    assert metadata == {"custom": True, "alias": "opus"}
     assert (
         LLMConfig.from_metadata(
             name=cfg.name,
@@ -325,12 +326,21 @@ def test_llmconfig_metadata_round_trip_with_parallel():
 
 
 def test_llmconfig_custom_metadata_round_trip():
-    cfg = LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", pooled=False, custom=True)
-    assert cfg.to_metadata() == {"pool": False, "custom": True}
+    cfg = LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", custom=True)
+    assert cfg.to_metadata() == {"custom": True}
     restored = LLMConfig.from_metadata(
-        name="g", base_url="u", model="m", api_key_ref="K", metadata={"pool": False, "custom": True}
+        name="g", base_url="u", model="m", api_key_ref="K", metadata={"custom": True}
     )
     assert restored == cfg
+
+
+def test_llmconfig_ignores_a_stored_pool_flag():
+    """A field that no longer exists: a row written before the pool became `not
+    custom` still loads, it just says nothing."""
+    restored = LLMConfig.from_metadata(
+        name="g", base_url="u", model="m", api_key_ref="K", metadata={"pool": False}
+    )
+    assert restored == LLMConfig(name="g", base_url="u", model="m", api_key_ref="K")
 
 
 def test_llmconfig_metadata_round_trip_without_parallel():
@@ -382,7 +392,6 @@ async def test_mutable_registry_alias_round_trip(mutable_registry):
         base_url="https://x/v1",
         model="claude-opus-4-8",
         api_key_ref="K",
-        pooled=False,
         custom=True,
         alias="opus",
     )
@@ -401,7 +410,6 @@ async def test_mutable_registry_refuses_duplicate_aliases_on_load(mutable_regist
             base_url="https://x/v1",
             model=name,
             api_key_ref="K",
-            pooled=False,
             custom=True,
             alias="opus",
         )

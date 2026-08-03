@@ -10,9 +10,12 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import Enum
+from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger("llmbroker.registry")
+
+_NO_KEY_HELP: Mapping[str, str] = MappingProxyType({})
 
 # Two providers is what "failover" means: one is a single quota with nothing to
 # fall back to. It describes the feature, not a tuning knob.
@@ -67,14 +70,11 @@ class LLMConfig:
     Nothing but ``sync`` writes the registry, and which entries a sync keeps is
     recomputed every time — so there is no retention or curation marker here.
 
-    Two orthogonal flags carry the entry's role:
-
-    * ``pooled`` — pool membership: a ``pooled=False`` entry is left out of the
-      routed pool (no failover onto it) yet stays reachable directly by name.
-    * ``custom`` — provenance: a ``custom=True`` entry is user-owned, not part of
-      the curated preset, so ``sync`` never prunes it. Independent of ``pooled``
-      — a custom entry may be pooled (a user's own extra pool model) or not (a
-      direct-only model such as a paid one).
+    ``custom`` carries the entry's whole role. A ``custom=True`` entry is
+    user-owned: ``sync`` never prunes it, the router never reaches it, and it is
+    called by name through ``direct``. Everything else is the curated pool, which
+    takes no user entries — so pool membership is not a field, it is ``not
+    custom``.
 
     ``alias`` is the entry's eternal handle, set only on custom entries: ``name``
     carries the model version and is rewritten by a catalog refresh, the alias
@@ -89,7 +89,6 @@ class LLMConfig:
     model: str
     api_key_ref: str
     parallel: int | None = None
-    pooled: bool = True
     custom: bool = False
     alias: str | None = None
     weight: float = 0.0
@@ -97,13 +96,10 @@ class LLMConfig:
     def to_metadata(self) -> dict[str, object]:
         """Structured optional config, serialized for the registry's JSON column.
 
-        Only non-default values are stored, so a plain pooled config stays empty.
+        Only non-default values are stored, so a plain pool config stays empty.
 
         >>> LLMConfig(name="g", base_url="https://x/v1", model="m", api_key_ref="K").to_metadata()
         {}
-        >>> paid = LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", pooled=False)
-        >>> paid.to_metadata()
-        {'pool': False}
         >>> followed = LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", alias="opus")
         >>> followed.to_metadata()
         {'alias': 'opus'}
@@ -113,8 +109,6 @@ class LLMConfig:
         metadata: dict[str, object] = {}
         if self.parallel is not None:
             metadata["parallel"] = self.parallel
-        if not self.pooled:
-            metadata["pool"] = False
         if self.custom:
             metadata["custom"] = True
         if self.alias is not None:
@@ -137,8 +131,6 @@ class LLMConfig:
         metadata = metadata or {}
         raw_parallel = metadata.get("parallel")
         parallel = raw_parallel if isinstance(raw_parallel, int) else None
-        raw_pool = metadata.get("pool")
-        pooled = raw_pool if isinstance(raw_pool, bool) else True
         raw_custom = metadata.get("custom")
         custom = raw_custom if isinstance(raw_custom, bool) else False
         raw_alias = metadata.get("alias")
@@ -149,7 +141,6 @@ class LLMConfig:
             model=model,
             api_key_ref=api_key_ref,
             parallel=parallel,
-            pooled=pooled,
             custom=custom,
             alias=alias,
             weight=_weight_from_metadata(metadata.get("weight"), name),
@@ -164,6 +155,18 @@ class PendingKey:
     api_key_ref: str
     help: str
     entry_names: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DeclaredModels:
+    """What ``direct=`` resolved to: the entries, and where to get the keys they want.
+
+    The help travels with the entries because nothing stores a declared model —
+    there is no registry row for a later read to recover it from.
+    """
+
+    configs: tuple[LLMConfig, ...] = ()
+    key_help: Mapping[str, str] = _NO_KEY_HELP
 
 
 @dataclass(frozen=True, slots=True)
@@ -439,7 +442,7 @@ class PoolHealth:
     """How much of the pool can actually serve a request, by provider.
 
     The unit is the ``api_key_ref``: two entries on one ref are one quota and one
-    failure domain. ``missing_keys`` names only refs no pooled entry can use.
+    failure domain. ``missing_keys`` names only refs no managed entry can use.
     """
 
     providers_usable: int = 0
@@ -461,6 +464,7 @@ class PoolSnapshot(Mapping[str, LLMSnapshot]):
 
     _llms: Mapping[str, LLMSnapshot]
     _health: PoolHealth
+    _direct_missing_keys: tuple[PendingKey, ...] = ()
 
     @property
     def providers_usable(self) -> int:
@@ -473,6 +477,17 @@ class PoolSnapshot(Mapping[str, LLMSnapshot]):
     @property
     def missing_keys(self) -> tuple[PendingKey, ...]:
         return self._health.missing_keys
+
+    @property
+    def direct_missing_keys(self) -> tuple[PendingKey, ...]:
+        """Refs the host's own ``direct``-reachable models want and cannot resolve.
+
+        Kept apart from ``missing_keys``: those count the pool's failover capacity,
+        and a model that is never routed can neither degrade it nor be repaired by
+        it. A UI still has to be able to say which key is missing and where it
+        comes from, which is the whole of what this carries.
+        """
+        return self._direct_missing_keys
 
     @property
     def degraded(self) -> bool:

@@ -4,7 +4,7 @@
 methods are the same, just with `await`:
 
 ```python
-async with llmbroker.AsyncBroker("llms.toml") as llms:
+async with llmbroker.AsyncBroker() as llms:
     reply = await llms.ask("Hello")
     print(reply.text)
 ```

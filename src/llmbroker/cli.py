@@ -24,10 +24,11 @@ from llmbroker.broker.stamps import write_stamp
 from llmbroker.broker.upstream import (
     PRESET_NAME_RE,
     FileSyncOutcome,
+    alias_targets_for,
+    cached_preset_text,
     configs_from_data,
     dead_entries,
     entry_block,
-    fetch_preset_text,
     keys_are_visible,
     paid_catalog_text,
     present_refs,
@@ -60,7 +61,7 @@ def _env_source_data(source: str) -> tuple[list[LLMConfig], dict[str, KeyInfo]] 
         )
         return None
     try:
-        text = fetch_preset_text(source)
+        text = cached_preset_text(source, home_dir())
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return None
@@ -98,7 +99,7 @@ def _cmd_env(args: argparse.Namespace) -> int:
 
 def _cmd_preset(args: argparse.Namespace) -> int:
     try:
-        text = fetch_preset_text(args.name)
+        text = cached_preset_text(args.name, home_dir())
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -138,7 +139,7 @@ async def _sync_target(text: str, name: str, target: Path) -> FileSyncOutcome:
         source=name,
         secrets=secrets,
         dead=await dead_entries(candidates, store),
-        fetch_catalog=paid_catalog_text,
+        alias_targets=await alias_targets_for([c.alias for c in current], home_dir()),
     )
 
 
@@ -276,7 +277,7 @@ def _cmd_add_model(args: argparse.Namespace) -> int:  # noqa: PLR0911
         )
         return 1
     try:
-        text = paid_catalog_text()
+        text = paid_catalog_text(home_dir())
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -312,13 +313,7 @@ def _cmd_add_model(args: argparse.Namespace) -> int:  # noqa: PLR0911
         name = _prompt_name(default_name) if interactive else default_name
     else:
         name = f"{prov['id']}-{model_id}"
-    pooled = (
-        _prompt_yes_no("Add to the pool (failover)?", default=bool(args.pool))
-        if interactive
-        else bool(args.pool)
-    )
-
-    return _append_custom_entry(target, prov, model_id, name, alias=alias, pooled=pooled)
+    return _append_custom_entry(target, prov, model_id, name, alias=alias)
 
 
 def _collision(target: Path, existing: dict, name: str, alias: str | None) -> str | None:
@@ -342,14 +337,13 @@ def _collision(target: Path, existing: dict, name: str, alias: str | None) -> st
     return None
 
 
-def _append_custom_entry(  # noqa: PLR0913
+def _append_custom_entry(
     target: Path,
     prov: dict,
     model_id: str,
     name: str,
     *,
     alias: str | None,
-    pooled: bool,
 ) -> int:
     """Append one ``[[custom]]`` block (plus its ``[keys]`` help if the ref is new)
     to ``target``, preserving the rest of the file. Refuses a name or alias collision."""
@@ -371,7 +365,6 @@ def _append_custom_entry(  # noqa: PLR0913
             "model": model_id,
             "base_url": str(prov["base_url"]),
             "api_key_ref": ref,
-            "pool": pooled,
         },
     )
     parts = [entry_block("custom", entry)]
@@ -391,11 +384,6 @@ def _append_custom_entry(  # noqa: PLR0913
 
 def _prompt_name(default: str) -> str:
     return input(f"Entry name [{default}]: ").strip() or default
-
-
-def _prompt_yes_no(label: str, *, default: bool = False) -> bool:
-    raw = input(f"{label} [{'Y/n' if default else 'y/N'}]: ").strip().lower()
-    return default if not raw else raw in ("y", "yes")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -470,11 +458,6 @@ def main(argv: list[str] | None = None) -> int:
         "--name",
         metavar="NAME",
         help="entry name for a --pin entry (default: provider id); invalid without --pin",
-    )
-    addm_p.add_argument(
-        "--pool",
-        action="store_true",
-        help="add to the routed pool (default: direct-only, reached via broker.direct)",
     )
     addm_p.set_defaults(func=_cmd_add_model)
 

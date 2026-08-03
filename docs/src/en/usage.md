@@ -5,21 +5,61 @@ A synchronous script is the simplest scenario. For FastAPI and workers see
 
 ## Model pool
 
-Grab a ready-made pool of free LLMs and generate a `.env` with the keys:
+The pool is the curated list of free LLMs, and you get it by asking for a broker:
+
+```python
+llms = llmbroker.Broker()
+```
+
+There is nothing to create and nothing to keep. Generate the key skeleton and
+fill in whichever keys are easy to get:
+
+```bash
+llmbroker env freetier > .env
+```
+
+`llmbroker env` prints a hint above each key — where to get it. A model without a
+key simply stays inactive, it is not an error. The broker reads the `.env` in your
+working directory; an exported variable wins over it.
+
+For a provider that cannot handle parallel requests on one key, set `parallel = 1`
+on its entry — which means a [config file](#file).
+
+### Your own paid models {#direct}
+
+The pool is exactly the curated free lineup, and nothing you declare ever joins
+it: what the pool sells is failover across interchangeable free endpoints, and
+your company gateway has no business being spilled onto by someone else's 429.
+Your own models are reached by name instead:
+
+```python
+llms = llmbroker.Broker(direct=["opus"])
+llms.direct("opus").ask("...")
+```
+
+`"opus"` is an alias from a curated catalog of paid models — an eternal handle
+that llmbroker keeps pointing at the current generation. Pass an `LLMConfig`
+instead to declare an endpoint of your own, exactly as written. Either way
+nothing is stored: the declaration in your code is the only source of truth.
+See [Direct model calls](direct.md).
+
+### A config file, when you want one {#file}
+
+A file is for a lineup you want under version control and reviewable in a pull
+request — pinned models, your own endpoints, a hand-tuned `weight`:
 
 ```bash
 llmbroker preset freetier > llms.toml
 llmbroker env llms.toml > .env
 ```
 
-`llmbroker env` prints a skeleton with a hint above each key — where to get it.
-Fill in whichever keys are easy to get: a model without a key simply stays
-inactive, it is not an error. The broker reads the `.env` sitting next to
-`llms.toml` on its own; an exported variable wins over it.
+```python
+llms = llmbroker.Broker("llms.toml")
+```
 
-`llms.toml` is a plain TOML list of models; feel free to edit it and add your
-own endpoints. For a provider that cannot handle parallel requests on one key,
-set `parallel = 1` on its entry.
+`llms.toml` is a plain TOML list of models; edit it freely. A file-configured
+broker reads the `.env` sitting next to it, and keeps the file itself current the
+same way — see [below](#sync).
 
 ### Which model is tried first {#weight}
 
@@ -51,8 +91,9 @@ instead of at the bottom where it could never earn its way up.
 
 ### Keeping the pool fresh {#sync}
 
-Providers come and go, and the curated preset follows them. Refreshing your file
-is one command:
+Providers come and go, and the curated preset follows them. You do not have to do
+anything about it — with no config file there is nothing of yours to refresh, and
+with one, refreshing it is a single command:
 
 ```bash
 llmbroker preset freetier --sync llms.toml
@@ -91,14 +132,23 @@ llmbroker.Broker("llms.toml", sync_interval=3600)      # check hourly instead
 
 ### Where llmbroker keeps its own state
 
-Outside your config, llmbroker caches a little of its own: the fetched preset, the
-paid catalog, and when it last checked for an update. That lives in one machine
-directory — `~/Library/Caches/llmbroker` on macOS, `$XDG_CACHE_HOME/llmbroker` on
-Linux, `%LOCALAPPDATA%\llmbroker` on Windows. Point it elsewhere with
-`$LLMBROKER_HOME`, or per broker with `home=`, which is how two projects on one
-machine keep entirely separate state. Nothing in there is authoritative: delete
-it, or run where nothing is writable, and the broker still works — it just
-re-fetches.
+llmbroker keeps a little of its own: the fetched preset, the paid catalog, when it
+last checked for an update — and, when you gave it no config file, the model list
+it runs and its call journal too. That lives in one machine directory —
+`~/Library/Caches/llmbroker` on macOS, `$XDG_CACHE_HOME/llmbroker` on Linux,
+`%LOCALAPPDATA%\llmbroker` on Windows. Point it elsewhere with `$LLMBROKER_HOME`,
+or per broker with `home=`, which is how two projects on one machine keep entirely
+separate state.
+
+None of it is authoritative: delete it, or run where nothing is writable — a
+read-only container — and the broker still works. It re-fetches, and in the
+read-only case simply remembers nothing between runs. Even with no network at all,
+a first run starts on the copy of the preset shipped inside the package.
+
+Sharing one journal per machine is deliberate in the no-config case: your keys
+come from the environment, so the rate limits it remembers really are one pool,
+and scattering the journal per working directory would make every run rediscover
+the same 429. Pass `home=` if you want a project to keep its own.
 
 A `.toml` config is synced from a curated preset only. To roll a vendored config
 out to a database registry instead, see
@@ -150,9 +200,18 @@ for key in snap.missing_keys:
     print(f"{key.api_key_ref} holds back {', '.join(key.entry_names)}")
     print(key.help)                      # where to get it
 
+for key in snap.direct_missing_keys:     # your own models, reached by name
+    print(f"{key.api_key_ref} — direct({key.entry_names[0]!r}) will fail")
+    print(key.help)
+
 for name, llm in snap.items():           # still a mapping of name -> per-model facts
     print(name, llm.has_key, llm.cooldown_until)
 ```
+
+`direct_missing_keys` is separate from `missing_keys` on purpose: a model you
+declared is never routed, so a key it lacks cannot degrade the pool and the pool
+gaining a provider cannot fix it. Both carry the same `help` — from your own
+`[keys]` block if you wrote one, otherwise from the curated catalog.
 
 The unit is the provider, not the model: two entries sharing one API key are one
 quota and count once. A pool with one usable provider is **degraded** — it can

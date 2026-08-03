@@ -30,6 +30,8 @@ from pathlib import Path
 
 import httpx
 
+from llmbroker.backends.inmemory import InMemoryDriver
+from llmbroker.backends.ports import DriverRegistry
 from llmbroker.broker.catalog import Catalog, resolve_key
 from llmbroker.broker.learning import _LearningHook
 from llmbroker.broker.pool import LLMPool
@@ -40,14 +42,18 @@ from llmbroker.broker.source import resolve_source
 from llmbroker.broker.stamps import stamp_age, write_stamp
 from llmbroker.broker.stats import stats_from_calls
 from llmbroker.broker.upstream import (
+    AliasTarget,
     SyncSource,
+    alias_targets_for,
     check_not_emptying,
     dead_entries,
     keys_are_visible,
     load_sync_source,
     merge_upstream,
-    paid_catalog_text,
     present_refs,
+    refresh_alias_configs,
+    refresh_cached_preset,
+    resolve_declared,
     retirement_candidates,
     sync_file,
 )
@@ -64,6 +70,7 @@ from llmbroker.home import home_dir
 from llmbroker.models import (
     AsyncResourceProtocol,
     Call,
+    DeclaredModels,
     LifecyclePhase,
     LLMConfig,
     LLMStats,
@@ -84,13 +91,14 @@ from llmbroker.protocols.store import (
 )
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import Secrets, as_secrets
-from llmbroker.standalone.store import FileStore
+from llmbroker.standalone.store import FileStore, InMemoryStore
 
 logger = logging.getLogger("llmbroker.broker")
 
 _DEFAULT_STATS_LIMIT = 1000
 _DEFAULT_SYNC_INTERVAL = 86_400.0  # seconds
 _DEFAULT_SYNC_SOURCE = "freetier"
+_PAID_CATALOG = "paid-catalog"
 
 
 def _default_secrets(registry: RegistryProtocol) -> SecretsProtocol:
@@ -109,6 +117,28 @@ def _default_store(registry: RegistryProtocol) -> StoreProtocol:
     if isinstance(registry, Registry):
         return FileStore(registry.path.parent / "store")
     return FileStore(Path("store"))
+
+
+def _zero_config_ports(
+    home: Path | None,
+) -> tuple[RegistryProtocol, SecretsProtocol, StoreProtocol]:
+    """The installation ``Broker()`` builds for itself when given no source at all:
+    the curated pool in the home directory, keys from the environment with the
+    working directory's ``.env`` behind them, one journal per machine.
+
+    That journal is machine-global on purpose rather than by compromise. Keys here
+    come from the environment, so the quota it tracks really is one pool; a journal
+    scattered per working directory would make every run rediscover the same 429 and
+    pay for it again. Two projects on genuinely different keys are already separated
+    by the key hash, and ``home=`` separates everything else.
+
+    Nowhere writable is a supported outcome: the broker then keeps its lineup and
+    its journal in memory and simply remembers nothing between runs.
+    """
+    secrets = Secrets(Path(".env"))
+    if home is None:
+        return DriverRegistry(InMemoryDriver()), secrets, InMemoryStore()
+    return Registry(home / "lineup.toml"), secrets, FileStore(home / "store")
 
 
 def _file_target_path(registry: Registry) -> Path:
@@ -160,21 +190,25 @@ def _find_custom(configs: list[LLMConfig], alias: str | None, name: str | None) 
     raise UnknownModelError(f"no model named {name!r} in the registry")
 
 
-def _check_broker_args(
-    scope: str | None,
-    sync_interval: float,
-    registry: RegistryProtocol | str | Path | None,
-) -> None:
+def _check_broker_args(scope: str | None, sync_interval: float) -> None:
     if scope == "":
         raise ValueError("scope must not be empty string; use None for unscoped")
     if sync_interval < 0:
         raise ValueError("sync_interval must not be negative")
-    if registry is None:
-        raise ValueError("AsyncBroker requires a `registry` source")
 
 
 class AsyncBroker:
     """Façade over the LLM pool: route completions, inspect state, edit the catalog.
+
+    ``registry`` is the data source, and *no* source is a source: with none given
+    the broker runs the curated free pool, resolving keys from the environment and
+    keeping its lineup and journal in the home directory.
+
+    ``direct`` declares paid models in two forms and no others: a paid-catalog
+    alias (``"opus"``), whose version llmbroker tracks, or a full ``LLMConfig``,
+    whose version the caller tracks. They are reached with ``broker.direct(...)``
+    and are never routed by the pool. Nothing is written for them — they are
+    re-resolved at every provision, which is what keeps an alias current.
 
     ``have_keys`` declares refs this installation has a key for but the broker
     cannot probe — per-user keys behind ``scope``, a secret injected only in
@@ -204,12 +238,16 @@ class AsyncBroker:
         sync: str | Path | None = _DEFAULT_SYNC_SOURCE,
         sync_interval: float = _DEFAULT_SYNC_INTERVAL,
         home: str | Path | None = None,
+        direct: Sequence[str | LLMConfig] = (),
     ) -> None:
-        _check_broker_args(scope, sync_interval, registry)
+        _check_broker_args(scope, sync_interval)
+        self._home = home_dir(home)
         source_secrets: SecretsProtocol | None = None
         source_store: StoreProtocol | None = None
         source_label: str | None = None
-        if isinstance(registry, (str, Path)):
+        if registry is None:
+            registry, source_secrets, source_store = _zero_config_ports(self._home)
+        elif isinstance(registry, (str, Path)):
             source_label = str(registry)
             registry, source_secrets, source_store = resolve_source(registry)
 
@@ -233,9 +271,17 @@ class AsyncBroker:
         self._scope = scope
         self._have_keys = have_keys
 
+        self._declared = tuple(direct)
+        self._last_declared: DeclaredModels | None = None
         pool = LLMPool(optimizer=self._optimizer)
         self._pool = pool
-        self._catalog = Catalog(registry, secrets, pool, scope=scope)
+        self._catalog = Catalog(
+            registry,
+            secrets,
+            pool,
+            scope=scope,
+            overlay=self._resolve_declared if self._declared else None,
+        )
 
         self._learning_hook: _LearningHook | None = None
         effective_store: StoreProtocol
@@ -252,9 +298,13 @@ class AsyncBroker:
 
         self._store = effective_store
         self._router = Router(pool, effective_store, scope=scope, optimizer=self._optimizer)
-        self._pool_view = PoolView(pool, effective_store, lambda: self._catalog.health)
+        self._pool_view = PoolView(
+            pool,
+            effective_store,
+            lambda: self._catalog.health,
+            lambda: self._catalog.direct_missing_keys,
+        )
 
-        self._home = home_dir(home)
         self._source_label = source_label
         self._sync_source = sync
         self._sync_interval = sync_interval
@@ -269,6 +319,38 @@ class AsyncBroker:
         self._last_underprov_alert: float = float("-inf")
         self._underprov_alert_interval: float = 60.0
         self._direct_http: httpx.AsyncClient | None = None
+
+    async def _resolve_declared(self) -> DeclaredModels:
+        """Re-resolve ``direct=``, keeping the resolution already in use when the
+        catalog cannot be read or no longer carries an alias.
+
+        The first resolution raises — a typo must be loud at start-up, and there is
+        nothing to fall back to. Every later one is a refresh, and a refresh that
+        cannot see upstream has nothing to say about where an alias points: the
+        same rule the stored ``[[custom]]`` half already follows. Without it a
+        catalog that dropped an alias, or a fetch that failed where nothing is
+        writable, would break calls the previous resolution was serving fine.
+        """
+        previous = self._last_declared
+        try:
+            resolved = await resolve_declared(
+                self._declared,
+                self._home,
+                bundled=previous is None,
+            )
+        except (UnknownModelError, ValueError, OSError) as exc:
+            if previous is None:
+                raise
+            logger.warning(
+                "paid catalog: %s — declared models stay on the resolution already in use",
+                exc,
+            )
+            return previous
+        self._last_declared = resolved
+        return resolved
+
+    def _follows_an_alias(self) -> bool:
+        return any(isinstance(item, str) for item in self._declared)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -316,18 +398,47 @@ class AsyncBroker:
         needs nothing, and its remainder carries into this process. Otherwise the
         pool is provisioned from what is stored and the refresh runs afterwards, off
         the request path.
+
+        A broker that syncs no lineup still arms the clock when it follows an
+        alias: the paid catalog is what that alias resolves through, and it goes
+        stale on its own schedule.
         """
-        if self._sync_source is None or self._sync_attempted:
+        if self._sync_attempted:
             return
         self._sync_attempted = True
+        if self._sync_source is None:
+            if self._follows_an_alias():
+                self._arm_refresh(_PAID_CATALOG)
+            return
         if not await self._registry.load():
             await self._attempt_sync("start")
             return
-        age = stamp_age(self._home, self._stamp_key(self._sync_source))
-        if age is not None and age < self._sync_interval:
-            self._next_refresh = time.monotonic() + (self._sync_interval - age)
+        self._arm_refresh(self._sync_source)
+
+    def _arm_refresh(self, source: str | Path) -> None:
+        age = stamp_age(self._home, self._stamp_key(source))
+        self._next_refresh = (
+            time.monotonic() + (self._sync_interval - age)
+            if age is not None and age < self._sync_interval
+            else 0.0
+        )
+
+    async def _refresh_paid_catalog(self) -> None:
+        """Keep the cached paid catalog current on the refresh clock.
+
+        A declared alias resolves through that cache, so without this an
+        installation that syncs no lineup would follow whatever version its wheel
+        shipped with for as long as the release stayed installed. Where a lineup
+        *is* synced this is redundant — ``sync`` reads the catalog itself.
+        """
+        if not self._follows_an_alias():
             return
-        self._next_refresh = 0.0
+        if self._home is not None:
+            await asyncio.to_thread(refresh_cached_preset, _PAID_CATALOG, self._home)
+            write_stamp(self._home, self._stamp_key(_PAID_CATALOG))
+        # With nowhere to cache, the resolution below fetches for itself; warming
+        # a cache that cannot be written would only fetch the same body twice.
+        self._catalog.invalidate_declared()
 
     async def _attempt_sync(self, reason: str) -> None:
         """Best-effort by construction: a refresh that cannot be fetched or cannot
@@ -336,14 +447,19 @@ class AsyncBroker:
         explicit ``sync()`` call raises instead — that caller has a plan.
         """
         source = self._sync_source
-        if source is None:
-            return
         try:
-            await self.sync(source)
+            if source is None:
+                await self._refresh_paid_catalog()
+            else:
+                await self.sync(source)
         except SyncRefusedError as exc:
             self.last_sync_report = exc.report
             logger.warning("sync %s refused, continuing on the current config: %s", reason, exc)
-        except (ValueError, OSError) as exc:
+        # Broad on purpose: this runs as a detached task, so anything not caught
+        # here is lost as an unretrieved task exception and the refresh silently
+        # stops for the life of the process. Catching by type list made that a
+        # matter of which exception a new code path happened to pick.
+        except Exception as exc:  # noqa: BLE001 - a refresh may not fail the process
             logger.warning("sync %s failed, continuing on the current config: %s", reason, exc)
         finally:
             self._next_refresh = time.monotonic() + self._sync_interval
@@ -377,10 +493,27 @@ class AsyncBroker:
         already provisioned a real change takes effect immediately.
         """
         src = await load_sync_source(source, cache_dir=self._home)
+        current = await self._registry.load()
+        # One place for both targets: a [[custom]] alias entry follows the catalog
+        # whether this installation keeps its lineup in a file or in a database. A
+        # `direct=` alias is stored nowhere and needs no refresh here, but it is
+        # what keeps the cached catalog current for the provision that resolves it.
+        targets = await alias_targets_for(
+            [*(c.alias for c in current), *(d for d in self._declared if isinstance(d, str))],
+            self._home,
+        )
+        # The read above refreshed the cached catalog, which is where a declared
+        # model resolves from: this is the clock it follows.
+        self._catalog.invalidate_declared()
         if isinstance(self._registry, Registry):
-            report, changed = await self._sync_file_target(src, _file_target_path(self._registry))
+            report, changed = await self._sync_file_target(
+                src,
+                _file_target_path(self._registry),
+                current,
+                targets,
+            )
         else:
-            report, changed = await self._sync_registry_target(src)
+            report, changed = await self._sync_registry_target(src, current, targets)
         if changed and isinstance(self._base_store, DisabledMapProtocol):
             configs = await self._registry.load()
             await self._base_store.seed_disabled([c.name for c in configs])
@@ -421,7 +554,24 @@ class AsyncBroker:
         )
         return await dead_entries(candidates, self._base_store)
 
-    async def _sync_file_target(self, src: SyncSource, target: Path) -> tuple[SyncReport, bool]:
+    def _log_alias_lines(
+        self,
+        label: str,
+        notices: tuple[str, ...],
+        warnings: tuple[str, ...],
+    ) -> None:
+        for notice in notices:
+            logger.info("sync %s: %s", label, notice)
+        for warning in warnings:
+            logger.warning("sync %s: %s", label, warning)
+
+    async def _sync_file_target(
+        self,
+        src: SyncSource,
+        target: Path,
+        current: list[LLMConfig],
+        targets: Mapping[str, AliasTarget],
+    ) -> tuple[SyncReport, bool]:
         if not src.preset or src.text is None:
             raise ValueError(
                 f"cannot sync {src.label} into the file registry {target}: a .toml registry"
@@ -429,7 +579,6 @@ class AsyncBroker:
                 " registry source syncs into a database registry — the vendored-lockfile"
                 " deploy path",
             )
-        current = await self._registry.load()
         present = await self._present_refs(src.configs, current)
         outcome = await sync_file(
             src.text,
@@ -439,19 +588,22 @@ class AsyncBroker:
             scope=self._scope,
             have_keys=self._have_keys,
             dead=await self._dead(src.configs, current, present),
-            fetch_catalog=paid_catalog_text,
+            alias_targets=targets,
         )
         # Outside the identity gate: a key that arrived in the environment is
         # bootstrapped by a sync whether or not the lineup itself moved.
         await self._catalog.seed_secrets(list(outcome.configs))
-        for notice in outcome.notices:
-            logger.info("sync %s: %s", src.label, notice)
-        for warning in outcome.warnings:
-            logger.warning("sync %s: %s", src.label, warning)
+        self._log_alias_lines(src.label, outcome.notices, outcome.warnings)
         return outcome.report, outcome.changed
 
-    async def _sync_registry_target(self, src: SyncSource) -> tuple[SyncReport, bool]:
-        current = await self._registry.load()
+    async def _sync_registry_target(
+        self,
+        src: SyncSource,
+        stored: list[LLMConfig],
+        targets: Mapping[str, AliasTarget],
+    ) -> tuple[SyncReport, bool]:
+        current, refresh = refresh_alias_configs(stored, targets)
+        self._log_alias_lines(src.label, refresh.notices, refresh.warnings)
         current_keys = (
             await self._registry.key_info() if isinstance(self._registry, KeyInfoProtocol) else {}
         )
@@ -468,10 +620,12 @@ class AsyncBroker:
             keys_scoped=self._scope is not None,
         )
         check_not_emptying(merged, current, report)
-        # Keyed by name rather than compared as lists: a database registry hands
-        # its rows back ordered by name, so position here is the backend's, not
-        # the lineup's, and would report every no-op sync as a change.
-        changed = {c.name: c for c in merged} != {c.name: c for c in current}
+        # Against what is stored, not against the alias-refreshed copy: a catalog
+        # move is a change and has to reach the registry. Keyed by name rather than
+        # compared as lists — a database registry hands its rows back ordered by
+        # name, so position here is the backend's, not the lineup's, and would
+        # report every no-op sync as a change.
+        changed = {c.name: c for c in merged} != {c.name: c for c in stored}
         if changed:
             await self._catalog.apply(merged)
         else:
@@ -614,14 +768,15 @@ class AsyncBroker:
                 "direct() takes exactly one of alias (positional) or name= —"
                 " they are separate keyspaces",
             )
-        configs = await self._registry.load()
+        configs = await self._catalog.entries()
         cfg = _find_custom(configs, alias, name)
         ref = alias if alias is not None else name
         key = await resolve_key(self._secrets, cfg.api_key_ref, self._scope)
         if key is None:
+            hint = self._catalog.key_help(cfg.api_key_ref)
             raise MissingKeyError(
                 f"api_key_ref {cfg.api_key_ref!r} for model {ref!r} could not be resolved"
-                " — set the env var or configure a secrets backend",
+                " — set the env var or configure a secrets backend" + (f". {hint}" if hint else ""),
             )
         return cfg, key
 

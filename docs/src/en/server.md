@@ -50,6 +50,11 @@ A `.toml` registry is synced from a curated preset name; anything else is refuse
 before the write, because rendering an arbitrary source into a live config file
 duplicates its `[[custom]]` blocks.
 
+`sync` also keeps a paid alias current here. A `[[custom]]` entry that follows a
+catalog alias is re-pointed at the version the catalog now recommends on every
+sync, in a database registry exactly as in a file — so a long-lived installation
+does not sit on the model id it was first deployed with.
+
 `sync` never takes away a model this installation can call. A model whose
 provider the new lineup drops is removed when the same provider replaces it, when
 this installation has no key for it, or when your own call journal proves it dead

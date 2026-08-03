@@ -158,12 +158,24 @@ class _LearningHook:
             return
         self._next_rebuild = now + _REBUILD_TTL
         if resync_registry:
-            await self._resync_registry()
+            await self._safe_resync_registry()
         if isinstance(self._inner, QueryableStoreProtocol):
             rows = await self._inner.calls(limit=self._quality_rebuild_limit)
             self._apply_scores_and_metrics(rows)
             await self._apply_peer_effects(rows)
         await self._resync_disabled()
+
+    async def _safe_resync_registry(self) -> None:
+        """Picking up another process's edits must never fail the call that carried
+        it here: this runs off ``record()``, so anything raised would surface out of
+        the user's own ``ask`` — and a rate limit, the commonest trigger of all, is
+        exactly what the pool exists to absorb. A registry nobody can read leaves
+        the pool as it is.
+        """
+        try:
+            await self._resync_registry()
+        except Exception:  # noqa: BLE001 - a background re-read may not break a request
+            logger.exception("registry resync failed, continuing on the current pool")
 
     def _own_key_hash(self, name: str) -> str | None:
         if not self._pool.has_key(name):

@@ -264,14 +264,39 @@ resulting cost estimate. The current behavior rules themselves live in
   spillover; a stateless process starts informed (first journal read). The
   shared fail-streak is the count of recent failing rows. There is no
   separate state-store subsystem or Redis backend.
-- **The data source is given by a single parameter**:
-  `Broker("config.toml")` / `Broker("llm.db")` / `Broker("postgresql://…")`
-  / `Broker("mongodb://…")` — recognized by scheme/extension (`.toml`,
-  `.db`/`sqlite://`, otherwise a clear error), the driver is imported
-  lazily. Registry + store + secrets are all derived from the source;
-  `secrets=` / `store=` / `registry=` remain for mixed configurations
-  (Vault, in-memory, etc.). The saving is conceptual, not in lines
-  (~zero).
+- **The data source is given by a single parameter, and no parameter is one
+  of the forms**: `Broker()` / `Broker("config.toml")` / `Broker("llm.db")` /
+  `Broker("postgresql://…")` / `Broker("mongodb://…")` — recognized by
+  scheme/extension (`.toml`, `.db`/`sqlite://`, otherwise a clear error), the
+  driver is imported lazily. Registry + store + secrets are all derived from
+  the source; `secrets=` / `store=` / `registry=` remain for mixed
+  configurations (Vault, in-memory, etc.). The saving is conceptual, not in
+  lines (~zero).
+- **The zero-config broker is the default, and the config file is for the
+  people it is actually for.** The file used to be mandatory for everyone
+  while carrying a decision for almost nobody: materializing the curated
+  preset by hand is a ritual with no choice in it, and now that the lineup
+  refreshes itself there is nothing in the copy to maintain either — asking
+  the user to keep one is asking them to hold our state. So `Broker()` runs
+  the curated pool out of the home directory, and a file stays the right
+  answer for a lineup a team wants under version control and reviewable in a
+  pull request. Rejected with it: **selecting curated pool models**
+  (`models=[…]`), because free-tier entry names carry the model version and
+  are rewritten on every bump, so selection by name would need a permanent
+  per-entry handle the preset does not have and the curator would have to
+  guarantee forever — and the case is thin, since a model with no key is
+  already inactive and never routed.
+- **Nothing a user declares enters the pool, and declared models are resolved
+  rather than stored.** The pool is exactly the curated lineup: what it sells
+  is failover across interchangeable free providers, and a self-hosted
+  endpoint or company gateway dropped into it would be spilled onto by a 429
+  it has nothing to do with. So pool membership is not a field — it is "not
+  the host's own" — and a field that is always another field's negation is
+  removed rather than kept as a way to disagree with yourself later. A model
+  declared in code is overlaid on the registry at provision and re-resolved
+  from the paid catalog every time, never written: storing it would create
+  two sources of truth for one list (the constructor call and the stored row)
+  and re-introduce exactly the drift alias-following exists to prevent.
 - **Storage layer**: one narrow per-DB `Driver` protocol plus generic ports
   (registry, store, secrets), written once. Behavior tests are written
   once; backends are covered via parameterized fixtures and a conformance
@@ -343,7 +368,7 @@ Line estimates for the design as built (pre-simplification `src` ≈ 6000).
 | Learning per (model, op) + selection order | 2, 3 | score windows, Wilson bound; demoted-for-operation go to the back; verdicts from the journal tail on a 60s debounce | 170 (optimizer) | shared tail read / 60s of activity |
 | Store: journal + disabled-doc | 5, 3 | insert per call; a score is a separate record everywhere (the journal is strictly append-only); verdicts — a tiny "name → bool" doc; automatic 3-month journal retention | in the ports | 1 insert |
 | Cluster shared cooldown | 6 | from the journal: a failing row carries `cooldown_until`; same tail read + on one's own failure | ~0 (in rebuild) | 0 extra |
-| Picking up admin/cluster edits | 2, 4 | registry and disabled-doc re-read on the same debounce; the key table only when a pooled ref has no key | ~10 | 1 tiny read / 60s of activity, 2 while a key is missing |
+| Picking up admin/cluster edits | 2, 4 | registry and disabled-doc re-read on the same debounce; the key table only when a managed ref has no key | ~10 | 1 tiny read / 60s of activity, 2 while a key is missing |
 | Explicit `sync(source)` + secrets bootstrap | 2 | add/update, and a removal only when the same provider replaces it, no key for it exists here, or the journal proves it dead; changing `model` identity is an error | 80 (catalog) | on call |
 | Merge engine + `SyncReport` | 2, 5 | provider-unit retirement with journal evidence, key-presence probe, file/registry writers; raw facts back to the caller and one log line per run | 400 (upstream) | 0 outside an explicit sync; one bounded journal read only when a provider was retired |
 | Snapshot: raw fields + metrics + pool health | 5 | pull via `snapshot()`: `disabled`, `has_key`, `cooldown_until`, `demoted_operations`; metrics from the cached tail; provider counts and missing keys from the last reconcile, sharing the `degraded` predicate with the alarm; events go to the log | 60 | 0 |

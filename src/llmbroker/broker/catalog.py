@@ -5,11 +5,13 @@ backend, and reflects every change into the ``LLMPool``. ``apply`` is the only
 registry write path; what it writes is decided in ``broker.upstream``.
 """
 
+import asyncio
 import logging
+from collections.abc import Awaitable, Callable, Sequence
 
 from llmbroker.broker.pool import LLMPool
 from llmbroker.exceptions import EmptyRegistryError
-from llmbroker.models import KeyInfo, LLMConfig, PendingKey, PoolHealth
+from llmbroker.models import DeclaredModels, KeyInfo, LLMConfig, PendingKey, PoolHealth
 from llmbroker.protocols.registry import (
     KeyInfoProtocol,
     MutableRegistryProtocol,
@@ -50,6 +52,43 @@ async def resolve_key(
     return await _resolve_non_empty(secrets, api_key_ref)
 
 
+def check_overlay(stored: list[LLMConfig], declared: list[LLMConfig]) -> None:
+    """A model declared in code must not claim a handle the registry already uses.
+
+    Two sources for one name is the case a registry's own uniqueness rules cannot
+    see, so it is named here — with both sides, since the only fix is to drop one.
+    """
+    names = {c.name for c in stored}
+    aliases = {c.alias for c in stored if c.alias is not None}
+    seen_names: set[str] = set()
+    seen_aliases: set[str] = set()
+    for cfg in declared:
+        # The alias first: it is the word the caller actually typed, while a name
+        # resolved from it carries a model version they never saw.
+        if cfg.alias is not None and cfg.alias in seen_aliases:
+            raise ValueError(
+                f"direct= declares the alias {cfg.alias!r} twice — an alias names"
+                " exactly one entry",
+            )
+        if cfg.name in seen_names:
+            raise ValueError(
+                f"direct= declares {cfg.name!r} twice — drop one of the two entries",
+            )
+        if cfg.name in names:
+            raise ValueError(
+                f"direct= declares {cfg.name!r}, and the registry already carries an"
+                " entry of that name — drop one of the two declarations",
+            )
+        if cfg.alias is not None:
+            if cfg.alias in aliases:
+                raise ValueError(
+                    f"direct= declares the alias {cfg.alias!r}, and the registry already"
+                    " carries an entry with it — an alias names exactly one entry",
+                )
+            seen_aliases.add(cfg.alias)
+        seen_names.add(cfg.name)
+
+
 class Catalog:
     """Reconciles the persistent registry into the live pool, and mirrors presets into it."""
 
@@ -60,14 +99,20 @@ class Catalog:
         pool: LLMPool,
         *,
         scope: str | None,
+        overlay: "Callable[[], Awaitable[DeclaredModels]] | None" = None,
     ) -> None:
         self._registry = registry
         self._secrets = secrets
         self._pool = pool
         self._scope = scope
+        self._overlay = overlay
+        self._declared: DeclaredModels | None = None
+        self._declared_lock = asyncio.Lock()
         self._health = PoolHealth()
+        self._direct_missing_keys: tuple[PendingKey, ...] = ()
         self._key_info: dict[str, KeyInfo] = {}
         self._reported_state: int | None = None
+        self._reported_missing: set[str] = set()
 
     @property
     def health(self) -> PoolHealth:
@@ -75,18 +120,67 @@ class Catalog:
         degradation alarm uses, so log and admin UI cannot diverge."""
         return self._health
 
+    @property
+    def direct_missing_keys(self) -> tuple[PendingKey, ...]:
+        """Refs the host's own ``direct``-reachable entries want and cannot resolve."""
+        return self._direct_missing_keys
+
     def key_help(self, ref: str) -> str:
-        return self._key_info[ref].help if ref in self._key_info else ""
+        """Where this ref's key comes from: the registry's own ``[keys]`` first —
+        a host that wrote its own hint means it — then the paid catalog's."""
+        stored = self._key_info[ref].help if ref in self._key_info else ""
+        if stored:
+            return stored
+        return self._declared.key_help.get(ref, "") if self._declared is not None else ""
+
+    def invalidate_declared(self) -> None:
+        """Drop the resolved overlay so the next read follows the catalog again."""
+        self._declared = None
+
+    async def entries(self) -> list[LLMConfig]:
+        """The stored lineup with the models declared in code overlaid.
+
+        Declared models are code and are never written; what keeps a followed
+        alias on the catalog's current version is re-resolving it whenever the
+        catalog is refreshed. That is the clock, not this read: ``direct()``
+        comes through here on every call and must not pay a catalog parse.
+        """
+        configs = await self._registry.load()
+        if self._overlay is None:
+            return configs
+        declared = await self._resolve_overlay()
+        check_overlay(configs, declared.configs)
+        return [*configs, *declared.configs]
+
+    async def _resolve_overlay(self) -> DeclaredModels:
+        """Resolve ``direct=`` once, however many callers arrive together.
+
+        Serialized because the refresh drops the resolution and the callers that
+        find it gone are requests: without the lock every one of them in flight
+        would read and parse the catalog for itself, and where nothing is
+        writable each of those reads is its own network fetch.
+        """
+        if self._declared is not None:
+            return self._declared
+        async with self._declared_lock:
+            if self._declared is None and self._overlay is not None:
+                declared = await self._overlay()
+                # The same bootstrap the stored lineup gets from `sync`: a key the
+                # environment has must reach a writable secrets backend, or a
+                # declared model is unusable there while its stored twin works.
+                await self.seed_secrets(declared.configs)
+                self._declared = declared
+            return self._declared if self._declared is not None else DeclaredModels()
 
     async def provision(self) -> None:
         """Reconcile the pool with the registry. The caller serializes this
-        one-time init; it is not re-entrant. Raises if the registry is empty."""
-        configs = await self._registry.load()
+        one-time init; it is not re-entrant. Raises when there is nothing at all."""
+        configs = await self.entries()
         if not configs:
             raise EmptyRegistryError(
-                "registry is empty — sync a lineup into it before provisioning, e.g."
-                ' `await broker.sync("freetier")` from your own entrypoint, or open the'
-                ' broker with AsyncBroker(..., sync="freetier")',
+                "registry is empty — no lineup is stored and none could be fetched."
+                ' Fill it with `await broker.sync("freetier")`, or from a deploy job,'
+                " or check network access to the preset catalog",
             )
         await self._reconcile(configs)
 
@@ -96,28 +190,27 @@ class Catalog:
         Called by the debounced journal rebuild so registry edits and key changes
         from other processes/nodes take effect on a running broker.
         """
-        configs = await self._registry.load()
-        await self._reconcile(configs)
+        await self._reconcile(await self.entries())
 
     async def _reconcile(self, configs: list[LLMConfig]) -> None:
-        """Reconcile only the pooled entries into the live pool. ``pooled=False``
-        entries stay in the registry (reachable via ``broker.direct``) but never
-        join the routed pool."""
-        pooled = [c for c in configs if c.pooled]
-        names = {c.name for c in pooled}
+        """Reconcile the managed entries into the live pool. A custom entry stays
+        in the registry (reachable via ``broker.direct``) and never joins it."""
+        managed = [c for c in configs if not c.custom]
+        names = {c.name for c in managed}
         for name in list(self._pool.configs):
             if name not in names:
                 await self._pool.drop(name)
-        for order, cfg in enumerate(pooled):
+        for order, cfg in enumerate(managed):
             await self._pool.add(cfg, await self._resolve_key(cfg), order=order)
-        self._health = await self._measure(pooled)
+        await self._measure(managed, [c for c in configs if c.custom])
         self._report_health()
+        self._report_missing_keys()
 
-    async def _measure(self, pooled: list[LLMConfig]) -> PoolHealth:
+    async def _measure(self, managed: list[LLMConfig], direct: list[LLMConfig]) -> None:
         usable: set[str] = set()
         missing: dict[str, list[str]] = {}
         total: set[str] = set()
-        for cfg in pooled:
+        for cfg in managed:
             if not cfg.api_key_ref:
                 continue
             total.add(cfg.api_key_ref)
@@ -126,17 +219,37 @@ class Catalog:
             else:
                 missing.setdefault(cfg.api_key_ref, []).append(cfg.name)
         held_back = {ref: names for ref, names in missing.items() if ref not in usable}
-        # Help text is read only for a ref that is missing, so a fully-keyed pool
-        # — the common case — costs no registry read at all.
-        if held_back and isinstance(self._registry, KeyInfoProtocol):
+        direct_held = await self._direct_without_keys(direct)
+        # Help text is read only for a ref that is missing, so a fully-keyed
+        # installation — the common case — costs no registry read at all.
+        if (held_back or direct_held) and isinstance(self._registry, KeyInfoProtocol):
             self._key_info = await self._registry.key_info()
-        return PoolHealth(
+        self._health = PoolHealth(
             providers_usable=len(usable),
             providers_total=len(total),
-            missing_keys=tuple(
-                PendingKey(api_key_ref=ref, help=self.key_help(ref), entry_names=tuple(names))
-                for ref, names in held_back.items()
-            ),
+            missing_keys=self._pending(held_back),
+        )
+        self._direct_missing_keys = self._pending(direct_held)
+
+    async def _direct_without_keys(self, direct: list[LLMConfig]) -> dict[str, list[str]]:
+        """Which refs the host's own entries want and cannot resolve.
+
+        Named by the handle the caller passes to ``direct()``: the alias where
+        there is one, since a resolved ``name`` carries a model version the caller
+        never typed.
+        """
+        missing: dict[str, list[str]] = {}
+        for cfg in direct:
+            if not cfg.api_key_ref:
+                continue
+            if await resolve_key(self._secrets, cfg.api_key_ref, self._scope) is None:
+                missing.setdefault(cfg.api_key_ref, []).append(cfg.alias or cfg.name)
+        return missing
+
+    def _pending(self, refs: dict[str, list[str]]) -> tuple[PendingKey, ...]:
+        return tuple(
+            PendingKey(api_key_ref=ref, help=self.key_help(ref), entry_names=tuple(names))
+            for ref, names in refs.items()
         )
 
     def _report_health(self) -> None:
@@ -156,7 +269,7 @@ class Catalog:
         refs = ", ".join(k.api_key_ref for k in health.missing_keys)
         tail = f" — no key for {refs}" if refs else ""
         if state == _NO_POOL:
-            # No pooled entry names a provider: there is no pool to degrade, and
+            # No managed entry names a provider: there is no pool to degrade, and
             # "no provider has a key" would name a cause that is not the case.
             return
         if health.providers_usable == 0:
@@ -184,18 +297,46 @@ class Catalog:
         await registry.mirror(configs)
         await self.seed_secrets(configs)
 
-    async def _resolve_key(self, cfg: LLMConfig) -> str | None:
-        key = await resolve_key(self._secrets, cfg.api_key_ref, self._scope)
-        if key is None:
-            logger.info(
-                "LLM %s: api_key_ref %r not resolved — inactive until the env var /"
-                " secret is set; this is normal, the pool routes over whatever keys are present",
-                cfg.name,
-                cfg.api_key_ref,
-            )
-        return key
+    def _report_missing_keys(self) -> None:
+        """One line per ref the first time it turns up missing, carrying where to get
+        it — which is the only moment the help is worth the reader's attention.
 
-    async def seed_secrets(self, configs: list[LLMConfig]) -> None:
+        Deduplicated on the set and not on a clock: a reconcile runs on every minute
+        of activity, and a key that stays missing must not fill the log. Reported per
+        ref rather than per entry because the ref is the unit everywhere else — two
+        entries behind one key are one thing to go and fetch.
+        """
+        pending = (*self._health.missing_keys, *self._direct_missing_keys)
+        pooled_refs = {k.api_key_ref for k in self._health.missing_keys}
+        for key in pending:
+            if key.api_key_ref in self._reported_missing:
+                continue
+            self._reported_missing.add(key.api_key_ref)
+            tail = f" — {key.help}" if key.help else ""
+            names = ", ".join(key.entry_names)
+            if key.api_key_ref in pooled_refs:
+                logger.info(
+                    "api_key_ref %r not resolved — %s inactive until the env var / secret"
+                    " is set; this is normal, the pool routes over whatever keys are"
+                    " present%s",
+                    key.api_key_ref,
+                    names,
+                    tail,
+                )
+            else:
+                logger.info(
+                    "api_key_ref %r not resolved — %s is reached by name only, so"
+                    " direct() on it fails until the env var / secret is set%s",
+                    key.api_key_ref,
+                    names,
+                    tail,
+                )
+        self._reported_missing &= {k.api_key_ref for k in pending}
+
+    async def _resolve_key(self, cfg: LLMConfig) -> str | None:
+        return await resolve_key(self._secrets, cfg.api_key_ref, self._scope)
+
+    async def seed_secrets(self, configs: Sequence[LLMConfig]) -> None:
         """Copy any env-resolvable keys into a mutable secrets backend, preserving existing."""
         if not isinstance(self._secrets, MutableSecretsProtocol):
             return

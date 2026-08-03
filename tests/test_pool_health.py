@@ -14,7 +14,7 @@ from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import InMemoryStore
 
 _ENTRY = '[[llms]]\nname="{name}"\nbase_url="https://{name}/v1"\nmodel="m"\napi_key_ref="{ref}"\n'
-_UNPOOLED = _ENTRY.format(name="paid", ref="P") + "pool = false\n"
+_CUSTOM_ONLY = '[[custom]]\nname="paid"\nbase_url="https://paid/v1"\nmodel="m"\napi_key_ref="P"\n'
 
 
 def _registry(tmp_path, *entries, keys=""):
@@ -205,10 +205,11 @@ async def test_gaining_a_further_provider_is_not_worth_a_line(tmp_path, caplog):
 
 
 async def test_a_registry_that_pools_nothing_is_not_a_degraded_pool(tmp_path, caplog):
-    """`pool = false` entries never join the pool, so there is nothing to degrade —
-    and "no provider has a key" would name a cause that is not the case here."""
+    """A `[[custom]]` entry never joins the pool, so a registry of nothing else has
+    no pool to degrade — and "no provider has a key" would name a cause that is not
+    the case here. `direct=` makes this shape ordinary."""
     target = tmp_path / "llms.toml"
-    target.write_text(_UNPOOLED)
+    target.write_text(_CUSTOM_ONLY)
     broker = AsyncBroker(
         registry=FileRegistry(target),
         secrets=DictSecrets({"P": "sk"}),
@@ -224,7 +225,7 @@ async def test_a_registry_that_pools_nothing_is_not_a_degraded_pool(tmp_path, ca
 
 
 async def test_a_pool_that_empties_out_does_not_report_a_recovery(tmp_path, caplog):
-    """Losing the last pooled entry is a membership change, not a repair."""
+    """Losing the last managed entry is a membership change, not a repair."""
     registry = _registry(tmp_path, ("a", "A"), ("b", "B"))
     broker = AsyncBroker(
         registry=registry,
@@ -235,7 +236,7 @@ async def test_a_pool_that_empties_out_does_not_report_a_recovery(tmp_path, capl
         async with broker:
             await broker.count()
             assert "no failover left" in _health_lines(caplog)[0][1]
-            registry.path.write_text(_UNPOOLED)
+            registry.path.write_text(_CUSTOM_ONLY)
             await broker._catalog.resync()
     assert len(_health_lines(caplog)) == 1
 

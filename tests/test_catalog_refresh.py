@@ -11,7 +11,7 @@ import tasks
 
 
 def test_catalog_refresh_prompt_file_exists():
-    prompt_path = Path("presets/freetier-refresh-prompt.md")
+    prompt_path = Path("src/llmbroker/presets/freetier-refresh-prompt.md")
     assert prompt_path.is_file()
     assert prompt_path.read_text().strip()
 

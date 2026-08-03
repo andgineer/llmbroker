@@ -29,7 +29,7 @@ def _write_toml(tmp_path, body: str) -> str:
 
 
 def test_shipped_preset_prints_in_file_order(capsys):
-    rc = main(["env", "presets/freetier.toml"])
+    rc = main(["env", "src/llmbroker/presets/freetier.toml"])
     out = capsys.readouterr().out
     assert rc == 0
     order = [ref for ref in ("GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY") if ref in out]
@@ -80,7 +80,7 @@ def test_preset_name_is_fetched_when_no_such_file_exists(capsys, monkeypatch):
     assert rc == 0
     assert "FETCHED_KEY=" in out
     assert "# FETCHED_KEY — Sign up at example.com." in out
-    assert "presets/freetier.toml" in urlopen.call_args[0][0]
+    assert "src/llmbroker/presets/freetier.toml" in urlopen.call_args[0][0]
 
 
 def test_existing_file_wins_over_a_same_named_preset(tmp_path, capsys, monkeypatch):

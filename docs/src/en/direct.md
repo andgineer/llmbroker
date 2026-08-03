@@ -5,44 +5,72 @@ Sometimes you want **one specific model**, called directly — a paid frontier
 model for a quality task. That is what `broker.direct(...)` gives you: a client
 for exactly that model, with **no pool, no failover**.
 
-Direct access is for **your own models**, the ones under `[[custom]]`. Pool
-models are anonymous — reach them with `ask`/`chat`/`stream`, which route and
-learn; naming one raises `PoolModelError`.
+Direct access is for **your own models** — declared with `direct=` in code, or
+written as `[[custom]]` in a config file. Pool models are anonymous: reach them
+with `ask`/`chat`/`stream`, which route and learn; naming one raises
+`PoolModelError`.
 
-## Aliases: your code survives a model version bump
-
-Ask for `"opus"`, not for `claude-opus-4-8`:
+## Declare it and call it
 
 ```python
-client = await llms.direct("opus")
+llms = llmbroker.Broker(direct=["opus"])
+llms.direct("opus").ask("...")
 ```
 
-`opus` is an **alias** — an eternal handle. When the next Claude generation
-lands, a catalog refresh re-points `opus` at it and your code does not change.
-An alias never disappears, never gets renamed, and never carries a version
-number in it.
+`"opus"` is an **alias** from a curated catalog of paid providers — an eternal
+handle. When the next Claude generation lands, llmbroker re-points `opus` at it
+and your code does not change. An alias never disappears, never gets renamed, and
+never carries a version number in it. Set the key it needs
+(`llmbroker env freetier` does not list paid keys; the alias resolves
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and so on by provider).
 
-## Two orthogonal flags
+Nothing is written anywhere for a declared model. The list in your code is the
+only source of truth, and the alias is re-resolved against the catalog on the
+same daily clock the pool refreshes on — which is what keeps it on the current
+version with no sync and no file to update.
 
-Every model lives in one registry. Two independent per-entry flags carry its
-role:
+If the catalog cannot be reached when that clock comes round, the model stays on
+the version it is already serving and a warning is logged. A resolution that
+worked is never traded for an older one; only the very first one, at start-up,
+can fail — that is where a mistyped alias tells you so, listing the ones that
+exist.
 
-- `pool` (default `true`) — pool membership. `pool = false` keeps the entry in
-  the registry but out of routing.
-- `custom` (default `false`) — provenance. Custom entries are yours, not part of
-  the broker's curated preset, so `sync` never prunes them.
+## A model that is entirely yours
 
-They are independent: a custom model may join the pool (`pool = true`) or stay
-direct-only (`pool = false`). `direct(...)` works on any custom entry, pooled or
-not.
+Pass a config instead of an alias — a self-hosted endpoint, a company gateway, a
+version you must pin:
 
-## Add your own models
+```python
+from llmbroker.models import LLMConfig
 
-Put models you add under a `[[custom]]` array — the same fields as `[[llms]]`,
-parsed by the same code, saved into the same registry, but flagged `custom`.
+gateway = LLMConfig(
+    name="frontier",
+    model="claude-opus-4-8",
+    base_url="https://api.anthropic.com/v1",   # any OpenAI-compatible endpoint
+    api_key_ref="ANTHROPIC_API_KEY",
+)
+llms = llmbroker.Broker(direct=[gateway])
+llms.direct(name="frontier").ask("...")
+```
 
-The quickest way is `add-model`, which picks from a curated catalog of paid
-providers and appends the `[[custom]]` block for you:
+That one is yours down to the version: no refresh ever touches it, because
+llmbroker was never told which catalog line it follows.
+
+## The pool takes no model of yours
+
+Not "by default" — ever. A declared model is never routed, never failed over
+onto, never a pool member in `count()` or `snapshot()`. The pool's whole value is
+failover across interchangeable free endpoints curated as one set; a private
+gateway dropped into it would be spilled onto by a rate limit that has nothing to
+do with it, and would be handed traffic you meant for the free tier.
+
+## In a config file
+
+The same two forms, written down. A `[[custom]]` array holds models that are
+yours — the same fields as `[[llms]]`, parsed by the same code, but flagged
+`custom` so a sync never prunes them and the router never reaches them.
+
+`add-model` picks from the paid catalog and appends the block for you:
 
 ```bash
 llmbroker add-model --into llms.toml            # interactive: pick provider, then model
@@ -50,15 +78,12 @@ llmbroker add-model --into llms.toml            # interactive: pick provider, th
 llmbroker add-model --into llms.toml --provider anthropic --model claude-opus-4-8
 ```
 
-It writes an alias entry: the `alias` you will call, plus a machine-formed
-`name` carrying the current version. It defaults to `pool = false`
-(direct-only); pass `--pool` to add it to the pool instead. Then set the key it
-prints (`llmbroker env llms.toml >> .env`).
+It writes an alias entry: the `alias` you will call, plus a machine-formed `name`
+carrying the current version. Then set the key it prints
+(`llmbroker env llms.toml >> .env`).
 
-## Pin an exact version
-
-For the minority that must not move, `--pin` writes a name-only block — no
-alias, so no refresh ever touches it:
+For the minority that must not move, `--pin` writes a name-only block — no alias,
+so no refresh ever touches it:
 
 ```bash
 llmbroker add-model --into llms.toml --pin --name frontier \
@@ -73,7 +98,6 @@ name        = "frontier"
 model       = "claude-opus-4-8"
 base_url    = "https://api.anthropic.com/v1"   # any OpenAI-compatible endpoint
 api_key_ref = "ANTHROPIC_API_KEY"
-pool        = false                            # direct-only
 ```
 
 and call it by name:
@@ -89,11 +113,10 @@ alias onward, the call fails loudly instead of quietly running a newer model.
 
 Either way, `llmbroker env llms.toml >> .env` adds the key line with a hint.
 
-The file is the single source of truth: add a `[[custom]]` block to add a model,
-then `sync` merges the file into the DB. It carries only the config (`base_url` /
-`model` / `api_key_ref`) — **never the key value**; the key is read from the env
-var or secrets backend at call time. Your `[[custom]]` entries are yours: a sync
-updates them from the file and never prunes them.
+A file entry carries only the config (`base_url` / `model` / `api_key_ref`) —
+**never the key value**; the key is read from the env var or secrets backend at
+call time. Your `[[custom]]` entries are yours: a sync updates them from the file
+and never prunes them, and `sync` is what mirrors them into a DB registry.
 
 ## Refresh without losing your models
 
@@ -134,7 +157,7 @@ too: set that env var before the next call.
 ## Stream and ask (async)
 
 ```python
-async with llmbroker.AsyncBroker("llms.toml") as llms:
+async with llmbroker.AsyncBroker(direct=["opus"]) as llms:
     client = await llms.direct("opus")
 
     # streaming — an async iterator of text deltas
@@ -178,7 +201,7 @@ The blocking `Broker` offers `direct(...)` too, with `ask()` only (streaming is
 async-only):
 
 ```python
-with llmbroker.Broker("llms.toml") as llms:
+with llmbroker.Broker(direct=["opus"]) as llms:
     result = llms.direct("opus").ask("...")
     print(result.text)
 ```
@@ -188,9 +211,10 @@ with llmbroker.Broker("llms.toml") as llms:
 Direct calls raise from one hierarchy under `LLMRequestError`:
 
 - `PoolModelError` — you named a preset-managed pool model. Use
-  `ask`/`chat`/`stream`, or add a `[[custom]]` entry for it.
+  `ask`/`chat`/`stream`, or declare the model yourself.
 - `UnknownModelError` — no entry matches. If your string exists in the *other*
-  keyspace, the message says so.
+  keyspace, the message says so. An alias in `direct=` that the paid catalog does
+  not carry raises this at startup, listing the aliases it does.
 - `MissingKeyError` — the model's `api_key_ref` is not set (a paid model without
   a key is an error here, unlike a pool model which just stays inactive).
 - `ProviderError` — the provider returned an error, with `.status` and `.detail`.

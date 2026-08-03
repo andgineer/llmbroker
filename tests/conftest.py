@@ -17,6 +17,7 @@ from testcontainers.postgres import PostgresContainer
 from testcontainers.vault import VaultContainer
 
 from llmbroker.aws import Secrets as AwsSecrets
+from llmbroker.broker import upstream
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.home import HOME_ENV_VAR
 from llmbroker.mongodb import Registry as MongoRegistry
@@ -52,16 +53,28 @@ def llmbroker_home(tmp_path_factory, monkeypatch):
     return home
 
 
+_BUNDLED_PRESET_TEXT = upstream.bundled_preset_text
+
+
 @pytest.fixture(autouse=True)
 def offline_catalog(monkeypatch):
-    """No test reaches the real catalog. Following the curated preset is the
-    default, so every broker built here would otherwise fetch. Patched at the
-    socket seam so a test is free to patch either level above it."""
+    """No test reaches the real catalog, and none falls back to the preset bundled
+    in the wheel. Following the curated preset is the default, so either would make
+    a real lineup arrive in a test that never wrote one. The fetch is patched at the
+    socket seam so a test is free to patch either level above it; a test about the
+    fallback floor itself opts back in with ``bundled_presets``."""
 
     def _refuse(*_args, **_kwargs):
         raise urllib.error.URLError("offline in tests")
 
     monkeypatch.setattr(urllib.request, "urlopen", _refuse)
+    monkeypatch.setattr(upstream, "bundled_preset_text", lambda _name: None)
+
+
+@pytest.fixture
+def bundled_presets(monkeypatch):
+    """Opt back into the presets the wheel actually ships."""
+    monkeypatch.setattr(upstream, "bundled_preset_text", _BUNDLED_PRESET_TEXT)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

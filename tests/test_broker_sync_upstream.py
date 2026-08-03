@@ -6,6 +6,7 @@ The fetch is always monkeypatched — no test goes to the network.
 
 import logging
 import tomllib
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -167,7 +168,7 @@ async def test_a_file_registry_is_rewritten_keeping_custom_entries_and_comments(
         "# my own header\n"
         '[[llms]]\nname="groq-old"\nbase_url="https://groq/v1"\nmodel="m"\napi_key_ref="GROQ"\n'
         '[[custom]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="big"\napi_key_ref="MY_KEY"'
-        "\npool=false\n"
+        "\n"
         '[keys.MY_KEY]\nhelp = "my custom key"\n',
     )
     broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore())
@@ -177,7 +178,6 @@ async def test_a_file_registry_is_rewritten_keeping_custom_entries_and_comments(
     data = tomllib.loads(target.read_text())
     assert [e["name"] for e in data["llms"]] == ["gemini", "groq-old"]
     assert [e["name"] for e in data["custom"]] == ["mine"]
-    assert data["custom"][0]["pool"] is False
     assert data["keys"]["MY_KEY"]["help"] == "my custom key"
     assert data["keys"]["GEMINI"]["help"] == "get one at aistudio"
     assert report.kept == ("groq-old",)
@@ -199,13 +199,123 @@ async def test_a_file_syncs_alias_entry_follows_the_paid_catalog(tmp_path, monke
     target = tmp_path / "llms.toml"
     target.write_text(
         '[[custom]]\nalias="opus"\nname="anthropic-claude-opus-4-8"\nmodel="claude-opus-4-8"'
-        '\nbase_url="https://api.anthropic.com/v1"\napi_key_ref="ANTHROPIC_API_KEY"\npool=false\n',
+        '\nbase_url="https://api.anthropic.com/v1"\napi_key_ref="ANTHROPIC_API_KEY"\n',
     )
     broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore())
     await broker.sync("freetier")
     await broker.aclose()
     (entry,) = tomllib.loads(target.read_text())["custom"]
     assert (entry["model"], entry["name"]) == ("claude-opus-5", "anthropic-claude-opus-5")
+
+
+_CATALOG_V1 = (
+    '[[provider]]\nid="anthropic"\nbase_url="https://api.anthropic.com/v1"\n'
+    'api_key_ref="ANTHROPIC_API_KEY"\nkey_help="console.anthropic.com"\n'
+    '  [[provider.models]]\n  alias="opus"\n  model="claude-opus-4-8"\n'
+)
+_CATALOG_V2 = _CATALOG_V1.replace("claude-opus-4-8", "claude-opus-5")
+
+
+@pytest.fixture
+def catalog(monkeypatch):
+    """The paid catalog and the free preset off one seam, each movable on its own."""
+    served = {"paid-catalog": _CATALOG_V1, "freetier": _PRESET_GEMINI}
+    monkeypatch.setattr(upstream, "fetch_preset_text", lambda name: served[name])
+    return served
+
+
+_OPUS_V1 = LLMConfig(
+    name="anthropic-claude-opus-4-8",
+    base_url="https://api.anthropic.com/v1",
+    model="claude-opus-4-8",
+    api_key_ref="ANTHROPIC_API_KEY",
+    custom=True,
+    alias="opus",
+)
+
+
+async def test_a_db_registry_alias_entry_follows_the_catalog_across_syncs(tmp_path, catalog):
+    """The defect this fixes: the alias refresh used to be reachable only through the
+    file branch, so a database installation sat on the model id it was first synced
+    with, forever and silently."""
+    db = await _seeded_db(tmp_path, (_OPUS_V1,))
+    broker = _broker(db)
+    await broker.sync("freetier")
+    catalog["paid-catalog"] = _CATALOG_V2
+    report = await broker.sync("freetier")
+    await broker.aclose()
+
+    stored = {c.alias: c for c in await SqliteRegistry(db).load() if c.alias}
+    assert stored["opus"].model == "claude-opus-5"
+    assert stored["opus"].name == "anthropic-claude-opus-5"
+    assert report.applied
+
+
+async def test_a_db_alias_entry_that_did_not_move_is_still_a_no_op(tmp_path, catalog, caplog):
+    """The identity gate covers the refreshed lineup too — a catalog that recommends
+    what is already stored writes nothing and logs nothing."""
+    db = await _seeded_db(tmp_path, (_OPUS_V1,))
+    broker = _broker(db, secrets=DictSecrets({"GEMINI": "sk"}))
+    await broker.sync("freetier")
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="llmbroker.broker"):
+        await broker.sync("freetier")
+    await broker.aclose()
+    assert [r.levelno for r in caplog.records if "sync" in r.message] == [logging.DEBUG]
+
+
+async def test_a_db_alias_the_catalog_dropped_warns_and_keeps_the_entry(tmp_path, catalog):
+    db = await _seeded_db(tmp_path, (replace(_OPUS_V1, alias="ghost"),))
+    broker = _broker(db)
+    await broker.sync("freetier")
+    await broker.aclose()
+    stored = {c.name for c in await SqliteRegistry(db).load()}
+    assert "anthropic-claude-opus-4-8" in stored
+
+
+async def test_an_unreachable_catalog_leaves_a_stored_alias_entry_alone(tmp_path, monkeypatch):
+    """The copy in the wheel is older than the repository by construction, so a
+    refresh that cannot see upstream must move nothing rather than roll a stored
+    entry back to the version this release shipped with."""
+
+    def _fetch(name: str) -> str:
+        if name == "freetier":
+            return _PRESET_GEMINI
+        raise ValueError("offline")
+
+    monkeypatch.setattr(upstream, "fetch_preset_text", _fetch)
+    monkeypatch.setattr(
+        upstream,
+        "bundled_preset_text",
+        lambda name: _CATALOG_V1 if name == "paid-catalog" else None,
+    )
+    stored = replace(_OPUS_V1, name="anthropic-claude-opus-5", model="claude-opus-5")
+    db = await _seeded_db(tmp_path, (stored,))
+    broker = _broker(db)
+    await broker.sync("freetier")
+    await broker.aclose()
+
+    kept = {c.alias: c for c in await SqliteRegistry(db).load() if c.alias}
+    assert (kept["opus"].model, kept["opus"].name) == (
+        "claude-opus-5",
+        "anthropic-claude-opus-5",
+    )
+
+
+async def test_a_registry_with_no_alias_entry_never_reads_the_catalog(tmp_path, monkeypatch):
+    """The catalog is a second network read; a lineup with nothing to follow must
+    not pay for it."""
+    fetched: list[str] = []
+
+    def _fetch(name: str) -> str:
+        fetched.append(name)
+        return _PRESET_GEMINI
+
+    monkeypatch.setattr(upstream, "fetch_preset_text", _fetch)
+    broker = _broker(await _seeded_db(tmp_path))
+    await broker.sync("freetier")
+    await broker.aclose()
+    assert fetched == ["freetier"]
 
 
 async def test_a_kept_entry_does_not_duplicate_over_repeated_file_syncs(tmp_path, preset):

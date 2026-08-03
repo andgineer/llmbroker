@@ -1,7 +1,7 @@
 # Paid catalog refresh prompt
 
 Standalone runbook. Hand this whole file to an LLM agent with repo access and
-**web access**, or follow it by hand. It regenerates `presets/paid-catalog.toml`
+**web access**, or follow it by hand. It regenerates `src/llmbroker/presets/paid-catalog.toml`
 — the curated catalog of paid providers and their current flagship models that
 `llmbroker add-model` reads to help a user drop a paid model into their config.
 
@@ -37,7 +37,7 @@ config depends on, so it is governed by a permanence contract:
 - **A model a shipped preset already pools does not belong here.** An alias
   entry's `name` is machine-formed `<provider id>-<model id>`, the same
   convention preset pool entries are named by, so a model this file shares with
-  `presets/freetier.toml` produces a name no config can carry twice —
+  `src/llmbroker/presets/freetier.toml` produces a name no config can carry twice —
   `add-model` and `preset --sync` both refuse it outright. Nor is there
   anything to add: the endpoint and the `api_key_ref` are the same ones the
   preset already uses, and the billing tier lives in the user's provider
@@ -114,7 +114,7 @@ snapshot, dated alias, or legacy id.
 Prefer the **stable/latest** id the provider recommends for production over a
 dated snapshot, unless only dated snapshots exist.
 
-## 3. Write `presets/paid-catalog.toml`
+## 3. Write `src/llmbroker/presets/paid-catalog.toml`
 
 Exact schema (one `[[provider]]` block per provider, one `[[provider.models]]`
 per curated model):
@@ -152,13 +152,13 @@ Rules:
 
 ## 4. Validate before proposing the change
 
-- Parse `presets/paid-catalog.toml` with `tomllib` and confirm every
+- Parse `src/llmbroker/presets/paid-catalog.toml` with `tomllib` and confirm every
   `[[provider]]` has `id`, `base_url`, `api_key_ref`, and at least one
   `[[provider.models]]` with an `alias`, `model`, `label`, and `verified`.
 - Confirm the alias contract mechanically: aliases unique across the whole file,
   none carrying a version substring, and every alias present in the previous
   revision still present in the new one.
-- Cross-check every shipped preset in `presets/`: no `<provider id>-<model id>`
+- Cross-check every shipped preset in `src/llmbroker/presets/`: no `<provider id>-<model id>`
   pair in this file may equal a preset pool entry's `name`.
 - Spot-check: for at least one provider whose key you hold, confirm each `model`
   id is accepted (a real request, or the provider's models-list endpoint). This

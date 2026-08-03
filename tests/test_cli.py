@@ -126,7 +126,7 @@ def test_preset_not_found_returns_1(capsys):
 def test_preset_http_error_returns_1(capsys):
     exc = urllib.error.HTTPError(url="u", code=500, msg="Server Error", hdrs=None, fp=None)
     with patch("urllib.request.urlopen", side_effect=exc):
-        rc = main(["preset", "freetier"])
+        rc = main(["preset", "notbundled"])
     assert rc == 1
     assert "HTTP 500" in capsys.readouterr().err
 
@@ -134,7 +134,7 @@ def test_preset_http_error_returns_1(capsys):
 def test_preset_url_error_returns_1(capsys):
     exc = urllib.error.URLError(reason="Name or service not known")
     with patch("urllib.request.urlopen", side_effect=exc):
-        rc = main(["preset", "freetier"])
+        rc = main(["preset", "notbundled"])
     assert rc == 1
     assert "Name or service not known" in capsys.readouterr().err
 
@@ -150,7 +150,7 @@ def test_preset_body_dying_mid_read_returns_1(capsys):
     resp = _mock_urlopen(b"")
     resp.read.side_effect = http.client.IncompleteRead(b"partial")
     with patch("urllib.request.urlopen", return_value=resp):
-        rc = main(["preset", "freetier"])
+        rc = main(["preset", "notbundled"])
     assert rc == 1
     assert "failed reading" in capsys.readouterr().err
 
@@ -420,7 +420,7 @@ def test_add_model_flags_appends_alias_custom(tmp_path):
     assert entry["model"] == "claude-opus-4-8"
     assert entry["base_url"] == "https://api.anthropic.com/v1"
     assert entry["api_key_ref"] == "ANTHROPIC_API_KEY"
-    assert entry["pool"] is False  # paid default: direct-only
+    assert "pool" not in entry  # a custom entry is direct-only by being custom
     assert data["keys"]["ANTHROPIC_API_KEY"]["help"] == "console.anthropic.com"
 
 
@@ -439,7 +439,6 @@ def test_add_model_pin_writes_name_only_block(tmp_path):
                 "--pin",
                 "--name",
                 "frontier",
-                "--pool",
             ]
         )
     assert rc == 0
@@ -447,7 +446,6 @@ def test_add_model_pin_writes_name_only_block(tmp_path):
     assert "alias" not in entry
     assert entry["name"] == "frontier"
     assert entry["model"] == "claude-sonnet-5"
-    assert entry["pool"] is True
 
 
 def test_add_model_pin_defaults_name_to_provider_id(tmp_path):
@@ -603,7 +601,7 @@ def test_add_model_interactive(tmp_path, capsys):
     f = _base_file(tmp_path)
     with (
         patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)),
-        patch("builtins.input", side_effect=["1", "2", "n"]),  # provider, model, pool=no
+        patch("builtins.input", side_effect=["1", "2"]),  # provider, model
     ):
         rc = main(["add-model", "--into", str(f)])
     assert rc == 0
@@ -612,10 +610,19 @@ def test_add_model_interactive(tmp_path, capsys):
     assert entry["alias"] == "sonnet"  # picked #2
     assert entry["name"] == "anthropic-claude-sonnet-5"
     assert entry["model"] == "claude-sonnet-5"
-    assert entry["pool"] is False
 
 
-def test_add_model_catalog_fetch_fails(tmp_path, capsys):
+def test_add_model_offline_reads_the_bundled_catalog(tmp_path, capsys, bundled_presets):
+    """The catalog ships in the wheel, so picking a paid model needs no network."""
+    f = _base_file(tmp_path)
+    exc = urllib.error.URLError(reason="offline")
+    with patch("urllib.request.urlopen", side_effect=exc):
+        rc = main(["add-model", "--into", str(f), "--provider", "anthropic", "--model", "opus"])
+    assert rc == 1  # the model id is wrong, but the catalog was read
+    assert "unknown model 'opus'" in capsys.readouterr().err
+
+
+def test_add_model_reports_a_fetch_failure_with_nothing_to_fall_back_to(tmp_path, capsys):
     f = _base_file(tmp_path)
     exc = urllib.error.URLError(reason="offline")
     with patch("urllib.request.urlopen", side_effect=exc):
@@ -624,6 +631,23 @@ def test_add_model_catalog_fetch_fails(tmp_path, capsys):
         )
     assert rc == 1
     assert "offline" in capsys.readouterr().err
+
+
+def test_preset_offline_prints_the_bundled_copy(capsys, bundled_presets):
+    """`llmbroker preset` and `llmbroker env` work with no network at all."""
+    exc = urllib.error.URLError(reason="offline")
+    with patch("urllib.request.urlopen", side_effect=exc):
+        rc = main(["preset", "freetier"])
+    assert rc == 0
+    assert "[[llms]]" in capsys.readouterr().out
+
+
+def test_env_offline_prints_the_bundled_presets_refs(capsys, bundled_presets):
+    exc = urllib.error.URLError(reason="offline")
+    with patch("urllib.request.urlopen", side_effect=exc):
+        rc = main(["env", "freetier"])
+    assert rc == 0
+    assert "GEMINI_API_KEY=" in capsys.readouterr().out
 
 
 def test_add_model_rejects_non_toml_into(tmp_path, capsys):
@@ -645,19 +669,16 @@ def test_add_model_incomplete_catalog_entry_errors_cleanly(tmp_path, capsys):
     assert "incomplete" in capsys.readouterr().err
 
 
-def test_add_model_interactive_honors_pool_and_name_flags(tmp_path):
+def test_add_model_interactive_honors_the_name_flag(tmp_path):
     f = _base_file(tmp_path)
     with (
         patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)),
-        patch(
-            "builtins.input", side_effect=["1", "1", "", ""]
-        ),  # provider, model, name/pool = defaults
+        patch("builtins.input", side_effect=["1", "1", ""]),  # provider, model, name = default
     ):
-        rc = main(["add-model", "--into", str(f), "--pin", "--name", "myclaude", "--pool"])
+        rc = main(["add-model", "--into", str(f), "--pin", "--name", "myclaude"])
     assert rc == 0
     (entry,) = tomllib.loads(f.read_text())["custom"]
     assert entry["name"] == "myclaude"  # --name used as the prompt default, accepted blank
-    assert entry["pool"] is True  # --pool used as the prompt default, accepted blank
 
 
 def test_add_model_eof_aborts_cleanly(tmp_path, capsys):
@@ -673,14 +694,14 @@ def test_add_model_eof_aborts_cleanly(tmp_path, capsys):
 
 def test_preset_invalid_toml_returns_1(capsys):
     with patch("urllib.request.urlopen", return_value=_mock_urlopen(b"not toml ]][")):
-        rc = main(["preset", "freetier"])
+        rc = main(["preset", "notbundled"])
     assert rc == 1
     assert "not valid TOML" in capsys.readouterr().err
 
 
 def test_preset_invalid_encoding_returns_1(capsys):
     with patch("urllib.request.urlopen", return_value=_mock_urlopen(b"\xff\xfe bad")):
-        rc = main(["preset", "freetier"])
+        rc = main(["preset", "notbundled"])
     assert rc == 1
     assert "UTF-8" in capsys.readouterr().err
 
@@ -688,7 +709,7 @@ def test_preset_invalid_encoding_returns_1(capsys):
 def test_preset_timeout_returns_1(capsys):
     exc = urllib.error.URLError(reason=socket.timeout("timed out"))
     with patch("urllib.request.urlopen", side_effect=exc):
-        rc = main(["preset", "freetier"])
+        rc = main(["preset", "notbundled"])
     assert rc == 1
     assert "timed out" in capsys.readouterr().err
 

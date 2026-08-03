@@ -10,7 +10,7 @@ import pytest
 
 from llmbroker.broker import upstream
 from llmbroker.broker.upstream import (
-    catalog_alias_index,
+    catalog_alias_targets,
     check_not_emptying,
     configs_from_data,
     fetch_preset_text,
@@ -18,6 +18,7 @@ from llmbroker.broker.upstream import (
     keys_are_visible,
     merge_upstream,
     present_refs,
+    refresh_alias_configs,
     refresh_alias_entries,
     render_merged_toml,
     sync_file,
@@ -504,7 +505,7 @@ _CATALOG = {
 
 def test_alias_entries_follow_the_catalog():
     entries = [{"alias": "opus", "name": "anthropic-claude-opus-4-8", "model": "claude-opus-4-8"}]
-    refresh = refresh_alias_entries(entries, catalog_alias_index(_CATALOG))
+    refresh = refresh_alias_entries(entries, catalog_alias_targets(_CATALOG))
     assert entries[0]["model"] == "claude-opus-5"
     assert entries[0]["name"] == "anthropic-claude-opus-5"
     assert refresh.key_help == {"ANTHROPIC_API_KEY": "console.anthropic.com"}
@@ -513,7 +514,7 @@ def test_alias_entries_follow_the_catalog():
 
 def test_an_unknown_alias_warns_and_leaves_the_entry_alone():
     entries = [{"alias": "ghost", "name": "x-y", "model": "y"}]
-    refresh = refresh_alias_entries(entries, catalog_alias_index(_CATALOG))
+    refresh = refresh_alias_entries(entries, catalog_alias_targets(_CATALOG))
     assert entries[0]["model"] == "y"
     assert refresh.warnings == ("alias 'ghost' is not in the paid catalog — entry left untouched",)
 
@@ -531,7 +532,64 @@ def test_a_duplicate_catalog_alias_is_an_invalid_catalog():
         ],
     }
     with pytest.raises(ValueError, match="alias 'opus' is used twice"):
-        catalog_alias_index(catalog)
+        catalog_alias_targets(catalog)
+
+
+def test_alias_configs_follow_the_same_catalog_as_the_file_entries():
+    """The registry half of the refresh: one rule, two shapes of stored lineup."""
+    stored = [
+        LLMConfig(
+            name="anthropic-claude-opus-4-8",
+            base_url="https://api.anthropic.com/v1",
+            model="claude-opus-4-8",
+            api_key_ref="ANTHROPIC_API_KEY",
+            custom=True,
+            alias="opus",
+        ),
+        _cfg("gemini"),
+    ]
+    refreshed, refresh = refresh_alias_configs(stored, catalog_alias_targets(_CATALOG))
+    assert (refreshed[0].model, refreshed[0].name) == (
+        "claude-opus-5",
+        "anthropic-claude-opus-5",
+    )
+    assert refreshed[0].base_url == "https://api.anthropic.com/v2"
+    assert refreshed[1] is stored[1]  # nothing without an alias is touched
+    assert "opus: claude-opus-4-8 -> claude-opus-5" in refresh.notices
+
+
+def test_an_unknown_alias_config_warns_and_is_left_alone():
+    stored = [
+        LLMConfig(
+            name="x-y",
+            base_url="https://x/v1",
+            model="y",
+            api_key_ref="K",
+            custom=True,
+            alias="ghost",
+        ),
+    ]
+    refreshed, refresh = refresh_alias_configs(stored, catalog_alias_targets(_CATALOG))
+    assert refreshed == stored
+    assert refresh.warnings == ("alias 'ghost' is not in the paid catalog — entry left untouched",)
+
+
+def test_a_re_spelled_key_ref_is_reported_as_the_one_thing_to_do():
+    stored = [
+        LLMConfig(
+            name="anthropic-claude-opus-5",
+            base_url="https://api.anthropic.com/v2",
+            model="claude-opus-5",
+            api_key_ref="ANTHROPIC_KEY",
+            custom=True,
+            alias="opus",
+        ),
+    ]
+    _refreshed, refresh = refresh_alias_configs(stored, catalog_alias_targets(_CATALOG))
+    assert refresh.notices == (
+        "opus: api_key_ref ANTHROPIC_KEY -> ANTHROPIC_API_KEY"
+        " — set ANTHROPIC_API_KEY before the next call",
+    )
 
 
 # ── sync_file: the file target end to end ────────────────────────────────────
@@ -660,25 +718,15 @@ async def test_sync_file_rejects_a_non_toml_target(tmp_path):
         await sync_file(_NEW, tmp_path / "llms.json", source="freetier", secrets=DictSecrets({}))
 
 
-async def test_sync_file_fetches_the_catalog_only_for_alias_entries(tmp_path):
-    calls: list[int] = []
+async def test_alias_targets_are_only_read_when_something_follows_an_alias(tmp_path, monkeypatch):
+    """The catalog is a second network read; a lineup with nothing to follow must
+    not pay for it."""
 
-    def fetch():
-        calls.append(1)
-        return ""
+    def _boom(_name):
+        raise AssertionError("the paid catalog was fetched with no alias to follow")
 
-    target = _write_current(
-        tmp_path,
-        '[[custom]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="m"\napi_key_ref="MY_KEY"\n',
-    )
-    await sync_file(
-        _NEW,
-        target,
-        source="freetier",
-        secrets=DictSecrets({}),
-        fetch_catalog=fetch,
-    )
-    assert calls == []
+    monkeypatch.setattr(upstream, "fetch_preset_text", _boom)
+    assert await upstream.alias_targets_for([None, None]) == {}
 
 
 async def test_sync_file_refreshes_an_alias_entry_from_the_catalog(tmp_path):
@@ -692,7 +740,7 @@ async def test_sync_file_refreshes_an_alias_entry_from_the_catalog(tmp_path):
         target,
         source="freetier",
         secrets=DictSecrets({}),
-        fetch_catalog=lambda: tomli_dumps_catalog(),
+        alias_targets=catalog_alias_targets(tomllib.loads(tomli_dumps_catalog())),
     )
     (entry,) = tomllib.loads(target.read_text())["custom"]
     assert (entry["model"], entry["name"]) == ("claude-opus-5", "anthropic-claude-opus-5")

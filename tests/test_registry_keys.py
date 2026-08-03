@@ -78,16 +78,16 @@ def test_registry_satisfies_key_info_protocol(tmp_path):
     assert isinstance(Registry(tmp_path / "x.toml"), KeyInfoProtocol)
 
 
-# ── Shipped catalog (presets/freetier.toml) ──────────────────────────────────
+# ── The preset bundled in the package ────────────────────────────────────────
 
 
 def test_shipped_freetier_preset_configs_load():
-    configs = asyncio.run(Registry("presets/freetier.toml").load())
+    configs = asyncio.run(Registry("src/llmbroker/presets/freetier.toml").load())
     assert len(configs) == 4
 
 
 def test_shipped_freetier_preset_key_info_extra_passthrough():
-    info = asyncio.run(Registry("presets/freetier.toml").key_info())
+    info = asyncio.run(Registry("src/llmbroker/presets/freetier.toml").key_info())
     assert len(info) == 3
     assert info["GEMINI_API_KEY"].extra == {"effort": "oauth", "value": "high"}
     assert info["GROQ_API_KEY"].extra == {"effort": "signup", "value": "good"}

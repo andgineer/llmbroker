@@ -1,5 +1,5 @@
 # Curated free-tier LLM pool (all OpenAI-compatible).
-# Fill the api_key_ref env vars: `python -m llmbroker env presets/freetier.toml > .env`
+# Fill the api_key_ref env vars: `python -m llmbroker env freetier > .env`
 #
 # `weight` is the curated prior on the quality rating each entry is expected to earn
 # (0..1, mandatory on every row) — row order carries no priority. See the rubric in

@@ -12,20 +12,22 @@ import tempfile
 import tomllib
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from http import HTTPStatus
 from http.client import HTTPException
+from importlib import resources
 from pathlib import Path
 from types import MappingProxyType
 
 import tomli_w
 
 from llmbroker.broker.catalog import resolve_key
-from llmbroker.exceptions import SyncRefusedError
+from llmbroker.exceptions import SyncRefusedError, UnknownModelError
 from llmbroker.models import (
     Call,
     CallStatus,
+    DeclaredModels,
     KeyInfo,
     LLMConfig,
     PendingKey,
@@ -40,7 +42,9 @@ from llmbroker.standalone.registry import Registry, config_from_entry, key_info_
 logger = logging.getLogger("llmbroker.broker")
 
 PRESET_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
-_PRESET_URL = "https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/{name}.toml"
+_PRESET_URL = (
+    "https://raw.githubusercontent.com/andgineer/llmbroker/main/src/llmbroker/presets/{name}.toml"
+)
 _FETCH_TIMEOUT = 10
 _PERMANENT_FAILURES = frozenset(
     {HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN, HTTPStatus.NOT_FOUND},
@@ -57,6 +61,17 @@ _KEPT_HEADER = (
 
 
 @dataclass(frozen=True, slots=True)
+class AliasTarget:
+    """What the paid catalog currently recommends for one alias."""
+
+    name: str
+    model: str
+    base_url: str
+    api_key_ref: str
+    key_help: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class AliasRefresh:
     """What re-pointing the alias-following ``[[custom]]`` entries changed.
 
@@ -67,6 +82,10 @@ class AliasRefresh:
     key_help: dict[str, str]
     notices: tuple[str, ...]
     warnings: tuple[str, ...]
+
+
+_NO_TARGETS: Mapping[str, AliasTarget] = MappingProxyType({})
+_NO_REFRESH = AliasRefresh(key_help={}, notices=(), warnings=())
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,53 +168,99 @@ def _check_fetched_urls(name: str, data: dict) -> None:
                 )
 
 
-def paid_catalog_text() -> str:
-    """The paid catalog. Kept here so every network read goes through one seam."""
-    return fetch_preset_text("paid-catalog")
-
-
 def _cache_path(cache_dir: Path, name: str) -> Path:
     return cache_dir / "presets" / f"{name}.toml"
 
 
-def cached_preset_text(name: str, cache_dir: Path | None = None) -> str:
-    """Fetch, keeping a copy beside it.
+def _read_cached_preset(name: str, cache_dir: Path | None) -> str | None:
+    if cache_dir is None:
+        return None
+    try:
+        return _cache_path(cache_dir, name).read_text(encoding="utf-8")
+    except OSError:
+        return None
 
-    The copy is a fallback and never a source: a successful fetch overwrites it, a
-    failed one — offline, or throttled by the CDN's per-IP limit — falls back to it,
-    which is what keeps such an installation running on what it last saw.
+
+def bundled_preset_text(name: str) -> str | None:
+    """The copy shipped in the wheel — the floor under the fallback chain, so a
+    first run with no network and a cold cache still has a lineup to start from."""
+    resource = resources.files("llmbroker").joinpath("presets", f"{name}.toml")
+    try:
+        return resource.read_text(encoding="utf-8")
+    except (OSError, ModuleNotFoundError):
+        return None
+
+
+def _write_cached_preset(name: str, cache_dir: Path | None, text: str) -> None:
+    if cache_dir is None:
+        return
+    target = _cache_path(cache_dir, name)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_atomic(target, text)
+    except OSError as exc:
+        logger.debug("preset %s: cannot cache into %s (%s)", name, target, exc)
+
+
+def refresh_cached_preset(name: str, cache_dir: Path | None) -> None:
+    """Pull a fresh copy into the cache. Raises when the fetch fails — the caller
+    decides whether the copy already here is good enough."""
+    _write_cached_preset(name, cache_dir, fetch_preset_text(name))
+
+
+def cached_preset_text(name: str, cache_dir: Path | None = None, *, bundled: bool = True) -> str:
+    """Fetch, keeping a copy beside it; on failure fall back to that copy, then to
+    the one bundled in the wheel.
+
+    Neither fallback is ever a source: a successful fetch overwrites the cache, a
+    failed one — offline, or throttled by the CDN's per-IP limit — reads it, which
+    is what keeps such an installation running on what it last saw.
+
+    ``bundled=False`` drops the last step, for the caller that re-points entries
+    someone already has: the copy shipped with this release is older than the
+    repository by construction, so re-pointing from it would roll a stored model
+    backwards. The wheel's copy is a floor for starting a lineup, never for
+    moving one.
     """
     try:
         text = fetch_preset_text(name)
     except ValueError as exc:
-        if cache_dir is None:
+        cached = _read_cached_preset(name, cache_dir)
+        if cached is not None:
+            logger.debug("preset %s: %s — falling back to the cached copy", name, exc)
+            return cached
+        bundled_text = bundled_preset_text(name) if bundled else None
+        if bundled_text is None:
             raise
-        try:
-            cached = _cache_path(cache_dir, name).read_text(encoding="utf-8")
-        except OSError:
-            raise exc from None
-        logger.debug("preset %s: %s — falling back to the cached copy", name, exc)
-        return cached
-    if cache_dir is not None:
-        target = _cache_path(cache_dir, name)
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            write_atomic(target, text)
-        except OSError as exc:
-            logger.debug("preset %s: cannot cache into %s (%s)", name, target, exc)
+        # Louder than the cached fallback, which serves what this machine last saw:
+        # the wheel's copy is frozen at the installed release, and a `preset` command
+        # writing it into a file the user then keeps must not look like a fresh one.
+        logger.warning(
+            "preset %s: %s — falling back to the bundled copy, frozen at this"
+            " llmbroker release and possibly older than the curated one",
+            name,
+            exc,
+        )
+        return bundled_text
+    _write_cached_preset(name, cache_dir, text)
     return text
+
+
+def paid_catalog_text(cache_dir: Path | None = None) -> str:
+    """The paid catalog. Kept here so every network read goes through one seam."""
+    return cached_preset_text("paid-catalog", cache_dir)
 
 
 # ── Alias-following custom entries, refreshed from the paid catalog ──────────
 
 
-def catalog_alias_index(catalog: dict) -> dict[str, tuple[dict, dict]]:
-    """Map every catalog alias to its ``(provider, model)`` pair.
+def catalog_alias_targets(catalog: dict) -> dict[str, AliasTarget]:
+    """Map every catalog alias to the entry fields it now recommends.
 
     Raises when the catalog is invalid: an alias names exactly one model, so a
     duplicate makes the whole file unusable.
     """
-    index: dict[str, tuple[dict, dict]] = {}
+    targets: dict[str, AliasTarget] = {}
     for prov in catalog.get("provider", []):
         if not isinstance(prov, dict) or not (
             prov.get("id") and prov.get("base_url") and prov.get("api_key_ref")
@@ -205,17 +270,147 @@ def catalog_alias_index(catalog: dict) -> dict[str, tuple[dict, dict]]:
             if not isinstance(model, dict) or not (model.get("alias") and model.get("model")):
                 continue
             alias = str(model["alias"])
-            if alias in index:
+            if alias in targets:
                 raise ValueError(f"paid catalog is invalid — alias '{alias}' is used twice")
-            index[alias] = (prov, model)
-    return index
+            targets[alias] = AliasTarget(
+                name=f"{prov['id']}-{model['model']}",
+                model=str(model["model"]),
+                base_url=str(prov["base_url"]),
+                api_key_ref=str(prov["api_key_ref"]),
+                key_help=str(prov["key_help"]) if prov.get("key_help") else "",
+            )
+    return targets
+
+
+async def alias_targets_for(
+    aliases: Iterable[str | None],
+    cache_dir: Path | None = None,
+) -> dict[str, AliasTarget]:
+    """What the catalog now recommends, read only when something follows an alias.
+
+    A catalog nobody can reach yields no targets rather than the wheel's copy, and
+    every alias entry is then left exactly as it is: a refresh that cannot see
+    upstream has nothing to say about where an alias points.
+    """
+    if not any(aliases):
+        return {}
+    try:
+        text = await asyncio.to_thread(
+            cached_preset_text,
+            "paid-catalog",
+            cache_dir,
+            bundled=False,
+        )
+    except ValueError as exc:
+        logger.warning("paid catalog unavailable (%s) — alias entries left untouched", exc)
+        return {}
+    return catalog_alias_targets(tomllib.loads(text))
+
+
+def local_paid_catalog_text(cache_dir: Path | None = None, *, bundled: bool = True) -> str:
+    """The paid catalog without going to the network first: this machine's cached
+    copy, then a fetch, and the wheel's copy as the floor under both.
+
+    Declared models resolve through here on the refresh clock, so the common read
+    is the local one. The bundled copy stays last: preferred over a fetch it would
+    pin a declared alias to the version this release shipped with, for as long as
+    the release is installed.
+
+    ``bundled=False`` drops it entirely, for a re-resolution — the same rule the
+    stored half already follows. Where nothing is writable there is no cache to
+    read, so an offline re-resolution would otherwise land on the wheel's copy and
+    move a working alias *backwards* to the version this release shipped with.
+    """
+    cached = _read_cached_preset("paid-catalog", cache_dir)
+    if cached is not None:
+        return cached
+    return cached_preset_text("paid-catalog", cache_dir, bundled=bundled)
+
+
+async def resolve_declared(
+    declared: Sequence[str | LLMConfig],
+    cache_dir: Path | None = None,
+    *,
+    bundled: bool = True,
+) -> DeclaredModels:
+    """Turn what the caller declared with ``direct=`` into entries.
+
+    A config is taken verbatim and forced ``custom``; a string is a paid-catalog
+    alias, resolved afresh so a followed model is always the current version. The
+    catalog's key help comes back with them: nothing stores a declared model, so
+    this read is the only place that help is ever available.
+    """
+    if not declared:
+        return DeclaredModels()
+    targets: Mapping[str, AliasTarget] = _NO_TARGETS
+    if any(isinstance(item, str) for item in declared):
+        text = await asyncio.to_thread(local_paid_catalog_text, cache_dir, bundled=bundled)
+        targets = catalog_alias_targets(tomllib.loads(text))
+    configs = tuple(
+        replace(item, custom=True)
+        if isinstance(item, LLMConfig)
+        else _entry_for_alias(item, targets)
+        for item in declared
+    )
+    wanted = {cfg.api_key_ref for cfg in configs}
+    return DeclaredModels(
+        configs=configs,
+        key_help={
+            t.api_key_ref: t.key_help
+            for t in targets.values()
+            if t.key_help and t.api_key_ref in wanted
+        },
+    )
+
+
+def _entry_for_alias(alias: str, targets: Mapping[str, AliasTarget]) -> LLMConfig:
+    target = targets.get(alias)
+    if target is None:
+        # A typo is the expected failure and the fix is one word, so the message
+        # has to carry the words that would work.
+        have = ", ".join(sorted(targets)) or "none"
+        raise UnknownModelError(
+            f"direct= names {alias!r}, which the paid catalog does not carry"
+            f" — available aliases: {have}",
+        )
+    return LLMConfig(
+        name=target.name,
+        base_url=target.base_url,
+        model=target.model,
+        api_key_ref=target.api_key_ref,
+        custom=True,
+        alias=alias,
+    )
+
+
+def _alias_notes(alias: str, was_model: object, was_ref: object, target: AliasTarget) -> list[str]:
+    notes = []
+    if was_model != target.model:
+        notes.append(f"{alias}: {was_model} -> {target.model}")
+    if was_ref != target.api_key_ref:
+        # The one change that needs the user to do something. It can arrive
+        # without a model change at all — a catalog that re-spells a provider's
+        # ref refreshes to a file that silently wants an env var nobody set.
+        notes.append(
+            f"{alias}: api_key_ref {was_ref} -> {target.api_key_ref}"
+            f" — set {target.api_key_ref} before the next call",
+        )
+    return notes
+
+
+def _unknown_alias(alias: str) -> str:
+    return f"alias '{alias}' is not in the paid catalog — entry left untouched"
 
 
 def refresh_alias_entries(
     entries: list[dict],
-    index: dict[str, tuple[dict, dict]],
+    targets: Mapping[str, AliasTarget],
 ) -> AliasRefresh:
-    """Re-point every alias entry at what the catalog now recommends, in place."""
+    """Re-point every alias entry at what the catalog now recommends, in place.
+
+    The raw-dict half of the refresh: a file target is re-emitted from its own
+    blocks, so whatever else the user wrote in them survives.
+    """
     key_help: dict[str, str] = {}
     notices: list[str] = []
     warnings: list[str] = []
@@ -223,30 +418,57 @@ def refresh_alias_entries(
         alias = entry.get("alias")
         if not alias:
             continue
-        found = index.get(str(alias))
-        if found is None:
-            warnings.append(f"alias '{alias}' is not in the paid catalog — entry left untouched")
+        target = targets.get(str(alias))
+        if target is None:
+            warnings.append(_unknown_alias(str(alias)))
             continue
-        prov, model = found
-        was_model = entry.get("model")
-        was_ref = entry.get("api_key_ref")
-        entry["model"] = str(model["model"])
-        entry["name"] = f"{prov['id']}-{model['model']}"
-        entry["base_url"] = str(prov["base_url"])
-        entry["api_key_ref"] = str(prov["api_key_ref"])
-        if prov.get("key_help"):
-            key_help[str(prov["api_key_ref"])] = str(prov["key_help"])
-        if was_model != entry["model"]:
-            notices.append(f"{alias}: {was_model} -> {entry['model']}")
-        if was_ref != entry["api_key_ref"]:
-            # The one change that needs the user to do something. It can arrive
-            # without a model change at all — a catalog that re-spells a provider's
-            # ref refreshes to a file that silently wants an env var nobody set.
-            notices.append(
-                f"{alias}: api_key_ref {was_ref} -> {entry['api_key_ref']}"
-                f" — set {entry['api_key_ref']} before the next call",
-            )
+        notices.extend(
+            _alias_notes(str(alias), entry.get("model"), entry.get("api_key_ref"), target),
+        )
+        entry["model"] = target.model
+        entry["name"] = target.name
+        entry["base_url"] = target.base_url
+        entry["api_key_ref"] = target.api_key_ref
+        if target.key_help:
+            key_help[target.api_key_ref] = target.key_help
     return AliasRefresh(key_help=key_help, notices=tuple(notices), warnings=tuple(warnings))
+
+
+def refresh_alias_configs(
+    configs: list[LLMConfig],
+    targets: Mapping[str, AliasTarget],
+) -> tuple[list[LLMConfig], AliasRefresh]:
+    """The same re-pointing for stored configs — a registry has no file text to keep."""
+    if not targets:
+        return configs, _NO_REFRESH
+    key_help: dict[str, str] = {}
+    notices: list[str] = []
+    warnings: list[str] = []
+    result: list[LLMConfig] = []
+    for cfg in configs:
+        target = targets.get(cfg.alias) if cfg.alias is not None else None
+        if target is None:
+            if cfg.alias is not None:
+                warnings.append(_unknown_alias(cfg.alias))
+            result.append(cfg)
+            continue
+        notices.extend(_alias_notes(cfg.alias or "", cfg.model, cfg.api_key_ref, target))
+        result.append(
+            replace(
+                cfg,
+                name=target.name,
+                model=target.model,
+                base_url=target.base_url,
+                api_key_ref=target.api_key_ref,
+            ),
+        )
+        if target.key_help:
+            key_help[target.api_key_ref] = target.key_help
+    return result, AliasRefresh(
+        key_help=key_help,
+        notices=tuple(notices),
+        warnings=tuple(warnings),
+    )
 
 
 # ── Which refs we have a key for ─────────────────────────────────────────────
@@ -579,8 +801,6 @@ def _entry_dict(cfg: LLMConfig) -> dict:
     entry["api_key_ref"] = cfg.api_key_ref
     if cfg.parallel is not None:
         entry["parallel"] = cfg.parallel
-    if not cfg.pooled:
-        entry["pool"] = False
     if cfg.weight:
         entry["weight"] = cfg.weight
     return entry
@@ -765,23 +985,19 @@ async def sync_file(  # noqa: PLR0913
     scope: str | None = None,
     have_keys: bool | Sequence[str] = False,
     dead: Mapping[str, Retirement] = _NO_EVIDENCE,
-    fetch_catalog: Callable[[], str] | None = None,
+    alias_targets: Mapping[str, AliasTarget] = _NO_TARGETS,
 ) -> FileSyncOutcome:
     """Merge ``new_text`` into the ``.toml`` at ``target`` and write it atomically.
 
-    ``fetch_catalog`` enables the alias-following refresh of ``[[custom]]`` entries
-    against the paid catalog, and is called only when the file has such an entry.
-    Any error leaves ``target`` untouched.
+    ``alias_targets`` re-points the file's alias-following ``[[custom]]`` entries;
+    who reads the catalog is the caller's business. Any error leaves ``target``
+    untouched.
     """
     if target.suffix.lower() != ".toml":
         raise ValueError(f"sync target must be a .toml file, got {target}")
     data = _read_toml(target)
     custom_entries = [e for e in data.get("custom", []) if isinstance(e, dict)]
-
-    refresh = AliasRefresh(key_help={}, notices=(), warnings=())
-    if fetch_catalog is not None and any(e.get("alias") for e in custom_entries):
-        catalog = tomllib.loads(await asyncio.to_thread(fetch_catalog))
-        refresh = refresh_alias_entries(custom_entries, catalog_alias_index(catalog))
+    refresh = refresh_alias_entries(custom_entries, alias_targets) if alias_targets else _NO_REFRESH
 
     new_data = tomllib.loads(new_text)
     new_configs = configs_from_data(new_data)

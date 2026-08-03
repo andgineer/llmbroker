@@ -148,4 +148,4 @@ All storage backends (sqlite, postgres, mongodb) and the secrets backends (aws, 
 - Python 3.11+ required: uses `tomllib` (stdlib) and `from datetime import UTC`
 - Secrets are pluggable via `src/llmbroker/secrets.py` (env vars, AWS, Vault)
 - Backends (SQLite, Redis, Postgres, MongoDB) are optional submodules — all optional extras
-- LLM registry is TOML-based (`presets/freetier.toml`); `api_key_ref` fields point to env var names
+- LLM registry is TOML-based (`src/llmbroker/presets/freetier.toml`); `api_key_ref` fields point to env var names

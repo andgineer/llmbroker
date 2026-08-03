@@ -48,6 +48,12 @@ line-length = 99
 [tool.hatch.version]
 path = "src/llmbroker/__about__.py"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/llmbroker"]
+# The curated presets ship in the wheel — they are the floor under the refresh's
+# fallback chain. Their refresh prompts are maintainer instructions, not payload.
+exclude = ["**/presets/*.md"]
+
 [dependency-groups]
 dev = [
     "allure-pytest>=2.14.2",

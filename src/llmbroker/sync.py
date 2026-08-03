@@ -118,6 +118,7 @@ class Broker:
         sync: str | Path | None = _DEFAULT_SYNC_SOURCE,
         sync_interval: float = _DEFAULT_SYNC_INTERVAL,
         home: str | Path | None = None,
+        direct: Sequence[str | LLMConfig] = (),
     ) -> None:
         self._async = AsyncBroker(
             registry,
@@ -129,6 +130,7 @@ class Broker:
             sync=sync,
             sync_interval=sync_interval,
             home=home,
+            direct=direct,
         )
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(

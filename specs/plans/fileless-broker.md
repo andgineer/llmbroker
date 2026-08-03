@@ -300,3 +300,352 @@ invoke pre
 python -m pytest
 python -c "import llmbroker; print(llmbroker.Broker().ask('hi').text)"   # no file, no arguments
 ```
+
+---
+
+## Handover
+
+Implemented in six batches, in the plan's own work order. `invoke pre` clean and
+`python -m pytest` → **1145 passed**, zero skips, after every batch and at the end.
+Docker was up; the postgres/mongo/vault/localstack testcontainer tests ran.
+
+### What is done
+
+- **§4 — the alias-refresh defect.** Repro written first
+  (`test_a_db_registry_alias_entry_follows_the_catalog_across_syncs`), confirmed failing
+  against unmodified `src/`, then fixed. The catalog read moved out of `sync_file` and
+  into `AsyncBroker.sync`, which resolves the targets once and hands them to whichever
+  branch runs. The registry branch gained `refresh_alias_configs`, the mirror of the
+  file branch's `refresh_alias_entries`; both share the notice/warning wording.
+- **§5 — the presets ship in the wheel.** All four files moved to
+  `src/llmbroker/presets/`; `[tool.hatch.build.targets.wheel]` excludes `**/presets/*.md`.
+  Verified against a real `uv build`: the wheel carries `freetier.toml` and
+  `paid-catalog.toml` and neither refresh prompt. Lookup order is now fetch → cache →
+  bundled. `preset`, `env` and `add-model` work offline.
+- **§3 — `LLMConfig.pooled` deleted.** `pooled` is `not custom` everywhere; the `pool`
+  key is no longer written and is ignored where read; `add-model` lost `--pool` and its
+  prompt.
+- **§1 — `Broker()`.** No source is a source: `<home>/lineup.toml`, `Secrets(".env")`,
+  `FileStore(<home>/store)`, degrading to an in-memory registry + `InMemoryStore` where
+  nothing is writable.
+- **§2 — `direct=`.** Resolved at provision through a `Catalog` overlay, never stored.
+- **§8 — docs**, en and ru, plus `README.md`.
+
+Specs moved in the same batch as the behavior: `architecture.md` (alias-at-sync, preset
+distribution, the pool-is-the-curated-lineup invariant, the three-tier table, the
+zero-config installation, declared models, the degradation measure's rename),
+`decisions.md` (three rows: the no-parameter source form, the zero-config default with
+what was rejected alongside it, the no-user-entries-in-the-pool rule),
+`mission.md` item 6.
+
+### Done differently from the plan
+
+- **The alias refresh is applied in two places, not one.** The plan says it "moves out of
+  `sync_file` and into `AsyncBroker.sync`". The *decision* — whether to read the catalog,
+  and what it now recommends — did move there and covers both branches. The *application*
+  could not: a file target is re-emitted from its own raw TOML blocks so that whatever
+  else the user wrote in them survives, and the broker holds `LLMConfig`s, not those
+  blocks. So `sync_file` still rewrites the dicts, from targets it is handed rather than
+  fetches. The defect is fixed either way; one function became two thin adapters over one
+  rule.
+- **`catalog_alias_index` became `catalog_alias_targets`**, returning a typed
+  `AliasTarget` instead of a raw `(provider, model)` dict pair. Two callers now consume
+  it in two shapes; handing both a pair of raw dicts to re-derive the same four fields
+  from would have duplicated the derivation.
+- **The identity gate compares against what is *stored*, not against the alias-refreshed
+  copy.** Not in the plan, and getting it wrong would have silently re-introduced the
+  defect: a pure alias move would have compared equal and never been written. There is a
+  test for it (`test_a_db_alias_entry_that_did_not_move_is_still_a_no_op` covers the
+  other side).
+- **`Catalog.provision()`'s emptiness check now counts declared models.** The plan does
+  not say. A registry that is empty because the caller only ever wanted
+  `Broker(sync=None, direct=["opus"])` is configured, not unconfigured, and
+  "registry is empty — sync a lineup into it" would be the wrong thing to say to them.
+  §3 already made the no-pool shape legitimate; this follows it.
+- **Declared aliases are resolved from the *local* catalog, fetch last.** The plan says
+  "the cached paid catalog … refreshed on the refresh's own clock". Implemented as
+  `local_paid_catalog_text`: cache → bundled → fetch, so provisioning never blocks on the
+  network, while a declared alias joins the set that decides whether a *sync* reads the
+  catalog — which is what keeps that cache warm.
+- **The test suite's default world now has no bundled preset either.** Once the wheel
+  carries a real lineup, every broker built in a test that did not write one would
+  silently provision four real models. The autouse `offline_catalog` fixture blanks
+  `bundled_preset_text` as well, and a `bundled_presets` fixture opts back in. Ten
+  existing tests asserting "a fetch failure reaches the caller" keep their meaning
+  unchanged because of it.
+
+### Decisions the plan left open
+
+- **§3's last bullet — does an administratively disabled entry still count its
+  provider?** It does, unchanged. The alarm reports the keys an installation *holds*;
+  a verdict the host set itself is one it already reads per model in `snapshot()`, and
+  `LLMPool.acquire` excludes the slot regardless, so a pool disabled down to nothing
+  still raises no ERROR. `architecture.md` already said this and now says it against the
+  renamed measure. No behavior changed.
+
+### Deliberately left out
+
+- **The stale `[tool.setuptools]` block in `pyproject.toml`.** Dead config — the build
+  backend is hatchling and ignores it. Removing it is unrelated to this plan.
+- **`llmbroker env freetier` still lists free-tier keys only.** A declared paid alias
+  needs `ANTHROPIC_API_KEY` and friends, and nothing prints those for a fileless
+  install; `direct.md` names them in prose instead. A `--direct` flag on `env` is a real
+  gap but scope this plan did not ask for.
+
+### One thing to know before merging
+
+`_PRESET_URL` now points at `main/src/llmbroker/presets/<name>.toml`, which **does not
+exist on `main` until this branch lands**. Verified live: `Broker()` in a clean
+directory logs `preset 'freetier' not found in catalog — falling back to the bundled
+copy` and provisions four models from the wheel. That is §5 working exactly as designed,
+but it does mean every installation runs on the bundled copy until the merge.
+
+### Verification run by hand
+
+```
+uv build --wheel                          # wheel carries both .toml presets, neither .md
+python -c "llmbroker.Broker()"            # 4 models, lineup.toml + store/ under $LLMBROKER_HOME
+python -c "llmbroker.Broker(direct=['opus'])"   # resolves claude-opus-5, absent from the pool
+```
+
+`llmbroker.Broker().ask("hi")` was not run: it needs a real provider key, which this
+environment has none of.
+
+---
+
+## Review round 1 — fixes
+
+Three defects found in review, all reproduced before fixing and each now guarded by a
+test that fails when its fix is reverted (verified one revert at a time).
+`invoke pre` clean, `python -m pytest` → **1149 passed**, zero skips.
+
+### The catalog's freshness was welded to `sync`
+
+`local_paid_catalog_text` preferred the wheel's copy over a fetch, and only
+`AsyncBroker.sync` ever refreshed the cache. Together that pinned a declared alias to
+the version the installed release shipped with — permanently and silently — for
+`sync=None` (a registry a deploy job fills) and for any broker with no writable home.
+The plan's rule 5 and `direct.md` both promise the opposite. Three changes:
+
+- the bundled copy moved behind the fetch in `local_paid_catalog_text`;
+- the paid catalog got its own refresh clock, armed and stamped like the lineup's, so
+  it is kept current where no lineup is synced;
+- declared models resolve on that clock rather than on every read.
+
+That last one also fixes the second defect: `direct()` went through
+`Catalog.entries()` → the overlay → a paid-catalog file read and TOML parse **per
+call**, on a documented request path. The overlay is now resolved once and
+re-resolved when the catalog moves.
+
+### An unreachable catalog rewrote stored entries backwards
+
+`alias_targets_for` fell back to the wheel's copy, so an offline sync re-pointed a
+stored `[[custom]]` alias to whatever version the installed release carried — and
+persisted it, since the identity gate saw a real change. Reproduced on sqlite:
+`opus → claude-opus-5` came back as `claude-opus-4-8`.
+
+The bundled copy is now dropped from that chain (`cached_preset_text(bundled=False)`),
+and a catalog nobody can reach yields no targets: every alias entry is left exactly as
+it is, with a warning. This also restores `sync_file`'s "any error leaves the target
+untouched" for the alias half.
+
+### Not fixed, deliberately
+
+- **`refresh_alias_configs`'s `key_help` is still discarded** by the registry branch.
+  It is a dead value today — no database registry implements the key-info port — and
+  wiring it would be scope this round did not need.
+- **No test asserts the wheel *excludes* the refresh prompts.** The only honest check
+  builds a wheel inside the test; the cost outweighs the risk on a glob that is
+  verified by hand.
+- **The CLI prints nothing when the catalog is unreachable** — the warning goes to the
+  logger. Consistent with how the preset's own fallback is already reported; surfacing
+  it would ripple a return type through two call sites for one line of output.
+
+Docs and specs moved with the behavior: `architecture.md` (the floor holds a lineup up
+but never moves one; resolution on the refresh clock; the catalog's own clock; an
+unreachable catalog moves nothing), and `tools.md`/`async.md` en+ru now open with
+`Broker()` rather than a config file the quick start no longer tells anyone to make.
+
+---
+
+## Review round 2 — fixes
+
+Four defects found in review, each reproduced first and each now guarded by a test
+that fails when its fix is reverted (verified one revert at a time).
+`invoke pre` clean, `python -m pytest` → **1157 passed**, zero skips.
+
+### One refresh cost one catalog read per call in flight
+
+`Catalog.entries()` resolved the `direct=` overlay without serializing, so the
+refresh that drops the resolution left every concurrent caller to re-resolve for
+itself: 200 concurrent `direct()` after one invalidation produced 200 catalog
+reads, and with no writable home — where the resolution skips the cache — 200
+network fetches on the request path. Round 1 had closed the per-call read for the
+sequential case only.
+
+Resolution now happens under a lock with a double check. Deliberately *not* moved
+into the background refresh task: pre-resolving there would run whether or not
+anything needs it, and the lock is the cheaper answer to the same problem. The
+cost that remains is one read by one caller per refresh window.
+
+### A declared model's key never reached a writable secrets backend
+
+`seed_secrets` was only ever called with the stored lineup, so on any tier-2
+installation `direct=["opus"]` raised `MissingKeyError` with `ANTHROPIC_API_KEY`
+exported, while the byte-identical `[[custom]]` row resolved fine — and the error
+text advised setting the env var, which was exactly what did not work. Nothing
+else could ever carry that key across, since a declared model is never synced.
+
+Fixed by seeding inside the same locked block that resolves the overlay, through
+the existing `seed_secrets` rather than a second path; its signature widened to
+`Sequence`. Once per resolution, and a no-op wherever secrets are not writable.
+
+### A collision raised on the request path
+
+`check_overlay` runs wherever the overlay is read, and one of those places is the
+journal rebuild a 429 triggers. A `[[custom]]` block edited into the registry
+under a running broker therefore turned a rate limit into a `ValueError` out of
+`ask()`.
+
+Fixed one level up, where it covers more than this case: the rebuild's registry
+re-read now logs and leaves the pool as it is. Picking up another process's edits
+is best-effort by construction — only provisioning and an explicit `sync` may
+raise. `architecture.md` states this as a rule.
+
+### Key help was read from the catalog and thrown away
+
+`catalog_alias_targets` read each provider's `key_help`, and `_entry_for_alias`
+dropped it; declared models are `custom`, so they were also excluded from
+`PoolHealth` by construction. A declared paid model with no key was therefore
+invisible in `snapshot()` and produced an error naming no way to fix it — while
+the help sat in the catalog the code had just parsed.
+
+Done in full, as asked:
+
+- `resolve_declared` returns `DeclaredModels` (entries + the key help for the refs
+  they actually want). The type lives in `models.py`: `upstream` imports from
+  `catalog`, so a shared type could not live in either.
+- `Catalog.key_help` resolves the registry's own `[keys]` first and the catalog's
+  second — a host that wrote a hint meant it.
+- New `PoolSnapshot.direct_missing_keys`, kept apart from `missing_keys` because a
+  model that is never routed can neither degrade the pool nor be repaired by it;
+  folding them together would make `degraded` mean two things. Entries are named
+  by the handle passed to `direct()`, not by the version-carrying resolved name.
+- `direct()`'s `MissingKeyError` appends the help.
+- The missing-key log line moved out of `_resolve_key` into a reporter that runs
+  after the measure. Not taste: `_resolve_key` runs *before* `key_info()` is
+  loaded, so a hint appended there would be empty on the first run — exactly when
+  it is wanted. Loading `key_info()` earlier instead would cost a registry read on
+  every fully-keyed pool, which the lazy load exists to avoid. The line keeps its
+  INFO level and its "not resolved" wording, so every existing assertion holds; it
+  is now emitted per ref rather than per entry (the ref is the unit everywhere
+  else) and deduplicated on the set of missing refs, so a standing gap does not
+  fill the log on every reconcile.
+
+### Known cost accepted
+
+`_direct_without_keys` resolves a key per custom entry on every reconcile, which
+custom entries did not previously pay. It mirrors what the pool already does per
+managed entry and is bounded by the same small number; without it a keyless direct
+model cannot be reported at all.
+
+### Not fixed, deliberately
+
+- **No database registry implements the key-info port**, so on tier 2 `key_help`
+  from the registry side is still empty — for the lineup *and* for `[[custom]]`
+  rows. Declared models now carry their own, so `direct=` is covered; closing it
+  for stored rows needs a new table and is not this round's scope.
+- **`llmbroker env` still lists free-tier keys only** (round 1's note stands).
+- **`preset --sync` prints nothing when the catalog is unreachable** (round 1's
+  note stands), though `cli.md`'s new "every command works offline" makes the
+  silence more visible than it was.
+
+### Incident during this round
+
+`git checkout src/llmbroker/broker/upstream.py`, used to undo a deliberate revert
+test, discarded the plan's uncommitted work in that file. Recovered byte-exact
+from the `uv build --wheel` artifact produced earlier in the session; the restored
+file matched the session-start diffstat (325 changed lines) before the round's own
+edits were re-applied. Nothing was lost. Later revert tests used file backups.
+
+---
+
+## Review round 3 — fixes
+
+Two defects found in review, both reproduced first, plus three cheap corrections
+taken in the same pass. Every fix is guarded by a test that fails when it is
+reverted (verified one revert at a time). `invoke pre` clean, `python -m pytest`
+→ **1162 passed**, zero skips.
+
+### A declared alias rolled backwards to the wheel's copy
+
+With no writable home there is no cache, so a re-resolution fell through
+`local_paid_catalog_text` → the fetch → the bundled copy. A refresh landing while
+the network was down therefore replaced a working `claude-opus-5` with the
+`claude-opus-4-8` the installed release shipped with — silently, on a paid model.
+Round 1 had closed exactly this for stored entries (`bundled=False` in
+`alias_targets_for`); the resolution path kept it.
+
+`local_paid_catalog_text` now takes `bundled=`, and a resolution asks for the
+wheel's copy only when there is nothing to keep — i.e. the first one. This is the
+spec's own rule ("the floor holds a lineup up; it never moves one") applied to
+the half that was missing it.
+
+### An alias the catalog dropped killed the refresh
+
+`resolve_declared` raises `UnknownModelError`, which is an `LLMRequestError` and
+so was caught by neither `except (ValueError, OSError)` in `_attempt_sync` nor
+anything else. The refresh task died as an unretrieved exception: the new lineup
+was written to disk but never reached the live pool, nothing was logged, and
+every later refresh failed the same way for the life of the process. `direct()`
+on unrelated aliases failed too.
+
+Fixed at the level where it belongs rather than by widening a type list:
+`AsyncBroker` keeps the last resolution that worked, and a re-resolution that
+cannot read the catalog — or finds an alias gone — logs and returns it. That is
+the rule the stored `[[custom]]` half already followed. The first resolution
+still raises: a typo must be loud at start-up, and there is nothing to keep.
+
+`_attempt_sync` was widened to `except Exception` regardless. It runs as a
+detached task; catching by type list makes "does the refresh survive" a matter of
+which exception a new code path happens to pick, which is how this defect existed
+at all.
+
+### Three corrections taken in the same pass
+
+- **The bundled fallback is reported.** It was DEBUG, so `llmbroker preset
+  freetier > llms.toml` offline handed someone a lineup frozen at their installed
+  release with no signal at all — and they keep that file. Now WARNING, which
+  `logging.lastResort` puts on stderr for every CLI command. The *cached* fallback
+  stays at DEBUG: serving what this machine last saw is the documented contract,
+  not a surprise.
+- **`EmptyRegistryError` no longer prescribes the thing that just failed.** For a
+  fileless broker the old text advised turning on `sync="freetier"` — the default
+  it had already tried. It now names both halves: nothing stored, nothing
+  fetched.
+- **A duplicate inside `direct=` blames `direct=`.** `direct=["opus", "opus"]`
+  reported that "the registry already carries" the entry. The alias is checked
+  before the resolved name, since the alias is the word the caller typed.
+
+### Not fixed, deliberately
+
+- **Round 1's and round 2's note that "the CLI prints nothing when the catalog is
+  unreachable" was wrong** — `logging.lastResort` already puts every WARNING on
+  stderr, and `preset --sync` offline does print the alias warning. Verified by
+  hand; nothing to fix, and the note is retracted rather than acted on.
+- **`direct()` still raises when a collision appears under a running broker.** Not
+  a defect: a call naming one model has no answer to give once the name is
+  ambiguous. `architecture.md` now states `direct()` alongside provisioning and
+  explicit `sync` as a path a caller asked for by name.
+- **`_direct_without_keys` resolving a key per custom entry per reconcile**
+  (round 2's accepted cost) stands. It is only worth revisiting on a tier-2
+  installation with a scoped backend and many custom entries.
+- **`llmbroker env` still lists free-tier keys only.** Round 1's note stands, and
+  it shrank: `snapshot().direct_missing_keys` and `MissingKeyError` now both carry
+  the catalog's key help.
+
+Specs and docs moved with the behavior: `architecture.md` (the floor excluded
+from a re-resolution and reported when used; only the first resolution may fail;
+`direct()` named among the paths allowed to raise; the background refresh catching
+everything; the no-writable-home qualification on "provisioning does not wait on
+the network"), and `direct.md` / `cli.md` en+ru.

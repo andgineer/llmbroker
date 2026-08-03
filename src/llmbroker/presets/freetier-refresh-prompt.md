@@ -1,7 +1,7 @@
 # Freetier preset refresh prompt
 
 Standalone runbook. Hand this whole file to an LLM agent with repo access and
-web access, or follow it by hand. It regenerates `presets/freetier.toml` —
+web access, or follow it by hand. It regenerates `src/llmbroker/presets/freetier.toml` —
 llmbroker's curated free-tier LLM pool — from current public sources.
 
 Background reading before you start (do not skip):
@@ -112,7 +112,7 @@ For each candidate provider/model, using the taxonomies fixed in
   a deliberate decision (genuinely different quota pools, or an aggregator's
   genuinely different upstreams), never as leftovers from a half-finished
   refresh. State which of the two it is in the diff summary.
-- **A model `presets/paid-catalog.toml` lists does not belong in this pool.**
+- **A model `src/llmbroker/presets/paid-catalog.toml` lists does not belong in this pool.**
   Pool entries here are named `<provider id>-<model id>`, and an entry added
   from the catalog takes a machine-formed name of exactly that shape, so a model
   held by both files makes a name no config can carry twice — `add-model` and
@@ -123,7 +123,7 @@ For each candidate provider/model, using the taxonomies fixed in
 
 ## 5. Regenerate the outputs
 
-- Rewrite `presets/freetier.toml`: one `[[llms]]` row per curated model
+- Rewrite `src/llmbroker/presets/freetier.toml`: one `[[llms]]` row per curated model
   (with `rate_limit` and `weight`), one `[keys.<API_KEY_REF>]` sub-table per
   provider (with `effort`, `value`, `help`).
 - Update `specs/reference/freetier-providers.md`: the curated-providers
@@ -132,14 +132,14 @@ For each candidate provider/model, using the taxonomies fixed in
 
 ## 6. Validate before proposing the change
 
-- Load `presets/freetier.toml` through `llmbroker.standalone.registry.Registry`
+- Load `src/llmbroker/presets/freetier.toml` through `llmbroker.standalone.registry.Registry`
   and confirm every `[[llms]]` row parses into an `LLMConfig` with a
   `rate_limit`, and every `[keys.*]` row parses into a `KeyInfo` with a
   recognized `effort` and `value` (not `None`).
 - Confirm every `[[llms]]` row carries a `weight` within `[0, 1]`. The parser
   refuses a malformed one, but it accepts a missing one as `0.0` — so this is a
   check to run, not one to rely on the loader for.
-- Cross-check `presets/paid-catalog.toml`: no `[[llms]]` `name` may equal a
+- Cross-check `src/llmbroker/presets/paid-catalog.toml`: no `[[llms]]` `name` may equal a
   `<provider id>-<model id>` pair from the catalog.
 - `invoke pre` and `python -m pytest` are green.
 - Present a diff summary — added / removed / changed models, and the

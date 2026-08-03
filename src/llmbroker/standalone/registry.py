@@ -38,14 +38,12 @@ def config_from_entry(entry: dict, *, custom: bool) -> LLMConfig | None:
         )
     if not name or not base_url:
         return None
-    raw_pool = entry.get("pool", True)
     return LLMConfig(
         name=str(name),
         base_url=str(base_url),
         model=str(entry.get("model", "")),
         api_key_ref=str(entry.get("api_key_ref", "")),
         parallel=_int_or_none(entry.get("parallel")),
-        pooled=raw_pool if isinstance(raw_pool, bool) else True,
         custom=custom,
         alias=str(alias) if alias is not None else None,
         weight=_weight_from_entry(entry.get("weight"), name),
@@ -113,10 +111,9 @@ class Registry:
         """Load ``[[llms]]`` (preset-managed) and ``[[custom]]`` (user-owned) entries.
 
         The two arrays are parsed identically; ``[[custom]]`` entries are flagged
-        ``custom=True`` so ``sync`` never prunes them. Both honor a per-entry
-        ``pool`` flag, so a custom model can join the pool or stay direct-only.
-        Only ``[[custom]]`` entries may carry an ``alias``, unique across the file;
-        names are unique across both arrays.
+        ``custom=True``, which keeps them out of the routed pool and out of every
+        sync's reach. Only ``[[custom]]`` entries may carry an ``alias``, unique
+        across the file; names are unique across both arrays.
         """
         data = _read_data(self._path)
         result: list[LLMConfig] = []

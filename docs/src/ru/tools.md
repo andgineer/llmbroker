@@ -20,7 +20,7 @@ tools = [{
     },
 }]
 
-llms = llmbroker.Broker("llms.toml")
+llms = llmbroker.Broker()
 reply = llmbroker.run_tool_loop(
     llms,
     [{"role": "user", "content": "Какая погода в Москве?"}],

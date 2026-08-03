@@ -24,9 +24,10 @@ Zero-administration routing over a pool of 4-5 free-tier LLMs:
    and the pool itself as a first-class object: how many providers can serve a
    request, which keys are missing, and whether the pool has degraded to a
    single quota. One call answers all of it; the UI chooses the presentation.
-6. **One-liner and cluster**: a sync wrapper + TOML + env keys for scripts;
-   the cluster's/stateless-server's shared cooldown is derived from the
-   store journal.
+6. **One-liner and cluster**: for a script, a sync wrapper plus env keys and
+   nothing else — `Broker()` takes no configuration and no file; the
+   cluster's/stateless-server's shared cooldown is derived from the store
+   journal.
 7. **Batteries**: sqlite, postgres, mongodb (registry + store + secrets),
    aws/vault (secrets). A new backend is one driver file, ~200 lines.
 8. **Cheap at low usage**: a bare broker makes zero DB calls; parallel calls

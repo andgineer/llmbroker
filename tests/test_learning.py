@@ -2,6 +2,7 @@
 record_quality, and the debounced journal rebuild (scores, peer cooldowns,
 metrics, disabled-map resync)."""
 
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -355,6 +356,25 @@ async def test_maybe_rebuild_calls_resync_registry(tmp_path):
     await hook.maybe_rebuild(force=True)
 
     assert calls == [1]
+
+
+async def test_a_registry_resync_that_raises_does_not_fail_the_call(tmp_path, caplog):
+    """The rebuild runs off record(), and its commonest trigger is a 429 — the very
+    thing the pool exists to absorb. A registry nobody can read must leave the pool
+    as it is and log, never surface out of the caller's own ask()."""
+    store = SqliteStore(tmp_path / "t.db")
+    pool = LLMPool()
+    await pool.add(_cfg("x"), "k")
+
+    async def exploding_resync() -> None:
+        raise ValueError("registry is unreadable")
+
+    hook = _LearningHook(Optimizer(), store, pool, exploding_resync)
+    with caplog.at_level(logging.ERROR, logger="llmbroker.broker"):
+        await hook.record(_call("x", CallStatus.RATE_LIMITED, cooldown_until=_soon()))
+
+    assert "x" in pool.configs  # the pool survived the unreadable registry
+    assert any("registry resync failed" in r.message for r in caplog.records)
 
 
 async def test_maybe_rebuild_skips_resync_registry_when_disabled(tmp_path):

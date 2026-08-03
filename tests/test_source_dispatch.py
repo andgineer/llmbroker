@@ -14,6 +14,7 @@ from llmbroker.postgres.driver import PostgresDriver
 from llmbroker.sqlite.driver import SqliteDriver
 from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.sqlite import Secrets as SqliteSecrets
+from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.sync import Broker
 
@@ -60,14 +61,20 @@ def test_unrecognized_source_raises_clear_error():
         resolve_source("not-a-known-form")
 
 
-def test_no_registry_raises():
-    with pytest.raises(ValueError, match="requires a `registry` source"):
-        AsyncBroker()
+def test_no_registry_is_the_curated_pool_in_the_home_directory(llmbroker_home):
+    """No source is a source: the zero-config installation. See
+    tests/test_fileless_broker.py for what it then does."""
+    broker = AsyncBroker()
+    assert isinstance(broker._registry, FileRegistry)
+    assert broker._registry.path == llmbroker_home / "lineup.toml"
 
 
-def test_sync_broker_no_registry_raises():
-    with pytest.raises(ValueError, match="requires a `registry` source"):
-        Broker()
+def test_sync_broker_no_registry_builds_the_same_installation(llmbroker_home):
+    broker = Broker()
+    try:
+        assert broker._async._registry.path == llmbroker_home / "lineup.toml"
+    finally:
+        broker.close()
 
 
 async def test_explicit_secrets_override_wins_over_sqlite_source(tmp_path):

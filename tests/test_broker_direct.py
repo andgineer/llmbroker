@@ -1,4 +1,4 @@
-"""Broker-level direct() access and the pooled flag — mocked httpx, no network."""
+"""Broker-level direct() access and the pool boundary — mocked httpx, no network."""
 
 import asyncio
 from unittest.mock import patch
@@ -16,7 +16,7 @@ from llmbroker.sync import Broker
 
 _BODY = """
 [[llms]]
-name="pooled-a"
+name="managed-a"
 base_url="https://pool/v1"
 model="m"
 api_key_ref="K"
@@ -27,7 +27,6 @@ alias="opus"
 base_url="https://paid/v1"
 model="big"
 api_key_ref="K"
-pool=false
 
 [[custom]]
 name="extra"
@@ -58,34 +57,26 @@ def _broker(tmp_path, secrets=None) -> AsyncBroker:
 
 
 # --------------------------------------------------------------------------- #
-# pooled flag
+# the pool boundary
 # --------------------------------------------------------------------------- #
 
 
-def test_pooled_default_and_metadata_roundtrip():
-    assert LLMConfig(name="a", base_url="u", model="m", api_key_ref="K").pooled is True
-    direct = LLMConfig(name="a", base_url="u", model="m", api_key_ref="K", pooled=False)
-    assert direct.to_metadata() == {"pool": False}
-    back = LLMConfig.from_metadata(
-        name="a", base_url="u", model="m", api_key_ref="K", metadata={"pool": False}
-    )
-    assert back.pooled is False
-
-
-def test_file_registry_parses_custom_and_pool(tmp_path):
+def test_file_registry_parses_provenance(tmp_path):
     configs = {c.name: c for c in asyncio.run(_registry(tmp_path).load())}
-    assert (configs["pooled-a"].custom, configs["pooled-a"].pooled) == (False, True)
-    assert (configs["frontier"].custom, configs["frontier"].pooled) == (True, False)
-    assert (configs["extra"].custom, configs["extra"].pooled) == (True, True)
+    assert configs["managed-a"].custom is False
+    assert configs["frontier"].custom is True
+    assert configs["extra"].custom is True
 
 
-def test_pool_membership_ignores_custom_but_honors_pool_flag(tmp_path):
+def test_the_pool_is_the_curated_lineup_and_takes_no_user_entry(tmp_path):
+    """Rule 1: nothing a user declares ever joins the routed pool, whatever the
+    entry looks like — a `[[custom]]` block is direct-only by being custom."""
+
     async def run():
         async with _broker(tmp_path) as broker:
             return set(await broker.snapshot())
 
-    # pooled-a (managed) and extra (custom, pool=true) join; frontier (pool=false) does not
-    assert asyncio.run(run()) == {"pooled-a", "extra"}
+    assert asyncio.run(run()) == {"managed-a"}
 
 
 # --------------------------------------------------------------------------- #
@@ -133,7 +124,7 @@ def test_direct_refuses_pool_model(tmp_path):
     async def run():
         async with _broker(tmp_path) as broker:
             with pytest.raises(PoolModelError, match="anonymous"):
-                await broker.direct(name="pooled-a")
+                await broker.direct(name="managed-a")
 
     asyncio.run(run())
 
@@ -176,7 +167,7 @@ def test_direct_positional_pool_name_says_pool_straight_away(tmp_path):
     async def run():
         async with _broker(tmp_path) as broker:
             with pytest.raises(PoolModelError, match="anonymous"):
-                await broker.direct("pooled-a")
+                await broker.direct("managed-a")
 
     asyncio.run(run())
 
@@ -185,18 +176,17 @@ def test_direct_by_name_prefers_the_custom_entry_over_a_pool_namesake():
     """The file registry refuses a duplicate name, but a DB registry mirrored
     before that check existed can still hand one back: the user's own entry is
     what `name=` means, not the pool entry that happens to sort first."""
-    pooled = LLMConfig(name="dup", base_url="https://pool/v1", model="m", api_key_ref="K")
+    managed = LLMConfig(name="dup", base_url="https://pool/v1", model="m", api_key_ref="K")
     mine = LLMConfig(
         name="dup",
         base_url="https://paid/v1",
         model="big",
         api_key_ref="K",
         custom=True,
-        pooled=False,
     )
-    assert _find_custom([pooled, mine], None, "dup") is mine
+    assert _find_custom([managed, mine], None, "dup") is mine
     with pytest.raises(PoolModelError):
-        _find_custom([pooled], None, "dup")
+        _find_custom([managed], None, "dup")
 
 
 def test_direct_missing_key_raises(tmp_path):
@@ -228,6 +218,6 @@ def test_sync_broker_direct_ask(tmp_path):
         ) as broker:
             result = broker.direct("opus").ask("hi")
             with pytest.raises(PoolModelError):
-                broker.direct(name="pooled-a")
+                broker.direct(name="managed-a")
 
     assert result.text == "sync-direct"

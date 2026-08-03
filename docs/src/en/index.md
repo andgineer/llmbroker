@@ -5,32 +5,35 @@ subscription, no single point of failure. No heavy dependencies like LangChain.
 
 ## Quick start
 
-[Install llmbroker](installation.md), then:
+[Install llmbroker](installation.md), get a key, and call:
 
 ```bash
-llmbroker preset freetier > llms.toml   # ready-made pool of free models
-llmbroker env freetier > .env           # which keys you need, and where to get them
+llmbroker env freetier > .env   # which keys you need, and where to get them
 ```
 
 ```python
-llms = llmbroker.Broker("llms.toml")
+llms = llmbroker.Broker()
 print(llms.ask("Hello, how are you?").text)
 ```
+
+That is the whole setup — no config file. `Broker()` runs the curated pool of
+free models, reads your keys from the environment (and the `.env` in your working
+directory), and keeps the model list current by itself.
 
 Fill in whichever keys are easy to get: a model without a key simply stays
 inactive. When a model hits its rate limit, the broker cools it down and switches
 to the next one — you get an answer, not an error, as long as any model is up.
 
-The curated preset keeps evolving. Refresh your file whenever you like — it is a
-command, not code:
+Need a paid model too? Name it — it is reached directly and never joins the pool:
 
-```bash
-llmbroker preset freetier --sync llms.toml
+```python
+llms = llmbroker.Broker(direct=["opus"])
+llms.ask("Summarise this")               # the free pool, routed and learned
+llms.direct("opus").ask("Now the hard part")   # Claude Opus, current version
 ```
 
-Your `[[custom]]` models and your keys survive, and a model whose provider left
-the preset stays in the file until a replacement you can actually call arrives —
-so an update never leaves you with fewer working models than you had.
+Prefer your model list in a file you review? That still works — see
+[Usage](usage.md#file).
 
 ## Where to go next
 
@@ -44,6 +47,8 @@ so an update never leaves you with fewer working models than you had.
 
 ## Features
 
+- **No configuration** — `Broker()` takes no file and no arguments; a config file
+  is there for teams who want the lineup in a diff.
 - **Automatic failover** — an error only when no one is left at all
   (`NoLLMAvailableError`).
 - **Chat, tools & agents** — `ask`, multi-turn `chat`, [tool calling](tools.md).

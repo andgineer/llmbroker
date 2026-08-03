@@ -116,7 +116,7 @@ def pre(c):
 @task
 def catalog_refresh(c: Context):
     """Print the freetier preset refresh prompt for handing to a maintainer or an agent."""
-    prompt_path = Path("presets/freetier-refresh-prompt.md")
+    prompt_path = Path("src/llmbroker/presets/freetier-refresh-prompt.md")
     print(prompt_path.read_text())
 
 

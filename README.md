@@ -7,12 +7,11 @@ subscription, no single point of failure. No LangChain, no heavy deps.
 
 ```bash
 pip install llmbroker
-llmbroker preset freetier > llms.toml   # ready-made pool of free models
-llmbroker env freetier > .env           # which API keys to get, and where
+llmbroker env freetier > .env   # which API keys to get, and where
 ```
 
 ```python
-llms = llmbroker.Broker("llms.toml")
+llms = llmbroker.Broker()       # no config file: the curated pool of free models
 reply = llms.ask("Explain decorators in one sentence")
 print(reply.text)   # groq rate-limited? gemini answers instead
 ```
@@ -53,7 +52,7 @@ For a list of available scripts run `invoke --list`; for details on one, `invoke
 
 The bundled `freetier` preset drifts as providers change their free tiers; refresh
 it with `invoke catalog-refresh`, which prints the maintenance runbook
-(`presets/freetier-refresh-prompt.md`).
+(`src/llmbroker/presets/freetier-refresh-prompt.md`).
 
 Reports:
 

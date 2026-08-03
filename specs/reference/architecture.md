@@ -179,6 +179,22 @@ source or an explicit `secrets=` object is unaffected.
   outside this package implements either one `Driver` (to reuse the shared ports)
   or a full port protocol directly.
 
+**No source is a source — the default installation.** `Broker()` with no
+arguments runs the curated free pool: the merged lineup in the home directory
+(`lineup.toml`, seeded on first use from the fetched, cached or bundled preset),
+keys from the environment with the working directory's `.env` behind them, the
+journal in the home directory too. The lineup file is a file registry like any
+other, so the refresh applies to it unchanged. Where nothing is writable the
+lineup and the journal live in process memory for that run — the broker still
+routes, it just remembers nothing between runs.
+
+The journal being machine-global here is the accurate model rather than a
+compromise: keys in this mode come from the environment, so the quota it tracks
+really is one pool. A journal scattered per working directory would make every
+run rediscover the same 429. Two projects on genuinely different keys are
+already separated — 429 and dead-key evidence scope by key hash — and a project
+wanting full isolation passes `home=`.
+
 **Source-parameter dispatch.** The broker's first positional argument is the data
 source; passing a plain string/`Path` dispatches on its form: `.toml`/`.json` → a
 file registry with env-var secrets; a sqlite path/URL (`.db`, `.sqlite`,
@@ -401,13 +417,36 @@ context.configure(include_object=llmbroker.integrations.alembic.include_object, 
 
 ## Preset distribution
 
-Curated LLM lists live in `presets/` at the repository root — not in the wheel.
-A list update is a plain commit, independent of any package version. The
-`preset <name>` CLI command fetches from the repository default branch:
+Curated LLM lists live in `src/llmbroker/presets/` and ship in the wheel. A list
+update is still a plain commit, independent of any package version, because the
+live source is the repository default branch, fetched over HTTPS:
 
 ```
-https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/<name>.toml
+https://raw.githubusercontent.com/andgineer/llmbroker/main/src/llmbroker/presets/<name>.toml
 ```
+
+**The bundled copy is a floor, never a source.** The lookup order is fetch, then
+the machine's cached copy, then the copy in the wheel; only when all three are
+missing is a preset an error. Without the last step a first run with no network
+and a cold cache would have nothing to start from, which is exactly the case a
+zero-config broker has to survive. It also makes `preset` and `env` work
+offline. The maintainer's refresh prompts sit beside the presets they regenerate
+and are excluded from the wheel — instructions, not payload.
+
+**The floor holds a lineup up; it never moves one.** The bundled copy is older
+than the repository by construction — it is frozen at the release the user
+installed — so it is dropped from the chain wherever a read decides where an
+*existing* entry should point: a stored entry a sync re-points, and a declared
+model already resolved once. A refresh that can reach neither upstream nor the
+cache re-points nothing, and it is never allowed to prefer the wheel's copy over
+a fetch; either would roll a model backwards to whatever the installed release
+shipped with, silently and for as long as it stayed installed.
+
+**And when the floor is used, it says so.** Serving the wheel's copy is reported
+at warning level, unlike the cached fallback, which serves what this machine
+last saw. The difference matters most outside the library: `preset <name>` hands
+someone a file they will keep, and one frozen at an installed release must not
+look like one just fetched.
 
 Presets are curated, multi-provider free-tier pools only: a paid-tier preset
 defeats the point (anyone willing to pay uses one good model directly — no
@@ -430,6 +469,27 @@ preset specifically is kept current.
 
 ---
 
+## The pool is exactly the curated lineup
+
+**Nothing a user declares ever enters the routed pool.** The pool is the curated
+preset and whatever a sync kept from an earlier one; a model the host declared —
+in a `[[custom]]` block or in code — is reached by name through `direct` and is
+never routed, never failed over onto, never learned from as a pool member. This
+is the boundary the whole design rests on, and it is why pool membership is not
+a stored field but the negation of one: an entry is pooled exactly when it is
+not the host's own. A field that is always another field's negation is a way to
+disagree with yourself later.
+
+What a user gains from the pool is failover across *free* providers, which only
+works because the lineup is curated as one set of interchangeable endpoints; a
+self-hosted endpoint or a company gateway dropped into it would be spilled onto
+by a 429 it has nothing to do with. Declaring such a model is exactly what
+`direct` is for.
+
+A `pool` key left in a hand-written `[[custom]]` block, or in a registry row
+written by an older release, is ignored rather than rejected: it is a field that
+no longer exists.
+
 ## Direct model access and stable aliases
 
 Application code must not change when a model version changes. A deployment that
@@ -437,12 +497,11 @@ follows the curated recommendation for "opus" keeps calling `direct("opus")`
 while the catalog moves that alias from one generation to the next; only the
 minority that genuinely needs a fixed version pins one.
 
-**Only user-owned `[[custom]]` entries are reachable directly.** Pointing
-`direct` at a preset-managed pool entry raises `PoolModelError`. The pool is
-anonymous by design: its members are reached through `ask`/`chat`/`stream`,
-which route and learn, and choosing or debugging an individual pool model from
-application code contradicts that. A model a host wants to call by name is a
-`[[custom]]` entry — that is what the array is for.
+**Only user-owned entries are reachable directly.** Pointing `direct` at a
+preset-managed pool entry raises `PoolModelError`. The pool is anonymous by
+design: its members are reached through `ask`/`chat`/`stream`, which route and
+learn, and choosing or debugging an individual pool model from application code
+contradicts that.
 
 **A custom entry carries two identifiers with disjoint roles.**
 
@@ -458,6 +517,60 @@ application code contradicts that. A model a host wants to call by name is a
 provider fields are catalog-managed and a refresh rewrites them. Without one,
 the entry is entirely the user's and a refresh never touches it — a pin needs no
 syntax of its own.
+
+**A paid model is declared in code or in data, and the two forms follow the same
+rule.** `direct=` on the broker takes a paid-catalog alias (`"opus"`, whose
+version llmbroker tracks) or a full config (whose version the caller tracks);
+`[[custom]]` is the same two forms written in a file. What differs is only when
+the alias is followed: a declared model is re-resolved at every provision, a
+stored one at every sync.
+
+**Declared models are overlaid, never stored.** They are appended to the lineup
+the pool reconciles against and to what `direct()` looks up, and nothing writes
+them to the registry — persisting them would create two sources of truth for one
+list, the constructor call and the stored row, and re-introduce the drift that
+alias-following exists to prevent. Re-resolving instead is what keeps `"opus"`
+pointing at the current Opus with no sync involved.
+
+**A declared model is re-resolved on the refresh clock, not on every read.**
+`direct()` is a request path, so it reads a resolution already made; what makes
+that resolution move is the catalog underneath it being refreshed. The
+resolution reads the copy already on the machine wherever there is one, so
+provisioning does not wait on the network; where nothing is writable there is no
+such copy and the read is a fetch, which is the price of keeping no state at
+all. One refresh costs one resolution however many calls are in flight when it
+lands: the callers that find the resolution gone are requests, and without that
+guarantee each of them would read and parse the catalog for itself.
+
+**The paid catalog carries its own refresh clock.** Where a lineup is synced,
+that sync reads the catalog and keeps it current. Where none is — a registry a
+deploy job fills, and a broker told to sync nothing — the same interval still
+refreshes the catalog on its own, because otherwise a declared alias would have
+no clock at all and would sit on the version the installed release shipped with.
+
+**Only the first resolution may fail; every later one keeps what works.** A
+catalog that cannot be read, or that no longer carries an alias someone
+declared, leaves the declared models on the resolution already in use, with a
+warning — the same rule the stored `[[custom]]` half follows, and for the same
+reason: a refresh that cannot see upstream has nothing to say about where an
+alias points. The wheel's copy is excluded from a re-resolution outright, since
+where nothing is writable it would otherwise be the only thing left to fall back
+to and would move a working alias *backwards* to the release's frozen version.
+Only the first resolution has nothing to keep, and only it raises.
+
+An alias the catalog does not carry therefore raises at provision and names the
+aliases it does: a typo is the expected failure and the fix is one word. A
+declared model whose name or alias is already in the registry raises too, naming
+both sources — that is the one collision the registry's own uniqueness rules
+cannot see. A declared model with no key behaves exactly as a keyless
+`[[custom]]` entry: it exists, and `direct()` on it reports the missing key.
+
+**A declared model's key is bootstrapped like a stored one.** A key the
+environment holds is copied into a writable secrets backend when the declaration
+resolves, the same way `sync` does it for the lineup it writes. Without that,
+`direct=` would be dead wherever secrets live in a backend rather than the
+environment, while the identical `[[custom]]` entry worked — and nothing else
+would ever carry that key across, since a declared model is never synced.
 
 **Learning resets by name change, with no dedicated mechanism.** A refresh
 rewrites the model id and the entry name together, so journal rows for the old
@@ -487,12 +600,16 @@ name does resolve, the user's own entry is what it means: `direct(name=…)`
 searches custom entries, and a pool entry of that name only decides which error
 comes back.
 
-**Refreshing is a file rewrite, never a runtime lookup.** `preset <name> --sync
-FILE` re-points every alias entry in the file at what the catalog now
-recommends, printing one line per change; an alias the catalog no longer knows
-is a warning and its entry is left untouched. The file stays the single source
-of truth and `sync` stays offline — nothing consults the catalog at runtime or
-at sync time.
+**An alias is followed at sync, wherever the lineup lives.** Every sync
+re-points the alias entries of the lineup it is merging at what the catalog now
+recommends — a `.toml` file and a database registry alike, from one place — and
+prints or logs one line per change; an alias the catalog no longer knows is a
+warning and its entry is left untouched. The catalog is read only when something
+actually follows an alias, so an installation with none pays no second network
+read, and a catalog nobody can reach leaves every alias entry exactly as it is —
+a refresh that cannot see upstream has nothing to say about where an alias
+points. Nothing consults it between syncs: a running pool never looks a model
+version up.
 
 ## Pool streaming
 
@@ -593,13 +710,33 @@ do is coerce the shared registry to a *local copy* of its own — diverging copi
 would flip-flop it. An implicit refresh follows the one shared upstream, which is
 why nodes converge instead of oscillating.
 
-### Two tiers, one merge site each
+**Picking up another process's edits may never fail the call that carried it
+here.** The re-read rides on the journal rebuild, and the rebuild's commonest
+trigger is a rate limit — the very thing the pool exists to absorb. So a registry
+that cannot be read, or that has been edited into a state the broker rejects,
+logs and leaves the live pool exactly as it is; it never surfaces out of the
+caller's own `ask`. Only the paths a caller asked for by name — provisioning, an
+explicit `sync`, and `direct()` naming one model — are allowed to raise; a
+`direct()` whose target has become ambiguous has no answer to give and must say
+so rather than guess.
 
-|  | tier 1 (the common case) | tier 2 |
-|---|---|---|
-| registry / secrets | `llms.toml` on its default env/`.env` secrets | DB / Vault / AWS, possibly per-user (`scope`) |
-| who merges | the CLI, into the file | `broker.sync(...)` |
-| key visibility | `os.environ` + the file's sibling `.env` | the broker's own secrets backend |
+The background refresh is the same promise made at the widest point: it runs as
+a detached task, so anything it does not catch is lost as an unretrieved
+exception and the refresh silently stops for the life of the process. It
+therefore catches everything, rather than the failures a given code path
+happened to be written with.
+
+### Three tiers, one merge site each
+
+|  | tier 0 (the default) | tier 1 (a declarative config) | tier 2 |
+|---|---|---|---|
+| registry / secrets | `<home>/lineup.toml` on env + the CWD `.env` | `llms.toml` on its default env/`.env` secrets | DB / Vault / AWS, possibly per-user (`scope`) |
+| who merges | the broker itself | the CLI, into the file | `broker.sync(...)` |
+| key visibility | `os.environ` + the CWD `.env` | `os.environ` + the file's sibling `.env` | the broker's own secrets backend |
+
+Tier 0 is what `Broker()` builds; tier 1 is for a lineup a team wants under
+version control and reviewable in a diff; tier 2 is the deploy path into a
+database registry.
 
 Each tier has exactly one merge site, and that site sees the same keys the
 application will. In tier 1 the CLI resolves through the same env-plus-sibling
@@ -757,7 +894,7 @@ verdict resurface.
 ### Pool health
 
 **The measure is the provider, not the entry.** Of the distinct `api_key_ref`s
-among pooled entries, how many have a key: `providers_usable` of
+among managed entries, how many have a key: `providers_usable` of
 `providers_total`. Two entries on one ref are one quota and one failure domain,
 so they count once.
 
@@ -765,8 +902,26 @@ so they count once.
 which is the failover feature's own definition rather than a tuning knob. Zero is
 a dead pool. Missing keys are never an alarm on their own — two providers may be
 all a host wants. A registry that pools nothing is not a degraded pool but the
-absence of one: a host whose entries are all `[[custom]]` or unpooled asked for no
-failover and is told nothing about it.
+absence of one: a host whose entries are all its own asked for no failover and is
+told nothing about it. That shape is ordinary, not pathological — a broker that
+only reaches declared paid models has exactly it.
+
+**A key missing on a model reached only by name is reported apart from the
+pool's.** Such a model is never routed, so it can neither degrade the pool nor
+be repaired by it, and folding it into the same count would make "degraded" mean
+two things. It still has to be visible: a host cannot be expected to discover by
+a failed call that its paid model has no key. So it is its own list on the
+snapshot, named by the handle the caller passes to `direct()` rather than by a
+resolved name carrying a model version the caller never typed.
+
+**Where a key comes from is data, and it travels with whatever knows it.** The
+registry's own `[keys]` help wins — a host that wrote a hint meant it — and the
+paid catalog's is the fallback, carried out of the resolution because nothing
+stores a declared model and no later read could recover it. That help reaches
+the snapshot, the sync report, the `direct()` error, and one log line the first
+time a ref turns up missing. The log is deduplicated on the set of missing refs
+rather than on a clock: a reconcile runs on every minute of activity, and a key
+that stays missing must not fill the log.
 
 The alarm lives where membership is reconciled, so it covers provisioning, every
 resync and every sync in one place: `ERROR` on the transition into one usable
