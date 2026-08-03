@@ -7,7 +7,7 @@ imports — safe to import from anywhere in the package.
 import hashlib
 import logging
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 from types import MappingProxyType
@@ -166,7 +166,9 @@ class DeclaredModels:
     """
 
     configs: tuple[LLMConfig, ...] = ()
-    key_help: Mapping[str, str] = _NO_KEY_HELP
+    # Factory, not a plain default: mappingproxy is unhashable before 3.12, and
+    # dataclasses reject an unhashable default outright.
+    key_help: Mapping[str, str] = field(default_factory=lambda: _NO_KEY_HELP)
 
 
 @dataclass(frozen=True, slots=True)

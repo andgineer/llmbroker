@@ -1,16 +1,18 @@
 # llmbroker: mission and requirements
 
-Zero-administration routing over a pool of 4-5 free-tier LLMs:
+Zero-administration routing over a pool of free-tier LLMs from several
+independent providers:
 
 1. **Routing with failover**: don't hammer 429/503 — back off (trusting
    `Retry-After`) and move on to the next model within the same request. The
    caller only sees an error once the whole pool is exhausted.
 2. **Zero administration**: a curated preset (TOML from the repository) that
-   keeps itself current inside a running installation, with no admin act at all
-   and never shrinking what the pool can call; a dead key is detected and
-   disables itself; a model that performs poorly for our tasks moves itself to
-   the back of the queue. The one irreducible admin act is obtaining a new
-   provider key — and it is surfaced in the sync report, never silently absorbed.
+   keeps itself current inside a running installation, with no admin act beyond
+   the keys themselves and never shrinking what the pool can call; a dead key is
+   detected and disables itself; a model that performs poorly for our tasks
+   moves itself to the back of the queue. Obtaining a provider key is the one
+   irreducible admin act — a free tier is issued to a person, not to a library —
+   and it is surfaced in the sync report, never silently absorbed.
 3. **Learning per (model, operation)**: tasks require different levels of
    model capability — quality scores accumulate per (model, operation) pair,
    demotion is per operation; no global verdict exists.
@@ -45,18 +47,32 @@ covers it, and a change that erodes any one of these erodes the mission:
    proxy traffic through their servers under their account: a single point
    of failure, their billing/markup, their data path, and one shared
    rate-limit bucket. llmbroker pools the providers' *own* free tiers via
-   direct keys — strictly more free capacity than any one gateway account —
-   and no third party ever sees the traffic. llmbroker must never require a
-   dedicated running service of its own.
-2. **No heavy dependencies.** The closest library, LiteLLM, is a large,
+   direct keys, so a pool holding keys for several providers draws on that
+   many independent quotas where a gateway account draws on one — and no
+   third party ever sees the traffic. (Keys for one provider are not a pool:
+   spilling from one provider onto another is the entire mechanism.)
+   llmbroker must never require a dedicated running service of its own.
+
+   It does centralize one thing — deciding what is worth pooling — but on the
+   configuration path rather than the data path, and that difference is what
+   the design defends. What it publishes is a text file on GitHub. Unreachable,
+   and nothing happens: an installation keeps running on the lineup it already
+   holds. Wrong, and it still cannot destroy a working configuration, because
+   the merge rules bound what an arriving lineup may take away
+   ([`rules/sync-merge.md`](rules/sync-merge.md)). There is no service to be
+   denied by and no runtime dependency to fail.
+2. **Nothing large comes with it.** The closest library, LiteLLM, is a large,
    fast-churning dependency surface whose cluster features push toward
-   running its proxy server. llmbroker's core has zero mandatory
-   dependencies; cluster-shared state derives from a journal in a database
-   the host already runs (sqlite/postgres/mongodb as optional extras).
+   running its proxy server. llmbroker's core is a handful of small
+   pure-Python packages — no provider SDK, no database driver, no framework —
+   so embedding it does not measurably grow the application that does.
+   Every backend is an optional extra, and cluster-shared state derives from a
+   journal in a database the host already runs.
 3. **Learned quality per (model, operation).** Existing routers balance on
-   health, latency, or cost. Only llmbroker demotes a model per task kind
-   from accumulated host ratings — a self-regulating pool, not a static
-   priority list.
+   health, latency, or cost. llmbroker is the only one that accepts a quality
+   signal from the host and turns it into the pool's order, per task kind — a
+   pool that regulates itself on the host's own definition of a good answer,
+   rather than a static priority list.
 4. **Zero administration as a feature, not a tutorial.** A curated free-tier
    preset that keeps itself current, dead keys that disable themselves,
    cooldowns that honor `Retry-After` — competitors leave all of this as
