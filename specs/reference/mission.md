@@ -64,11 +64,11 @@ covers it, and a change that erodes any one of these erodes the mission:
    spilling from one provider onto another is the entire mechanism.)
    llmbroker must never require a dedicated running service of its own.
 
-   It does centralize one thing — deciding what is worth pooling — but on the
-   configuration path rather than the data path, and that difference is what
-   the design defends. What it publishes is a text file on GitHub. Unreachable,
-   and nothing happens: an installation keeps running on the lineup it already
-   holds. Wrong, and it still cannot destroy a working configuration: an
+   It does centralize curation — which endpoints are worth pooling, and which
+   paid models are worth naming — but on the configuration path rather than the
+   data path, and that difference is what the design defends. What it publishes
+   is text on GitHub. Unreachable, and nothing happens: an installation keeps
+   running on what it already holds. Wrong, and it still cannot destroy a working configuration: an
    arriving lineup is merged under rules that never cost an installation a
    provider it could reach. There is no service to be denied by and no runtime
    dependency to fail.
@@ -120,8 +120,11 @@ share what it learned without a running service of its own.
 **The routed pool is exactly the curated lineup.** Failover only works across
 endpoints curated as interchangeable, so a host's own model is never routed
 onto, never failed over from, and never learned about as a pool member.
-Reaching it by name is a separate act, and paid models follow permanent aliases
-so application code survives a version bump.
+Reaching it by name is a separate act. Pinning a version is one way and stays
+the host's own; the other is to name a permanent alias, and then llmbroker owns
+that entry and keeps it pointing at the current version. Application code
+survives a version bump, at the price of an entry that is no longer the host's
+to hand-edit.
 
 **The lineup keeps itself current, unconditionally.** Free endpoints are retired
 without notice, so a pinned lineup decays into nothing. The refresh rides on
