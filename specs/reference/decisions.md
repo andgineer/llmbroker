@@ -217,13 +217,6 @@ one quota scope by themselves. A string also avoids a `42` vs `"42"` collision.
 scheme or extension, with the driver imported lazily. Explicit port arguments
 remain for mixed configurations.
 
-### the-set-of-batteries-is-fixed
-
-**Blocks:** adding further storage backends.
-**Why:** each driver is small behind one generic port, so the set is not a cost
-problem — but there is no role left for another. See
-`cooldown-from-the-journal` for why Redis in particular has none.
-
 ---
 
 ## The lineup
@@ -287,6 +280,17 @@ a way to disagree with yourself later.
 **Why:** it would create two sources of truth for one list — the constructor
 call and the stored row — and re-introduce exactly the drift alias-following
 exists to prevent.
+
+### the-paid-catalog-is-curated-too
+
+**Blocks:** dropping the curated paid catalog and alias-following, leaving a
+host to write its own `[[custom]]` entries by hand.
+**Why:** weighed against the volume it costs and kept. An alias is the only
+thing that survives a model version bump, so without a curated catalog every
+host pins a version and silently runs a retired model until it breaks. The
+curation rides the same configuration path as the free lineup — unreachable
+changes nothing, wrong cannot destroy a working config — so it adds no runtime
+dependency, only code.
 
 ### keyinfo-is-a-passthrough
 

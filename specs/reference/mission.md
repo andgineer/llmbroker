@@ -13,7 +13,9 @@ independent providers:
    what is being asked of it, so quality is tracked per (model, operation) and
    no global verdict exists.
 4. **Keys optionally per-user**, with fallback to a shared key, over one shared
-   model list and one shared body of learning. Quota follows the key.
+   model list and one shared body of learning. Quota follows the key. Where the
+   keys are not llmbroker's to see, their absence proves nothing and the
+   installation says what it holds.
 5. **Visibility from the host UI**: every per-model fact, the call journal, and
    the pool itself as a first-class object — how many providers can serve a
    request, which keys are missing, whether failover is still possible.
