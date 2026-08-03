@@ -45,16 +45,20 @@ system is wrong. It also indexes everything else, so it is what tells you which 
 task needs. Loading it is not optional and not conditional on the task looking relevant: the
 invariants that bite are the ones in a subsystem you did not think you were touching.
 
-| file | what it answers | when to load |
+| file (under `specs/reference/`) | what it answers | when to load |
 |---|---|---|
-| `specs/reference/invariants.md` | cross-cutting rules + the index | always |
-| `specs/reference/rules/call-path.md` | one routed call: failure classification, `wait`, streaming, the error contract | on demand |
-| `specs/reference/rules/selection.md` | which model is picked: cooldown, demotion, priority, weights | on demand |
-| `specs/reference/rules/sync-merge.md` | lineup → registry: removal rule, refresh clock, report, pool health | on demand |
-| `specs/reference/rules/presets-aliases.md` | where definitions come from: presets, catalog, `direct`, key help, CLI | on demand |
-| `specs/reference/rules/storage.md` | backends, schema policy, journal read path, scoping, home dir | on demand |
-| `specs/reference/decisions.md` | why a contested call went that way | one entry, by anchor, before proposing a mechanism |
-| `specs/reference/mission.md` | what the library is for | rarely — it is the human entry point |
+| `invariants.md` | cross-cutting rules + the index | always |
+| `rules/call-path.md` | one routed call: failure classification, `wait`, streaming, error contract | on demand |
+| `rules/selection.md` | which model is picked: cooldown, demotion, priority, weights | on demand |
+| `rules/sync-merge.md` | lineup → registry: the removal rule, the tiers, the report | on demand |
+| `rules/lineup-refresh.md` | what keeps a lineup current: the two gates, check record, cache | on demand |
+| `rules/pool-health.md` | provider counts, `degraded`, the alarm | on demand |
+| `rules/presets.md` | the free pool's definitions: distribution, key help, the CLI | on demand |
+| `rules/direct-aliases.md` | the paid catalog, `direct`, the alias contract | on demand |
+| `rules/backends.md` | the three ports, source dispatch, lifecycle, DB schema, secret naming | on demand |
+| `rules/journal.md` | the journal: read path, the one tail read, retention, scoping | on demand |
+| `decisions.md` | why a contested call went that way | one entry, by anchor, before proposing a mechanism |
+| `mission.md` | what the library is for | rarely — it is the human entry point |
 
 **Do not read a detail file "to be safe".** The index names what each one holds; if the task does
 not touch that subject, its rules do not apply, and the cross-cutting ones are already loaded.

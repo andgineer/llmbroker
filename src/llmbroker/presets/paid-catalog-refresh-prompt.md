@@ -14,7 +14,7 @@ Background reading before you start (do not skip):
   `[keys.*]` are parsed. The catalog's fields must map cleanly onto what a
   `[[custom]]` entry needs: `base_url`, `model`, `api_key_ref`, and a `[keys]`
   help blurb.
-- [`../specs/reference/rules/presets-aliases.md`](../specs/reference/rules/presets-aliases.md) —
+- [`../../../specs/reference/rules/direct-aliases.md`](../../../specs/reference/rules/direct-aliases.md) —
   llmbroker calls **only OpenAI-compatible** `/chat/completions` endpoints. A
   provider without an OpenAI-compatible endpoint cannot be in this catalog.
 
