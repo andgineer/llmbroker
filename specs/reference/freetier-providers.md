@@ -44,8 +44,10 @@ Two things are easy to conflate:
   gets 1,000 RPD while `llama-3.1-8b` gets 14,400 RPD. So a rate limit is a
   property of the *model endpoint*, not of the key. (OpenRouter is the opposite
   extreme: all its `:free` models share one account-wide daily pool — a
-  per-provider limit. Both shapes exist, so the catalog carries `rate_limit`
-  per-model on each `[[llms]]` row.)
+  per-provider limit.) Both shapes exist, which is why no limit figure is
+  carried in the preset at all: a pooled row holds only its endpoint, its key
+  reference and its weight. The numbers below are curation research, read by a
+  human deciding what to pool — never by the router.
 - **Quota scope is per account / organization / project.** Whatever the limit,
   the bucket it draws from is shared across all your keys for that provider —
   making extra keys does not multiply it. This is why pooling *across* providers
@@ -105,11 +107,9 @@ silent curation failure.
 
 It is a judgement informed by benchmarks, not equal to any of them: benchmarks
 measure a task, the weight predicts how a host will rate an ordinary answer. The
-shipped values rest on the evidence recorded under "Curated providers" below —
-Gemini 3.5 Flash-Lite `0.75` (Artificial Analysis intelligence index 50),
-Nemotron 3 Ultra `0.72` (AA 47.7, the highest US open-weight model), Laguna S 2.1
-`0.70` (SWE-Bench Multilingual 78.5%, general answers sound), gpt-oss-120b `0.55`
-(AA 33.3).
+shipped values live in the preset and rest on the evidence recorded under
+"Curated providers" below; a refresh that changes one restates its evidence
+there rather than here.
 
 The paid catalog carries no weight: its entries land direct-only, outside the
 routed pool, so nothing would read one.

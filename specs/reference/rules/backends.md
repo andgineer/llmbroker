@@ -17,21 +17,18 @@ Every host plugs in up to three backends; only the registry is required.
 
 The store is the only storage llmbroker owns and writes.
 
-**Where each kind lives.** Contracts live in `llmbroker.protocols` — implement
-one to add a custom backend; they are not part of the top-level surface.
-Zero-dependency implementations live in `llmbroker.standalone` and are
-re-exported on the top-level package: a config file, env-var secrets, a
-file-backed store, no integration code. Dependency-carrying backends are one
-subpackage per driver, each re-exporting its own classes from its own
-`__init__.py` — they cannot live on the top-level package the way `standalone`
-does, since that would force the optional driver import on a bare
-`import llmbroker`, and importing the subpackage is the dependency declaration.
+**Where each kind lives** — the map an implementation follows. Contracts sit in
+their own module, apart from the top-level surface: implement one to add a
+custom backend. Zero-dependency implementations sit together and are the only
+ones the top-level package exposes. Every dependency-carrying backend is its own
+subpackage, one per driver, so importing the subpackage *is* the dependency
+declaration and a bare `import llmbroker` never pulls a driver in.
 
-Internally each SQL/document backend is one storage `Driver` behind one shared
-port implementation written once against the `Driver` protocol; adding a new DB
-backend is one driver file. A custom backend outside the package implements
-either one `Driver`, to reuse the shared ports, or a full port protocol
-directly.
+Internally each SQL/document backend is one storage driver behind one shared
+port implementation, written once against the driver protocol — so **adding a DB
+backend is one new driver file and no edit to the ports**. A custom backend
+outside the package implements either one driver, to reuse the shared ports, or
+a full port protocol directly.
 
 **The default secrets backend reads a `.env` file, without a dependency.** A
 broker whose config source is a file defaults to that file's sibling `.env` as a
@@ -141,18 +138,15 @@ There is no state or summaries table — shared cooldowns and learned quality
 derive entirely from the calls journal.
 
 **Host migration coexistence.** The package ships a predicate for Alembic's
-`include_object` hook that excludes every `llmbroker_*` object from
+object-inclusion hook that excludes every `llmbroker_*` object from a host's
 autogenerate, carrying zero Alembic dependency: it inspects the object name
 only.
 
 ## Secret naming
 
-Each managed-secret backend uses a deterministic, namespaced path so secrets
-written by llmbroker are identifiable and isolated from the rest of the account.
-Neither has a user or scope parameter — the ref is the whole identity, already
-carrying any scope prefix the broker added.
-
-- **AWS Secrets Manager** — the secret name is a configurable prefix followed by
-  the ref, defaulting to an `llmbroker/` prefix. Secrets created by llmbroker
-  carry an `llmbroker` tag for independent enumeration and cleanup.
-- **HashiCorp Vault** — the KV v2 engine, under an `llmbroker/` path.
+Each managed-secret backend derives its path deterministically from the ref
+under an llmbroker-owned namespace, so secrets written by llmbroker are
+identifiable and separable from the rest of an account, and what llmbroker
+created can be enumerated and cleaned up without guessing. Neither backend has a
+user or scope parameter — the ref is the whole identity, already carrying any
+scope prefix the broker added.

@@ -15,8 +15,8 @@ Background reading before you start (do not skip):
   preset lands on a running deployment. You do not implement this behavior;
   you must not violate its invariants (see Guardrails below, and
   [`../../../specs/reference/invariants.md`](../../../specs/reference/invariants.md)).
-- `src/llmbroker/models.py` — the `EffortLevel` and `ValueLevel` enums. These
-  are fixed; do not invent new buckets.
+The `effort`/`value` buckets are defined in `freetier-providers.md` alone —
+llmbroker parses neither, so do not invent new ones.
 
 ## 1. Consult the sources
 
@@ -41,9 +41,10 @@ to one of these.
 For each candidate provider/model, using the taxonomies fixed in
 `freetier-providers.md`:
 
-- **`rate_limit`** — the real limit windows (`rpm`/`rpd`/`tpm`/`tpd`).
-  Check whether the limit is per-model or per-account/provider (both shapes
-  exist — see the "Rate-limit dimensions" section).
+- **the limit windows** (requests per minute and per day, and any token
+  windows) — recorded in `freetier-providers.md` only, since the preset carries
+  no limit field. Check whether the limit is per-model or per-account/provider
+  (both shapes exist — see the "Rate-limit dimensions" section).
 - **`effort`** — how hard the key is to obtain: `oauth < signup < verify <
   console < waitlist`.
 - **`value`** — whether the provider exposes at least one genuinely useful
@@ -124,19 +125,19 @@ For each candidate provider/model, using the taxonomies fixed in
 
 ## 5. Regenerate the outputs
 
-- Rewrite `src/llmbroker/presets/freetier.toml`: one `[[llms]]` row per curated model
-  (with `rate_limit` and `weight`), one `[keys.<API_KEY_REF>]` sub-table per
-  provider (with `effort`, `value`, `help`).
+- Rewrite `src/llmbroker/presets/freetier.toml`: one `[[llms]]` row per curated
+  model (with `weight`), one `[keys.<API_KEY_REF>]` sub-table per provider (with
+  `effort`, `value`, `help`).
 - Update `specs/reference/freetier-providers.md`: the curated-providers
   table, the candidate-providers list, the per-provider notes, the sources
   list, and the refresh date.
 
 ## 6. Validate before proposing the change
 
-- Load `src/llmbroker/presets/freetier.toml` through `llmbroker.standalone.registry.Registry`
-  and confirm every `[[llms]]` row parses into an `LLMConfig` with a
-  `rate_limit`, and every `[keys.*]` row parses into a `KeyInfo` with a
-  recognized `effort` and `value` (not `None`).
+- Load `src/llmbroker/presets/freetier.toml` through the file registry and
+  confirm every row parses, and that every `[keys.*]` section carries an
+  `effort`, a `value` and a `help`. The loader validates none of the three — it
+  relays them — so this is a check to run, not one to delegate.
 - Confirm every `[[llms]]` row carries a `weight` within `[0, 1]`. The parser
   refuses a malformed one, but it accepts a missing one as `0.0` — so this is a
   check to run, not one to rely on the loader for.
@@ -149,15 +150,16 @@ For each candidate provider/model, using the taxonomies fixed in
 
 ## Guardrails
 
-- **Facts only from sources.** Every `rate_limit`/`effort`/`value` value must
-  trace to a cited source captured in `freetier-providers.md`. Never guess a
-  number.
+- **Facts only from sources.** Every limit figure and every `effort`/`value`
+  value must trace to a cited source captured in `freetier-providers.md`. Never
+  guess a number.
 - **Curation, not accumulation.** Adding a model requires a value
   justification. The goal is a small, dependable pool.
 - **Human-in-the-loop.** Output a reviewed diff, never an unattended commit.
-- **Taxonomies are fixed elsewhere.** If the `effort`/`value`/`rate_limit`
-  shapes themselves need to change, that is a separate change to
-  `freetier-providers.md` and the `EffortLevel`/`ValueLevel` enums in
-  `models.py` — not something to do inside a routine refresh.
+- **Taxonomies are curation convention, not a parsed vocabulary.** llmbroker
+  relays whatever a `[keys.REF]` section holds without validating it, so a new
+  bucket breaks nothing in code and everything in comparability. Changing the
+  `effort`/`value` shapes is a separate change to `freetier-providers.md` — not
+  something to do inside a routine refresh.
 - **Entry identity is immutable.** Never repoint an existing entry name at a
   different `model`.

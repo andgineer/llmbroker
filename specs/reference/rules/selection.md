@@ -7,7 +7,7 @@ elaborates are in [`../invariants.md`](../invariants.md).
 
 The `Optimizer` computes both. `optimize=True` (the default) activates it; an
 explicit instance tunes it. Its lifecycle has exactly two phases, AVAILABLE and
-COOLING, always derived from `cooldown_until` versus now.
+COOLING, always derived from the recorded cooldown instant versus now.
 
 ## Cooldown: trust the provider
 
@@ -15,10 +15,10 @@ On a 429/503 the wait is computed from *that response's own* signal:
 
 - `Retry-After` (seconds or an HTTP-date), when the provider sends one, is used
   as-is on the first failure of a streak.
-- Mid-streak (no success since the last 429/503), the number is scaled by
-  `backoff_factor ** consecutive_fails`. A success resets the streak to zero.
+- Mid-streak (no success since the last 429/503), the number is scaled
+  exponentially in the streak length. A success resets the streak to zero.
 - With no `Retry-After`, a flat base is used before the same streak scaling.
-- The final wait is capped at `max_delay`.
+- The final wait is capped.
 
 A generic 5xx, a transport failure, or an HTTP 200 that is not a chat completion
 uses the same formula with the flat base, there being no `Retry-After` to read.
@@ -32,14 +32,14 @@ that key digest remain inside the rebuild tail; replacing the secret resolves to
 a different digest, the old rows stop matching, and the model revives on a
 following rebuild.
 
-**Sharing across instances.** Every failed call journals `cooldown_until` and
-`key_hash` (a short digest of the resolved key value) on its row. The debounced
-tail read applies the newest `cooldown_until` per model to every instance's
-pool, and is forced out of turn by the instance's own failures. A 5xx cooldown
-applies unconditionally — it is provider-side and shared by everyone. A 429 or
-401/403 cooldown applies only where `key_hash` matches this instance's own
-resolved key for that model: quota belongs to the key, so a shared key shares
-its cooldown and a personal key cools only its owner.
+**Sharing across instances.** Every failed call journals, on its row, the
+cooldown instant the failing instance computed and a short digest of the key it
+used. The debounced tail read applies the newest cooldown per model to every
+instance's pool, and is forced out of turn by the instance's own failures. A 5xx
+cooldown applies unconditionally — it is provider-side and shared by everyone. A
+429 or 401/403 cooldown applies only where the digest matches this instance's
+own resolved key for that model: quota belongs to the key, so a shared key
+shares its cooldown and a personal key cools only its owner.
 
 Coordination is advisory. Correctness comes from failover; the cost of
 staleness is one wasted roundtrip with a transparent spillover, and a stateless
@@ -47,10 +47,10 @@ process starts informed from its first journal read.
 
 ## Quality demotion
 
-Per `(model, operation)`, a window of the last `quality_window` ratings is kept.
-A bucket is **demoted** iff it holds at least `quality_min_count` ratings and
-their Wilson-score upper bound sits below `quality_floor`. Calls made without
-`operation=` fall into the `None` bucket.
+Per `(model, operation)`, a window of the most recent ratings is kept. A bucket
+is **demoted** iff it holds enough of them and their Wilson-score upper bound
+sits below a floor — demote only when even the optimistic estimate is below it.
+Unlabelled calls fall into their own bucket.
 
 ```python
 reply = await llms.ask("Summarize this contract clause", operation="summarize")
@@ -91,7 +91,7 @@ a rule of its own.
 
 **The weight decides where a model starts, never where it stays.** Evidence
 displaces it by shrinkage rather than by a threshold: with no ratings the
-priority is exactly the weight; the weight is worth `prior_strength`
+priority is exactly the weight; the weight counts for a fixed number of
 pseudo-ratings against an empty window and proportionally fewer as the window
 fills; a full window leaves the priority equal to the observed mean, with the
 weight contributing nothing. Ratings can therefore reorder the pool freely
@@ -147,7 +147,7 @@ caller's clock.
 ## The two axes, and the invariant that keeps them apart
 
 - **Cooldown** is provider-driven, self-healing, and a hard exclusion: the wait
-  scales with the streak and resets on the next success, so a degrading model is
+  grows with the streak and resets on the next success, so a degrading model is
   withdrawn for longer and a recovering one returns at once.
 - **Quality** is host-driven, sticky, and orders rather than excludes.
 
@@ -159,6 +159,6 @@ time-based recovery.
 
 There is no alerts API and no status enum. The few human-actionable events —
 dead key, a demotion flip, an under-provisioned pool (every keyed model COOLING
-at once, debounced) — are log lines on the `llmbroker.broker` logger.
+at once, debounced) — are log lines.
 `snapshot()` serves each model's raw facts and metrics; the host derives
 whatever presentation it wants.

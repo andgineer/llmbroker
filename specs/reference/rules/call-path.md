@@ -90,8 +90,8 @@ mid-answer dies rather than hanging.
 
 **A spent budget is never a model's fault.** The model is not cooled, its
 failure streak does not advance, the call raises
-`NoLLMAvailableError(reason="timeout")`, and the journal row carries no
-`cooldown_until`. Only the global ceiling firing means the model is genuinely
+`NoLLMAvailableError` with a timeout reason, and the journal row records no
+cooldown. Only the global ceiling firing means the model is genuinely
 too slow, and that cools it like a 5xx. Without the distinction a tight `wait`
 would teach the broker that healthy models are failing. The row is a plain
 `ERROR` one — an expiry is journaled for visibility, not classified, so there is

@@ -27,7 +27,7 @@ flip-flop it.
 |---|---|---|---|
 | registry / secrets | the home-directory lineup on env plus the CWD `.env` | a config file on its default env/`.env` secrets | DB / Vault / AWS, possibly per-user (`scope`) |
 | who merges | the broker itself | the CLI, into the file | `broker.sync(...)` |
-| key visibility | `os.environ` + the CWD `.env` | `os.environ` + the file's sibling `.env` | the broker's own secrets backend |
+| key visibility | the process environment + the CWD `.env` | the process environment + the file's sibling `.env` | the broker's own secrets backend |
 
 Tier 0 is what a bare `Broker()` builds; tier 1 is for a lineup a team wants
 under version control and reviewable in a diff; tier 2 is the deploy path into a

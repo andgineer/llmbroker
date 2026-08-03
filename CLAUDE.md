@@ -39,6 +39,13 @@ Run `invoke pre` after each discrete batch of changes, not only at the end.
 
 ## The specs, and what to load
 
+**The code is the source of truth; the specs are not a second copy of it.** They carry exactly two
+things the code cannot: a decision too large to fit in a comment, which edits would silently erode
+if it were written nowhere; and a map — where a kind of thing lives, so a change lands in the right
+place and does not break the structure already there. Anything you could learn faster by opening
+the module does not belong in a spec, because a spec that restates code is a spec that will lie
+about it.
+
 **Read `specs/reference/invariants.md` before touching `src/`, on every task.** It is ~700 words
 and holds the rules whose violation is *silent* — the code compiles, the gate is green, and the
 system is wrong. It also indexes everything else, so it is what tells you which detail file the
@@ -160,6 +167,8 @@ Any request to implement a plan — "выполни очередной план"
 - **Before proposing a mechanism in a plan, check `specs/reference/decisions.md` for it.** It is an addressable registry — open the entry, not the file. A mechanism recorded there was already weighed, and the entry names the counter-argument the new proposal is about to hand-wave. Proposing it again wastes a review round. If a recorded decision is genuinely wrong now, say so explicitly in the plan and argue against the recorded reason — never re-propose in silence.
 - Never reference plan file paths or step numbers inside code comments or docstrings.
 - Specs in `specs/` capture architectural decisions and business requirements only — not implementation details (no function signatures, field names, or internal class structure).
+- **A code identifier appearing in a spec is a smell — assume it does not belong until it earns one of three exemptions.** Naming a thing ties the spec to a rename and buys nothing a reader could not get from the module. It earns its place only as (1) *navigation* — where a kind of thing lives, or what the shape of a change must be ("adding a DB backend is one new driver file"); (2) a *host-facing contract* — an exception class a host catches, a protocol it implements, a public entry point, a key in the TOML a human writes; or (3) the *name of a rejected alternative*, which is the search key that stops it being re-proposed. Tuning-knob names, field and column names, logger names, module paths used as prose, and literal configured values fail all three: state the rule without them.
+- **`invariants.md` is capped at ~25 entries; past that an entry enters only by displacing another.** It is loaded on every task, so its size is a tax on all work. An entry belongs there only when breaking it is both silent and cross-cutting — a rule local to one subsystem lives in that subsystem's file, where the task itself leads a reader to it.
 - Specs describe current state only, including in `decisions.md`-style rationale docs: never narrate what a removed class/parameter/field used to be called (e.g. "the `Stack` classes, `stack=`, go away") — state the current shape and, if useful, *why* it's shaped that way. Old names belong to git history, not to a living spec.
 - **A rule is written in exactly one place.** Everywhere else links to it. Duplicated rules drift, and a reader cannot tell which copy is current.
 - Module docstrings and code comments never document architecture in blocks (a design-essay docstring, a multi-paragraph "how this subsystem works" comment). Keep docstrings to 1-3 lines; if content explains *why* the system is shaped a certain way rather than a non-obvious local WHY, it belongs in `specs/reference/`, not in the code.

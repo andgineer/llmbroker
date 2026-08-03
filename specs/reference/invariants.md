@@ -7,7 +7,8 @@ beside it holds the behavior that follows from it.
 **Load this file for every task.** An entry earns a place here only when
 breaking it is both silent and cross-cutting. A rule local to one subsystem
 lives in that subsystem's file instead, where the task itself will lead a reader
-to it.
+to it. The list is capped at ~25: it is loaded on every task, so past the cap an
+entry enters only by displacing another.
 
 ## Where everything lives
 
