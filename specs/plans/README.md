@@ -19,18 +19,9 @@ Statuses as of 2026-08-03: the queue is empty.
 
 ## Standing rules for whatever is queued next
 
-Three rules established by shipped work and binding on what follows:
+The rules binding on every plan live in [`../reference/invariants.md`](../reference/invariants.md),
+which is loaded for every task. Nothing is restated here — a rule written twice is a rule that will
+drift.
 
-- **The lineup keeps itself current, and a sync that changes nothing changes nothing.** The refresh
-  is unconditional and interval-gated, and an identity gate suppresses every write, application and
-  INFO line when the merged result equals what is stored — compared by name for a registry target,
-  since a database returns rows in its own order. A new persisted field on `LLMConfig` joins that
-  comparison automatically; a plan that adds one owes it a test, not a mechanism. Recorded in
-  `architecture.md`, "Keeping the lineup current".
-
-- **Journal reads never provision.** The journal does not depend on the registry, and a visibility
-  call must survive an empty or stale one. Recorded in `architecture.md`; the sync's own bounded
-  journal read honors it, and what follows must not diverge from it.
-- **A latency budget is per call, never per model.** `wait` bounds slot acquisition and the
-  in-flight attempt; there is no per-LLM timeout knob and will not be one — see
-  `architecture.md`.
+One consequence worth naming for plan authors: a new persisted field on a registry entry joins the
+sync identity comparison automatically, so a plan that adds one owes it a test, not a mechanism.

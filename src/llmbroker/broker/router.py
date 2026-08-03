@@ -2,7 +2,7 @@
 
 Acquires a free slot, calls the provider, and journals every attempt; each
 failure's disposal — cool down and retry, fail over without cooling, or hand the
-caller back its own expired ``wait`` — is the error contract in architecture.md.
+caller back its own expired ``wait`` — is the error contract in call-path.md.
 """
 
 import asyncio

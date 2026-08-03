@@ -92,7 +92,7 @@ Unlike `effort` and `value`, which are onboarding guidance for a human, `weight`
 is read by the router: it is the curated prior on the quality rating an entry is
 expected to earn, on the same `0..1` scale as a host rating, and it sets where the
 entry starts in the pool until an installation's own ratings replace it entirely
-(see "Selection" in [`optimizer.md`](optimizer.md)). Every `[[llms]]` row carries
+(see "Order of acquisition" in [`rules/selection.md`](rules/selection.md)). Every `[[llms]]` row carries
 one — an entry without a weight starts at the bottom of the pool, which is a
 silent curation failure.
 
@@ -181,7 +181,7 @@ to Nvidia) add nothing on either axis.
 ## Curation rules for adding and removing entries
 
 What a curated update may do is bounded by what a downstream sync will do with
-it (see "Syncing the lineup" in [`architecture.md`](architecture.md)).
+it (see [`rules/sync-merge.md`](rules/sync-merge.md)).
 
 - **A same-provider replacement removes the old entry.** The two usually share
   one provider quota, and a still-endorsed old model would keep spending it on

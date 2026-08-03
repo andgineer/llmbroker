@@ -37,6 +37,28 @@ Before claiming anything is done, both must be green:
 
 Run `invoke pre` after each discrete batch of changes, not only at the end.
 
+## The specs, and what to load
+
+**Read `specs/reference/invariants.md` before touching `src/`, on every task.** It is ~700 words
+and holds the rules whose violation is *silent* — the code compiles, the gate is green, and the
+system is wrong. It also indexes everything else, so it is what tells you which detail file the
+task needs. Loading it is not optional and not conditional on the task looking relevant: the
+invariants that bite are the ones in a subsystem you did not think you were touching.
+
+| file | what it answers | when to load |
+|---|---|---|
+| `specs/reference/invariants.md` | cross-cutting rules + the index | always |
+| `specs/reference/rules/call-path.md` | one routed call: failure classification, `wait`, streaming, the error contract | on demand |
+| `specs/reference/rules/selection.md` | which model is picked: cooldown, demotion, priority, weights | on demand |
+| `specs/reference/rules/sync-merge.md` | lineup → registry: removal rule, refresh clock, report, pool health | on demand |
+| `specs/reference/rules/presets-aliases.md` | where definitions come from: presets, catalog, `direct`, key help, CLI | on demand |
+| `specs/reference/rules/storage.md` | backends, schema policy, journal read path, scoping, home dir | on demand |
+| `specs/reference/decisions.md` | why a contested call went that way | one entry, by anchor, before proposing a mechanism |
+| `specs/reference/mission.md` | what the library is for | rarely — it is the human entry point |
+
+**Do not read a detail file "to be safe".** The index names what each one holds; if the task does
+not touch that subject, its rules do not apply, and the cross-cutting ones are already loaded.
+
 ## Executing a plan
 
 Any request to implement a plan — "выполни очередной план", "выполни следующий план",
@@ -58,7 +80,10 @@ Any request to implement a plan — "выполни очередной план"
    change: an architectural decision, a business requirement, an invariant a future reader must
    not break. Implementation detail (signatures, field names, line numbers) is not spec-worthy and
    is not copied anywhere: the code is its source of truth. Each plan names what to write and
-   where; if it names nothing, nothing needs moving.
+   where; if it names nothing, nothing needs moving. Which file it lands in follows the table
+   above: a rule whose violation is silent *and* cross-cutting goes to `invariants.md` and is
+   stated only there; a rule local to one subsystem goes to that subsystem's file; a `decisions.md`
+   entry is written only when a plausible alternative can be named in it.
 8. **Never delete the plan file.** It is the review artifact: the reviewer reads the diff against
    it. Deletion happens only after review and merge, when the maintainer asks — then the file and
    its row in `specs/plans/README.md` go together.
@@ -128,10 +153,11 @@ Any request to implement a plan — "выполни очередной план"
     functions belong in a named module, and every caller imports from that exact module.
 
 ### Plan and spec files
-- **Before proposing anything in a plan, read `specs/reference/decisions.md` — both "Decisions accepted" and "What was dropped".** A mechanism listed there was already weighed and rejected, and the recorded reason is usually the counter-argument the new proposal is about to hand-wave. Proposing it again wastes a review round. If the recorded decision is genuinely wrong now, say so explicitly in the plan and argue against the recorded reason — never re-propose in silence.
+- **Before proposing a mechanism in a plan, check `specs/reference/decisions.md` for it.** It is an addressable registry — open the entry, not the file. A mechanism recorded there was already weighed, and the entry names the counter-argument the new proposal is about to hand-wave. Proposing it again wastes a review round. If a recorded decision is genuinely wrong now, say so explicitly in the plan and argue against the recorded reason — never re-propose in silence.
 - Never reference plan file paths or step numbers inside code comments or docstrings.
 - Specs in `specs/` capture architectural decisions and business requirements only — not implementation details (no function signatures, field names, or internal class structure).
 - Specs describe current state only, including in `decisions.md`-style rationale docs: never narrate what a removed class/parameter/field used to be called (e.g. "the `Stack` classes, `stack=`, go away") — state the current shape and, if useful, *why* it's shaped that way. Old names belong to git history, not to a living spec.
+- **A rule is written in exactly one place.** Everywhere else links to it. Duplicated rules drift, and a reader cannot tell which copy is current.
 - Module docstrings and code comments never document architecture in blocks (a design-essay docstring, a multi-paragraph "how this subsystem works" comment). Keep docstrings to 1-3 lines; if content explains *why* the system is shaped a certain way rather than a non-obvious local WHY, it belongs in `specs/reference/`, not in the code.
 
 ## Dependencies and optional extras

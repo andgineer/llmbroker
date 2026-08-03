@@ -893,7 +893,7 @@ class AsyncBroker:
         """Fire when zero keyed configs are routable — the genuine "no usable models" alarm.
 
         A keyless config is never enqueued/acquired/cooled (see the partial-key framing
-        in architecture.md), so it must be excluded here: with even one keyless config
+        in the key-help rules), so it must be excluded here: with even one keyless config
         present, an unfiltered check could never observe "all non-AVAILABLE", masking
         the real alarm even when every *keyed* config is COOLING. Only a ``"timeout"``
         reason means the pool is merely temporarily exhausted; every other reason

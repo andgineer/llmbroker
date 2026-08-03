@@ -9,11 +9,12 @@ Background reading before you start (do not skip):
 - [`../specs/reference/freetier-providers.md`](../specs/reference/freetier-providers.md) —
   the rate-limit dimensions, the `effort`/`value` taxonomies, the currently
   curated providers, and the sources list. This is the document you refresh.
-- [`../specs/reference/architecture.md`](../specs/reference/architecture.md) and
-  [`../specs/reference/optimizer.md`](../specs/reference/optimizer.md) — the
-  two-halves catalog and the sync removal rule, which govern how a refreshed
+- [`../specs/reference/rules/presets-aliases.md`](../specs/reference/rules/presets-aliases.md)
+  and [`../specs/reference/rules/sync-merge.md`](../specs/reference/rules/sync-merge.md) —
+  the two-halves catalog and the sync removal rule, which govern how a refreshed
   preset lands on a running deployment. You do not implement this behavior;
-  you must not violate its invariants (see Guardrails below).
+  you must not violate its invariants (see Guardrails below, and
+  [`../specs/reference/invariants.md`](../specs/reference/invariants.md)).
 - `src/llmbroker/models.py` — the `EffortLevel` and `ValueLevel` enums. These
   are fixed; do not invent new buckets.
 

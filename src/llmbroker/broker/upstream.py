@@ -1,7 +1,7 @@
 """The sync engine: fetch a curated lineup, merge it into the current one, write it.
 
 Shared by the CLI's file target and the broker's own ``sync`` — the removal rule
-lives here exactly once. See ``specs/reference/architecture.md`` for the rule.
+lives here exactly once. See ``specs/reference/rules/sync-merge.md`` for the rule.
 """
 
 import asyncio
