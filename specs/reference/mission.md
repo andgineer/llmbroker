@@ -8,11 +8,12 @@ independent providers:
    caller only sees an error once the whole pool is exhausted.
 2. **Zero administration**: a curated preset (TOML from the repository) that
    keeps itself current inside a running installation, with no admin act beyond
-   the keys themselves and never shrinking what the pool can call; a dead key is
-   detected and disables itself; a model that performs poorly for our tasks
-   moves itself to the back of the queue. Obtaining a provider key is the one
-   irreducible admin act — a free tier is issued to a person, not to a library —
-   and it is surfaced in the sync report, never silently absorbed.
+   the keys themselves and never costing the installation a provider it could
+   reach; a dead key is detected and disables itself; a model that performs
+   poorly for our tasks moves itself to the back of the queue. Obtaining a
+   provider key is the one irreducible admin act — a free tier is issued to a
+   person, not to a library — so a missing key is always surfaced to whoever has
+   to supply it, never silently absorbed.
 3. **Learning per (model, operation)**: tasks require different levels of
    model capability — quality scores accumulate per (model, operation) pair,
    demotion is per operation; no global verdict exists.
@@ -24,11 +25,12 @@ independent providers:
    presence, cooldown, per-operation demotions), a call journal, metrics —
    and the pool itself as a first-class object: how many providers can serve a
    request, which keys are missing, and whether the pool has degraded to a
-   single quota. One call answers all of it; the UI chooses the presentation.
+   single quota. llmbroker serves the facts and never a verdict on them — the
+   UI chooses the presentation.
 6. **One-liner and cluster**: for a script, a sync wrapper plus env keys and
-   nothing else — a bare `Broker()` takes no configuration and no file; the
-   cluster's/stateless-server's shared cooldown is derived from the store
-   journal.
+   nothing else — a bare `Broker()` takes no configuration and leaves no file
+   to maintain; the cluster's/stateless-server's shared cooldown is derived
+   from the store journal.
 7. **Batteries**: sqlite, postgres, mongodb (registry + store + secrets),
    aws/vault (secrets). A new backend is one driver file.
 8. **Cheap at low usage**: a bare broker makes zero DB calls; parallel calls
@@ -57,10 +59,10 @@ covers it, and a change that erodes any one of these erodes the mission:
    configuration path rather than the data path, and that difference is what
    the design defends. What it publishes is a text file on GitHub. Unreachable,
    and nothing happens: an installation keeps running on the lineup it already
-   holds. Wrong, and it still cannot destroy a working configuration, because
-   the merge rules bound what an arriving lineup may take away
-   ([`rules/sync-merge.md`](rules/sync-merge.md)). There is no service to be
-   denied by and no runtime dependency to fail.
+   holds. Wrong, and it still cannot destroy a working configuration: an
+   arriving lineup is merged under rules that never cost an installation a
+   provider it could reach. There is no service to be denied by and no runtime
+   dependency to fail.
 2. **Nothing large comes with it.** The closest library, LiteLLM, is a large,
    fast-churning dependency surface whose cluster features push toward
    running its proxy server. llmbroker's core is a handful of small
@@ -84,42 +86,58 @@ covers it, and a change that erodes any one of these erodes the mission:
 
 ## The design this produced
 
-Six shapes follow from the requirements above, and between them they explain
-most of the API.
+The load-bearing choices, for a reader who will not go through the rule files:
+enough to predict how the library behaves and to tell a change that fits from
+one that fights the design. Each is a decision, not a mechanism — how any of it
+is carried out is the implementation's business.
 
-**Three pluggable ports, only one required.** A registry (where model configs
-live), secrets (how a key reference becomes a key), and a store (the call
-journal plus the admin disabled map). Zero-dependency defaults ship for all
-three, so the library works with no backend at all; a single source parameter
-derives all three from one file or DSN.
+**The provider is the unit, not the model.** Failover buys something only across
+independent quotas, so two endpoints behind one key count once — in what the
+pool is curated to hold, in whether it is healthy, and in what a refresh may
+take away. A pool of many models on one key is not a pool.
 
-**The journal is the only state.** Beyond the static registry, everything
-llmbroker knows — shared cooldowns, quality windows, metrics — is re-derived
-from an append-only call journal on a debounced tail read. There is no second
-storage subsystem, which is what lets a stateless cluster share a cooldown
-without a running service of its own.
+**Three pluggable ports, only one required.** Where configurations live, how a
+key reference becomes a key, and where calls are recorded. Zero-dependency
+defaults ship for all three, so the library works with no backend at all, and
+naming one source is enough to derive all three.
+
+**Nothing learned is written down.** Everything llmbroker knows beyond the
+stored lineup — cooldowns shared across nodes, quality windows, metrics — is
+re-derived from an append-only record of calls. Learning writes to no
+configuration, and the lineup changes only when a sync merges one. There is no
+second state subsystem to reconcile, which is what lets a stateless cluster
+share what it learned without a running service of its own.
 
 **The routed pool is exactly the curated lineup.** Failover only works across
 endpoints curated as interchangeable, so a host's own model is never routed
-onto. Reaching it by name is a separate verb, and paid models follow permanent
-aliases so application code survives a version bump.
+onto, never failed over from, and never learned about as a pool member.
+Reaching it by name is a separate act, and paid models follow permanent aliases
+so application code survives a version bump.
 
 **The lineup keeps itself current, unconditionally.** Free endpoints are retired
-without notice, so a pinned lineup decays. The refresh is interval-gated and
-lazy on activity, and a merge may never take away a model the installation can
-actually call.
+without notice, so a pinned lineup decays into nothing. The refresh rides on
+activity rather than on a timer of its own, and it may never cost the
+installation a provider it could reach. An installation that must not follow our
+curation states a lineup of its own instead of freezing ours.
 
 **Availability and quality are separate axes.** Cooldown is provider-driven,
-self-healing and excludes; quality demotion is host-driven, sticky and only
-reorders. Nothing auto-generated ever enters the quality window, or a demoted
-model could never earn its way back.
+self-healing, and withdraws a model; quality demotion is host-driven, sticky,
+and only reorders. Keeping them apart is what allows demotion to have no
+timer — an excluded model returns by itself, a demoted one returns on evidence.
+
+**Quality is the host's verdict, never llmbroker's own.** Only a rating the host
+supplies enters the quality window: nothing inferred, nothing auto-generated,
+and no model judging another's answer. A host that has no quality signal gets
+curated ordering and loses nothing else; one that has it — did the JSON parse,
+did the user accept the answer — spends nothing to use it. Scores are per task
+kind, because a model good enough to classify may be too weak to summarize.
 
 **Errors are a contract, not prose.** One exception carries a machine-readable
 reason for "nothing could answer"; every other failure state a host must handle
-has its own type, and lifecycle failures sit on their own branch.
+has its own type, and lifecycle failures sit on their own branch. A host never
+has to match on message text.
 
 ---
 
-The rules an implementation must uphold live in [`rules/`](rules/), with the
-cross-cutting ones collected in [`invariants.md`](invariants.md). Why a
-contested decision went the way it did is in [`decisions.md`](decisions.md).
+Everything below this is detail: [`invariants.md`](invariants.md) holds the
+cross-cutting rules and indexes the rest.
