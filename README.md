@@ -11,7 +11,7 @@
 | src/llmbroker/backends/inmemory.py    |       36 |        1 |     97% |        19 |
 | src/llmbroker/backends/ports.py       |       98 |        0 |    100% |           |
 | src/llmbroker/backends/spec.py        |        7 |        0 |    100% |           |
-| src/llmbroker/broker/broker.py        |      357 |        7 |     98% |190, 195, 435, 725-727, 898 |
+| src/llmbroker/broker/broker.py        |      359 |        7 |     98% |190, 195, 436, 734-736, 907 |
 | src/llmbroker/broker/catalog.py       |      181 |        4 |     98% |74, 84, 215, 244 |
 | src/llmbroker/broker/learning.py      |      126 |        7 |     94% |51-54, 113, 116, 182 |
 | src/llmbroker/broker/pool.py          |      190 |        1 |     99% |       148 |
@@ -50,7 +50,7 @@
 | src/llmbroker/standalone/store.py     |      143 |        5 |     97% |185, 206-207, 239-240 |
 | src/llmbroker/sync.py                 |      103 |        1 |     99% |       103 |
 | src/llmbroker/vault/secrets.py        |       19 |        0 |    100% |           |
-| **TOTAL**                             | **3679** |  **125** | **97%** |           |
+| **TOTAL**                             | **3681** |  **125** | **97%** |           |
 
 
 ## Setup coverage badge
