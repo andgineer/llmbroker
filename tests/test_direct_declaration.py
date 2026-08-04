@@ -384,7 +384,7 @@ async def test_a_collision_appearing_later_does_not_fail_a_call(tmp_path, served
             'api_key_ref="ANTHROPIC_API_KEY"\n',
         )
         with caplog.at_level(logging.ERROR, logger="llmbroker.broker"):
-            await broker._learning_hook.maybe_rebuild(force=True)
+            await broker._learner.maybe_rebuild(force=True)
         assert await broker.count() == 1
 
     assert any("registry resync failed" in r.message for r in caplog.records)

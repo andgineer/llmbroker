@@ -46,7 +46,7 @@ async def _fail_once(broker: AsyncBroker, error: httpx.HTTPStatusError) -> None:
 
 async def _peer_cooldown(stack, key: str) -> datetime | None:
     async with _broker(stack, key) as peer:
-        await peer._learning_hook.maybe_rebuild(force=True)
+        await peer._learner.maybe_rebuild(force=True)
         return (await peer.snapshot())["p1"].cooldown_until
 
 

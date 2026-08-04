@@ -63,8 +63,8 @@ def test_dead_key_drop_survives_rebuild(tmp_path):
             assert call_provider.call_count == 1
             assert "p1" not in await broker.snapshot()
 
-            await broker._learning_hook.maybe_rebuild(force=True)
-            await broker._learning_hook.maybe_rebuild(force=True)
+            await broker._learner.maybe_rebuild(force=True)
+            await broker._learner.maybe_rebuild(force=True)
 
             assert "p1" not in await broker.snapshot()
             with patch(_PATCH, new=call_provider):
@@ -89,7 +89,7 @@ def test_replacing_secret_revives_model(tmp_path):
             assert "p1" not in await broker.snapshot()
 
             secrets._mapping["K"] = "fresh-key"  # noqa: SLF001 - test double, direct mutation
-            await broker._learning_hook.maybe_rebuild(force=True)
+            await broker._learner.maybe_rebuild(force=True)
 
             snap = await broker.snapshot()
             assert "p1" in snap

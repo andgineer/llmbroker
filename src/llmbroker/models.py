@@ -316,6 +316,9 @@ class Call:
     scope: str | None = None
     cooldown_until: datetime | None = None
     key_hash: str | None = None
+    # Set only where the caller's own budget ran out mid-attempt: the bound the
+    # model failed to answer within, which is the only latency evidence it left.
+    budget_ms: int | None = None
 
 
 def key_hash(secret: str) -> str:

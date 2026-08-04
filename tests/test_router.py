@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from llmbroker.broker.learning import _LearningHook
+from llmbroker.broker.learning import Learner
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.router import Router, _Outcome
 from llmbroker.exceptions import NoLLMAvailableError
@@ -58,9 +58,10 @@ async def _noop_resync() -> None:
 
 
 def _router_with_optimizer(pool: LLMPool, opt: Optimizer) -> Router:
-    """Wire _LearningHook like AsyncBroker does, so rl_fail_count/dead-key drop drive for real."""
-    store = _LearningHook(opt, InMemoryStore(), pool, _noop_resync)
-    return Router(pool, store, scope=None, optimizer=opt)
+    """Wire the Learner like AsyncBroker does, so rl_fail_count/dead-key drop drive for real."""
+    store = InMemoryStore()
+    learner = Learner(opt, store, pool, _noop_resync)
+    return Router(pool, store, scope=None, optimizer=opt, learner=learner)
 
 
 async def _attempt(router: Router, cfg: LLMConfig) -> _Outcome:
@@ -493,5 +494,33 @@ def test_wait_time_capped_at_max_delay():
             await _attempt(router, cfg)
 
         assert captured == [500.0]
+
+    asyncio.run(run())
+
+
+def test_a_store_that_cannot_record_still_drives_the_learner():
+    """A journal nobody can write must not also blind the pool: the dead-key drop and
+    the cooldown streak are what keep the next call off a model this one condemned."""
+
+    async def run():
+        cfg = _cfg("a")
+        pool = await _pool(cfg, _cfg("b"))
+        opt = Optimizer()
+
+        class _BrokenStore:
+            async def record(self, call):
+                raise OSError("journal is gone")
+
+            async def record_quality(self, llm_name, operation, score, *, call_id=None):
+                pass
+
+        store = _BrokenStore()
+        learner = Learner(opt, store, pool, _noop_resync)
+        router = Router(pool, store, scope=None, optimizer=opt, learner=learner)
+
+        with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(401))):
+            await _attempt(router, cfg)
+
+        assert "a" not in pool  # the dead key was still dropped
 
     asyncio.run(run())

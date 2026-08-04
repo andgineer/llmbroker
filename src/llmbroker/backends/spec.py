@@ -74,10 +74,11 @@ TABLES: dict[str, TableSpec] = {
             "scope": "text",
             "cooldown_until": "timestamp",
             "key_hash": "text",
+            "budget_ms": "int",
         },
         indexes=(("llm_name",), ("called_at",)),
     ),
 }
 
 # Gates the current TABLES shape; ensure_schema creates it fresh or raises on mismatch.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6

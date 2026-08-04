@@ -12,11 +12,23 @@ from llmbroker.optimizer import Optimizer
 
 logger = logging.getLogger("llmbroker.broker")
 
-_UNMET_WINDOW_SEC = 600.0
 # A recorded bound and a caller's remaining budget both carry sub-millisecond noise,
 # so "the same wait twice" would otherwise be a coin flip. One second is a physical
 # statement, not a ratio: at LLM latencies, smaller budget differences are noise.
-_UNMET_SLACK_SEC = 1.0
+_BUDGET_SLACK_SEC = 1.0
+
+# How long one observed miss keeps ordering weight. The router's own miss and the
+# rebuild's derivation from the tail both age by it, so evidence cannot outlive
+# itself in one path and not the other.
+BUDGET_BOUND_WINDOW_SEC = 600.0
+
+
+@dataclass(frozen=True, slots=True)
+class _Bound:
+    """The largest budget a model recently missed, and when that evidence lapses."""
+
+    seconds: float
+    until: datetime  # aware UTC
 
 
 @dataclass
@@ -30,8 +42,6 @@ class _Slot:
     fail_count: int = 0
     disabled: bool = False  # manual admin verdict
     order: int = 0  # tiebreaker only: registry/preset position, lower is better
-    unmet_budget: float | None = None  # largest answer budget recently missed, seconds
-    unmet_until: datetime | None = None  # aware UTC; while set, the bound above is fresh
 
 
 class LLMPool:
@@ -42,6 +52,7 @@ class LLMPool:
         self._cond = asyncio.Condition()
         self._next_order = 0
         self._optimizer = optimizer
+        self._budget_bounds: dict[str, _Bound] = {}
 
     # ------------------------------------------------------------------
     # Membership / lookup
@@ -100,6 +111,7 @@ class LLMPool:
         """Remove a slot entirely, so a later re-add under the same name starts clean."""
         async with self._cond:
             self._slots.pop(name, None)
+            self._budget_bounds.pop(name, None)
             self._cond.notify_all()
 
     # ------------------------------------------------------------------
@@ -138,37 +150,42 @@ class LLMPool:
             return slot.config.weight
         return self._optimizer.quality_score(slot.config.name, operation, slot.config.weight)
 
-    def note_unmet_budget(self, config: LLMConfig, budget: float) -> None:
-        """Record that this LLM did not answer within ``budget`` seconds.
+    async def apply_budget_bounds(self, observed: dict[str, tuple[float, datetime]]) -> None:
+        """Replace the map of recently-missed answer budgets, each given as the
+        budget in seconds and the instant it was observed.
 
-        A missing name is legal (removed mid-flight) — no-op.
+        Wholesale, like the quality windows: a rebuild is a fresh derivation over
+        the journal tail, not an increment on what is already here.
         """
-        slot = self._slots.get(config.name)
-        if slot is None:
-            return
-        now = datetime.now(UTC)
-        # A lapsed window is spent evidence, not a floor to build on: carrying the
-        # old number over would let one small expiry re-arm a far larger bound the
-        # window had already retired, for budgets nobody is offering any more.
-        fresh = slot.unmet_until is not None and slot.unmet_until > now
-        previous = slot.unmet_budget if fresh and slot.unmet_budget is not None else 0.0
-        slot.unmet_budget = max(previous, budget)
-        slot.unmet_until = now + timedelta(seconds=_UNMET_WINDOW_SEC)
+        async with self._cond:
+            self._budget_bounds = {
+                name: _Bound(budget, at + timedelta(seconds=BUDGET_BOUND_WINDOW_SEC))
+                for name, (budget, at) in observed.items()
+            }
 
-    def clear_unmet_budget(self, name: str) -> None:
-        slot = self._slots.get(name)
-        if slot is not None:
-            slot.unmet_budget = None
-            slot.unmet_until = None
+    def raise_budget_bound(self, name: str, budget: float, observed_at: datetime) -> None:
+        """Record one just-observed miss, so the next caller offering no more than
+        ``budget`` seconds is handed a sibling first."""
+        current = self._budget_bounds.get(name)
+        # A lapsed window is spent evidence, not a floor to build on: carrying the
+        # old number over would let one small miss re-arm a far larger bound the
+        # window had already retired, for budgets nobody is offering any more.
+        previous = current.seconds if current is not None and current.until > observed_at else 0.0
+        self._budget_bounds[name] = _Bound(
+            max(previous, budget),
+            observed_at + timedelta(seconds=BUDGET_BOUND_WINDOW_SEC),
+        )
+
+    def clear_budget_bound(self, name: str) -> None:
+        self._budget_bounds.pop(name, None)
 
     def _over_budget(self, slot: _Slot, remaining: float | None, now: datetime) -> bool:
         """Whether this LLM has recently failed to answer within a budget as small as
         the one on offer — a reason to prefer a sibling, never to exclude it."""
-        if remaining is None or slot.unmet_budget is None:
+        bound = self._budget_bounds.get(slot.config.name)
+        if remaining is None or bound is None or bound.until <= now:
             return False
-        if slot.unmet_until is None or slot.unmet_until <= now:
-            return False
-        return remaining < slot.unmet_budget + _UNMET_SLACK_SEC
+        return remaining < bound.seconds + _BUDGET_SLACK_SEC
 
     def demoted_operations(self, name: str) -> frozenset[str | None]:
         return (

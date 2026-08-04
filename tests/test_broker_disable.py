@@ -58,7 +58,7 @@ async def test_disable_enable_llm_round_trip_preserves_quality_window(tmp_path):
         for i in range(5):
             call = _call(f"c{i}", operation="summarize")
             await broker._store.record(call)
-            await broker._store.record_quality("p1", "summarize", 0.0)
+            await broker.record_quality("p1", "summarize", 0.0)
         assert len(opt._scores[("p1", "summarize")]) == 5
 
         await broker.disable_llm("p1")
@@ -79,7 +79,7 @@ async def test_disable_enable_llm_round_trip_preserves_quality_window(tmp_path):
 
 async def test_disable_enable_llm_without_optimizer_still_persists(tmp_path):
     """disable_llm/enable_llm write the disabled map even with optimize=False — only the
-    provision-time warm start needs the learning hook, not the admin write path."""
+    provision-time warm start needs the learner, not the admin write path."""
     db = str(tmp_path / "b.db")
     reg = SqliteRegistry(db)
     await reg.mirror([_cfg()])

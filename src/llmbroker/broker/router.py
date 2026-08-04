@@ -19,6 +19,7 @@ from typing import TypeVar
 import httpx
 
 from llmbroker import chat
+from llmbroker.broker.learning import Learner
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.result import AsyncResult
 from llmbroker.chat import (
@@ -198,11 +199,13 @@ class Router:
         *,
         scope: str | None,
         optimizer: Optimizer | None = None,
+        learner: Learner | None = None,
     ) -> None:
         self._pool = pool
         self._store = store
         self._scope = scope
         self._optimizer = optimizer
+        self._learner = learner
         self._http: httpx.AsyncClient | None = None
 
     async def ask(
@@ -334,7 +337,7 @@ class Router:
 
     def _backoff(self, name: str) -> float:
         # Read before the first record is awaited (which increments rl_fail_count via
-        # the learning hook), so the first failure in a streak always sees exponent 0.
+        # the learner), so the first failure in a streak always sees exponent 0.
         fails_before = self._optimizer.rl_fail_count(name) if self._optimizer else 0
         return self._optimizer.backoff_factor**fails_before if self._optimizer else 1.0
 
@@ -347,6 +350,7 @@ class Router:
         error_detail: str | None = None,
         usage: Usage | None = None,
         cooldown_delay: float | None = None,
+        budget_ms: int | None = None,
     ) -> None:
         cooldown_until = (
             datetime.now(UTC) + timedelta(seconds=cooldown_delay)
@@ -368,13 +372,14 @@ class Router:
                 scope=self._scope,
                 cooldown_until=cooldown_until,
                 key_hash=key_hash(attempt.resolved_key) if cooldown_delay is not None else None,
+                budget_ms=budget_ms,
             ),
         )
 
     async def _finish_ok(self, attempt: _Attempt, usage: Usage | None) -> None:
         await self._pool.release(attempt.config)
         self._pool.clear_cooling(attempt.config.name)
-        self._pool.clear_unmet_budget(attempt.config.name)
+        self._pool.clear_budget_bound(attempt.config.name)
         await self._record(attempt, CallStatus.OK, http_status=200, usage=usage)
 
     async def _dispose(
@@ -388,13 +393,18 @@ class Router:
         """Settle one failed attempt: cool the model down or just hand the slot
         back, then journal it. The single failure surface both routing paths use."""
         delay: float | None = None
+        budget_ms: int | None = None
         if verdict.cool_base is None:
             await self._pool.release(attempt.config)
             if isinstance(verdict.outcome, _BudgetExpired):
                 # Not a penalty: the only latency this model will ever report is the
                 # budget it just failed to meet, and the next caller offering no more
-                # than that should be handed a sibling first.
-                self._pool.note_unmet_budget(attempt.config, timeout)
+                # than that should be handed a sibling first. Applied here as well as
+                # journaled, for the same reason the cooldown above is: this node's
+                # next caller must not wait on a rebuild to learn what this one paid
+                # for, and the pool must not depend on learning being switched on.
+                budget_ms = int(timeout * 1000)
+                self._pool.raise_budget_bound(attempt.config.name, timeout, datetime.now(UTC))
         else:
             delay = self._capped_wait(verdict.cool_base, backoff)
             await self._pool.cool_down(attempt.config, delay)
@@ -404,6 +414,7 @@ class Router:
             http_status=verdict.http_status,
             error_detail=verdict.detail,
             cooldown_delay=delay,
+            budget_ms=budget_ms,
         )
 
     async def _spent_budget(self, attempt: _Attempt, outcome: _Outcome) -> None:
@@ -475,6 +486,9 @@ class Router:
                 operation=operation,
                 store=self._store,
                 scope=self._scope,
+                observe_quality=(
+                    self._learner.record_quality_observed if self._learner is not None else None
+                ),
             )
             return
 
@@ -609,6 +623,15 @@ class Router:
             await self._store.record(call)
         except Exception:  # noqa: BLE001
             logger.exception("llmbroker: store.record failed")
+        # Guarded separately, and reached even when the write above failed: a journal
+        # nobody can write must not also blind the pool to what just happened — the
+        # cooldown streak and the dead-key drop are what keep the next call off a
+        # model this one proved unusable.
+        if self._learner is not None:
+            try:
+                await self._learner.observe(call)
+            except Exception:  # noqa: BLE001
+                logger.exception("llmbroker: learning from the call failed")
 
     async def aclose(self) -> None:
         if self._http is not None:

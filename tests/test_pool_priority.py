@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from llmbroker.broker.learning import _LearningHook
+from llmbroker.broker.learning import Learner
 from llmbroker.broker.pool import LLMPool
 from llmbroker.models import Call, CallStatus, LLMConfig
 from llmbroker.optimizer import Optimizer
@@ -135,7 +135,7 @@ async def test_demotion_outranks_priority():
 
 async def test_a_recent_budget_miss_outranks_priority():
     pool = await _pool(("slow-once", 0.9), ("plain", 0.0))
-    pool.note_unmet_budget(_cfg("slow-once"), 30.0)
+    pool.raise_budget_bound("slow-once", 30.0, datetime.now(UTC))
     # No budget on offer: nothing to weigh, the curated favourite still wins.
     assert await _acquired(pool) == "slow-once"
     assert await _acquired(pool, answer_deadline=time.monotonic() + 5.0) == "plain"
@@ -154,20 +154,20 @@ async def test_failed_calls_leave_the_quality_window_and_the_priority_untouched(
     optimizer = Optimizer()
     pool = await _pool(("m", 0.6), optimizer=optimizer)
     store = SqliteStore(str(tmp_path / "journal.db"))
-    hook = _LearningHook(optimizer, store, pool, _noop_resync)
+    learner = Learner(optimizer, store, pool, _noop_resync)
     try:
         for status in (CallStatus.RATE_LIMITED, CallStatus.UNAVAILABLE, CallStatus.ERROR) * 5:
-            await hook.record(
-                Call(
-                    id=str(uuid.uuid4()),
-                    llm_name="m",
-                    operation=None,
-                    trace_id=None,
-                    status=status,
-                    ts=datetime.now(UTC),
-                ),
+            call = Call(
+                id=str(uuid.uuid4()),
+                llm_name="m",
+                operation=None,
+                trace_id=None,
+                status=status,
+                ts=datetime.now(UTC),
             )
-        await hook.maybe_rebuild(force=True, resync_registry=False)
+            await store.record(call)
+            await learner.observe(call)
+        await learner.maybe_rebuild(force=True, resync_registry=False)
     finally:
         await store.aclose()
     assert pool._priority(pool._slots["m"], None) == 0.6

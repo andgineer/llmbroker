@@ -244,7 +244,7 @@ def test_a_hung_provider_cools_down_at_the_global_ceiling():
         assert pool.state("a").phase is LifecyclePhase.COOLING
         # The ceiling firing is the model's fault and cools it; the budget-expiry
         # bound is the other mechanism, and the two must never stack on one failure.
-        assert pool._slots["a"].unmet_budget is None
+        assert "a" not in pool._budget_bounds
 
     asyncio.run(run())
 

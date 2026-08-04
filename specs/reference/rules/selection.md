@@ -115,10 +115,15 @@ What the expiry proves is a lower bound — "this one did not answer within X
 seconds" — and that is enough to stop handing it to the next caller whose budget
 is no larger, so a hung endpoint costs one caller rather than all of them.
 
-A fresh expiry extends the window and may raise the bound; a window allowed to
-lapse retires the bound with it, so stale evidence is never the floor a later,
-smaller miss builds on; a successful answer erases it outright. Four properties
-keep this from becoming a penalty in disguise:
+The expiry is journaled as the budget it missed, and the bound is derived from
+the journal tail with everything else llmbroker learns. A fresh expiry may raise
+the bound; two things retire it, and both are needed. A model's own success
+retires every miss older than it. A window on the clock retires the rest —
+because a model kept out of first place produces no successful rows either, so
+success alone would let one observation invert the curated order indefinitely.
+Unlike a cooldown, which carries the instant it expires and so heals on its own,
+a recorded miss states only what happened; the window is what gives it an end.
+Four properties keep this from becoming a penalty in disguise:
 
 - **It is budget-relative.** A caller with a larger budget, or none, ignores the
   bound entirely, so the signal can reorder a pool but never overturn one: when
@@ -127,9 +132,19 @@ keep this from becoming a penalty in disguise:
 - **It never withdraws a model.** A bounded model is still selected when it is
   the last candidate standing — exactly when a caller would rather have a slow
   answer than none.
-- **It is node-local**, because latency is a property of the *path* — this
-  node's egress, region, resolver. A cooldown is shared precisely because a
-  quota is a property of the *key*, which genuinely is shared.
+- **It applies the moment the miss is observed, from the call itself**, not at
+  the next rebuild and not only where learning is switched on. The rebuild is
+  debounced and a spent budget is not the kind of failure that forces one, so
+  every caller inside that debounce would otherwise walk into the same hang —
+  the one thing this signal exists to prevent. Like a cooldown, it belongs to the
+  routing path rather than to what the host has rated, and the rebuild's role is
+  only to carry a peer's miss here.
+- **It is shared with everyone reading the same journal**, unlike the path it
+  measures: latency belongs to a node's egress, region and resolver, so a peer's
+  miss is weaker evidence here than this node's own. It is admitted anyway
+  because the signal only ever reorders — a bound that does not hold here costs
+  one reordering — and partitioning it would put a node identity in the journal
+  that nothing else needs.
 - **It is one signal for both routing paths, deliberately approximate.** A
   stream contributes the budget it missed reaching the first delta, a completion
   the budget it missed answering in full, and neither is scaled. Ordering is all

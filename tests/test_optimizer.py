@@ -1,6 +1,6 @@
 """Tests for the Optimizer: backoff bookkeeping, quality windows, and demotion verdicts.
 
-Dead-key-drop / journal-rebuild behavior lives in ``_LearningHook`` — see
+Dead-key-drop / journal-rebuild behavior lives in ``Learner`` — see
 ``tests/test_learning.py``.
 """
 

@@ -42,6 +42,7 @@ def _call_row(
         "scope": scope,
         "cooldown_until": None,
         "key_hash": None,
+        "budget_ms": None,
     }
 
 
@@ -288,6 +289,16 @@ async def test_journal_recent_combines_since_with_match(driver):
         since=base + timedelta(days=1),
     )
     assert [r["id"] for r in rows] == ["new-alice"]
+
+
+async def test_journal_round_trips_the_missed_budget(driver):
+    """The bound the pool orders by is a stored column, not prose parsed back out
+    of an error message."""
+    row = _call_row("c1", llm_name="x", called_at=datetime(2030, 1, 1, tzinfo=UTC))
+    row["budget_ms"] = 1500
+    await driver.append("calls", row)
+    rows = await driver.recent("calls", 10)
+    assert [r["budget_ms"] for r in rows] == [1500]
 
 
 async def test_journal_purge_removes_rows_before_cutoff(driver):

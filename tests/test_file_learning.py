@@ -25,7 +25,7 @@ async def test_learning_survives_restart_on_default_file_store(tmp_path, monkeyp
     b1 = AsyncBroker(str(toml))
     await b1.ensure_pool()
     for _ in range(10):  # quality_min_count=10; 10 zeros → wilson upper ≈0.28 < floor 0.3
-        await b1._store.record_quality("m1", "summarize", 0.0)
+        await b1.record_quality("m1", "summarize", 0.0)
     assert b1._optimizer.is_demoted("m1", "summarize")
 
     b2 = AsyncBroker(str(toml))  # fresh process over the same TOML
@@ -82,6 +82,6 @@ async def test_two_brokers_converge_over_one_journal(tmp_path, monkeypatch, stor
     for _ in range(10):
         await a._store.record_quality("m1", "summarize", 0.0)
 
-    await b._learning_hook.maybe_rebuild(force=True)
+    await b._learner.maybe_rebuild(force=True)
     assert b._optimizer.is_demoted("m1", "summarize")
     assert b._pool._slots["m1"].cooldown_until == until

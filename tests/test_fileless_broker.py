@@ -87,7 +87,7 @@ async def test_nowhere_writable_still_routes_and_simply_forgets(
     async with AsyncBroker() as broker:
         assert await broker.count() == 2
         assert broker._home is None
-        assert isinstance(broker._base_store, InMemoryStore)
+        assert isinstance(broker._store, InMemoryStore)
     assert list(tmp_path.iterdir()) == []
 
 
@@ -96,7 +96,7 @@ async def test_the_journal_is_one_per_home_not_one_per_working_directory(
     llmbroker_home,
 ):
     async with AsyncBroker() as broker:
-        assert isinstance(broker._base_store, FileStore)
+        assert isinstance(broker._store, FileStore)
     assert (llmbroker_home / "store").is_dir()
 
 

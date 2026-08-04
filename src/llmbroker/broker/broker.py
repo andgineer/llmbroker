@@ -8,7 +8,7 @@ the collaborator that owns it:
   writes a merged lineup into it (the only registry write path)
 * ``Router``        — routing a completion over the pool with failover
 * ``PoolView``       — read-only views of current pool state
-* ``_LearningHook`` — quality windows, dead-key drops, and the debounced
+* ``Learner``       — quality windows, dead-key drops, and the debounced
   journal rebuild feeding shared cooldowns, snapshot metrics, and the admin
   disabled-verdict map (only wired when ``optimize`` is truthy)
 
@@ -33,7 +33,7 @@ import httpx
 from llmbroker.backends.inmemory import InMemoryDriver
 from llmbroker.backends.ports import DriverRegistry
 from llmbroker.broker.catalog import Catalog, resolve_key
-from llmbroker.broker.learning import _LearningHook
+from llmbroker.broker.learning import TAIL_READ_LIMIT, Learner, metrics_from_calls
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.pool_view import PoolView
 from llmbroker.broker.result import AsyncLLM, AsyncResult
@@ -73,6 +73,7 @@ from llmbroker.models import (
     DeclaredModels,
     LifecyclePhase,
     LLMConfig,
+    LLMMetrics,
     LLMStats,
     PoolSnapshot,
     Retirement,
@@ -267,7 +268,7 @@ class AsyncBroker:
 
         self._registry = registry
         self._secrets = secrets
-        self._base_store = store
+        self._store = store
         self._scope = scope
         self._have_keys = have_keys
 
@@ -283,24 +284,20 @@ class AsyncBroker:
             overlay=self._resolve_declared if self._declared else None,
         )
 
-        self._learning_hook: _LearningHook | None = None
-        effective_store: StoreProtocol
+        self._learner: Learner | None = None
         if self._optimizer is not None:
-            self._learning_hook = _LearningHook(
-                self._optimizer,
-                store,
-                pool,
-                self._catalog.resync,
-            )
-            effective_store = self._learning_hook
-        else:
-            effective_store = store
+            self._learner = Learner(self._optimizer, store, pool, self._catalog.resync)
 
-        self._store = effective_store
-        self._router = Router(pool, effective_store, scope=scope, optimizer=self._optimizer)
+        self._router = Router(
+            pool,
+            store,
+            scope=scope,
+            optimizer=self._optimizer,
+            learner=self._learner,
+        )
         self._pool_view = PoolView(
             pool,
-            effective_store,
+            self._metrics_map,
             lambda: self._catalog.health,
             lambda: self._catalog.direct_missing_keys,
         )
@@ -319,6 +316,15 @@ class AsyncBroker:
         self._last_underprov_alert: float = float("-inf")
         self._underprov_alert_interval: float = 60.0
         self._direct_http: httpx.AsyncClient | None = None
+
+    async def _metrics_map(self) -> dict[str, LLMMetrics]:
+        """Per-LLM metrics from whatever is available: the learner's cache, a
+        queryable store's tail, or nothing."""
+        if self._learner is not None:
+            return self._learner.metrics
+        if isinstance(self._store, QueryableStoreProtocol):
+            return metrics_from_calls(await self._store.calls(limit=TAIL_READ_LIMIT))
+        return {}
 
     async def _resolve_declared(self) -> DeclaredModels:
         """Re-resolve ``direct=``, keeping the resolution already in use when the
@@ -368,9 +374,9 @@ class AsyncBroker:
                 if not self._provisioned:
                     await self._sync_on_start()
                     await self._catalog.provision()
-                    if self._learning_hook is not None:
+                    if self._learner is not None:
                         # warm start — provision() above already resynced the registry
-                        await self._learning_hook.maybe_rebuild(
+                        await self._learner.maybe_rebuild(
                             force=True,
                             resync_registry=False,
                         )
@@ -523,9 +529,9 @@ class AsyncBroker:
             )
         else:
             report, changed = await self._sync_registry_target(src, current, targets)
-        if changed and isinstance(self._base_store, DisabledMapProtocol):
+        if changed and isinstance(self._store, DisabledMapProtocol):
             configs = await self._registry.load()
-            await self._base_store.seed_disabled([c.name for c in configs])
+            await self._store.seed_disabled([c.name for c in configs])
         # Both land before the resync: a resync that raises must not swallow the
         # record of a change already applied.
         if changed:
@@ -561,7 +567,7 @@ class AsyncBroker:
             present,
             keys_visible=self._keys_visible(present),
         )
-        return await dead_entries(candidates, self._base_store)
+        return await dead_entries(candidates, self._store)
 
     def _log_alias_lines(
         self,
@@ -809,6 +815,8 @@ class AsyncBroker:
             call_id=call_id,
             scope=self._scope,
         )
+        if self._learner is not None:
+            self._learner.record_quality_observed(llm_name, operation, score)
 
     # ------------------------------------------------------------------
     # Inspection
@@ -835,16 +843,16 @@ class AsyncBroker:
         every operation including future ones. Only ``enable_llm`` clears it."""
         await self.ensure_pool()
         self._pool.set_disabled(name)
-        if isinstance(self._base_store, DisabledMapProtocol):
-            await self._base_store.set_disabled(name, True)
+        if isinstance(self._store, DisabledMapProtocol):
+            await self._store.set_disabled(name, True)
 
     async def enable_llm(self, name: str) -> None:
         """Clear the manual latch — a re-enabled model rehabilitates through new
         ratings, no quality reset exists."""
         await self.ensure_pool()
         await self._pool.clear_disabled(name)
-        if isinstance(self._base_store, DisabledMapProtocol):
-            await self._base_store.set_disabled(name, False)
+        if isinstance(self._store, DisabledMapProtocol):
+            await self._store.set_disabled(name, False)
 
     # ------------------------------------------------------------------
     # Call journal
@@ -919,10 +927,7 @@ class AsyncBroker:
             )
 
     def _require_queryable(self) -> QueryableStoreProtocol:
-        # The learning hook satisfies the protocol structurally whatever it wraps,
-        # so the question can only be put to the backend itself — which is then also
-        # what answers the read: the hook adds nothing to it but pass-through.
-        store = self._base_store
+        store = self._store
         if not isinstance(store, QueryableStoreProtocol):
             raise TypeError(
                 "this store backend is not queryable — use a queryable backend"

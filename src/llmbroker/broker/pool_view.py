@@ -2,11 +2,9 @@
 
 from collections.abc import Callable
 
-from llmbroker.broker.learning import resolve_metrics_map
 from llmbroker.broker.pool import LLMPool
-from llmbroker.broker.result import AsyncLLM
+from llmbroker.broker.result import AsyncLLM, MetricsSource
 from llmbroker.models import LLMSnapshot, PendingKey, PoolHealth, PoolSnapshot
-from llmbroker.protocols.store import StoreProtocol
 
 
 class PoolView:
@@ -15,25 +13,25 @@ class PoolView:
     def __init__(
         self,
         pool: LLMPool,
-        store: StoreProtocol,
+        metrics_source: MetricsSource,
         health: Callable[[], PoolHealth],
         direct_missing_keys: Callable[[], tuple[PendingKey, ...]],
     ) -> None:
         self._pool = pool
-        self._store = store
+        self._metrics_source = metrics_source
         self._health = health
         self._direct_missing_keys = direct_missing_keys
 
     def get(self, name: str) -> AsyncLLM:
         if name not in self._pool:
             raise KeyError(name)
-        return AsyncLLM(name, self._pool.config(name), self._pool, self._store)
+        return AsyncLLM(name, self._pool.config(name), self._pool, self._metrics_source)
 
     def count(self) -> int:
         return len(self._pool)
 
     async def snapshot(self) -> PoolSnapshot:
-        metrics_map = await resolve_metrics_map(self._store)
+        metrics_map = await self._metrics_source()
         result: dict[str, LLMSnapshot] = {}
         for name, cfg in self._pool.configs.items():
             result[name] = LLMSnapshot(

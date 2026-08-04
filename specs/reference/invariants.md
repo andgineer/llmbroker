@@ -57,9 +57,13 @@ entry enters only by displacing another.
    per-model timeout knob and will not be one — it could not compose with
    failover. → `call-path.md`
 
-8. **Everything derived comes from the journal.** There is no second state
-   subsystem: shared cooldowns, quality windows and snapshot metrics are pure
-   functions over one debounced tail read. → `journal.md`
+8. **The journal is the only durable source of everything derived.** There is no
+   second state subsystem holding a truth of its own: what a restart must not
+   lose is on a row, never only in memory. Live state is reached two ways and
+   only two — folded forward from the row just journaled, which is not optional
+   because a store with no read path has nothing else to learn from, and
+   re-derived from the tail, each kind either replaced wholesale or merged so
+   that other evidence can only raise it. → `journal.md`
 
 9. **Every instant crossing the store boundary is UTC, in both directions.** A
    naive value is refused on write and on read rather than guessed at; admitted

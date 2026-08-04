@@ -1,4 +1,4 @@
-"""Integration tests: _LearningHook bookkeeping over all store backends.
+"""Integration tests: ``Learner`` bookkeeping over all store backends.
 
 Each test runs against every implemented store backend:
   - toml  — InMemoryStore (no DB)
@@ -20,7 +20,7 @@ import uuid
 
 import pytest
 
-from llmbroker.broker.learning import _LearningHook
+from llmbroker.broker.learning import Learner
 from llmbroker.broker.pool import LLMPool
 from llmbroker.models import Call, CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
@@ -49,8 +49,21 @@ async def _noop_resync() -> None:
     return
 
 
-def _hook(opt: Optimizer, store: object, pool: LLMPool) -> _LearningHook:
-    return _LearningHook(opt, store, pool, _noop_resync)
+class _Journal:
+    """Store and learner wired the way the router wires them: the row is written,
+    then observed."""
+
+    def __init__(self, opt: Optimizer, store, pool: LLMPool) -> None:
+        self._store = store
+        self._learner = Learner(opt, store, pool, _noop_resync)
+
+    async def record(self, call: Call) -> None:
+        await self._store.record(call)
+        await self._learner.observe(call)
+
+    async def record_quality(self, llm_name: str, operation: str | None, score: float) -> None:
+        await self._store.record_quality(llm_name, operation, score)
+        self._learner.record_quality_observed(llm_name, operation, score)
 
 
 # ---------------------------------------------------------------------------
@@ -67,10 +80,10 @@ async def test_auth_failure_drops_llm_cleanly(any_store, http_status, caplog):
     pool = LLMPool()
     await pool.add(_cfg("llm1"), "key")
     opt = Optimizer()
-    hook = _hook(opt, any_store, pool)
+    journal = _Journal(opt, any_store, pool)
 
     with caplog.at_level("ERROR", logger="llmbroker.broker"):
-        await hook.record(_call("llm1", CallStatus.ERROR, http_status=http_status))
+        await journal.record(_call("llm1", CallStatus.ERROR, http_status=http_status))
 
     assert "llm1" not in pool
     assert any("API key" in r.message and str(http_status) in r.message for r in caplog.records)
@@ -83,13 +96,13 @@ async def test_repeated_ok_calls_keep_llm_available_and_reset_backoff(any_store)
     pool = LLMPool()
     await pool.add(_cfg("llm1"), "key")
     opt = Optimizer()
-    hook = _hook(opt, any_store, pool)
+    journal = _Journal(opt, any_store, pool)
 
-    await hook.record(_call("llm1", CallStatus.RATE_LIMITED))
+    await journal.record(_call("llm1", CallStatus.RATE_LIMITED))
     assert opt.rl_fail_count("llm1") == 1
 
     for _ in range(15):
-        await hook.record(_call("llm1", CallStatus.OK))
+        await journal.record(_call("llm1", CallStatus.OK))
 
     assert pool.state("llm1").phase is LifecyclePhase.AVAILABLE
     assert opt.rl_fail_count("llm1") == 0
@@ -100,10 +113,10 @@ async def test_rl_fail_count_accumulates_across_backend(any_store):
     pool = LLMPool()
     await pool.add(_cfg("llm1"), "key")
     opt = Optimizer()
-    hook = _hook(opt, any_store, pool)
+    journal = _Journal(opt, any_store, pool)
 
     for _ in range(3):
-        await hook.record(_call("llm1", CallStatus.RATE_LIMITED))
+        await journal.record(_call("llm1", CallStatus.RATE_LIMITED))
 
     assert opt.rl_fail_count("llm1") == 3
     assert "llm1" in pool  # rate limiting alone never drops the slot
@@ -120,11 +133,11 @@ async def test_quality_demotion_end_to_end_prefers_the_better_model(any_store):
     pool = LLMPool(optimizer=opt)
     await pool.add(_cfg("flaky"), "key", order=0)
     await pool.add(_cfg("stable"), "key", order=1)
-    hook = _hook(opt, any_store, pool)
+    journal = _Journal(opt, any_store, pool)
 
     for _ in range(10):
-        await hook.record_quality("flaky", "summarize", 0.0)
-        await hook.record_quality("stable", "summarize", 1.0)
+        await journal.record_quality("flaky", "summarize", 0.0)
+        await journal.record_quality("stable", "summarize", 1.0)
 
     assert opt.is_demoted("flaky", "summarize") is True
     assert opt.is_demoted("stable", "summarize") is False
@@ -138,10 +151,10 @@ async def test_quality_demoted_model_still_serves_alone(any_store):
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
     pool = LLMPool(optimizer=opt)
     await pool.add(_cfg("only"), "key")
-    hook = _hook(opt, any_store, pool)
+    journal = _Journal(opt, any_store, pool)
 
     for _ in range(10):
-        await hook.record_quality("only", "summarize", 0.0)
+        await journal.record_quality("only", "summarize", 0.0)
 
     assert opt.is_demoted("only", "summarize") is True
     picked = await pool.acquire(0, operation="summarize")
@@ -153,11 +166,11 @@ async def test_quality_stats_are_isolated_per_operation(any_store):
     pool = LLMPool()
     await pool.add(_cfg("llm1"), "key")
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
-    hook = _hook(opt, any_store, pool)
+    journal = _Journal(opt, any_store, pool)
 
     for _ in range(10):
-        await hook.record_quality("llm1", "op_a", 0.0)
-        await hook.record_quality("llm1", "op_b", 1.0)
+        await journal.record_quality("llm1", "op_a", 0.0)
+        await journal.record_quality("llm1", "op_b", 1.0)
 
     assert opt.is_demoted("llm1", "op_a") is True
     assert opt.is_demoted("llm1", "op_b") is False

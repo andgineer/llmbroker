@@ -1,19 +1,18 @@
-"""``_LearningHook``: the wrapper around a store backend.
+"""``Learner``: the observer of the journal stream.
 
 Drives ``Optimizer`` bookkeeping (backoff counters, quality windows) from the
 live event stream, and periodically rebuilds derived state — quality-window
-verdicts, shared cooldowns, snapshot metrics, registry membership, and the
-admin disabled-verdict map — from one cached read of the journal tail. No
-second storage subsystem: everything llmbroker learns beyond config is
-re-derived from the append-only journal plus the tiny disabled map.
+verdicts, shared cooldowns, budget bounds, snapshot metrics, registry
+membership, and the admin disabled-verdict map — from one cached read of the
+journal tail.
 """
 
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
-from llmbroker.broker.pool import LLMPool
+from llmbroker.broker.pool import BUDGET_BOUND_WINDOW_SEC, LLMPool
 from llmbroker.broker.stats import stats_from_calls
 from llmbroker.http_status import is_auth_failure
 from llmbroker.models import Call, CallStatus, LLMMetrics, key_hash
@@ -27,7 +26,7 @@ from llmbroker.protocols.store import (
 logger = logging.getLogger("llmbroker.broker")
 
 _REBUILD_TTL = 60.0  # seconds — checked on activity, no background task
-_DEFAULT_QUALITY_REBUILD_LIMIT = 300
+TAIL_READ_LIMIT = 300
 
 
 def metrics_from_calls(rows: list[Call]) -> dict[str, LLMMetrics]:
@@ -42,79 +41,63 @@ def metrics_from_calls(rows: list[Call]) -> dict[str, LLMMetrics]:
     }
 
 
-async def resolve_metrics_map(store: StoreProtocol) -> dict[str, LLMMetrics]:
-    """Derive a per-LLM metrics map from whatever the store can offer:
-    a ``_LearningHook``'s cache, a queryable store's tail, or nothing."""
-    if isinstance(store, _LearningHook):
-        return store.metrics_cache
-    if isinstance(store, QueryableStoreProtocol):
-        rows = await store.calls(limit=_DEFAULT_QUALITY_REBUILD_LIMIT)
-        return metrics_from_calls(rows)
-    return {}
+def budget_bounds_from_calls(
+    rows: list[Call],
+    *,
+    since: datetime,
+) -> dict[str, tuple[float, datetime]]:
+    """Per model, the largest budget it failed to answer within since ``since``, in
+    seconds, paired with when that miss was observed.
+
+    Two things retire a miss, and both are needed. A model's own success retires
+    everything older than it — past that row the misses describe a state the model
+    has left. ``since`` retires the rest on the clock, because a model that is
+    never picked never produces a success, and a bound nothing can clear would
+    invert the curated order for as long as the row stayed in the tail.
+    """
+    bounds: dict[str, tuple[float, datetime]] = {}
+    answered: set[str] = set()
+    for row in rows:  # newest-first
+        if row.kind != "call" or row.llm_name in answered:
+            continue
+        if row.status == CallStatus.OK:
+            answered.add(row.llm_name)
+            continue
+        if row.budget_ms is None or row.ts is None or row.ts < since:
+            continue
+        seconds = row.budget_ms / 1000
+        current = bounds.get(row.llm_name)
+        if current is None or seconds > current[0]:
+            bounds[row.llm_name] = (seconds, row.ts)
+    return bounds
 
 
-class _LearningHook:
-    """Store hook: cooldown bookkeeping, dead-key drops, quality windows,
-    debounced journal rebuild."""
+class Learner:
+    """Observes the journal stream: cooldown bookkeeping, dead-key drops, quality
+    windows, budget bounds, debounced journal rebuild."""
 
     def __init__(
         self,
         optimizer: Optimizer,
-        inner: StoreProtocol,
+        store: StoreProtocol,
         pool: LLMPool,
         resync_registry: Callable[[], Awaitable[None]],
         *,
-        quality_rebuild_limit: int = _DEFAULT_QUALITY_REBUILD_LIMIT,
+        quality_rebuild_limit: int = TAIL_READ_LIMIT,
     ) -> None:
         self._opt = optimizer
-        self._inner = inner
+        self._store = store
         self._pool = pool
         self._resync_registry = resync_registry
         self._quality_rebuild_limit = quality_rebuild_limit
         self._next_rebuild: float = 0.0
-        self.metrics_cache: dict[str, LLMMetrics] = {}
+        self.metrics: dict[str, LLMMetrics] = {}
 
-    async def record(self, call: Call) -> None:
-        try:
-            await self._inner.record(call)
-        finally:
-            await self._drive(call)
-
-    async def record_quality(
-        self,
-        llm_name: str,
-        operation: str | None,
-        score: float,
-        *,
-        call_id: str | None = None,
-        scope: str | None = None,
-    ) -> None:
-        await self._inner.record_quality(llm_name, operation, score, call_id=call_id, scope=scope)
+    def record_quality_observed(self, llm_name: str, operation: str | None, score: float) -> None:
+        """Fold a rating the caller has already persisted into the live window."""
         self._opt.record_quality(llm_name, operation, score)
 
-    async def calls(
-        self,
-        *,
-        limit: int,
-        scope: str | None = None,
-        since: datetime | None = None,
-        kind: str | None = None,
-        operation: str | None = None,
-    ) -> list[Call]:
-        if isinstance(self._inner, QueryableStoreProtocol):
-            return await self._inner.calls(
-                limit=limit,
-                scope=scope,
-                since=since,
-                kind=kind,
-                operation=operation,
-            )
-        return []
-
-    def __getattr__(self, name: str) -> object:
-        return getattr(self._inner, name)
-
-    async def _drive(self, call: Call) -> None:
+    async def observe(self, call: Call) -> None:
         name = call.llm_name
         if call.status in (CallStatus.RATE_LIMITED, CallStatus.UNAVAILABLE):
             self._opt.on_rate_limited(name)
@@ -145,9 +128,10 @@ class _LearningHook:
             await self.maybe_rebuild(force=shared)
 
     async def maybe_rebuild(self, *, force: bool = False, resync_registry: bool = True) -> None:
-        """Re-derive score windows, shared cooldowns, and metrics from one cached tail
-        read; re-read the registry and disabled map so edits from other processes/nodes
-        propagate. Debounced to at most once per ``_REBUILD_TTL`` unless ``force``.
+        """Re-derive score windows, shared cooldowns, budget bounds and metrics from
+        one cached tail read; re-read the registry and disabled map so edits from
+        other processes/nodes propagate. Debounced to at most once per
+        ``_REBUILD_TTL`` unless ``force``.
 
         ``resync_registry=False`` skips the registry re-read — used for the
         provision-time warm start, where ``Catalog.provision()`` just resynced it.
@@ -158,18 +142,18 @@ class _LearningHook:
         self._next_rebuild = now + _REBUILD_TTL
         if resync_registry:
             await self._safe_resync_registry()
-        if isinstance(self._inner, QueryableStoreProtocol):
-            rows = await self._inner.calls(limit=self._quality_rebuild_limit)
+        if isinstance(self._store, QueryableStoreProtocol):
+            rows = await self._store.calls(limit=self._quality_rebuild_limit)
             self._apply_scores_and_metrics(rows)
             await self._apply_peer_effects(rows)
         await self._resync_disabled()
 
     async def _safe_resync_registry(self) -> None:
         """Picking up another process's edits must never fail the call that carried
-        it here: this runs off ``record()``, so anything raised would surface out of
-        the user's own ``ask`` — and a rate limit, the commonest trigger of all, is
-        exactly what the pool exists to absorb. A registry nobody can read leaves
-        the pool as it is.
+        it here: this runs off the journal write, so anything raised would surface
+        out of the user's own ``ask`` — and a rate limit, the commonest trigger of
+        all, is exactly what the pool exists to absorb. A registry nobody can read
+        leaves the pool as it is.
         """
         try:
             await self._resync_registry()
@@ -193,7 +177,7 @@ class _LearningHook:
             if len(bucket) < self._opt.quality_window:
                 bucket.append(row.quality_score if row.quality_score is not None else 0.0)
         self._opt.load_scores(scores)
-        self.metrics_cache = metrics_from_calls(rows)
+        self.metrics = metrics_from_calls(rows)
 
     def _cooldown_applies(self, row: Call) -> bool:
         """5xx (``UNAVAILABLE``/other ``ERROR``) applies unconditionally — provider-side,
@@ -227,14 +211,16 @@ class _LearningHook:
             ):
                 dead.add(row.llm_name)
         await self._pool.apply_peer_cooldowns(cooldowns, fail_counts)
+        window_start = datetime.now(UTC) - timedelta(seconds=BUDGET_BOUND_WINDOW_SEC)
+        await self._pool.apply_budget_bounds(budget_bounds_from_calls(rows, since=window_start))
         for name in dead:
             await self._pool.drop(name)
 
     async def _resync_disabled(self) -> None:
-        if not isinstance(self._inner, DisabledMapProtocol):
+        if not isinstance(self._store, DisabledMapProtocol):
             return
-        await self._inner.seed_disabled(list(self._pool.configs))
-        disabled = await self._inner.disabled_map()
+        await self._store.seed_disabled(list(self._pool.configs))
+        disabled = await self._store.disabled_map()
         for name, flag in disabled.items():
             if flag:
                 self._pool.set_disabled(name)

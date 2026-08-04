@@ -92,15 +92,20 @@ exponential cooldown; the only thing auto-removed is a dead key.
 
 ### budget-expiry-teaches-ordering
 
-An expired caller budget records a node-local latency lower bound that reorders
-the pool for equally tight budgets.
+An expired caller budget is journaled as the budget the model failed to answer
+within, and a latency lower bound is derived from the journal alongside the
+cooldowns and quality windows, reordering the pool for equally tight budgets.
 
 **Blocks:** discarding the expiry as pure loss; counting it as a failure or a
-cooldown.
+cooldown; holding the bound as pool-local state no journal read produces;
+recovering it by matching the error text of a row.
 **Why:** a model that never answers produces no successful rows, so this is the
 only obtainable latency evidence — but blaming a model for the caller's clock
 would teach the broker that healthy models are failing. Ordering only,
-budget-relative, and never a withdrawal.
+budget-relative, and never a withdrawal. Keeping the evidence on the row makes
+the bound one more thing the single tail read derives, rather than a second
+state subsystem beside it; keeping it as its own field rather than as prose in
+the error detail keeps a message the library formats out of a routing decision.
 
 ---
 

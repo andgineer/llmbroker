@@ -42,18 +42,27 @@ a subtraction rather than an assumption about the status enum's shape.
 
 A debounced read of the most recent records re-derives everything llmbroker
 knows beyond the static config: quality-window verdicts, shared cooldowns,
-snapshot metrics, pool membership (re-reading the registry), and the admin
-disabled-verdict map — so edits from another process or node reach a running
-broker without a restart. The read is forced out of turn by the instance's own
-failure that cooled a model or dropped it; a failure that changed no shared
-state waits for the debounce like everything else.
+latency bounds, snapshot metrics, pool membership (re-reading the registry), and
+the admin disabled-verdict map — so edits from another process or node reach a
+running broker without a restart. The read is forced out of turn by the
+instance's own failure that cooled a model or dropped it; a failure that changed
+no shared state waits for the debounce like everything else.
+
+A call record therefore carries the evidence, not a summary of it: a failure
+that cooled the model carries the cooldown it earned and the hash of the key it
+spent, and one that ran out the caller's budget carries the budget it missed
+(see [`selection.md`](selection.md)). Nothing derived is recovered by reading
+back a message the library formatted.
 
 The tail is shared across all models and operations, so a chatty model can crowd
 a quiet model's ratings out of it. This is an accepted consequence, and the tail
 limit is the tuning knob.
 
 Persistence is the store by default; an explicit in-memory opt-out degrades to
-session-scoped learning. The journal forgets via retention — every backend
+session-scoped learning. That degradation is what the forward fold of invariant 8
+carries: a store with no read path never contributes a tail, so a rating and a
+missed budget reach the live state only as the row is written, and nothing
+survives the process. The journal forgets via retention — every backend
 self-purges records older than its retention horizon — and there is no public
 purge operation.
 

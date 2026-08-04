@@ -1,13 +1,16 @@
-"""Tests for ``_LearningHook``: dead-key drops, rl_fail_count bookkeeping,
-record_quality, and the debounced journal rebuild (scores, peer cooldowns,
-metrics, disabled-map resync)."""
+"""Tests for ``Learner``: dead-key drops, rl_fail_count bookkeeping, observed
+ratings, and the debounced journal rebuild (scores, peer cooldowns, budget
+bounds, metrics, disabled-map resync)."""
 
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
 
-from llmbroker.broker.learning import _LearningHook, metrics_from_calls
+from llmbroker.broker.learning import (
+    Learner,
+    metrics_from_calls,
+)
 from llmbroker.broker.pool import LLMPool
 from llmbroker.models import Call, CallStatus, LLMConfig, key_hash
 from llmbroker.optimizer import Optimizer
@@ -39,8 +42,8 @@ async def _noop_resync() -> None:
     return
 
 
-def _hook(opt: Optimizer, store, pool: LLMPool) -> _LearningHook:
-    return _LearningHook(opt, store, pool, _noop_resync)
+def _make_learner(opt: Optimizer, store, pool: LLMPool) -> Learner:
+    return Learner(opt, store, pool, _noop_resync)
 
 
 # ---------------------------------------------------------------------------
@@ -51,10 +54,10 @@ def _hook(opt: Optimizer, store, pool: LLMPool) -> _LearningHook:
 async def test_auth_failure_401_drops_llm_and_logs(caplog):
     pool = LLMPool()
     await pool.add(_cfg(), "key")
-    hook = _hook(Optimizer(), InMemoryStore(), pool)
+    learner = _make_learner(Optimizer(), InMemoryStore(), pool)
 
     with caplog.at_level("ERROR"):
-        await hook.record(_call("x", CallStatus.ERROR, http_status=401))
+        await learner.observe(_call("x", CallStatus.ERROR, http_status=401))
 
     assert "x" not in pool
     assert any("API key" in r.message and "401" in r.message for r in caplog.records)
@@ -64,10 +67,10 @@ async def test_auth_failure_403_drops_llm_and_logs(caplog):
     pool = LLMPool()
     await pool.add(_cfg(), "key")
     opt = Optimizer()
-    hook = _hook(opt, InMemoryStore(), pool)
+    learner = _make_learner(opt, InMemoryStore(), pool)
 
     with caplog.at_level("ERROR"):
-        await hook.record(_call("x", CallStatus.ERROR, http_status=403))
+        await learner.observe(_call("x", CallStatus.ERROR, http_status=403))
 
     assert "x" not in pool
     assert any("403" in r.message for r in caplog.records)
@@ -77,10 +80,10 @@ async def test_generic_error_does_not_drop_llm():
     pool = LLMPool()
     await pool.add(_cfg(), "key")
     opt = Optimizer()
-    hook = _hook(opt, InMemoryStore(), pool)
+    learner = _make_learner(opt, InMemoryStore(), pool)
 
     for _ in range(3):
-        await hook.record(_call("x", CallStatus.ERROR, cooldown_until=_soon()))
+        await learner.observe(_call("x", CallStatus.ERROR, cooldown_until=_soon()))
 
     assert "x" in pool
     assert opt.rl_fail_count("x") == 3
@@ -92,10 +95,10 @@ async def test_error_row_without_cooldown_does_not_advance_the_streak():
     pool = LLMPool()
     await pool.add(_cfg(), "key")
     opt = Optimizer()
-    hook = _hook(opt, InMemoryStore(), pool)
+    learner = _make_learner(opt, InMemoryStore(), pool)
 
     for _ in range(3):
-        await hook.record(_call("x", CallStatus.ERROR, http_status=400))
+        await learner.observe(_call("x", CallStatus.ERROR, http_status=400))
 
     assert "x" in pool
     assert opt.rl_fail_count("x") == 0
@@ -112,14 +115,14 @@ async def test_error_row_without_cooldown_does_not_force_a_rebuild():
         nonlocal resyncs
         resyncs += 1
 
-    hook = _LearningHook(Optimizer(), InMemoryStore(), pool, counting_resync)
+    learner = Learner(Optimizer(), InMemoryStore(), pool, counting_resync)
 
-    await hook.record(_call("x", CallStatus.ERROR, error_detail="wait budget exhausted"))
+    await learner.observe(_call("x", CallStatus.ERROR, error_detail="wait budget exhausted"))
     assert resyncs == 1  # the first call is never debounced
-    await hook.record(_call("x", CallStatus.ERROR, error_detail="wait budget exhausted"))
+    await learner.observe(_call("x", CallStatus.ERROR, error_detail="wait budget exhausted"))
     assert resyncs == 1
 
-    await hook.record(_call("x", CallStatus.ERROR, cooldown_until=_soon()))
+    await learner.observe(_call("x", CallStatus.ERROR, cooldown_until=_soon()))
     assert resyncs == 2
 
 
@@ -127,11 +130,11 @@ async def test_ok_calls_reset_rl_fail_count():
     pool = LLMPool()
     await pool.add(_cfg(), "key")
     opt = Optimizer()
-    hook = _hook(opt, InMemoryStore(), pool)
+    learner = _make_learner(opt, InMemoryStore(), pool)
 
-    await hook.record(_call("x", CallStatus.RATE_LIMITED))
+    await learner.observe(_call("x", CallStatus.RATE_LIMITED))
     assert opt.rl_fail_count("x") == 1
-    await hook.record(_call("x", CallStatus.OK))
+    await learner.observe(_call("x", CallStatus.OK))
     assert opt.rl_fail_count("x") == 0
 
 
@@ -140,13 +143,13 @@ async def test_ok_calls_reset_rl_fail_count():
 # ---------------------------------------------------------------------------
 
 
-async def test_record_quality_updates_window_instantly():
+async def test_an_observed_rating_updates_the_window_instantly():
     pool = LLMPool()
     await pool.add(_cfg(), "key")
     opt = Optimizer()
-    hook = _hook(opt, InMemoryStore(), pool)
+    learner = _make_learner(opt, InMemoryStore(), pool)
 
-    await hook.record_quality("x", "summarize", 0.8)
+    learner.record_quality_observed("x", "summarize", 0.8)
 
     assert list(opt._scores[("x", "summarize")]) == [0.8]
 
@@ -161,43 +164,43 @@ async def test_rebuild_loads_quality_windows_from_journal(tmp_path):
     pool = LLMPool()
     await pool.add(_cfg("bad"), "key")
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
-    hook = _hook(opt, store, pool)
+    learner = _make_learner(opt, store, pool)
 
     for _ in range(10):
         await store.record_quality("bad", "summarize", 0.0)
 
-    await hook.maybe_rebuild(force=True)
+    await learner.maybe_rebuild(force=True)
 
     assert opt.is_demoted("bad", "summarize") is True
 
 
-async def test_rebuild_computes_metrics_cache(tmp_path):
+async def test_rebuild_computes_metrics(tmp_path):
     store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     await pool.add(_cfg("x"), "key")
     opt = Optimizer()
-    hook = _hook(opt, store, pool)
+    learner = _make_learner(opt, store, pool)
 
     await store.record(_call("x", CallStatus.OK))
     await store.record(_call("x", CallStatus.OK))
 
-    await hook.maybe_rebuild(force=True)
+    await learner.maybe_rebuild(force=True)
 
-    assert hook.metrics_cache["x"].call_count == 2
-    assert hook.metrics_cache["x"].last_status is CallStatus.OK
+    assert learner.metrics["x"].call_count == 2
+    assert learner.metrics["x"].last_status is CallStatus.OK
 
 
 async def test_rebuild_is_debounced_without_force(tmp_path):
     store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     opt = Optimizer()
-    hook = _hook(opt, store, pool)
+    learner = _make_learner(opt, store, pool)
 
-    await hook.maybe_rebuild(force=True)
+    await learner.maybe_rebuild(force=True)
     await store.record(_call("x", CallStatus.OK))
-    await hook.maybe_rebuild()  # within TTL — no-op
+    await learner.maybe_rebuild()  # within TTL — no-op
 
-    assert hook.metrics_cache == {}
+    assert learner.metrics == {}
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +213,7 @@ async def test_rebuild_applies_5xx_cooldown_unconditionally(tmp_path):
     pool = LLMPool()
     await pool.add(_cfg("x"), "key")  # a *different* key than the failing row below
     opt = Optimizer()
-    hook = _hook(opt, store, pool)
+    learner = _make_learner(opt, store, pool)
 
     until = datetime.now(UTC) + timedelta(seconds=60)
     await store.record(
@@ -223,7 +226,7 @@ async def test_rebuild_applies_5xx_cooldown_unconditionally(tmp_path):
         ),
     )
 
-    await hook.maybe_rebuild(force=True)
+    await learner.maybe_rebuild(force=True)
 
     assert pool._slots["x"].cooldown_until == until
 
@@ -233,7 +236,7 @@ async def test_rebuild_applies_429_cooldown_only_when_key_hash_matches(tmp_path)
     pool = LLMPool()
     await pool.add(_cfg("x"), "shared-key")
     opt = Optimizer()
-    hook = _hook(opt, store, pool)
+    learner = _make_learner(opt, store, pool)
 
     until = datetime.now(UTC) + timedelta(seconds=60)
     await store.record(
@@ -246,7 +249,7 @@ async def test_rebuild_applies_429_cooldown_only_when_key_hash_matches(tmp_path)
         ),
     )
 
-    await hook.maybe_rebuild(force=True)
+    await learner.maybe_rebuild(force=True)
 
     assert pool._slots["x"].cooldown_until == until
 
@@ -256,7 +259,7 @@ async def test_rebuild_ignores_429_cooldown_when_key_hash_differs(tmp_path):
     pool = LLMPool()
     await pool.add(_cfg("x"), "my-own-key")
     opt = Optimizer()
-    hook = _hook(opt, store, pool)
+    learner = _make_learner(opt, store, pool)
 
     until = datetime.now(UTC) + timedelta(seconds=60)
     await store.record(
@@ -269,7 +272,7 @@ async def test_rebuild_ignores_429_cooldown_when_key_hash_differs(tmp_path):
         ),
     )
 
-    await hook.maybe_rebuild(force=True)
+    await learner.maybe_rebuild(force=True)
 
     assert pool._slots["x"].cooldown_until is None
 
@@ -279,7 +282,7 @@ async def test_rebuild_drops_dead_key_when_hash_matches(tmp_path):
     pool = LLMPool()
     await pool.add(_cfg("x"), "my-own-key")
     opt = Optimizer()
-    hook = _hook(opt, store, pool)
+    learner = _make_learner(opt, store, pool)
 
     await store.record(
         _call(
@@ -291,7 +294,7 @@ async def test_rebuild_drops_dead_key_when_hash_matches(tmp_path):
         ),
     )
 
-    await hook.maybe_rebuild(force=True)
+    await learner.maybe_rebuild(force=True)
 
     assert "x" not in pool
 
@@ -305,10 +308,10 @@ async def test_rebuild_seeds_and_applies_disabled_map(tmp_path):
     store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     await pool.add(_cfg("x"), "key")
-    hook = _hook(Optimizer(), store, pool)
+    learner = _make_learner(Optimizer(), store, pool)
 
     await store.set_disabled("x", True)
-    await hook.maybe_rebuild(force=True)
+    await learner.maybe_rebuild(force=True)
 
     assert pool.is_disabled("x")
     assert await store.get_disabled("x") is True
@@ -318,9 +321,9 @@ async def test_rebuild_seeds_missing_names_as_not_disabled(tmp_path):
     store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
     await pool.add(_cfg("fresh"), "key")
-    hook = _hook(Optimizer(), store, pool)
+    learner = _make_learner(Optimizer(), store, pool)
 
-    await hook.maybe_rebuild(force=True)
+    await learner.maybe_rebuild(force=True)
 
     assert await store.get_disabled("fresh") is False
     assert not pool.is_disabled("fresh")
@@ -331,10 +334,10 @@ async def test_rebuild_re_enable_via_disabled_map_clears_pool_flag(tmp_path):
     pool = LLMPool()
     await pool.add(_cfg("x"), "key")
     pool.set_disabled("x")
-    hook = _hook(Optimizer(), store, pool)
+    learner = _make_learner(Optimizer(), store, pool)
 
     await store.set_disabled("x", False)
-    await hook.maybe_rebuild(force=True)
+    await learner.maybe_rebuild(force=True)
 
     assert not pool.is_disabled("x")
 
@@ -352,8 +355,8 @@ async def test_maybe_rebuild_calls_resync_registry(tmp_path):
     async def resync() -> None:
         calls.append(1)
 
-    hook = _LearningHook(Optimizer(), store, pool, resync)
-    await hook.maybe_rebuild(force=True)
+    learner = Learner(Optimizer(), store, pool, resync)
+    await learner.maybe_rebuild(force=True)
 
     assert calls == [1]
 
@@ -369,9 +372,9 @@ async def test_a_registry_resync_that_raises_does_not_fail_the_call(tmp_path, ca
     async def exploding_resync() -> None:
         raise ValueError("registry is unreadable")
 
-    hook = _LearningHook(Optimizer(), store, pool, exploding_resync)
+    learner = Learner(Optimizer(), store, pool, exploding_resync)
     with caplog.at_level(logging.ERROR, logger="llmbroker.broker"):
-        await hook.record(_call("x", CallStatus.RATE_LIMITED, cooldown_until=_soon()))
+        await learner.observe(_call("x", CallStatus.RATE_LIMITED, cooldown_until=_soon()))
 
     assert "x" in pool.configs  # the pool survived the unreadable registry
     assert any("registry resync failed" in r.message for r in caplog.records)
@@ -387,8 +390,8 @@ async def test_maybe_rebuild_skips_resync_registry_when_disabled(tmp_path):
     async def resync() -> None:
         calls.append(1)
 
-    hook = _LearningHook(Optimizer(), store, pool, resync)
-    await hook.maybe_rebuild(force=True, resync_registry=False)
+    learner = Learner(Optimizer(), store, pool, resync)
+    await learner.maybe_rebuild(force=True, resync_registry=False)
 
     assert calls == []
 

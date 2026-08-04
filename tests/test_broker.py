@@ -13,6 +13,7 @@ from llmbroker.broker.broker import AsyncBroker
 from llmbroker.exceptions import EmptyRegistryError, NoLLMAvailableError
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
+from llmbroker.protocols.store import QueryableStoreProtocol
 from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.sqlite import Secrets as SqliteSecrets
 from llmbroker.sqlite import Store as SqliteStore
@@ -402,6 +403,29 @@ def test_result_record_quality_does_not_raise(tmp_path):
     asyncio.run(run())
 
 
+def test_result_record_quality_updates_the_window_instantly(tmp_path):
+    """A host's own rating applies before any rebuild, whichever entry point it
+    arrives through — the live result handle included."""
+
+    async def run():
+        opt = Optimizer(quality_min_count=10, quality_floor=0.3)
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            secrets=_secrets(),
+            store=InMemoryStore(),
+            optimize=opt,
+        ) as broker:
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
+                for _ in range(10):
+                    result = await broker.chat(
+                        [{"role": "user", "content": "x"}], operation="summarize"
+                    )
+                    await result.record_quality(0.0)
+            assert opt.is_demoted("p1", "summarize") is True
+
+    asyncio.run(run())
+
+
 def test_result_exposes_rating_identity(tmp_path):
     """The result carries the identity a host must persist to rate the call later —
     and its call_id is the id of the call journal row."""
@@ -486,7 +510,7 @@ def test_broker_record_quality_survives_journal_rebuild(tmp_path):
             opt.load_scores({})
             assert opt.is_demoted("p1", "summarize") is False
             # The forced rebuild re-derives the verdict purely from the quality rows.
-            await broker._learning_hook.maybe_rebuild(force=True)
+            await broker._learner.maybe_rebuild(force=True)
             assert opt.is_demoted("p1", "summarize") is True
 
     asyncio.run(run())
@@ -542,6 +566,22 @@ def test_broker_record_quality_unknown_llm_does_not_raise(tmp_path):
             registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore()
         ) as broker:
             await broker.record_quality("ghost", "summarize", 0.0)
+
+    asyncio.run(run())
+
+
+def test_learning_does_not_make_a_non_queryable_store_look_queryable(tmp_path):
+    """The broker holds the real backend, so the protocol question has an honest
+    answer: an in-memory store cannot serve calls() however much learning is on."""
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore()
+        ) as broker:
+            assert broker._optimizer is not None  # learning is wired
+            assert not isinstance(broker._store, QueryableStoreProtocol)
+            with pytest.raises(TypeError, match="not queryable"):
+                await broker.calls(limit=10)
 
     asyncio.run(run())
 
@@ -848,6 +888,6 @@ def test_sqlite_source_default_store_is_sqlite_store(tmp_path):
             [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")]
         )
         async with AsyncBroker(db_path) as broker:
-            assert isinstance(broker._base_store, DriverStore)
+            assert isinstance(broker._store, DriverStore)
 
     asyncio.run(run())
