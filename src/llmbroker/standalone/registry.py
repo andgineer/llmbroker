@@ -50,21 +50,24 @@ def config_from_entry(entry: dict, *, custom: bool) -> LLMConfig | None:
     )
 
 
-def _check_unique_names(configs: list[LLMConfig]) -> None:
-    """Refuse a name carried twice across ``[[llms]]`` and ``[[custom]]``.
+ALIAS_NAME_HINT = (
+    "an alias entry's name is machine-formed again on every refresh, so renaming it will"
+    " not stick — drop its 'alias' to pin it instead"
+)
 
-    Every downstream store keys on the name — a DB registry's primary key, the
-    live pool's slot map — so a duplicate is not an ambiguity to resolve later
-    but an entry silently lost at the next sync.
-    """
-    seen: set[str] = set()
+
+def _check_unique_names(configs: list[LLMConfig]) -> None:
+    """Refuse a name carried twice across ``[[llms]]`` and ``[[custom]]``."""
+    seen: dict[str, LLMConfig] = {}
     for cfg in configs:
-        if cfg.name in seen:
+        first = seen.get(cfg.name)
+        if first is not None:
+            hint = f"; {ALIAS_NAME_HINT}" if first.alias or cfg.alias else ""
             raise ValueError(
                 f"Registry: duplicate name {cfg.name!r} — a name identifies exactly one"
-                " entry, across [[llms]] and [[custom]] alike",
+                f" entry, across [[llms]] and [[custom]] alike{hint}",
             )
-        seen.add(cfg.name)
+        seen[cfg.name] = cfg
 
 
 def key_info_from_entry(ref: str, raw: object) -> KeyInfo:
@@ -80,6 +83,38 @@ def key_info_from_entry(ref: str, raw: object) -> KeyInfo:
         help=help_text if isinstance(help_text, str) else "",
         extra=extra,
     )
+
+
+def _key_infos(data: dict) -> dict[str, KeyInfo]:
+    raw = data.get("keys", {})
+    if not isinstance(raw, dict):
+        # ValueError, not TypeError: see the entry check in parse_lineup.
+        raise ValueError(  # noqa: TRY004
+            f"Registry: [keys] is {type(raw).__name__}, not a table of api_key_ref"
+            " sections — this is where a human is told how to obtain each key",
+        )
+    return {str(ref): key_info_from_entry(str(ref), val) for ref, val in raw.items()}
+
+
+def parse_lineup(data: dict) -> tuple[list[LLMConfig], dict[str, KeyInfo]]:
+    """The one reader of a lineup: ``[[llms]]`` then ``[[custom]]`` in file order,
+    plus the ``[keys]`` metadata. Whether a lineup is valid is decided only here."""
+    configs: list[LLMConfig] = []
+    for section, custom in (("llms", False), ("custom", True)):
+        for position, entry in enumerate(data.get(section, []), start=1):
+            if not isinstance(entry, dict):
+                # ValueError, not TypeError: a malformed lineup must stay inside the
+                # error type a background refresh catches rather than kill the process.
+                raise ValueError(  # noqa: TRY004
+                    f"Registry: [[{section}]] entry {position} is {type(entry).__name__},"
+                    " not a table",
+                )
+            cfg = config_from_entry(entry, custom=custom)
+            if cfg is not None:
+                configs.append(cfg)
+    _check_unique_names(configs)
+    check_unique_aliases(configs)
+    return configs, _key_infos(data)
 
 
 def _read_data(path: Path) -> dict:
@@ -108,30 +143,9 @@ class Registry:
         return self._path
 
     async def load(self) -> list[LLMConfig]:
-        """Load ``[[llms]]`` (preset-managed) and ``[[custom]]`` (user-owned) entries.
-
-        The two arrays are parsed identically; ``[[custom]]`` entries are flagged
-        ``custom=True``, which keeps them out of the routed pool and out of every
-        sync's reach. Only ``[[custom]]`` entries may carry an ``alias``, unique
-        across the file; names are unique across both arrays.
-        """
-        data = _read_data(self._path)
-        result: list[LLMConfig] = []
-        for entry in data.get("llms", []):
-            cfg = config_from_entry(entry, custom=False)
-            if cfg is not None:
-                result.append(cfg)
-        for entry in data.get("custom", []):
-            cfg = config_from_entry(entry, custom=True)
-            if cfg is not None:
-                result.append(cfg)
-        _check_unique_names(result)
-        check_unique_aliases(result)
-        return result
+        """The file's ``[[llms]]`` and ``[[custom]]`` entries, validated."""
+        return parse_lineup(_read_data(self._path))[0]
 
     async def key_info(self) -> dict[str, KeyInfo]:
         """Per-provider onboarding metadata from the ``[keys]`` table, keyed by ``api_key_ref``."""
-        raw = _read_data(self._path).get("keys", {})
-        if not isinstance(raw, dict):
-            return {}
-        return {str(ref): key_info_from_entry(str(ref), val) for ref, val in raw.items()}
+        return _key_infos(_read_data(self._path))

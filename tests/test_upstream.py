@@ -12,9 +12,7 @@ from llmbroker.broker import upstream
 from llmbroker.broker.upstream import (
     catalog_alias_targets,
     check_not_emptying,
-    configs_from_data,
     fetch_preset_text,
-    key_infos_from_data,
     keys_are_visible,
     merge_upstream,
     present_refs,
@@ -713,6 +711,14 @@ async def test_sync_file_refuses_to_write_a_file_that_does_not_match_the_merge(t
     assert target.read_text() == original
 
 
+def test_render_check_refuses_a_rendering_that_lost_an_entry():
+    """The other half of the guard: the rendering parses and is a valid lineup, but
+    does not carry what the merge decided. Nothing else can catch that."""
+    rendered = '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
+    with pytest.raises(ValueError, match=r"would carry \['a'\] instead of \['a', 'b'\]"):
+        upstream._check_render_faithful(rendered, [_cfg("a"), _cfg("b")])
+
+
 async def test_sync_file_rejects_a_non_toml_target(tmp_path):
     with pytest.raises(ValueError, match=".toml"):
         await sync_file(_NEW, tmp_path / "llms.json", source="freetier", secrets=DictSecrets({}))
@@ -758,18 +764,7 @@ def tomli_dumps_catalog() -> str:
     )
 
 
-# ── Parsing helpers ──────────────────────────────────────────────────────────
-
-
-def test_configs_and_keys_are_read_in_file_order():
-    data = tomllib.loads(
-        '[[llms]]\nname="a"\nbase_url="u"\nmodel="m"\napi_key_ref="A"\n'
-        '[[custom]]\nname="c"\nbase_url="u"\nmodel="m"\napi_key_ref="C"\n'
-        '[keys.A]\nhelp="a help"\n',
-    )
-    configs = configs_from_data(data)
-    assert [(c.name, c.custom) for c in configs] == [("a", False), ("c", True)]
-    assert key_infos_from_data(data)["A"].help == "a help"
+# ── Preset name parsing ──────────────────────────────────────────────────────
 
 
 def test_fetch_preset_text_refuses_an_invalid_name():

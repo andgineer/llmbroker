@@ -26,7 +26,6 @@ from llmbroker.broker.upstream import (
     FileSyncOutcome,
     alias_targets_for,
     cached_preset_text,
-    configs_from_data,
     dead_entries,
     entry_block,
     keys_are_visible,
@@ -39,7 +38,7 @@ from llmbroker.broker.upstream import (
 from llmbroker.exceptions import SyncRefusedError
 from llmbroker.home import home_dir
 from llmbroker.models import KeyInfo, LLMConfig
-from llmbroker.standalone.registry import Registry, key_info_from_entry
+from llmbroker.standalone.registry import Registry, key_info_from_entry, parse_lineup
 from llmbroker.standalone.secrets import Secrets
 from llmbroker.standalone.store import FileStore
 
@@ -48,12 +47,22 @@ async def _env_data(reg: Registry) -> tuple[list[LLMConfig], dict[str, KeyInfo]]
     return await reg.load(), await reg.key_info()
 
 
+def _read_env_data(reg: Registry) -> tuple[list[LLMConfig], dict[str, KeyInfo]] | None:
+    """A malformed lineup is the user's own file, so it is reported like every other
+    bad argument — the one command onboarding starts with may not end in a traceback."""
+    try:
+        return asyncio.run(_env_data(reg))
+    except (ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+
+
 def _env_source_data(source: str) -> tuple[list[LLMConfig], dict[str, KeyInfo]] | None:
     """Load the ``env`` argument as an existing config file, or as a preset name
     fetched from the catalog — so onboarding needs no local file at all."""
     path = Path(source)
     if path.exists():
-        return asyncio.run(_env_data(Registry(path)))
+        return _read_env_data(Registry(path))
     if not PRESET_NAME_RE.match(source):
         print(
             f"error: no such file: {path} (and {source!r} is not a valid preset name)",
@@ -68,7 +77,7 @@ def _env_source_data(source: str) -> tuple[list[LLMConfig], dict[str, KeyInfo]] 
     with tempfile.TemporaryDirectory() as tmp:
         staged = Path(tmp) / f"{source}.toml"
         staged.write_text(text, encoding="utf-8")
-        return asyncio.run(_env_data(Registry(staged)))
+        return _read_env_data(Registry(staged))
 
 
 def _cmd_env(args: argparse.Namespace) -> int:
@@ -119,8 +128,8 @@ async def _sync_target(text: str, name: str, target: Path) -> FileSyncOutcome:
     secrets = Secrets(target.parent / ".env")
     store_dir = target.parent / "store"
     store = FileStore(store_dir) if store_dir.is_dir() else None
-    current = configs_from_data(_read_config(target))
-    new_configs = configs_from_data(tomllib.loads(text))
+    current, _ = parse_lineup(_read_config(target))
+    new_configs, _ = parse_lineup(tomllib.loads(text))
     present = await present_refs(
         [c.api_key_ref for c in (*new_configs, *current)],
         secrets,

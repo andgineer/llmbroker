@@ -10,8 +10,8 @@ never commit unasked, and leave the plan file in place for review. Nothing needs
 the request. The plan and its row here are removed only after review and merge, on request.
 
 Statuses as of 2026-08-06: a simplification pass over the implementation. No functionality is
-removed by any of them. **Plans 1-4 are implemented and waiting on the maintainer — 1 is also
-reviewed, with no defects. The next one to take is plan 5.** A row stays here, with its status, until
+removed by any of them. **Plans 1-5 are implemented and waiting on the maintainer — 1 is also
+reviewed, with no defects. The next one to take is plan 6.** A row stays here, with its status, until
 the maintainer asks for it to go after merge; "take the first row" means the first row still
 marked `queued`.
 
@@ -23,7 +23,7 @@ marked `queued`.
 | 2 | [router-failover-and-sse](router-failover-and-sse.md) | **implemented** | — | 1 *(implemented)* | `chat` and `stream` are one algorithm written twice; SSE reader written twice |
 | 3 | [learning-as-observer](learning-as-observer.md) | **implemented** | — | — | the store wrapper makes `isinstance` lie; the unmet-budget bound moves to the journal. Schema bump 5 → 6 |
 | 4 | [store-retention-dedup](store-retention-dedup.md) | **implemented** | — | — | retention declared in five files, quality record built in two |
-| 5 | [lineup-parser](lineup-parser.md) | queued | — | — | **fixes a divergence**: two parsers, different validation |
+| 5 | [lineup-parser](lineup-parser.md) | **implemented** | — | — | **fixes a divergence**: two parsers, different validation |
 | 6 | [lineup-file-ownership](lineup-file-ownership.md) | queued | — | 5 | stop assembling the config file as text; split by owner; then split `upstream.py`. Largest plan |
 | 7 | [lineup-refresher](lineup-refresher.md) | queued | — | 6 | **skeleton** — written in full after 6 merges; **ships with 6** |
 | 8 | [models-purity](models-purity.md) | queued | — | 6 | **skeleton** — `models.py` logs, formats prose, and holds the validators |

@@ -143,8 +143,9 @@ is what lets a file-configured broker keep itself current. Provisioning against
 an empty registry still fails fast, naming the sync call that would fill it.
 
 The write is atomic and preserves the target's permissions, and what is about to
-replace a live config is parsed and checked against the merge result first —
-this is the one code path that can destroy a user's configuration.
+replace a live config is read back as a lineup and checked against the merge
+result first — this is the one code path that can destroy a user's
+configuration.
 
 ## The report
 

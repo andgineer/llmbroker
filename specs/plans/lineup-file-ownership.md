@@ -60,6 +60,15 @@ Blocked by `lineup-parser` — this plan assumes one `parse_lineup`.
    someone wrote by hand outranks a curated one, which is the rule
    `Catalog.key_help` already follows.
 
+   Note before writing this: `load()` and `key_info()` each read and parse the
+   path themselves, so a single sync source already reads one file three times
+   (both methods plus the raw text). Two files per method makes that five, and
+   the reads are not of one instant — the halves can disagree if the file is
+   edited between them. Decide here whether the pair reads once; `lineup-parser`
+   left this open on purpose, since collapsing it means either caching a parse
+   or changing the two-method registry protocol, and this plan is the one that
+   reshapes both.
+
 2. **Render wholesale.** One function renders a list of `LLMConfig` plus a
    `[keys]` table to TOML text. Delete `render_merged_toml`, `_keys_tail`,
    `_check_render_faithful`, `entry_block` and `_KEPT_HEADER`. Nothing is

@@ -124,3 +124,25 @@ def test_extra_fields_do_not_appear_in_output(tmp_path, capsys):
     assert rc == 0
     assert "effort" not in out
     assert "value=good" not in out
+
+
+def test_a_malformed_lineup_is_an_error_line_not_a_traceback(tmp_path, capsys):
+    """The command onboarding starts with reports a bad file the way it reports every
+    other bad argument."""
+    body = (
+        '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n'
+        '[[custom]]\nname="a"\nbase_url="https://y/v1"\nmodel="m"\napi_key_ref="KEY_B"\n'
+    )
+    rc = main(["env", _write_toml(tmp_path, body)])
+    assert rc == 1
+    assert "error: Registry: duplicate name 'a'" in capsys.readouterr().err
+
+
+def test_a_malformed_keys_table_is_an_error_line(tmp_path, capsys):
+    body = (
+        'keys = "KEY_A"\n'
+        '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n'
+    )
+    rc = main(["env", _write_toml(tmp_path, body)])
+    assert rc == 1
+    assert "[keys] is str, not a table" in capsys.readouterr().err

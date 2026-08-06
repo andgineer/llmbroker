@@ -102,8 +102,14 @@ it — a DB registry's primary key, the live pool's slot map — so a config
 carrying a name twice does not raise an ambiguity to resolve later, it loses an
 entry at the next sync. An alias entry's name is machine-formed in the same
 convention preset pool entries use, so a catalog move can land one on the other;
-that is refused where it would be introduced (loading a config, and the CLI
-refresh before it writes anything) rather than tolerated. When a name does
+that is refused where it would be introduced rather than tolerated. Uniqueness
+of names and of aliases is decided when a lineup file is read, and reading one
+as a registry and reading it as a sync source are one judgement, so a file
+cannot be valid for one and invalid for the other. A collision the *merge*
+creates between two individually valid lineups is caught separately, on the
+result. Either way the error names the fix, and for an alias entry the fix is
+never a rename: the name is machine-formed again on the next refresh. When a
+name does
 resolve, the user's own entry is what it means: `direct()` by name searches
 custom entries, and a pool entry of that name only decides which error comes
 back.

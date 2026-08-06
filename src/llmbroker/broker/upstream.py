@@ -38,7 +38,7 @@ from llmbroker.models import (
 from llmbroker.protocols.registry import KeyInfoProtocol, RegistryProtocol
 from llmbroker.protocols.secrets import SecretsProtocol
 from llmbroker.protocols.store import QueryableStoreProtocol, StoreProtocol
-from llmbroker.standalone.registry import Registry, config_from_entry, key_info_from_entry
+from llmbroker.standalone.registry import ALIAS_NAME_HINT, Registry, parse_lineup
 
 logger = logging.getLogger("llmbroker.broker")
 
@@ -612,9 +612,7 @@ def _check_name_clash(merged: list[LLMConfig]) -> None:
         if cfg.name in seen:
             raise ValueError(
                 f"the merged file would carry two entries named '{cfg.name}' —"
-                " rename the [[custom]] entry if it is pinned; an alias entry's name is"
-                " machine-formed again on every refresh, so renaming it will not stick"
-                " — drop its 'alias' to pin it instead",
+                f" rename the [[custom]] entry if it is pinned; {ALIAS_NAME_HINT}",
             )
         seen.add(cfg.name)
 
@@ -852,26 +850,6 @@ def write_atomic(target: Path, text: str) -> None:
 # ── The file target, end to end ──────────────────────────────────────────────
 
 
-def configs_from_data(data: dict) -> list[LLMConfig]:
-    """The ``[[llms]]`` + ``[[custom]]`` entries of a parsed config, in file order."""
-    configs: list[LLMConfig] = []
-    for section, custom in (("llms", False), ("custom", True)):
-        for entry in data.get(section, []):
-            if not isinstance(entry, dict):
-                continue
-            cfg = config_from_entry(entry, custom=custom)
-            if cfg is not None:
-                configs.append(cfg)
-    return configs
-
-
-def key_infos_from_data(data: dict) -> dict[str, KeyInfo]:
-    raw = data.get("keys", {})
-    if not isinstance(raw, dict):
-        return {}
-    return {str(ref): key_info_from_entry(str(ref), val) for ref, val in raw.items()}
-
-
 def resolve_sync_source(source: str) -> tuple[str, bool]:
     """Read a string source as an existing path, or as a curated preset name."""
     if Path(source).exists():
@@ -895,11 +873,11 @@ async def load_sync_source(
         name, is_preset = resolve_sync_source(source)
         if is_preset:
             text = await asyncio.to_thread(cached_preset_text, name, cache_dir)
-            data = tomllib.loads(text)
+            preset_configs, preset_keys = parse_lineup(tomllib.loads(text))
             return SyncSource(
                 label=name,
-                configs=configs_from_data(data),
-                keys=key_infos_from_data(data),
+                configs=preset_configs,
+                keys=preset_keys,
                 text=text,
                 preset=True,
             )
@@ -959,12 +937,13 @@ def _keys_tail(
 
 def _check_render_faithful(rendered: str, merged: list[LLMConfig]) -> None:
     """Belt and braces before the one write that can destroy a live config: what is
-    about to replace it must parse, and carry exactly the merge's entries."""
+    about to replace it must read back as a valid lineup carrying exactly the
+    merge's entries."""
     try:
-        written = [c.name for c in configs_from_data(tomllib.loads(rendered))]
-    except tomllib.TOMLDecodeError as exc:
+        written = [c.name for c in parse_lineup(tomllib.loads(rendered))[0]]
+    except ValueError as exc:
         raise ValueError(
-            f"sync: the merged file would not parse ({exc}) — nothing written",
+            f"sync: the merged file would not read back ({exc}) — nothing written",
         ) from exc
     expected = [c.name for c in merged]
     if sorted(written) != sorted(expected):
@@ -998,8 +977,8 @@ async def sync_file(  # noqa: PLR0913
     refresh = refresh_alias_entries(custom_entries, alias_targets) if alias_targets else _NO_REFRESH
 
     new_data = tomllib.loads(new_text)
-    new_configs = configs_from_data(new_data)
-    current_configs = configs_from_data(data)
+    new_configs, new_keys = parse_lineup(new_data)
+    current_configs, current_keys = parse_lineup(data)
     present = await present_refs(
         [c.api_key_ref for c in (*new_configs, *current_configs)],
         secrets,
@@ -1008,9 +987,9 @@ async def sync_file(  # noqa: PLR0913
     )
     merged, _keys, report = merge_upstream(
         new_configs,
-        key_infos_from_data(new_data),
+        new_keys,
         current_configs,
-        key_infos_from_data(data),
+        current_keys,
         present,
         source=source,
         dead=dead,
