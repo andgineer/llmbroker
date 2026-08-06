@@ -35,15 +35,14 @@ def quality_call(
 
 
 class PurgeClock:
-    """Debounce for the retention purge: ``due()`` is true at most once per ``interval``."""
+    """Debounce for the retention purge: ``due()`` is true at most once per interval."""
 
-    def __init__(self, interval: float = PURGE_INTERVAL) -> None:
-        self._interval = interval
+    def __init__(self) -> None:
         self._last = float("-inf")
 
     def due(self) -> bool:
         now = time.monotonic()
-        if now - self._last < self._interval:
+        if now - self._last < PURGE_INTERVAL:
             return False
         self._last = now
         return True
