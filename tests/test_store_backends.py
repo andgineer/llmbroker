@@ -1,11 +1,14 @@
-"""Backend-parametrized tests for the QueryableStoreProtocol (sqlite, postgres, mongodb)."""
+"""Backend-parametrized tests for the QueryableStoreProtocol (file, sqlite, postgres,
+mongodb)."""
 
+from dataclasses import fields
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
 from llmbroker.broker.learning import metrics_from_calls
 from llmbroker.broker.stats import stats_from_calls
+from llmbroker.journal_policy import PurgeClock
 from llmbroker.models import Call, CallStatus, Usage
 
 _BASE = datetime(2030, 1, 1, tzinfo=UTC)
@@ -96,7 +99,7 @@ async def test_retention_purges_old_calls_via_maybe_purge(queryable_store):
     purge also sees today's file as expired (it truncates the cutoff to a date)."""
     await queryable_store.record(_call("old"))
     queryable_store._retention = timedelta(days=-1)  # everything recorded is now "old"
-    queryable_store._last_purge = float("-inf")  # force the debounce open
+    queryable_store._purge_clock = PurgeClock()  # a fresh clock is due immediately
     await queryable_store._maybe_purge()
     assert await queryable_store.calls(limit=10) == []
 
@@ -231,3 +234,49 @@ async def test_calls_rejects_non_positive_limit(queryable_store, limit):
     await queryable_store.record(_call("c1", ts=_BASE))
     with pytest.raises(ValueError, match="limit must be"):
         await queryable_store.calls(limit=limit)
+
+
+# ── Lossless persistence (invariant 8) ──────────────────────────────────────
+
+# Distinguishable, non-empty value per journal field. Populating every field at
+# once makes this a storage-fidelity fixture, not a semantically valid record.
+_FIELD_SAMPLES = {
+    "id": "rt-1",
+    "llm_name": "p1",
+    "operation": "summarize",
+    "trace_id": "trace-abc",
+    "status": CallStatus.ERROR,
+    "kind": "call",
+    "ts": _BASE,
+    "http_status": 503,
+    "latency_ms": 1234,
+    "error_detail": "provider said no",
+    "usage": Usage(prompt_tokens=1, completion_tokens=2, total_tokens=3, extra={"cached": 4}),
+    "quality_score": 0.75,
+    "call_id": "corr-9",
+    "scope": "tenant-a",
+    "cooldown_until": _BASE + timedelta(minutes=30),
+    "key_hash": "abc123def456",
+    "budget_ms": 1500,
+}
+
+
+def _fully_populated_call() -> Call:
+    declared = {f.name for f in fields(Call)}
+    unsampled = declared - _FIELD_SAMPLES.keys()
+    assert not unsampled, (
+        f"journal field(s) {sorted(unsampled)} have no sample value — add one, or the "
+        f"lossless-persistence guarantee silently stops covering them"
+    )
+    blank = {k for k, v in _FIELD_SAMPLES.items() if v is None or v == ""}
+    assert not blank, f"sample value for {sorted(blank)} is empty, so it proves nothing"
+    return Call(**_FIELD_SAMPLES)  # type: ignore[arg-type]
+
+
+async def test_every_journal_field_survives_the_store(queryable_store):
+    """A backend may not persist a subset of the row it was handed: a dropped field
+    degrades selection with a green gate rather than raising."""
+    original = _fully_populated_call()
+    await queryable_store.record(original)
+    (restored,) = await queryable_store.calls(limit=10)
+    assert restored == original

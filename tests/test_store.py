@@ -293,7 +293,7 @@ def test_file_store_retention_purge_is_debounced(tmp_path):
     k = FileStore(tmp_path, retention=timedelta(days=90))
 
     async def run():
-        await k.record(_call("triggers-purge", ts=datetime.now(UTC)))  # sets _last_purge
+        await k.record(_call("triggers-purge", ts=datetime.now(UTC)))  # closes the debounce
         await k.record(_call("old", ts=old_ts))  # written after purge already ran once
 
     asyncio.run(run())

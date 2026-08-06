@@ -63,7 +63,10 @@ entry enters only by displacing another.
    only two — folded forward from the row just journaled, which is not optional
    because a store with no read path has nothing else to learn from, and
    re-derived from the tail, each kind either replaced wholesale or merged so
-   that other evidence can only raise it. → `journal.md`
+   that other evidence can only raise it. And a row survives its store whole: a
+   backend that persists part of what it was handed is a defect, not a storage
+   choice — the loss surfaces as degraded selection, never as an error.
+   → `journal.md`
 
 9. **Every instant crossing the store boundary is UTC, in both directions.** A
    naive value is refused on write and on read rather than guessed at; admitted

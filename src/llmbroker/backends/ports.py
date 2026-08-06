@@ -5,11 +5,10 @@ Registry and secrets are global — no user scope exists anywhere in this layer
 journal attribution field instead).
 """
 
-import time
-import uuid
 from datetime import UTC, datetime, timedelta
 
 from llmbroker.backends.driver import Driver, Row
+from llmbroker.journal_policy import RETENTION_DEFAULT, PurgeClock, quality_call
 from llmbroker.models import (
     Call,
     CallStatus,
@@ -20,9 +19,6 @@ from llmbroker.models import (
     to_utc,
     with_utc_timestamps,
 )
-
-_DEFAULT_RETENTION = timedelta(days=90)
-_PURGE_INTERVAL_SECONDS = 3600.0
 
 
 class DriverRegistry:
@@ -152,10 +148,10 @@ class DriverStore:
     hour on write activity.
     """
 
-    def __init__(self, driver: Driver, *, retention: timedelta = _DEFAULT_RETENTION) -> None:
+    def __init__(self, driver: Driver, *, retention: timedelta = RETENTION_DEFAULT) -> None:
         self._driver = driver
         self._retention = retention
-        self._last_purge = float("-inf")
+        self._purge_clock = PurgeClock()
 
     async def record(self, call: Call) -> None:
         await self._driver.append("calls", _call_to_row(with_utc_timestamps(call)))
@@ -170,21 +166,7 @@ class DriverStore:
         call_id: str | None = None,
         scope: str | None = None,
     ) -> None:
-        """Append a self-contained quality record — never updates the call row."""
-        await self.record(
-            Call(
-                id=str(uuid.uuid4()),
-                llm_name=llm_name,
-                operation=operation,
-                trace_id=None,
-                status=None,
-                kind="quality",
-                ts=datetime.now(UTC),
-                quality_score=score,
-                call_id=call_id,
-                scope=scope,
-            ),
-        )
+        await self.record(quality_call(llm_name, operation, score, call_id=call_id, scope=scope))
 
     async def calls(
         self,
@@ -215,10 +197,8 @@ class DriverStore:
         await self._driver.purge("calls", cutoff)
 
     async def _maybe_purge(self) -> None:
-        now = time.monotonic()
-        if now - self._last_purge < _PURGE_INTERVAL_SECONDS:
+        if not self._purge_clock.due():
             return
-        self._last_purge = now
         await self._purge_old_calls()
 
     # ------------------------------------------------------------------

@@ -6,9 +6,8 @@ from datetime import timedelta
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from llmbroker.backends.ports import DriverStore
+from llmbroker.journal_policy import RETENTION_DEFAULT
 from llmbroker.mongodb.driver import MongoDriver
-
-_DEFAULT_RETENTION = timedelta(days=90)
 
 
 class Store(DriverStore):
@@ -19,6 +18,6 @@ class Store(DriverStore):
         self,
         db: AsyncIOMotorDatabase,
         *,
-        retention: timedelta = _DEFAULT_RETENTION,
+        retention: timedelta = RETENTION_DEFAULT,
     ) -> None:
         super().__init__(MongoDriver(db), retention=retention)

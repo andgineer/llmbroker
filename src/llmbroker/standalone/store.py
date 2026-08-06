@@ -18,40 +18,16 @@ write activity. The disabled map is never purged.
 
 import asyncio
 import json
-import time
-import uuid
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import yaml
 
+from llmbroker.journal_policy import RETENTION_DEFAULT, PurgeClock, quality_call
 from llmbroker.models import Call, CallStatus, Usage, check_limit, to_utc, with_utc_timestamps
 
-_DEFAULT_RETENTION = timedelta(days=90)
-_PURGE_INTERVAL_SECONDS = 3600.0
 _DISABLED_HEADER = "# llmbroker: admin verdicts; values are yours, names are seeded automatically\n"
-
-
-def _new_quality_call(
-    llm_name: str,
-    operation: str | None,
-    score: float,
-    call_id: str | None,
-    scope: str | None,
-) -> Call:
-    return Call(
-        id=str(uuid.uuid4()),
-        llm_name=llm_name,
-        operation=operation,
-        trace_id=None,
-        status=None,
-        kind="quality",
-        ts=datetime.now(UTC),
-        quality_score=score,
-        call_id=call_id,
-        scope=scope,
-    )
 
 
 class InMemoryStore:
@@ -127,12 +103,12 @@ def _call_from_jsonable(d: dict) -> Call:
 class FileStore:
     """Day-split JSONL call journal plus a YAML disabled-verdict map, under one directory."""
 
-    def __init__(self, directory: str | Path, *, retention: timedelta = _DEFAULT_RETENTION) -> None:
+    def __init__(self, directory: str | Path, *, retention: timedelta = RETENTION_DEFAULT) -> None:
         self._dir = Path(directory)
         self._calls_dir = self._dir / "calls"
         self._disabled_path = self._dir / "disabled.yml"
         self._retention = retention
-        self._last_purge = float("-inf")
+        self._purge_clock = PurgeClock()
 
     def _day_path(self, ts: datetime) -> Path:
         """UTC date, not the record's own offset: the ``since`` bound skips whole
@@ -159,7 +135,7 @@ class FileStore:
         call_id: str | None = None,
         scope: str | None = None,
     ) -> None:
-        await self.record(_new_quality_call(llm_name, operation, score, call_id, scope))
+        await self.record(quality_call(llm_name, operation, score, call_id=call_id, scope=scope))
 
     def _day_files_newest_first(self) -> list[Path]:
         if not self._calls_dir.exists():
@@ -243,10 +219,8 @@ class FileStore:
                 path.unlink(missing_ok=True)
 
     async def _maybe_purge(self) -> None:
-        now = time.monotonic()
-        if now - self._last_purge < _PURGE_INTERVAL_SECONDS:
+        if not self._purge_clock.due():
             return
-        self._last_purge = now
         await asyncio.to_thread(self._purge_old_day_files)
 
     def _read_disabled(self) -> dict[str, bool]:
