@@ -29,7 +29,7 @@
 | src/llmbroker/home.py                 |       58 |        7 |     88% |27-28, 31-32, 34, 44-45 |
 | src/llmbroker/http\_status.py         |       18 |        0 |    100% |           |
 | src/llmbroker/integrations/alembic.py |        2 |        0 |    100% |           |
-| src/llmbroker/journal\_policy.py      |       18 |        0 |    100% |           |
+| src/llmbroker/journal\_policy.py      |       17 |        0 |    100% |           |
 | src/llmbroker/models.py               |      210 |        0 |    100% |           |
 | src/llmbroker/mongodb/driver.py       |       87 |        4 |     95% |21, 63, 154-155 |
 | src/llmbroker/mongodb/registry.py     |        6 |        0 |    100% |           |
@@ -52,7 +52,7 @@
 | src/llmbroker/standalone/store.py     |      136 |        5 |     96% |162, 183-184, 216-217 |
 | src/llmbroker/sync.py                 |      103 |        1 |     99% |       103 |
 | src/llmbroker/vault/secrets.py        |       19 |        0 |    100% |           |
-| **TOTAL**                             | **3693** |  **115** | **97%** |           |
+| **TOTAL**                             | **3692** |  **115** | **97%** |           |
 
 
 ## Setup coverage badge
