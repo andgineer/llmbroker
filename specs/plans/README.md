@@ -30,11 +30,15 @@ marked `queued`.
 | 9 | [direct-client-seam](direct-client-seam.md) | queued | — | 2 | **skeleton** — the sync broker reaches a private method; two clients copy-pasted |
 | 10 | [declared-out-of-catalog](declared-out-of-catalog.md) | queued | — | 6 | **skeleton** — the `direct=` overlay is half of `Catalog` and owns a cycle back to the broker |
 | 11 | [sse-chunk-shape](sse-chunk-shape.md) | queued | — | 2 | **fixes a spec divergence**: a non-object SSE payload escapes the pool raw instead of failing over. Small |
+| 12 | [store-conformance-suite](store-conformance-suite.md) | queued | — | — | tests only, no runtime change: the store layer never got the driver layer's one-suite-for-all shape, so ten universal behaviors are written twice. Take last |
 
 Plans 1-5 touch disjoint files and may be taken in any order subject to the
 Blocked-by column. Plans 6 and 7 must reach a release together: 7 extracts the
 seam 6 creates. Plan 11 is the only one here that is not a simplification — it
 came out of plan 2's review and fixes behavior, so it may be taken out of order.
+Plan 12 changes no runtime code at all and blocks nothing, so it goes last: its
+own text argues it should be taken only when its purely mechanical diff reads as
+worth the churn.
 
 **Skeletons (7-10) carry findings, not routes.** The evidence in them is about
 today's code and stays valid; the work order is missing because their target

@@ -89,10 +89,9 @@ the route.
 **Decisions the plan did not make.**
 
 - `PurgeClock.due()` both tests and stamps the clock, so the two stores keep the
-  exact "mark first, then purge" order they had. `PurgeClock(interval=...)` is
-  parameterized with `PURGE_INTERVAL` as its default rather than reading the
-  module constant internally — a test can build a clock with its own window
-  without patching a module global.
+  exact "mark first, then purge" order they had. It takes no arguments: an
+  interval override was written first and removed in review, since nothing set
+  it and the debounce window is a single policy value, not a per-store knob.
 - `_last_purge` is gone as an attribute, so
   `tests/test_store_backends.py::test_retention_purges_old_calls_via_maybe_purge`
   now forces the debounce open by assigning a fresh `PurgeClock()` instead of
