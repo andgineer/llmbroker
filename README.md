@@ -9,7 +9,7 @@
 | src/llmbroker/aws/secrets.py          |       32 |        2 |     94% |    43, 54 |
 | src/llmbroker/backends/driver.py      |        8 |        0 |    100% |           |
 | src/llmbroker/backends/inmemory.py    |       36 |        1 |     97% |        19 |
-| src/llmbroker/backends/ports.py       |       98 |        0 |    100% |           |
+| src/llmbroker/backends/ports.py       |       93 |        0 |    100% |           |
 | src/llmbroker/backends/spec.py        |        7 |        0 |    100% |           |
 | src/llmbroker/broker/broker.py        |      364 |       10 |     97% |191, 196, 325-327, 442, 740-742, 915 |
 | src/llmbroker/broker/catalog.py       |      181 |        4 |     98% |74, 84, 215, 244 |
@@ -29,6 +29,7 @@
 | src/llmbroker/home.py                 |       58 |        7 |     88% |27-28, 31-32, 34, 44-45 |
 | src/llmbroker/http\_status.py         |       18 |        0 |    100% |           |
 | src/llmbroker/integrations/alembic.py |        2 |        0 |    100% |           |
+| src/llmbroker/journal\_policy.py      |       18 |        0 |    100% |           |
 | src/llmbroker/models.py               |      210 |        0 |    100% |           |
 | src/llmbroker/mongodb/driver.py       |       87 |        4 |     95% |21, 63, 154-155 |
 | src/llmbroker/mongodb/registry.py     |        6 |        0 |    100% |           |
@@ -48,10 +49,10 @@
 | src/llmbroker/sqlite/store.py         |        8 |        0 |    100% |           |
 | src/llmbroker/standalone/registry.py  |       75 |        1 |     99% |       136 |
 | src/llmbroker/standalone/secrets.py   |       74 |        4 |     95% |32, 112, 119, 124 |
-| src/llmbroker/standalone/store.py     |      143 |        5 |     97% |186, 207-208, 240-241 |
+| src/llmbroker/standalone/store.py     |      136 |        5 |     96% |162, 183-184, 216-217 |
 | src/llmbroker/sync.py                 |      103 |        1 |     99% |       103 |
 | src/llmbroker/vault/secrets.py        |       19 |        0 |    100% |           |
-| **TOTAL**                             | **3687** |  **115** | **97%** |           |
+| **TOTAL**                             | **3693** |  **115** | **97%** |           |
 
 
 ## Setup coverage badge
