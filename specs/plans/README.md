@@ -9,8 +9,10 @@ over a stale plan, gate on `invoke pre` + `pytest` after every batch, never bump
 never commit unasked, and leave the plan file in place for review. Nothing needs to be restated in
 the request. The plan and its row here are removed only after review and merge, on request.
 
-Statuses as of 2026-08-08: a simplification pass over the implementation. No functionality is
-removed by any of them. **Plans 1-7 are implemented and waiting on the maintainer — 1, 6 and 7 are
+Statuses as of 2026-08-08: a simplification pass over the implementation, plus one plan that
+narrows what the library accepts. Plan 8 is the exception to "nothing is removed" — it deletes the
+hand-named config file as a configuration form, and argues from the mission why that is a boundary
+rather than a loss. **Plans 1-7 are implemented and waiting on the maintainer — 1, 6 and 7 are
 reviewed, and 6 was reviewed twice: its second round reversed the two-file split it introduced,
 for the reasons in its own `Review round 2` section. The next one to take is plan 8.** A row stays
 here, with its status, until
@@ -28,21 +30,22 @@ marked `queued`.
 | 5 | [lineup-parser](lineup-parser.md) | **implemented** | — | — | **fixes a divergence**: two parsers, different validation |
 | 6 | [lineup-file-ownership](lineup-file-ownership.md) | **implemented, reviewed ×2** | — | 5 *(implemented)* | stop assembling the config file as text; then split `upstream.py`. Largest plan. Round 2 reversed the file split: the lineup file has one author |
 | 7 | [lineup-refresher](lineup-refresher.md) | **implemented, reviewed** | — | 6 *(implemented)* | written in full against 6's result; **ships with 6** |
-| 8 | [models-purity](models-purity.md) | queued | — | 6 *(implemented)* | **skeleton** — `models.py` logs, formats prose, and holds the validators |
-| 9 | [direct-client-seam](direct-client-seam.md) | queued | — | 2 *(implemented)* | **skeleton** — the sync broker reaches a private method; two clients copy-pasted |
-| 10 | [declared-out-of-catalog](declared-out-of-catalog.md) | queued | — | 6 *(implemented)* | **skeleton** — the `direct=` overlay is half of `Catalog` and owns a cycle back to the broker |
-| 11 | [sse-chunk-shape](sse-chunk-shape.md) | queued | — | 2 *(implemented)* | **fixes a spec divergence**: a non-object SSE payload escapes the pool raw instead of failing over. Small |
-| 12 | [store-conformance-suite](store-conformance-suite.md) | queued | — | — | tests only, no runtime change: the store layer never got the driver layer's one-suite-for-all shape, so ten universal behaviors are written twice. Take last |
+| 8 | [curated-source-only](curated-source-only.md) | queued | — | 6, 7 *(implemented)* | **removes a form**, not a simplification: a lineup arrives only as a curated preset name, and no host names a config file. Take before 9-11 — they would otherwise tidy code this deletes |
+| 9 | [models-purity](models-purity.md) | queued | — | 6 *(implemented)* | **skeleton** — `models.py` logs, formats prose, and holds the validators |
+| 10 | [direct-client-seam](direct-client-seam.md) | queued | — | 2 *(implemented)* | **skeleton** — the sync broker reaches a private method; two clients copy-pasted |
+| 11 | [declared-out-of-catalog](declared-out-of-catalog.md) | queued | — | 6 *(implemented)* | **skeleton** — the `direct=` overlay is half of `Catalog` and owns a cycle back to the broker |
+| 12 | [sse-chunk-shape](sse-chunk-shape.md) | queued | — | 2 *(implemented)* | **fixes a spec divergence**: a non-object SSE payload escapes the pool raw instead of failing over. Small |
+| 13 | [store-conformance-suite](store-conformance-suite.md) | queued | — | — | tests only, no runtime change: the store layer never got the driver layer's one-suite-for-all shape, so ten universal behaviors are written twice. Take last |
 
 Plans 1-5 touch disjoint files and may be taken in any order subject to the
 Blocked-by column. Plans 6 and 7 must reach a release together: 7 extracts the
-seam 6 creates. Plan 11 is the only one here that is not a simplification — it
-came out of plan 2's review and fixes behavior, so it may be taken out of order.
-Plan 12 changes no runtime code at all and blocks nothing, so it goes last: its
-own text argues it should be taken only when its purely mechanical diff reads as
-worth the churn.
+seam 6 creates. Plan 8 goes before the skeletons: it deletes modules and call
+sites they would otherwise be written against. Plan 12 came out of plan 2's
+review and fixes behavior, so it may be taken out of order. Plan 13 changes no
+runtime code at all and blocks nothing, so it goes last: its own text argues it
+should be taken only when its purely mechanical diff reads as worth the churn.
 
-**Skeletons (8-10) carry findings, not routes.** The evidence in them is about
+**Skeletons (9-11) carry findings, not routes.** The evidence in them is about
 today's code and stays valid; the work order is missing because their target
 modules do not exist until the plan that blocks them merges. Each names what its
 blocking plan will already have closed — read that section first when writing
