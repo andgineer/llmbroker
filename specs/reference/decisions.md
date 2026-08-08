@@ -297,6 +297,48 @@ curation rides the same configuration path as the free lineup — unreachable
 changes nothing, wrong cannot destroy a working config — so it adds no runtime
 dependency, only code.
 
+### the-lineup-file-is-generated-not-authored
+
+There is one lineup file and it is llmbroker's output. A sync renders it in full
+and `add-model` appends to it; nothing invites a human to write in it.
+
+**Blocks:** splitting it into an llmbroker half and a host-owned half; editing it
+in place through a style-preserving TOML document library so hand-written
+comments survive; refusing to sync a file that carries a comment.
+**Why:** the alternatives all exist to protect text a human typed into the file,
+and no path puts it there. Both forms a host declares — a model described in full
+and a paid-catalog alias — arrive through `add-model` or through `direct=` in
+code, so the file has exactly one author. Splitting by ownership of the entry was
+tried and reversed: it made "is this entry rewritten" a question about which file
+an entry is in, but half the host's own models (the alias-following ones) still
+lived in the generated half, so it bought comment preservation for some of them
+and charged for all of them — a reserved filename, two refusals inside the second
+file, uniqueness across the pair, and a rule about which file documents which key
+ref that silently deleted key help. A document library would keep every comment
+but returns the writer to editing a live file in place, which is the shape this
+design left. Refusing on a comment stops a refresh the mission promises is
+unconditional, and llmbroker's own curated presets carry comments. The accepted
+cost is that a comment or an unknown key does not survive a sync; the note a
+command may one day attach to an entry belongs on the entry as data.
+
+### the-floor-is-not-seeded-into-the-cache
+
+The wheel's copy of a curated text is a fallback branch, read at the end of the
+chain; it is never written into this machine's cache.
+
+**Blocks:** seeding the cache from the bundled copy on first read, so the
+precedence collapses to "cache, then network" and the flag that drops the floor
+disappears.
+**Why:** that flag exists because a read deciding where an entry someone
+*already has* should point may not serve a copy older than the repository. Once
+the wheel's copy is in the cache it is indistinguishable from one the machine
+fetched, so a cold-cache offline sync would re-point stored alias entries
+*backwards* to whatever the installed release shipped with — silently, and for
+as long as it stayed installed. Keeping that guarantee under seeding needs a
+marker on the cache entry and a tri-state read of it, which is more machinery
+than the flag it removes. The accepted cost is that the floor stays a branch of
+the fallback chain rather than a value in the cache.
+
 ### keyinfo-is-a-passthrough
 
 **Blocks:** a closed effort/value vocabulary a preset section must conform to.

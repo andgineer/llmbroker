@@ -4,7 +4,7 @@ import json
 import tomllib
 from pathlib import Path
 
-from llmbroker.models import KeyInfo, LLMConfig, check_unique_aliases, check_weight
+from llmbroker.models import KeyInfo, Lineup, LLMConfig, check_unique_aliases, check_weight
 
 
 def _int_or_none(value: object) -> int | None:
@@ -96,7 +96,7 @@ def _key_infos(data: dict) -> dict[str, KeyInfo]:
     return {str(ref): key_info_from_entry(str(ref), val) for ref, val in raw.items()}
 
 
-def parse_lineup(data: dict) -> tuple[list[LLMConfig], dict[str, KeyInfo]]:
+def parse_lineup(data: dict) -> Lineup:
     """The one reader of a lineup: ``[[llms]]`` then ``[[custom]]`` in file order,
     plus the ``[keys]`` metadata. Whether a lineup is valid is decided only here."""
     configs: list[LLMConfig] = []
@@ -114,7 +114,7 @@ def parse_lineup(data: dict) -> tuple[list[LLMConfig], dict[str, KeyInfo]]:
                 configs.append(cfg)
     _check_unique_names(configs)
     check_unique_aliases(configs)
-    return configs, _key_infos(data)
+    return Lineup(configs=configs, keys=_key_infos(data))
 
 
 def _read_data(path: Path) -> dict:
@@ -132,8 +132,17 @@ def _read_data(path: Path) -> dict:
     )
 
 
+def read_lineup(path: Path) -> Lineup:
+    """The lineup this installation follows: its entries and its ``[keys]`` help."""
+    return parse_lineup(_read_data(path))
+
+
 class Registry:
-    """File-backed read-only registry — ``.toml`` / ``.json`` by extension."""
+    """File-backed read-only registry — ``.toml`` / ``.json`` by extension.
+
+    The file is written by llmbroker's own commands and rewritten in full by a sync;
+    see ``specs/reference/rules/sync-merge.md``.
+    """
 
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
@@ -143,9 +152,9 @@ class Registry:
         return self._path
 
     async def load(self) -> list[LLMConfig]:
-        """The file's ``[[llms]]`` and ``[[custom]]`` entries, validated."""
-        return parse_lineup(_read_data(self._path))[0]
+        """The ``[[llms]]`` and ``[[custom]]`` entries of the file, validated."""
+        return read_lineup(self._path).configs
 
     async def key_info(self) -> dict[str, KeyInfo]:
         """Per-provider onboarding metadata from the ``[keys]`` table, keyed by ``api_key_ref``."""
-        return _key_infos(_read_data(self._path))
+        return read_lineup(self._path).keys

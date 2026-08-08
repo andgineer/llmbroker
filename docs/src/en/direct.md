@@ -70,37 +70,44 @@ The same two forms, written down. A `[[custom]]` array holds models that are
 yours — the same fields as `[[llms]]`, parsed by the same code, but flagged
 `custom` so a sync never prunes them and the router never reaches them.
 
-`add-model` picks from the paid catalog and appends the block for you:
+### The lineup file is written for you
+
+The file holding these entries is llmbroker's own: a refresh regenerates it in
+full, and `add-model` is how anything gets into it. It lives in llmbroker's
+directory — you never need its path — and its first line says as much. Comments
+and keys llmbroker does not model do not survive a refresh, so it is not a place
+to keep notes.
+
+`add-model` picks from the paid catalog and writes the entry for you:
 
 ```bash
-llmbroker add-model --into llms.toml            # interactive: pick provider, then model
+llmbroker add-model                             # interactive: pick provider, then model
 # or non-interactive:
-llmbroker add-model --into llms.toml --provider anthropic --model claude-opus-4-8
+llmbroker add-model --provider anthropic --model claude-opus-4-8
 ```
 
 It writes an alias entry: the `alias` you will call, plus a machine-formed `name`
-carrying the current version. Then set the key it prints
-(`llmbroker env llms.toml >> .env`).
+carrying the current version. Then set the key it prints.
 
-For the minority that must not move, `--pin` writes a name-only block — no alias,
+For the minority that must not move, `--pin` writes a name-only entry — no alias,
 so no refresh ever touches it:
 
 ```bash
-llmbroker add-model --into llms.toml --pin --name frontier \
+llmbroker add-model --pin --name frontier \
     --provider anthropic --model claude-opus-4-8
 ```
 
-Or write it by hand:
+Either form lands as a `[[custom]]` entry:
 
 ```toml
 [[custom]]
-name        = "frontier"
-model       = "claude-opus-4-8"
-base_url    = "https://api.anthropic.com/v1"   # any OpenAI-compatible endpoint
+name = "frontier"
+model = "claude-opus-4-8"
+base_url = "https://api.anthropic.com/v1"
 api_key_ref = "ANTHROPIC_API_KEY"
 ```
 
-and call it by name:
+and you call it by name:
 
 ```python
 client = await llms.direct(name="frontier")
@@ -111,23 +118,18 @@ means. That makes `direct(name=...)` a **version assertion** as well as a
 lookup: point it at `anthropic-claude-opus-4-8` and the day a refresh moves the
 alias onward, the call fails loudly instead of quietly running a newer model.
 
-Either way, `llmbroker env llms.toml >> .env` adds the key line with a hint.
+`add-model` prints the key line to set, with a hint for where to get it.
 
-A file entry carries only the config (`base_url` / `model` / `api_key_ref`) —
+A stored entry carries only the config (`base_url` / `model` / `api_key_ref`) —
 **never the key value**; the key is read from the env var or secrets backend at
-call time. Your `[[custom]]` entries are yours: a sync updates them from the file
-and never prunes them, and `sync` is what mirrors them into a DB registry.
+call time. Your entries are yours: a refresh never prunes them, and `sync` is
+what mirrors them into a DB registry.
 
 ## Refresh without losing your models
 
-Do **not** overwrite the file with `preset freetier > llms.toml` — that would
-drop your `[[custom]]` block. Use `--sync` instead:
-
-```bash
-llmbroker preset freetier --sync llms.toml
-```
-
-`--sync` does three things:
+A refresh happens by itself, and `llmbroker preset freetier --sync FILE`
+regenerates a lineup file on demand — for a deploy that wants the change as a
+reviewable diff. Either way it does three things:
 
 - rewrites the `[[llms]]` (preset-managed) entries and their `[keys]` from the
   fresh preset;
@@ -140,8 +142,8 @@ llmbroker preset freetier --sync llms.toml
 opus: claude-opus-4-8 -> claude-opus-5
 ```
 
-Pinned entries (no alias) are never touched, and an alias the catalog no longer
-knows is a warning, not a rewrite.
+A pinned entry — one with no alias — is never re-pointed, and an alias the
+catalog no longer knows is a warning, not a rewrite.
 
 A refreshed entry gets a new `name`, so its learned quality stats start clean —
 what one version was good at says nothing about the next.

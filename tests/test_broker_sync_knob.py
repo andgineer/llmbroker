@@ -12,8 +12,9 @@ import logging
 
 import pytest
 
-from llmbroker.broker import upstream
+from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
+from llmbroker.broker.refresher import LineupRefresher
 from llmbroker.exceptions import EmptyRegistryError, SyncRefusedError
 from llmbroker.models import LLMConfig, SyncReport
 from llmbroker.sqlite import Registry as SqliteRegistry
@@ -28,7 +29,7 @@ _PRESET = (
 
 @pytest.fixture
 def preset(monkeypatch):
-    monkeypatch.setattr(upstream, "fetch_preset_text", lambda _name: _PRESET)
+    monkeypatch.setattr(presets, "fetch_preset_text", lambda _name: _PRESET)
 
 
 def _lineup(tmp_path):
@@ -48,8 +49,8 @@ def _broker(tmp_path, **kwargs):
 
 async def _settle(broker) -> None:
     """Wait out the background refresh a non-empty registry schedules."""
-    if broker._refresh_task is not None:
-        await broker._refresh_task
+    if broker._refresher._task is not None:
+        await broker._refresher._task
 
 
 async def test_the_knob_populates_a_fresh_registry_before_provisioning(tmp_path):
@@ -86,7 +87,7 @@ async def test_the_fetch_is_attempted_once_across_repeated_calls(tmp_path, monke
         calls.append(name)
         return _PRESET
 
-    monkeypatch.setattr(upstream, "fetch_preset_text", counted)
+    monkeypatch.setattr(presets, "fetch_preset_text", counted)
     async with _broker(tmp_path, sync="freetier") as broker:
         await broker.count()
         await broker.count()
@@ -102,7 +103,7 @@ async def test_a_failed_provision_does_not_re_fetch(tmp_path, monkeypatch):
         calls.append(name)
         return ""  # an empty lineup leaves the fresh registry empty
 
-    monkeypatch.setattr(upstream, "fetch_preset_text", counted)
+    monkeypatch.setattr(presets, "fetch_preset_text", counted)
     broker = _broker(tmp_path, sync="freetier")
     for _ in range(2):
         with pytest.raises(EmptyRegistryError):
@@ -115,7 +116,7 @@ async def test_a_fetch_failure_keeps_the_existing_config_and_logs(tmp_path, monk
     def fail(_name):
         raise ValueError("preset 'freetier' not found in catalog")
 
-    monkeypatch.setattr(upstream, "fetch_preset_text", fail)
+    monkeypatch.setattr(presets, "fetch_preset_text", fail)
     db = str(tmp_path / "b.db")
     await SqliteRegistry(db).mirror(
         [LLMConfig(name="old", base_url="https://x/v1", model="m", api_key_ref="GEMINI")],
@@ -147,7 +148,7 @@ async def test_a_truncated_response_does_not_stop_the_broker_from_starting(
         def read(self):
             raise http.client.IncompleteRead(b"partial")
 
-    monkeypatch.setattr(upstream.urllib.request, "urlopen", lambda *a, **k: _Truncated())
+    monkeypatch.setattr(presets.urllib.request, "urlopen", lambda *a, **k: _Truncated())
     db = str(tmp_path / "b.db")
     await SqliteRegistry(db).mirror(
         [LLMConfig(name="old", base_url="https://x/v1", model="m", api_key_ref="GEMINI")],
@@ -165,7 +166,7 @@ async def test_a_refusal_stashes_the_report_and_continues(tmp_path, monkeypatch,
     async def refuse(_self, _source):
         raise SyncRefusedError("refused", report=refused)
 
-    monkeypatch.setattr(AsyncBroker, "sync", refuse)
+    monkeypatch.setattr(LineupRefresher, "sync", refuse)
     db = str(tmp_path / "b.db")
     await SqliteRegistry(db).mirror(
         [LLMConfig(name="old", base_url="https://x/v1", model="m", api_key_ref="GEMINI")],
@@ -184,7 +185,7 @@ async def test_an_explicit_sync_still_raises(tmp_path, monkeypatch):
     def fail(_name):
         raise ValueError("preset 'freetier' not found in catalog")
 
-    monkeypatch.setattr(upstream, "fetch_preset_text", fail)
+    monkeypatch.setattr(presets, "fetch_preset_text", fail)
     db = str(tmp_path / "b.db")
     await SqliteRegistry(db).mirror(
         [LLMConfig(name="old", base_url="https://x/v1", model="m", api_key_ref="GEMINI")],

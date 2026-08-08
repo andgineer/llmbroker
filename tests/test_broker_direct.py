@@ -6,7 +6,8 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from llmbroker.broker.broker import AsyncBroker, _find_custom
+from llmbroker.broker.broker import AsyncBroker
+from llmbroker.broker.catalog import find_custom
 from llmbroker.exceptions import MissingKeyError, PoolModelError, UnknownModelError
 from llmbroker.models import LLMConfig
 from llmbroker.standalone.registry import Registry
@@ -184,9 +185,9 @@ def test_direct_by_name_prefers_the_custom_entry_over_a_pool_namesake():
         api_key_ref="K",
         custom=True,
     )
-    assert _find_custom([managed, mine], None, "dup") is mine
+    assert find_custom([managed, mine], None, "dup") is mine
     with pytest.raises(PoolModelError):
-        _find_custom([managed], None, "dup")
+        find_custom([managed], None, "dup")
 
 
 def test_direct_missing_key_raises(tmp_path):

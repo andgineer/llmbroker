@@ -9,7 +9,7 @@ import logging
 import time
 from pathlib import Path
 
-from llmbroker.broker.upstream import write_atomic
+from llmbroker.util.atomic import write_atomic
 
 logger = logging.getLogger("llmbroker.broker")
 

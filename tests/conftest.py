@@ -17,7 +17,7 @@ from testcontainers.postgres import PostgresContainer
 from testcontainers.vault import VaultContainer
 
 from llmbroker.aws import Secrets as AwsSecrets
-from llmbroker.broker import upstream
+from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.home import HOME_ENV_VAR
 from llmbroker.mongodb import Registry as MongoRegistry
@@ -53,7 +53,7 @@ def llmbroker_home(tmp_path_factory, monkeypatch):
     return home
 
 
-_BUNDLED_PRESET_TEXT = upstream.bundled_preset_text
+_BUNDLED_PRESET_TEXT = presets.bundled_preset_text
 
 
 @pytest.fixture(autouse=True)
@@ -68,13 +68,13 @@ def offline_catalog(monkeypatch):
         raise urllib.error.URLError("offline in tests")
 
     monkeypatch.setattr(urllib.request, "urlopen", _refuse)
-    monkeypatch.setattr(upstream, "bundled_preset_text", lambda _name: None)
+    monkeypatch.setattr(presets, "bundled_preset_text", lambda _name: None)
 
 
 @pytest.fixture
 def bundled_presets(monkeypatch):
     """Opt back into the presets the wheel actually ships."""
-    monkeypatch.setattr(upstream, "bundled_preset_text", _BUNDLED_PRESET_TEXT)
+    monkeypatch.setattr(presets, "bundled_preset_text", _BUNDLED_PRESET_TEXT)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

@@ -148,6 +148,15 @@ class LLMConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class Lineup:
+    """A set of entries and the key help that goes with them — read from a source,
+    or produced by a merge. ``keys`` is keyed by ``api_key_ref``."""
+
+    configs: list[LLMConfig] = field(default_factory=list)
+    keys: dict[str, KeyInfo] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class PendingKey:
     """One ``api_key_ref`` a synced lineup wants and the secrets store does not have,
     with the entries it holds back inactive until it resolves."""
@@ -207,69 +216,6 @@ class SyncReport:
     active_after: int = 0
     keys_visible: bool = True
     keys_scoped: bool = False
-
-    def _kept_line(self) -> str:
-        subject, verb = ("it", "stays") if len(self.kept) == 1 else ("they", "stay")
-        refs = ", ".join(self.kept_refs) or "their provider"
-        head = f"the lineup no longer carries {refs}"
-        if self.keys_visible:
-            held = "a key for it" if len(self.kept_refs) == 1 else "keys for them"
-            why = f"{head} and this installation has {held}, so {subject} {verb}"
-        elif self.keys_scoped:
-            why = (
-                f"{head}, and keys are per user here so a missing one proves nothing"
-                f" — {subject} {verb}"
-            )
-        else:
-            why = (
-                f"{head}, and no key resolved here at all so these are not the keys this"
-                f" lineup runs on — {subject} {verb}"
-            )
-        return f"  kept: {', '.join(self.kept)} — {why}"
-
-    def _retired_lines(self) -> list[str]:
-        """One line each: a sync deleting an entry has to show its evidence, or an
-        admin cannot check the verdict without going to the journal themselves."""
-        lines = []
-        for item in self.retired:
-            status = item.http_status or "a permanent failure"
-            since = f" since {item.since:%Y-%m-%d}" if item.since is not None else ""
-            lines.append(
-                f"  retired: {item.name} — {status}{since}, no successful call since;"
-                " the lineup dropped it too",
-            )
-        return lines
-
-    def __str__(self) -> str:
-        verb = "applied" if self.applied else "refused"
-        lines = [
-            f"sync {self.source}: {verb}"
-            f" — {self.active_before} -> {self.active_after} entries with a key",
-        ]
-        for label, names in (
-            ("added", self.added),
-            ("updated", self.updated),
-            ("removed", self.removed),
-        ):
-            if names:
-                lines.append(f"  {label}: {', '.join(names)}")
-        lines.extend(self._retired_lines())
-        if self.kept:
-            lines.append(self._kept_line())
-        for ref in self.orphan_refs:
-            lines.append(
-                f"  unused key {ref} — nothing here uses it any more;"
-                " revoke it at the provider if you do not need it",
-            )
-        for pending in self.pending_keys:
-            lines.append(
-                f"  pending key {pending.api_key_ref}"
-                f" — holds back {', '.join(pending.entry_names)}",
-            )
-            lines.extend(f"      {line}" for line in pending.help.splitlines() if line.strip())
-        if len(lines) == 1:
-            lines.append("  no changes")
-        return "\n".join(lines)
 
 
 class CallStatus(Enum):

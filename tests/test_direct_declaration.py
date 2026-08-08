@@ -9,8 +9,9 @@ import logging
 
 import pytest
 
-from llmbroker.broker import upstream
+from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
+from llmbroker.broker.presets import PresetSource
 from llmbroker.exceptions import MissingKeyError, UnknownModelError
 from llmbroker.models import LLMConfig
 from llmbroker.sqlite import Registry as SqliteRegistry
@@ -37,13 +38,13 @@ _SECRETS = {"GEMINI": "sk-gem", "ANTHROPIC_API_KEY": "sk-ant"}
 def served(monkeypatch):
     """The two bodies the catalog serves, each movable on its own."""
     bodies = {"freetier": _PRESET, "paid-catalog": _CATALOG}
-    monkeypatch.setattr(upstream, "fetch_preset_text", lambda name: bodies[name])
+    monkeypatch.setattr(presets, "fetch_preset_text", lambda name: bodies[name])
     return bodies
 
 
 async def _settle(broker: AsyncBroker) -> None:
-    if broker._refresh_task is not None:
-        await broker._refresh_task
+    if broker._refresher._task is not None:
+        await broker._refresher._task
 
 
 async def _resolved(broker: AsyncBroker, alias: str) -> LLMConfig:
@@ -78,7 +79,7 @@ async def test_a_declared_alias_follows_the_catalog_on_the_refresh_clock(tmp_pat
     async with _broker(tmp_path, direct=["opus"], sync_interval=0.0) as broker:
         assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
         served["paid-catalog"] = _CATALOG_MOVED
-        broker._next_refresh = 0.0
+        broker._refresher._next_refresh = 0.0
         await broker.count()
         await _settle(broker)
         assert (await _resolved(broker, "opus")).model == "claude-opus-5"
@@ -171,7 +172,7 @@ async def test_a_declared_alias_is_not_pinned_to_the_catalog_in_the_wheel(
     """The bundled copy is a floor, never preferred over a fetch. Ahead of one it
     would hold a declared alias on the version this release shipped with for as
     long as the release stayed installed."""
-    monkeypatch.setattr(upstream, "bundled_preset_text", lambda _name: _CATALOG)
+    monkeypatch.setattr(presets, "bundled_preset_text", lambda _name: _CATALOG)
     served["paid-catalog"] = _CATALOG_MOVED
     async with _broker(tmp_path, direct=["opus"], sync=None) as broker:
         assert (await _resolved(broker, "opus")).model == "claude-opus-5"
@@ -187,7 +188,7 @@ async def test_an_unreachable_catalog_never_moves_a_declared_alias_backwards(
     working alias back to the version this release shipped with — the paid half of
     the rule the stored entries already follow."""
     monkeypatch.setattr("llmbroker.broker.broker.home_dir", lambda _override: None)
-    monkeypatch.setattr(upstream, "bundled_preset_text", lambda _name: _CATALOG)
+    monkeypatch.setattr(presets, "bundled_preset_text", lambda _name: _CATALOG)
     served["paid-catalog"] = _CATALOG_MOVED
     async with _broker(tmp_path, direct=["opus"], sync=None) as broker:
         assert broker._home is None
@@ -196,7 +197,7 @@ async def test_an_unreachable_catalog_never_moves_a_declared_alias_backwards(
         def _offline(_name: str) -> str:
             raise ValueError("offline")
 
-        monkeypatch.setattr(upstream, "fetch_preset_text", _offline)
+        monkeypatch.setattr(presets, "fetch_preset_text", _offline)
         broker._catalog.invalidate_declared()
         assert (await _resolved(broker, "opus")).model == "claude-opus-5"
 
@@ -223,7 +224,7 @@ async def test_an_alias_the_catalog_dropped_keeps_serving_and_does_not_stop_the_
             '[[llms]]\nname = "groq"\nbase_url = "https://q/v1"\nmodel = "m"\n'
             'api_key_ref = "GEMINI"\n'
         )
-        broker._next_refresh = 0.0
+        broker._refresher._next_refresh = 0.0
         with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
             await broker.count()
             await _settle(broker)
@@ -259,10 +260,10 @@ async def test_direct_resolves_on_the_refresh_clock_and_not_per_call(
     async with _broker(tmp_path, direct=["opus"], sync=None) as broker:
         assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
 
-        def _boom(_cache_dir=None, **_kwargs) -> str:
+        def _boom(_self, _name, **_kwargs) -> str:
             raise AssertionError("direct() re-read the paid catalog")
 
-        monkeypatch.setattr(upstream, "local_paid_catalog_text", _boom)
+        monkeypatch.setattr(PresetSource, "text", _boom)
         for _ in range(5):
             assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
 
@@ -279,13 +280,13 @@ async def test_a_refresh_costs_one_catalog_read_however_many_calls_are_in_flight
         await broker.ensure_pool()
         await _settle(broker)  # the start-up catalog refresh, out of the way
         reads: list[object] = []
-        real = upstream.local_paid_catalog_text
+        real = PresetSource.text
 
-        def counted(cache_dir=None, **kwargs) -> str:
-            reads.append(cache_dir)
-            return real(cache_dir, **kwargs)
+        def counted(self, name, **kwargs) -> str:
+            reads.append(name)
+            return real(self, name, **kwargs)
 
-        monkeypatch.setattr(upstream, "local_paid_catalog_text", counted)
+        monkeypatch.setattr(PresetSource, "text", counted)
         broker._catalog.invalidate_declared()
         resolved = await asyncio.gather(*(_resolved(broker, "opus") for _ in range(50)))
 
@@ -400,6 +401,6 @@ async def test_resolution_reads_the_cached_catalog_rather_than_the_network(tmp_p
         raise AssertionError(f"provision fetched {name!r} instead of reading the cache")
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(upstream, "fetch_preset_text", _boom)
+        mp.setattr(presets, "fetch_preset_text", _boom)
         async with _broker(tmp_path, direct=["opus"], sync=None) as second:
             assert (await _resolved(second, "opus")).model == "claude-opus-4-8"

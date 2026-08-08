@@ -30,6 +30,12 @@ provider fields are catalog-managed and a refresh rewrites them. Without one,
 the entry is entirely the user's and a refresh never touches it — a pin needs no
 syntax of its own.
 
+**So a followed entry is not the host's to hand-edit — and neither is the file it
+sits in.** Both forms are added by command and stored in a file llmbroker
+regenerates
+([`sync-merge.md`](sync-merge.md#the-lineup-file-is-written-never-authored)); a
+pin differs only in that no refresh moves it.
+
 **A paid model is declared in code or in data, and the two forms follow the same
 rule.** Declaring on the broker takes a paid-catalog alias (whose version
 llmbroker tracks) or a full config (whose version the caller tracks); a custom

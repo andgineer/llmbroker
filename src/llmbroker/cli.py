@@ -20,27 +20,26 @@ from pathlib import Path
 
 import tomli_w
 
+from llmbroker.broker.aliases import alias_targets_for
+from llmbroker.broker.keys import KeyProbe
+from llmbroker.broker.lineup_file import FileSyncOutcome, entry_block, sync_lineup_file
+from llmbroker.broker.merge import SyncSource
+from llmbroker.broker.presets import PAID_CATALOG, PRESET_NAME_RE, PresetSource
+from llmbroker.broker.report import alias_lines, format_report
+from llmbroker.broker.source import lineup_path
 from llmbroker.broker.stamps import write_stamp
-from llmbroker.broker.upstream import (
-    PRESET_NAME_RE,
-    FileSyncOutcome,
-    alias_targets_for,
-    cached_preset_text,
-    dead_entries,
-    entry_block,
-    keys_are_visible,
-    paid_catalog_text,
-    present_refs,
-    retirement_candidates,
-    sync_file,
-    write_atomic,
-)
 from llmbroker.exceptions import SyncRefusedError
-from llmbroker.home import home_dir
+from llmbroker.home import HOME_ENV_VAR, home_dir
 from llmbroker.models import KeyInfo, LLMConfig
-from llmbroker.standalone.registry import Registry, key_info_from_entry, parse_lineup
+from llmbroker.standalone.registry import (
+    Registry,
+    key_info_from_entry,
+    parse_lineup,
+    read_lineup,
+)
 from llmbroker.standalone.secrets import Secrets
 from llmbroker.standalone.store import FileStore
+from llmbroker.util.atomic import write_atomic
 
 
 async def _env_data(reg: Registry) -> tuple[list[LLMConfig], dict[str, KeyInfo]]:
@@ -70,7 +69,7 @@ def _env_source_data(source: str) -> tuple[list[LLMConfig], dict[str, KeyInfo]] 
         )
         return None
     try:
-        text = cached_preset_text(source, home_dir())
+        text = PresetSource(home_dir()).text(source)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return None
@@ -108,7 +107,7 @@ def _cmd_env(args: argparse.Namespace) -> int:
 
 def _cmd_preset(args: argparse.Namespace) -> int:
     try:
-        text = cached_preset_text(args.name, home_dir())
+        text = PresetSource(home_dir()).text(args.name)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -125,37 +124,19 @@ _DB_TARGET_SCHEMES = ("sqlite://", "postgresql://", "mongodb://")
 async def _sync_target(text: str, name: str, target: Path) -> FileSyncOutcome:
     """The CLI's own merge site: env plus the target's sibling ``.env`` for keys,
     and the sibling ``store/`` for death evidence when the broker put one there."""
-    secrets = Secrets(target.parent / ".env")
+    presets = PresetSource(home_dir())
     store_dir = target.parent / "store"
-    store = FileStore(store_dir) if store_dir.is_dir() else None
-    current, _ = parse_lineup(_read_config(target))
-    new_configs, _ = parse_lineup(tomllib.loads(text))
-    present = await present_refs(
-        [c.api_key_ref for c in (*new_configs, *current)],
-        secrets,
-        scope=None,
-        have_keys=False,
-    )
-    candidates = retirement_candidates(
-        new_configs,
-        current,
-        present,
-        keys_visible=keys_are_visible(present, scope=None, have_keys=False),
-    )
-    return await sync_file(
-        text,
+    src = SyncSource(label=name, lineup=parse_lineup(tomllib.loads(text)), preset=True)
+    return await sync_lineup_file(
         target,
-        source=name,
-        secrets=secrets,
-        dead=await dead_entries(candidates, store),
-        alias_targets=await alias_targets_for([c.alias for c in current], home_dir()),
+        src,
+        probe=KeyProbe(Secrets(target.parent / ".env")),
+        store=FileStore(store_dir) if store_dir.is_dir() else None,
+        alias_targets=await alias_targets_for(
+            [c.alias for c in read_lineup(target).configs],
+            presets,
+        ),
     )
-
-
-def _read_config(target: Path) -> dict:
-    if not target.exists():
-        return {}
-    return tomllib.loads(target.read_text(encoding="utf-8"))
 
 
 def _sync_preset_into(text: str, name: str, raw_target: str) -> int:
@@ -184,13 +165,14 @@ def _sync_preset_into(text: str, name: str, raw_target: str) -> int:
     # Written, never read: an explicitly typed command always does the thing, but
     # an application on this host shares the clock it just advanced.
     write_stamp(home_dir(), f"{name} {target.resolve()}")
-    for warning in outcome.warnings:
+    notices, warnings = alias_lines(outcome.refresh.facts)
+    for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
-    for notice in outcome.notices:
+    for notice in notices:
         print(notice)
     # Printed on every run, no-ops included: a kept entry and a missing key stay
     # visible in each deploy log until an admin resolves them.
-    print(outcome.report)
+    print(format_report(outcome.report))
     return 0
 
 
@@ -274,10 +256,15 @@ def _select_provider_model(
 
 
 def _cmd_add_model(args: argparse.Namespace) -> int:  # noqa: PLR0911
-    target = Path(args.into)
-    if target.suffix.lower() != ".toml":
-        print(f"error: --into target must be a .toml file, got {target}", file=sys.stderr)
+    home = home_dir()
+    if home is None:
+        print(
+            "error: nowhere to write — llmbroker found no writable directory of its own."
+            f" Set {HOME_ENV_VAR} to a directory this process can write to",
+            file=sys.stderr,
+        )
         return 1
+    target = lineup_path(home)
     if args.name and not args.pin:
         print(
             "error: --name is only valid with --pin — an alias entry's name is machine-formed"
@@ -286,7 +273,7 @@ def _cmd_add_model(args: argparse.Namespace) -> int:  # noqa: PLR0911
         )
         return 1
     try:
-        text = paid_catalog_text(home_dir())
+        text = PresetSource(home_dir()).text(PAID_CATALOG)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -325,25 +312,27 @@ def _cmd_add_model(args: argparse.Namespace) -> int:  # noqa: PLR0911
     return _append_custom_entry(target, prov, model_id, name, alias=alias)
 
 
-def _collision(target: Path, existing: dict, name: str, alias: str | None) -> str | None:
-    """The error message for a name or alias already in the file, or ``None``."""
-    taken = {
+def _collision(target: Path, data: dict, name: str, alias: str | None) -> str | None:
+    """The error message for a name or alias already in the lineup, or ``None``."""
+    names = {
         str(e["name"])
         for section in ("llms", "custom")
-        for e in existing.get(section, [])
+        for e in data.get(section, [])
         if isinstance(e, dict) and e.get("name")
     }
-    if name in taken:
+    if name in names:
         hint = " — use --name" if alias is None else " (that catalog model is already in the file)"
         return f"error: an entry named '{name}' already exists in {target}{hint}"
     aliases = {
-        str(e["alias"])
-        for e in existing.get("custom", [])
-        if isinstance(e, dict) and e.get("alias")
+        str(e["alias"]) for e in data.get("custom", []) if isinstance(e, dict) and e.get("alias")
     }
     if alias is not None and alias in aliases:
         return f"error: alias '{alias}' is already used in {target}"
     return None
+
+
+def _read_toml(path: Path) -> dict:
+    return tomllib.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
 
 def _append_custom_entry(
@@ -354,14 +343,16 @@ def _append_custom_entry(
     *,
     alias: str | None,
 ) -> int:
-    """Append one ``[[custom]]`` block (plus its ``[keys]`` help if the ref is new)
-    to ``target``, preserving the rest of the file. Refuses a name or alias collision."""
+    """Append one ``[[custom]]`` block, plus its ``[keys]`` help if the ref is new.
+
+    Preserves the rest of the file, and refuses a name or alias collision.
+    """
     try:
-        existing = tomllib.loads(target.read_text(encoding="utf-8")) if target.exists() else {}
+        data = _read_toml(target)
     except (tomllib.TOMLDecodeError, OSError) as exc:
         print(f"error: cannot read existing {target}: {exc}", file=sys.stderr)
         return 1
-    clash = _collision(target, existing, name, alias)
+    clash = _collision(target, data, name, alias)
     if clash is not None:
         print(clash, file=sys.stderr)
         return 1
@@ -377,12 +368,12 @@ def _append_custom_entry(
         },
     )
     parts = [entry_block("custom", entry)]
-    if ref not in existing.get("keys", {}) and prov.get("key_help"):
-        keys = {ref: {"help": str(prov["key_help"])}}
-        parts.append(tomli_w.dumps({"keys": keys}).rstrip("\n"))
+    if ref not in data.get("keys", {}) and prov.get("key_help"):
+        parts.append(tomli_w.dumps({"keys": {ref: {"help": str(prov["key_help"])}}}).rstrip("\n"))
 
     if target.exists():
         parts.insert(0, target.read_text(encoding="utf-8").rstrip("\n"))
+    target.parent.mkdir(parents=True, exist_ok=True)
     write_atomic(target, "\n\n".join(parts) + "\n")
 
     reach = f"direct({alias!r})" if alias is not None else f"direct(name={name!r})"
@@ -416,37 +407,34 @@ def main(argv: list[str] | None = None) -> int:
         "preset",
         help="print a curated preset TOML to stdout",
         description=(
-            "Print a curated preset TOML to stdout. To save: preset freetier > freetier.toml."
-            " With --sync FILE, refresh the [[llms]] and [keys] in FILE from the preset while"
-            " keeping your [[custom]] models and their keys; a [[custom]] entry carrying an"
-            " alias is also re-pointed at whatever the paid catalog now recommends. A model"
-            " the preset dropped stays in FILE until a replacement you can actually call"
-            " arrives, so an update never shrinks your pool."
+            "Print a curated preset TOML to stdout. With --sync FILE, regenerate FILE from"
+            " the preset: the pool models, the keys they need, your own models carried over,"
+            " and every alias-following entry re-pointed at whatever the paid catalog now"
+            " recommends. A model the preset dropped stays in FILE until a replacement you"
+            " can actually call arrives, so an update never shrinks your pool. FILE is"
+            " written by llmbroker and is not meant to be edited by hand."
         ),
     )
     preset_p.add_argument("name", help="preset name (e.g. freetier)")
     preset_p.add_argument(
         "--sync",
         metavar="FILE",
-        help="sync into FILE: refresh [[llms]]/[keys], keep [[custom]] (instead of stdout)",
+        help="sync into FILE: regenerate it from the preset (instead of stdout)",
     )
     preset_p.set_defaults(func=_cmd_preset)
 
     addm_p = sub.add_parser(
         "add-model",
-        help="pick a paid provider/model from the catalog and append it as [[custom]]",
+        help="pick a paid provider/model from the catalog and add it to your lineup",
         description=(
-            "Pick a paid provider and model from the curated catalog and append a [[custom]]"
-            " entry to your config file. Interactive by default; pass --provider and --model"
+            "Pick a paid provider and model from the curated catalog and add it to this"
+            " installation's lineup. Interactive by default; pass --provider and --model"
             " to run non-interactively. The entry follows the catalog's alias — call it as"
-            " direct('opus') and `preset <name> --sync` keeps it on the current version."
+            " direct('opus') and a refresh keeps it on the current version; --pin writes a"
+            f" version-pinned entry no refresh touches. The lineup lives in llmbroker's own"
+            f" directory (set {HOME_ENV_VAR} to move it). A broker whose registry is a"
+            " database takes its own models from direct=[...] in your code instead."
         ),
-    )
-    addm_p.add_argument(
-        "--into",
-        required=True,
-        metavar="FILE",
-        help="the .toml config to append to",
     )
     addm_p.add_argument(
         "--provider",

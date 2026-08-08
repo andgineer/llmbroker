@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from llmbroker.broker import upstream
+from llmbroker.broker import presets
 from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
 from llmbroker.sqlite import Store as SqliteStore
@@ -276,7 +276,7 @@ def test_broker_sync_into_a_file_registry_returns_the_report(tmp_path, monkeypat
     """The sync wrapper mirrors the async one: a file target is rewritten from the
     curated preset and the report comes back through the blocking call."""
     monkeypatch.setattr(
-        upstream,
+        presets,
         "fetch_preset_text",
         lambda _name: '[[llms]]\nname="p2"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n',
     )

@@ -8,11 +8,17 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from llmbroker.broker.upstream import dead_entries, retirement_candidates
+from llmbroker.broker.keys import KeyEvidence
+from llmbroker.broker.merge import dead_entries, retirement_candidates
 from llmbroker.models import Call, CallStatus, LLMConfig, Retirement
 from llmbroker.standalone.store import FileStore
 
 _BASE = datetime(2030, 1, 1, tzinfo=UTC)
+
+
+def _seen(*refs: str) -> KeyEvidence:
+    """A probe that found every named ref, at a site where absence is evidence."""
+    return KeyEvidence(present=frozenset(refs), visible=True)
 
 
 def _cfg(name, ref="K", *, custom=False):
@@ -152,19 +158,19 @@ def test_only_entries_the_merge_would_otherwise_keep_are_candidates():
         _cfg("mine", "GROQ", custom=True),  # custom entries are never pruned
     ]
     new = [_cfg("gemini", "GEMINI")]
-    assert retirement_candidates(new, current, {"GROQ", "GEMINI"}) == ["groq-old"]
+    assert retirement_candidates(new, current, _seen("GROQ", "GEMINI")) == ["groq-old"]
 
 
 def test_an_entry_whose_provider_the_lineup_still_carries_is_not_a_candidate():
     """Its models replace it with no key lookup, so no evidence is needed."""
     new = [_cfg("groq-new", "GROQ")]
     current = [_cfg("groq-old", "GROQ")]
-    assert retirement_candidates(new, current, {"GROQ"}) == []
+    assert retirement_candidates(new, current, _seen("GROQ")) == []
 
 
 def test_an_ordinary_sync_has_no_candidates():
     lineup = [_cfg("a", "A"), _cfg("b", "B")]
-    assert retirement_candidates(lineup, lineup, {"A", "B"}) == []
+    assert retirement_candidates(lineup, lineup, _seen("A", "B")) == []
 
 
 def test_where_a_missing_key_proves_nothing_every_dropped_entry_is_a_candidate():
@@ -173,8 +179,6 @@ def test_where_a_missing_key_proves_nothing_every_dropped_entry_is_a_candidate()
     and "nobody could call it" is the only evidence it can ever produce."""
     current = [_cfg("groq-old", "GROQ"), _cfg("cerebras-old", "CEREBRAS")]
     new = [_cfg("gemini", "GEMINI")]
-    assert retirement_candidates(new, current, set(), keys_visible=False) == [
-        "groq-old",
-        "cerebras-old",
-    ]
-    assert retirement_candidates(new, current, set(), keys_visible=True) == []
+    blind = KeyEvidence(present=frozenset(), visible=False)
+    assert retirement_candidates(new, current, blind) == ["groq-old", "cerebras-old"]
+    assert retirement_candidates(new, current, KeyEvidence(visible=True)) == []

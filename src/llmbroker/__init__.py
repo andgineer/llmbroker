@@ -1,6 +1,7 @@
 """llmbroker — a standalone, host-agnostic LLM-provider broker."""
 
 from llmbroker.broker.broker import AsyncBroker
+from llmbroker.broker.report import format_report
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.chat import arun_tool_loop, run_tool_loop
 from llmbroker.direct import AsyncDirectClient, DirectClient, DirectResult
@@ -71,5 +72,6 @@ __all__ = [
     "Result",
     "Secrets",
     "arun_tool_loop",
+    "format_report",
     "run_tool_loop",
 ]

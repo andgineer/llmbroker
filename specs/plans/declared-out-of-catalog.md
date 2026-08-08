@@ -24,7 +24,17 @@ second job, and break the ownership cycle it created.
    and `_refresh_paid_catalog`). So: Broker → Catalog → Broker, with the cache
    invalidated from outside the object that holds it.
 
-3. **The cache has a lock, a clock and a fallback policy**
+3. **`entries()` re-reads and re-validates the registry on every `direct()` call.**
+   Its own docstring says that read "must not pay a catalog parse" — and it does
+   not, but it does pay a registry one: a file open, a TOML parse and the
+   uniqueness checks, synchronously on the event loop, per call. The registry
+   deliberately re-reads rather than caches — a cache there would be a staleness
+   bug, and that decision is right — so the cache belongs on this side, where a
+   sync already knows when to drop it. Whatever object ends up owning the
+   declared overlay is the natural owner of a lineup read that a sync
+   invalidates.
+
+4. **The cache has a lock, a clock and a fallback policy**
    (`_resolve_overlay`, plus `AsyncBroker._resolve_declared`'s rule that the
    first resolution raises and every later one falls back to the resolution in
    use). That is a coherent little subject with its own state — which is the

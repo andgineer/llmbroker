@@ -47,10 +47,11 @@ vendored file belongs in the deploy job above, not in every node's startup.
 
 A vendored file or another registry as the source is a **database** target only.
 A `.toml` registry is synced from a curated preset name; anything else is refused
-before the write, because rendering an arbitrary source into a live config file
-duplicates its `[[custom]]` blocks.
+before the write — not because it could not be rendered, but because nothing needs
+it: a lineup you maintain by hand is rolled out to a database registry, where the
+deploy job that owns it already lives.
 
-`sync` also keeps a paid alias current here. A `[[custom]]` entry that follows a
+`sync` also keeps a paid alias current here. An entry that follows a
 catalog alias is re-pointed at the version the catalog now recommends on every
 sync, in a database registry exactly as in a file — so a long-lived installation
 does not sit on the model id it was first deployed with.

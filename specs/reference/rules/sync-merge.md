@@ -41,9 +41,11 @@ never merges from the CLI at all. That is what makes a key-aware merge safe — 
 merge ever runs blind to the keys the program consuming its output will have.
 
 A file target is written from a curated preset only. A file or registry source
-syncs into a database registry — the vendored-lockfile deploy path, where the
-merge dedupes custom entries; rendering an arbitrary source into a live config
-file cannot.
+syncs into a database registry — the vendored-lockfile deploy path. The
+restriction is not technical: the target half is rendered from the merge whatever
+the source was. It stands because no path wants the other combination — a lineup
+a team maintains by hand is rolled out to a database registry, where the deploy
+job that owns it already is — so widening it would add a shape with no caller.
 
 ## The removal rule: the provider is the unit
 
@@ -114,9 +116,8 @@ exists to surface the real ones, on the commonest removal of all.
 
 **Retention is recomputed, never stored.** Which entries are kept follows from
 (arriving lineup, current lineup, keys) on every merge, so a persisted flag
-would be an output masquerading as an input. Nothing records it; the file writer
-groups kept entries under a generated comment, and the report names them on
-every run, including no-ops.
+would be an output masquerading as an input. Nothing records it; the report names
+the kept entries on every run, including no-ops.
 
 **One structural guard.** Applying a result with zero entries over a registry
 that has some is refused with `SyncRefusedError` carrying the report; an empty
@@ -137,15 +138,33 @@ the value. Existing secrets are never overwritten — admin-edited values win. I
 also seeds the store's disabled map with any missing model names, never touching
 existing verdict values.
 
-A file registry is a legitimate target for a curated preset: the merged lineup
-is written back to the file, preserving its comments and custom entries, which
-is what lets a file-configured broker keep itself current. Provisioning against
-an empty registry still fails fast, naming the sync call that would fill it.
+A file registry is a legitimate target for a curated preset: the merged lineup is
+written back, which is what lets a file-configured broker keep itself current.
+Provisioning against an empty registry still fails fast, naming the sync call
+that would fill it. The write is atomic and preserves the target's permissions.
 
-The write is atomic and preserves the target's permissions, and what is about to
-replace a live config is read back as a lineup and checked against the merge
-result first — this is the one code path that can destroy a user's
-configuration.
+## The lineup file is written, never authored
+
+**No configuration file is the host's to maintain**
+([`decisions.md`](../decisions.md#the-lineup-file-is-generated-not-authored)).
+The lineup file is generated: a sync renders it in full from the merged entries,
+and the CLI's add-model command is how anything else gets into it. It says so in
+its own first line. Nothing in its previous text is preserved, so anything
+llmbroker does not model — a comment, an unknown key — does not survive a sync.
+A database registry is the same picture with rows instead of text.
+
+That the file is llmbroker's is what makes rendering from the merged entries
+possible at all, and rendering is what removes the read-back check an assembled
+file needed: there is no arriving text to splice, so there is nothing to verify
+the result against.
+
+**A generated file still carries what the host owns.** Their entries are part of
+the merge like any other — a name one uses is taken, a key one needs is reported
+as pending, a ref one references is not an orphan, and the help for that ref is
+rendered back beside it. That last one is the whole reason the help is modeled
+rather than left as prose: it is the only guidance llmbroker offers for the one
+irreducible admin act, so a sync that dropped it would erase the instructions for
+a key still missing.
 
 ## The report
 

@@ -9,7 +9,7 @@ import logging
 
 import pytest
 
-from llmbroker.broker import upstream
+from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.home import HOME_ENV_VAR
 from llmbroker.standalone.registry import Registry as FileRegistry
@@ -34,13 +34,13 @@ def fetches(monkeypatch):
             return _PRESET
 
     stub = _Stub()
-    monkeypatch.setattr(upstream, "fetch_preset_text", stub)
+    monkeypatch.setattr(presets, "fetch_preset_text", stub)
     return stub
 
 
 async def _settle(broker: AsyncBroker) -> None:
-    if broker._refresh_task is not None:
-        await broker._refresh_task
+    if broker._refresher._task is not None:
+        await broker._refresher._task
 
 
 async def test_a_cold_start_provisions_and_writes_its_lineup(fetches, llmbroker_home):
@@ -142,7 +142,7 @@ async def test_a_lineup_that_cannot_be_filled_says_what_to_do(caplog, llmbroker_
     def _fail(name: str) -> str:
         raise ValueError(f"preset {name!r} not found in catalog")
 
-    monkeypatch.setattr(upstream, "fetch_preset_text", _fail)
+    monkeypatch.setattr(presets, "fetch_preset_text", _fail)
     broker = AsyncBroker()
     with caplog.at_level(logging.WARNING, logger="llmbroker.broker"), pytest.raises(Exception) as e:
         await broker.ensure_pool()
@@ -166,7 +166,7 @@ async def test_a_cold_offline_start_says_the_lineup_is_not_the_current_one(
     def _fail(name: str) -> str:
         raise ValueError(f"preset {name!r} not found in catalog")
 
-    monkeypatch.setattr(upstream, "fetch_preset_text", _fail)
+    monkeypatch.setattr(presets, "fetch_preset_text", _fail)
     with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
         async with AsyncBroker() as broker:
             assert await broker.count() > 0

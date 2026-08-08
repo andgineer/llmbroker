@@ -70,6 +70,28 @@ invariants that bite are the ones in a subsystem you did not think you were touc
 **Do not read a detail file "to be safe".** The index names what each one holds; if the task does
 not touch that subject, its rules do not apply, and the cross-cutting ones are already loaded.
 
+## Mission first, then simplicity, then the plan
+
+The order of authority is: the mission (`specs/reference/mission.md`) → the simplest and most
+reliable implementation that serves it → the plan and the recorded decisions. Plans and
+`decisions.md` entries are means, not ends: they were written with less information than you have
+while implementing, and a detail in them never outranks what the library is for.
+
+When a plan step or a recorded decision pushes toward something more complex or more fragile than
+the mission needs, neither implement it silently nor deviate silently:
+
+1. **Judge it yourself first.** Most candidates do not survive: a recorded decision usually already
+   names the counter-argument, and "simpler" that drops a stated requirement is not simpler. If your
+   own assessment says the plan is right, follow the plan and move on.
+2. **If it does survive, raise it before writing the code** — what the plan or decision says, where
+   it fights the mission or reliability, what you propose instead, what it costs, and your
+   recommendation.
+3. **Proceed on confirmation.** If the maintainer reaffirms the plan, implement the plan as written.
+
+**Never ask the maintainer to "choose a variant".** Every choice put to a human arrives as the
+options with their trade-offs side by side, the one you recommend, and why — a question answerable
+with "yes". Handing over a menu with no recommendation hands the work back.
+
 ## Executing a plan
 
 Any request to implement a plan — "выполни очередной план", "выполни следующий план",

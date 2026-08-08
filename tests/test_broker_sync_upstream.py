@@ -11,10 +11,13 @@ from datetime import UTC, datetime
 
 import pytest
 
-from llmbroker.broker import upstream
+from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.exceptions import SyncRefusedError
-from llmbroker.models import Call, CallStatus, LLMConfig
+from llmbroker.broker.keys import KeyEvidence
+from llmbroker.broker.merge import check_not_emptying, merge_upstream
+from llmbroker.broker.report import format_report
+from llmbroker.models import Call, CallStatus, Lineup, LLMConfig
 from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.sqlite import Secrets as SqliteSecrets
 from llmbroker.sqlite import Store as SqliteStore
@@ -42,7 +45,7 @@ def preset(monkeypatch):
         assert name == "freetier"
         return served["text"]
 
-    monkeypatch.setattr(upstream, "fetch_preset_text", fake_fetch)
+    monkeypatch.setattr(presets, "fetch_preset_text", fake_fetch)
     return served
 
 
@@ -162,24 +165,27 @@ async def test_a_scoped_installation_still_retires_on_journal_evidence(tmp_path,
 # ── The file target ──────────────────────────────────────────────────────────
 
 
-async def test_a_file_registry_is_rewritten_keeping_custom_entries_and_comments(tmp_path, preset):
+async def test_a_file_registry_is_regenerated_and_keeps_the_users_own_models(tmp_path, preset):
+    """The broker's own write-back renders the whole file from the merge — the user's
+    models and the hints for their keys ride through it."""
     target = tmp_path / "llms.toml"
     target.write_text(
-        "# my own header\n"
         '[[llms]]\nname="groq-old"\nbase_url="https://groq/v1"\nmodel="m"\napi_key_ref="GROQ"\n'
-        '[[custom]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="big"\napi_key_ref="MY_KEY"'
-        "\n"
+        '[[custom]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="big"\napi_key_ref="MY_KEY"\n'
         '[keys.MY_KEY]\nhelp = "my custom key"\n',
     )
     broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore())
     report = await broker.sync("freetier")
-    await broker.aclose()
+    try:
+        assert {c.name for c in await broker._registry.load()} == {"gemini", "groq-old", "mine"}
+    finally:
+        await broker.aclose()
 
     data = tomllib.loads(target.read_text())
     assert [e["name"] for e in data["llms"]] == ["gemini", "groq-old"]
     assert [e["name"] for e in data["custom"]] == ["mine"]
-    assert data["keys"]["MY_KEY"]["help"] == "my custom key"
     assert data["keys"]["GEMINI"]["help"] == "get one at aistudio"
+    assert data["keys"]["MY_KEY"]["help"] == "my custom key"
     assert report.kept == ("groq-old",)
 
 
@@ -192,7 +198,7 @@ async def test_a_file_syncs_alias_entry_follows_the_paid_catalog(tmp_path, monke
         '  [[provider.models]]\n  alias="opus"\n  model="claude-opus-5"\n'
     )
     monkeypatch.setattr(
-        upstream,
+        presets,
         "fetch_preset_text",
         lambda name: catalog if name == "paid-catalog" else _PRESET_GEMINI,
     )
@@ -208,6 +214,43 @@ async def test_a_file_syncs_alias_entry_follows_the_paid_catalog(tmp_path, monke
     assert (entry["model"], entry["name"]) == ("claude-opus-5", "anthropic-claude-opus-5")
 
 
+async def test_both_targets_report_the_same_alias_move(tmp_path, monkeypatch, caplog):
+    """One refresh, one set of facts: the file and the database halves are the same
+    code now, and a change has to read identically out of either."""
+    catalog = (
+        '[[provider]]\nid="anthropic"\nbase_url="https://api.anthropic.com/v2"\n'
+        'api_key_ref="ANTHROPIC_API_KEY"\nkey_help="console.anthropic.com"\n'
+        '  [[provider.models]]\n  alias="opus"\n  model="claude-opus-5"\n'
+    )
+    monkeypatch.setattr(
+        presets,
+        "fetch_preset_text",
+        lambda name: catalog if name == "paid-catalog" else _PRESET_GEMINI,
+    )
+
+    async def _lines(broker) -> list[str]:
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
+            await broker.sync("freetier")
+        await broker.aclose()
+        return [r.message for r in caplog.records if r.message.startswith("sync freetier: opus")]
+
+    target = tmp_path / "llms.toml"
+    target.write_text(
+        '[[custom]]\nalias="opus"\nname="anthropic-claude-opus-4-8"\nmodel="claude-opus-4-8"'
+        '\nbase_url="https://api.anthropic.com/v1"\napi_key_ref="ANTHROPIC_API_KEY"\n',
+    )
+    from_file = await _lines(
+        AsyncBroker(
+            registry=FileRegistry(target),
+            secrets=DictSecrets({}),
+            store=InMemoryStore(),
+        ),
+    )
+    from_db = await _lines(_broker(await _seeded_db(tmp_path, (_OPUS_V1,))))
+    assert from_file == from_db == ["sync freetier: opus: claude-opus-4-8 -> claude-opus-5"]
+
+
 _CATALOG_V1 = (
     '[[provider]]\nid="anthropic"\nbase_url="https://api.anthropic.com/v1"\n'
     'api_key_ref="ANTHROPIC_API_KEY"\nkey_help="console.anthropic.com"\n'
@@ -220,7 +263,7 @@ _CATALOG_V2 = _CATALOG_V1.replace("claude-opus-4-8", "claude-opus-5")
 def catalog(monkeypatch):
     """The paid catalog and the free preset off one seam, each movable on its own."""
     served = {"paid-catalog": _CATALOG_V1, "freetier": _PRESET_GEMINI}
-    monkeypatch.setattr(upstream, "fetch_preset_text", lambda name: served[name])
+    monkeypatch.setattr(presets, "fetch_preset_text", lambda name: served[name])
     return served
 
 
@@ -283,9 +326,9 @@ async def test_an_unreachable_catalog_leaves_a_stored_alias_entry_alone(tmp_path
             return _PRESET_GEMINI
         raise ValueError("offline")
 
-    monkeypatch.setattr(upstream, "fetch_preset_text", _fetch)
+    monkeypatch.setattr(presets, "fetch_preset_text", _fetch)
     monkeypatch.setattr(
-        upstream,
+        presets,
         "bundled_preset_text",
         lambda name: _CATALOG_V1 if name == "paid-catalog" else None,
     )
@@ -311,7 +354,7 @@ async def test_a_registry_with_no_alias_entry_never_reads_the_catalog(tmp_path, 
         fetched.append(name)
         return _PRESET_GEMINI
 
-    monkeypatch.setattr(upstream, "fetch_preset_text", _fetch)
+    monkeypatch.setattr(presets, "fetch_preset_text", _fetch)
     broker = _broker(await _seeded_db(tmp_path))
     await broker.sync("freetier")
     await broker.aclose()
@@ -443,9 +486,14 @@ async def test_the_refusal_leaves_the_registry_untouched_and_carries_the_report(
     where it lives — the rule itself can never produce an empty lineup."""
     db = await _seeded_db(tmp_path)
     current = await SqliteRegistry(db).load()
-    _merged, _keys, report = upstream.merge_upstream([], {}, current, {}, set(), source="freetier")
+    _merged, report = merge_upstream(
+        Lineup(),
+        Lineup(configs=current),
+        KeyEvidence(),
+        source="freetier",
+    )
     with pytest.raises(SyncRefusedError) as excinfo:
-        upstream.check_not_emptying([], current, report)
+        check_not_emptying([], current, report)
     assert excinfo.value.report.applied is False
     assert {c.name for c in await SqliteRegistry(db).load()} == {"groq-old"}
 
@@ -457,7 +505,7 @@ async def test_a_path_source_needs_no_network(tmp_path, monkeypatch):
     def explode(_name):
         raise AssertionError("a path source must never fetch")
 
-    monkeypatch.setattr(upstream, "fetch_preset_text", explode)
+    monkeypatch.setattr(presets, "fetch_preset_text", explode)
     src = tmp_path / "lineup.toml"
     src.write_text(
         '[[llms]]\nname="gemini"\nbase_url="https://g/v1"\nmodel="m"\napi_key_ref="GEMINI"\n',
@@ -481,7 +529,7 @@ async def test_a_fetch_failure_raises_from_the_explicit_call(tmp_path, monkeypat
     def fail(_name):
         raise ValueError("preset 'freetier' not found in catalog")
 
-    monkeypatch.setattr(upstream, "fetch_preset_text", fail)
+    monkeypatch.setattr(presets, "fetch_preset_text", fail)
     db = await _seeded_db(tmp_path)
     broker = _broker(db)
     with pytest.raises(ValueError, match="not found in catalog"):
@@ -548,4 +596,4 @@ async def test_a_no_op_run_says_so_at_debug_and_nowhere_else(tmp_path, preset, c
     assert records[0].message == "sync freetier: no change"
     # The report is still produced and still stashed — only the log level moved.
     assert broker.last_sync_report is report
-    assert str(report).endswith("no changes")
+    assert format_report(report).endswith("no changes")

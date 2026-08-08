@@ -47,7 +47,7 @@ class DriverRegistry:
     async def mirror(self, configs: list[LLMConfig]) -> None:
         """Total mirror: add new, update existing, delete stored entries absent
         from ``configs``. What may be absent is decided before this call, in
-        ``broker.upstream``; here the merged lineup is simply written."""
+        ``broker.merge``; here the merged lineup is simply written."""
         source_names = {c.name for c in configs}
         existing = {str(row["name"]) for row in await self._driver.fetch("registry")}
         for name in existing - source_names:

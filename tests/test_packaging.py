@@ -9,7 +9,7 @@ from importlib import resources
 
 import pytest
 
-from llmbroker.broker.upstream import bundled_preset_text
+from llmbroker.broker.presets import bundled_preset_text
 
 _SHIPPED = ("freetier", "paid-catalog")
 

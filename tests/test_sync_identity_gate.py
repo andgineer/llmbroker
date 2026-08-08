@@ -4,10 +4,9 @@ writes nothing, applies nothing and stays out of the INFO log."""
 import logging
 from unittest.mock import AsyncMock, patch
 
-from llmbroker.broker import upstream
+from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.catalog import Catalog
-from llmbroker.broker.upstream import sync_file
 from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.sqlite import Secrets as SqliteSecrets
 from llmbroker.standalone.registry import Registry
@@ -28,63 +27,15 @@ _UNSORTED = (
 
 
 # ── The file target ──────────────────────────────────────────────────────────
-
-
-async def test_an_unchanged_file_sync_leaves_the_target_byte_identical(tmp_path):
-    target = tmp_path / "llms.toml"
-    target.write_text("")
-    first = await sync_file(_NEW, target, source="freetier", secrets=DictSecrets({}))
-    assert first.changed is True
-
-    text, mtime = target.read_text(), target.stat().st_mtime_ns
-    second = await sync_file(_NEW, target, source="freetier", secrets=DictSecrets({}))
-    assert second.changed is False
-    assert target.read_text() == text
-    assert target.stat().st_mtime_ns == mtime
-
-
-async def test_comments_and_custom_blocks_survive_an_unchanged_sync(tmp_path):
-    """The whole point of not rewriting: a hand-kept file keeps its own text."""
-    target = tmp_path / "llms.toml"
-    target.write_text(
-        "# my own note\n"
-        '[[custom]]\nname = "mine"\nbase_url = "https://mine/v1"\nmodel = "m"\n'
-        'api_key_ref = "MY_KEY"\n',
-    )
-    await sync_file(_NEW, target, source="freetier", secrets=DictSecrets({}))
-    text = target.read_text()
-
-    outcome = await sync_file(_NEW, target, source="freetier", secrets=DictSecrets({}))
-    assert outcome.changed is False
-    assert target.read_text() == text
-    assert '[[custom]]\nname = "mine"' in text
-
-
-async def test_a_moved_preset_still_rewrites_the_file(tmp_path):
-    target = tmp_path / "llms.toml"
-    target.write_text("")
-    await sync_file(_NEW, target, source="freetier", secrets=DictSecrets({}))
-    moved = _NEW.replace('help = "gemini help"', 'help = "new help"')
-    outcome = await sync_file(moved, target, source="freetier", secrets=DictSecrets({}))
-    assert outcome.changed is True
-    assert "new help" in target.read_text()
-
-
-async def test_a_preset_whose_only_change_is_a_weight_still_rewrites_the_file(tmp_path):
-    target = tmp_path / "llms.toml"
-    target.write_text("")
-    await sync_file(_NEW, target, source="freetier", secrets=DictSecrets({}))
-    reweighted = _NEW.replace(
-        'api_key_ref = "GEMINI_API_KEY"\n\n',
-        'api_key_ref = "GEMINI_API_KEY"\nweight = 0.75\n\n',
-    )
-    outcome = await sync_file(reweighted, target, source="freetier", secrets=DictSecrets({}))
-    assert outcome.changed is True
-    assert "weight = 0.75" in target.read_text()
+#
+# The byte-level gate on the rendered file is in test_lineup_file.py; here it is
+# the broker's own outcome that matters.
 
 
 async def test_a_file_broker_reports_no_change_at_debug(tmp_path, caplog, monkeypatch):
-    monkeypatch.setattr(upstream, "fetch_preset_text", lambda _name: _NEW)
+    """The first sync of a hand-written file rewrites it into the form llmbroker
+    renders; from there on an unchanged preset is a no-op."""
+    monkeypatch.setattr(presets, "fetch_preset_text", lambda _name: _NEW)
     target = tmp_path / "llms.toml"
     target.write_text(_NEW)
     broker = AsyncBroker(
@@ -93,6 +44,8 @@ async def test_a_file_broker_reports_no_change_at_debug(tmp_path, caplog, monkey
         store=InMemoryStore(),
     )
     try:
+        await broker.sync("freetier")
+        caplog.clear()
         with caplog.at_level(logging.DEBUG, logger="llmbroker.broker"):
             await broker.sync("freetier")
     finally:

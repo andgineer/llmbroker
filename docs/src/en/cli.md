@@ -48,10 +48,10 @@ all — see [API keys](secrets.md).
 llmbroker preset freetier --sync llms.toml
 ```
 
-Rewrites the preset-managed models and their key hints in `llms.toml`, keeps your
-`[[custom]]` entries and their keys, and re-points every alias-following custom
-entry at what the paid catalog now recommends. Then it prints a report of what it
-did — on every run, no-ops included.
+Regenerates `llms.toml` from the preset: the pool models and their key hints, your
+own models carried over, and every alias-following entry re-pointed at what the
+paid catalog now recommends. Then it prints a report of what it did — on every
+run, no-ops included. The file is llmbroker's output, not a file to hand-edit.
 
 This is the **reviewable** path, not the only one: a broker keeps the same file
 current by itself (see [Basic usage](usage.md#syncing)). The command is for when
@@ -71,8 +71,8 @@ source are both refused, each for its own reason:
 - a DSN would duplicate connection config your application already owns, and
   would need DB credentials in the CLI's environment — which an app that fetches
   its DSN from Vault cannot provide;
-- rendering an arbitrary source into a live `.toml` duplicates its `[[custom]]`
-  blocks and leaves a file the broker cannot parse.
+- a lineup you maintain by hand is rolled out to a database registry, so nothing
+  needs it rendered into a file target — the restriction costs no use case.
 
 Mirror into a registry from your own entrypoint instead: see
 [Servers & clusters](server.md#sync).

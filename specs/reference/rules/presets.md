@@ -18,6 +18,13 @@ missing is a preset an error. Without the last step a first run with no network
 and a cold cache would have nothing to start from, which is exactly the case a
 zero-config broker has to survive. It also makes the CLI work offline.
 
+**One object holds that precedence, and a read names its purpose rather than its
+mechanism.** Every read of a curated text goes through it, and only two things
+vary: whether the copy already here is preferred to a fetch, and whether the
+wheel's copy is in the chain at all. Both are decided at the one call site whose
+decision they belong to, so no branch of the fallback chain is threaded through
+the callers as a flag.
+
 **The floor holds a lineup up; it never moves one.** The bundled copy is older
 than the repository by construction — frozen at the release the user installed —
 so it is dropped from the chain wherever a read decides where an *existing*
@@ -25,7 +32,15 @@ entry should point: a stored entry a sync re-points, and a declared model
 already resolved once. A refresh that can reach neither upstream nor the cache
 re-points nothing, and it is never allowed to prefer the wheel's copy over a
 fetch; either would roll a model backwards to whatever the installed release
-shipped with, silently and for as long as it stayed installed.
+shipped with, silently and for as long as it stayed installed. It is a branch of
+the chain and not a value in the cache, which is what keeps the two
+distinguishable
+([`decisions.md`](../decisions.md#the-floor-is-not-seeded-into-the-cache)).
+
+**A resolution on the request path prefers the copy already here.** Provisioning
+resolves a declared alias, so that read takes the cache before the network and
+fetches only when the machine has nothing; what moves it forward is the refresh
+clock overwriting the cache underneath it, not the resolution going to look.
 
 **And when the floor is used, it says so.** Serving the wheel's copy is reported
 at warning level, unlike the cached fallback, which serves what this machine
@@ -92,16 +107,20 @@ any newly resolvable secrets — never via a polling task.
   same way a preset is fetched — so a first-time user needs no local file at
   all. Onboarding is folded into this command rather than a separate
   setup/status command, to keep the CLI surface small.
-- **`preset <name>`** prints a curated preset to stdout, or refreshes a file in
-  place: the managed pool entries and their keys from the preset, and every
-  alias-following custom entry from the paid catalog. It prints the `SyncReport`
+- **`preset <name>`** prints a curated preset to stdout, or regenerates a lineup
+  file from it: the pool entries and their keys from the preset, and every
+  alias-following entry from the paid catalog. It prints the `SyncReport`
   on every run, no-ops included, and exits non-zero only on a failure — a
   pending key or a kept entry is a valid state, not an error.
 - **`add-model`** picks a paid provider and model from the curated catalog and
   appends it as a custom entry, following the alias contract in
   [`direct-aliases.md`](direct-aliases.md): it follows the catalog's alias by
   default so later refreshes keep it current, and a pin flag writes a
-  version-pinned entry instead, which no refresh touches.
+  version-pinned entry instead, which no refresh touches. Both land in the lineup
+  of the installation the command is run against, and a name or alias already in
+  it is refused. It is the only way a host's own model enters a lineup by hand:
+  everything else about that file is llmbroker's
+  ([`sync-merge.md`](sync-merge.md#the-lineup-file-is-written-never-authored)).
 
 **The CLI writes files only, and a DB-shaped refresh target is refused.**
 Mirroring a lineup into a registry is the application's own entrypoint calling

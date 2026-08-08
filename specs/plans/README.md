@@ -9,9 +9,11 @@ over a stale plan, gate on `invoke pre` + `pytest` after every batch, never bump
 never commit unasked, and leave the plan file in place for review. Nothing needs to be restated in
 the request. The plan and its row here are removed only after review and merge, on request.
 
-Statuses as of 2026-08-06: a simplification pass over the implementation. No functionality is
-removed by any of them. **Plans 1-5 are implemented and waiting on the maintainer — 1 is also
-reviewed, with no defects. The next one to take is plan 6.** A row stays here, with its status, until
+Statuses as of 2026-08-08: a simplification pass over the implementation. No functionality is
+removed by any of them. **Plans 1-7 are implemented and waiting on the maintainer — 1, 6 and 7 are
+reviewed, and 6 was reviewed twice: its second round reversed the two-file split it introduced,
+for the reasons in its own `Review round 2` section. The next one to take is plan 8.** A row stays
+here, with its status, until
 the maintainer asks for it to go after merge; "take the first row" means the first row still
 marked `queued`.
 
@@ -24,12 +26,12 @@ marked `queued`.
 | 3 | [learning-as-observer](learning-as-observer.md) | **implemented** | — | — | the store wrapper makes `isinstance` lie; the unmet-budget bound moves to the journal. Schema bump 5 → 6 |
 | 4 | [store-retention-dedup](store-retention-dedup.md) | **implemented** | — | — | retention declared in five files, quality record built in two |
 | 5 | [lineup-parser](lineup-parser.md) | **implemented** | — | — | **fixes a divergence**: two parsers, different validation |
-| 6 | [lineup-file-ownership](lineup-file-ownership.md) | queued | — | 5 | stop assembling the config file as text; split by owner; then split `upstream.py`. Largest plan |
-| 7 | [lineup-refresher](lineup-refresher.md) | queued | — | 6 | **skeleton** — written in full after 6 merges; **ships with 6** |
-| 8 | [models-purity](models-purity.md) | queued | — | 6 | **skeleton** — `models.py` logs, formats prose, and holds the validators |
-| 9 | [direct-client-seam](direct-client-seam.md) | queued | — | 2 | **skeleton** — the sync broker reaches a private method; two clients copy-pasted |
-| 10 | [declared-out-of-catalog](declared-out-of-catalog.md) | queued | — | 6 | **skeleton** — the `direct=` overlay is half of `Catalog` and owns a cycle back to the broker |
-| 11 | [sse-chunk-shape](sse-chunk-shape.md) | queued | — | 2 | **fixes a spec divergence**: a non-object SSE payload escapes the pool raw instead of failing over. Small |
+| 6 | [lineup-file-ownership](lineup-file-ownership.md) | **implemented, reviewed ×2** | — | 5 *(implemented)* | stop assembling the config file as text; then split `upstream.py`. Largest plan. Round 2 reversed the file split: the lineup file has one author |
+| 7 | [lineup-refresher](lineup-refresher.md) | **implemented, reviewed** | — | 6 *(implemented)* | written in full against 6's result; **ships with 6** |
+| 8 | [models-purity](models-purity.md) | queued | — | 6 *(implemented)* | **skeleton** — `models.py` logs, formats prose, and holds the validators |
+| 9 | [direct-client-seam](direct-client-seam.md) | queued | — | 2 *(implemented)* | **skeleton** — the sync broker reaches a private method; two clients copy-pasted |
+| 10 | [declared-out-of-catalog](declared-out-of-catalog.md) | queued | — | 6 *(implemented)* | **skeleton** — the `direct=` overlay is half of `Catalog` and owns a cycle back to the broker |
+| 11 | [sse-chunk-shape](sse-chunk-shape.md) | queued | — | 2 *(implemented)* | **fixes a spec divergence**: a non-object SSE payload escapes the pool raw instead of failing over. Small |
 | 12 | [store-conformance-suite](store-conformance-suite.md) | queued | — | — | tests only, no runtime change: the store layer never got the driver layer's one-suite-for-all shape, so ten universal behaviors are written twice. Take last |
 
 Plans 1-5 touch disjoint files and may be taken in any order subject to the
@@ -40,7 +42,7 @@ Plan 12 changes no runtime code at all and blocks nothing, so it goes last: its
 own text argues it should be taken only when its purely mechanical diff reads as
 worth the churn.
 
-**Skeletons (7-10) carry findings, not routes.** The evidence in them is about
+**Skeletons (8-10) carry findings, not routes.** The evidence in them is about
 today's code and stays valid; the work order is missing because their target
 modules do not exist until the plan that blocks them merges. Each names what its
 blocking plan will already have closed — read that section first when writing

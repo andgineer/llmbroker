@@ -2,7 +2,7 @@
 
 Loads configs from the registry, resolves their API keys via the secrets
 backend, and reflects every change into the ``LLMPool``. ``apply`` is the only
-registry write path; what it writes is decided in ``broker.upstream``.
+registry write path; what it writes is decided in ``broker.merge``.
 """
 
 import asyncio
@@ -10,7 +10,7 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 
 from llmbroker.broker.pool import LLMPool
-from llmbroker.exceptions import EmptyRegistryError
+from llmbroker.exceptions import EmptyRegistryError, PoolModelError, UnknownModelError
 from llmbroker.models import DeclaredModels, KeyInfo, LLMConfig, PendingKey, PoolHealth
 from llmbroker.protocols.registry import (
     KeyInfoProtocol,
@@ -87,6 +87,44 @@ def check_overlay(stored: list[LLMConfig], declared: list[LLMConfig]) -> None:
                 )
             seen_aliases.add(cfg.alias)
         seen_names.add(cfg.name)
+
+
+_POOL_MODEL_HINT = (
+    "pool models are anonymous — reach them with ask()/chat()/stream(), which route and"
+    " learn; add a [[custom]] entry for the model if you need to call it by name"
+)
+
+
+def find_custom(configs: list[LLMConfig], alias: str | None, name: str | None) -> LLMConfig:
+    """Resolve one user-owned entry from exactly one of the two keyspaces.
+
+    A miss whose string exists in the *other* keyspace says so, since the two are
+    one typo apart at a call site.
+    """
+    if alias is not None:
+        for cfg in configs:
+            if cfg.custom and cfg.alias == alias:
+                return cfg
+        if any(c.custom and c.name == alias for c in configs):
+            raise UnknownModelError(
+                f"no entry with alias {alias!r}; an entry with this name exists"
+                f" — call direct(name={alias!r})",
+            )
+        if any(c.name == alias for c in configs):
+            # The pre-alias call shape: direct() took a name, and a pool name at that.
+            # Sending it to direct(name=...) first would only spend an error saying so.
+            raise PoolModelError(f"{alias!r} is a preset-managed pool model: {_POOL_MODEL_HINT}")
+        raise UnknownModelError(f"no entry with alias {alias!r} in the registry")
+    for cfg in configs:
+        if cfg.custom and cfg.name == name:
+            return cfg
+    if any(c.custom and c.alias == name for c in configs):
+        raise UnknownModelError(
+            f"no entry named {name!r}; an entry with this alias exists — call direct({name!r})",
+        )
+    if any(c.name == name for c in configs):
+        raise PoolModelError(f"{name!r} is a preset-managed pool model: {_POOL_MODEL_HINT}")
+    raise UnknownModelError(f"no model named {name!r} in the registry")
 
 
 class Catalog:
@@ -291,7 +329,7 @@ class Catalog:
         """Mirror an already-merged lineup into the registry and seed its keys.
 
         The merge decision — what the lineup should be — belongs to
-        ``broker.upstream``; this half only writes it.
+        ``broker.merge``; this half only writes it.
         """
         registry = self._require_mutable_registry()
         await registry.mirror(configs)

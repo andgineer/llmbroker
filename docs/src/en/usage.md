@@ -43,23 +43,26 @@ instead to declare an endpoint of your own, exactly as written. Either way
 nothing is stored: the declaration in your code is the only source of truth.
 See [Direct model calls](direct.md).
 
-### A config file, when you want one {#file}
+### Where the lineup lives {#file}
 
-A file is for a lineup you want under version control and reviewable in a pull
-request — pinned models, your own endpoints, a hand-tuned `weight`:
+You do not have to put it anywhere. A broker keeps its lineup in llmbroker's own
+directory — `~/.cache/llmbroker` on Linux, `~/Library/Caches/llmbroker` on macOS
+— and refreshes it there. Set `LLMBROKER_HOME` to move that directory, which is
+what a container without a writable cache needs.
 
-```bash
-llmbroker preset freetier > llms.toml
-llmbroker env llms.toml > .env
-```
+That file is written by llmbroker, not by you: a refresh regenerates it in full.
+Add your own models with [`add-model`](direct.md), not by editing it.
+
+You can point a broker at a lineup file of your own instead:
 
 ```python
 llms = llmbroker.Broker("llms.toml")
 ```
 
-`llms.toml` is a plain TOML list of models; edit it freely. A file-configured
-broker reads the `.env` sitting next to it, and keeps the file itself current the
-same way — see [below](#sync).
+That is for a deploy that wants the lineup in its repository, reviewable as a
+diff — generate it with `llmbroker preset freetier --sync llms.toml` and commit
+the result. Such a broker reads the `.env` sitting next to the file, and keeps
+the file current the same way — see [below](#sync).
 
 ### Which model is tried first {#weight}
 
@@ -99,13 +102,13 @@ with one, refreshing it is a single command:
 llmbroker preset freetier --sync llms.toml
 ```
 
-It rewrites the managed models and their key hints, keeps your `[[custom]]`
-entries, and prints a report of what it did. From code the same operation is
-`llms.sync("freetier")`, and it returns that report:
+It regenerates the file from the preset — the pool models, their key hints, and
+your own models carried over — and prints a report of what it did. From code the
+same operation is `llms.sync("freetier")`, and it returns that report:
 
 ```python
-report = llms.sync("freetier")       # a preset name — the only call that goes online
-print(report)                        # or forward it to your own admin channel
+report = llms.sync("freetier")           # a preset name — the only call that goes online
+print(llmbroker.format_report(report))   # or forward the report to your own admin channel
 ```
 
 You rarely need to. **The curated lineup keeps itself current on its own**, with
@@ -178,7 +181,7 @@ Four things in the report are worth understanding:
   ```
 - **An unused key** is a key you actually have that nothing in your config
   references any more. Whether to revoke it at the provider is your call, and a
-  `[[custom]]` entry still using it keeps it out of that advice. A provider you
+  model of your own still using it keeps it out of that advice. A provider you
   never had a key for just disappears quietly — there is nothing to revoke.
 
 That is the whole rule: a sync never takes away a model you can call, unless the
