@@ -15,18 +15,18 @@ deleted the hand-named config file as a configuration form, and argued from the 
 is a boundary rather than a loss; that claim no longer holds for this batch as a whole.
 **Plans 1-8 are implemented and waiting on the maintainer — 1, 6, 7 and 8 are reviewed, and 6 was
 reviewed twice: its second round reversed the two-file split it introduced, for the reasons in its
-own `Review round 2` section. Plan 9 is implemented and awaiting review; **the next one to take is
-plan 11, then 17**. A row stays here, with its status,
+own `Review round 2` section. Plans 9 and 11 are implemented and awaiting review; **the next one to
+take is plan 20**, which 11's review turned up. A row stays here, with its status,
 until the maintainer asks for it to go after merge.
 
 **The `#` column is identity, not order — read the Take-order line below it.** 16, 17 and 18 were
 written after 15 and are taken before it; taking the numerically first `queued` row would start
 with a plan whose inventory the later ones delete.
 
-**Take order: 11 → 17 → 19 → 18 → 16 → 10 → 12 → 13 → 14 → 15.** 11 goes first because it is the only
-queued plan that fixes runtime behavior rather than shape, and it is small and blocks nothing —
-"may be pulled forward at any time" is the status in which a plan stays undone through eight
-others.
+**Take order: 20 → 17 → 19 → 18 → 16 → 10 → 12 → 13 → 14 → 15.** 20 goes first on the same ground
+11 did before it: it is the only queued plan that fixes runtime behavior rather than shape, it is
+small, and it blocks nothing — "may be pulled forward at any time" is the status in which a plan
+stays undone through eight others.
 
 ## Order
 
@@ -42,7 +42,7 @@ others.
 | 8 | [curated-source-only](curated-source-only.md) | **implemented** | — | 6, 7 *(implemented)* | **removes a form**, not a simplification: a lineup arrives only as a curated preset name, and no host names a config file. Taken before the skeletons — they would otherwise have tidied code this deletes |
 | 9 | [registry-ownership](registry-ownership.md) | **implemented** | — | 8 *(implemented)* | **fixes a trap 8 created**: a sync destroys entries the host put in its own registry. An entry records who wrote it, and a host-built registry object must state what it follows |
 | 10 | [model-list-vocabulary](model-list-vocabulary.md) | queued | — | 17, 19, 18, 16 | text only, no runtime change: `lineup` is a coined word that reaches the reader undefined — docs and program strings say "the model list". **Re-inventory the strings** — the four plans before it delete some and write their own new ones in this plan's wording |
-| 11 | [sse-chunk-shape](sse-chunk-shape.md) | queued | — | 2 *(implemented)* | **fixes a spec divergence**: a non-object SSE payload escapes the pool raw instead of failing over. Small, independent of everything, and the only queued plan that changes behavior. **Take first** |
+| 11 | [sse-chunk-shape](sse-chunk-shape.md) | **implemented** | — | 2 *(implemented)* | **fixes a spec divergence**: a non-object SSE payload escaped the pool raw instead of failing over |
 | 12 | [models-purity](models-purity.md) | queued | — | 17, 16 | **skeleton** — `models.py` logs, formats prose, and holds the validators. 17 and 16 both reshape its field set and validator list |
 | 13 | [direct-client-seam](direct-client-seam.md) | queued | — | 2 *(implemented)* | **skeleton** — the sync broker reaches a private method; two clients copy-pasted. Unaffected by 16-18 |
 | 14 | [declared-out-of-catalog](declared-out-of-catalog.md) | queued | — | 17 | **skeleton** — the `direct=` overlay is half of `Catalog` and owns a cycle back to the broker. **17 closes one of its four findings and raises the rest**: the overlay becomes the only home a named model has |
@@ -51,6 +51,7 @@ others.
 | 17 | [named-models-are-declared](named-models-are-declared.md) | queued | — | 9 | **removes a form**: a model reached by name is declared in code, never stored. `custom`, `[[custom]]` and `add-model` go; the CLI gains read-only `list`, the alias refresh moves from the merge to the resolution, and `synced` is renamed for the question it answers. **Take first** |
 | 18 | [env-one-form](env-one-form.md) | queued | — | — | `env` takes a preset name and drops the form that cannot work on a database registry; plus the undocumented second refresh clock gets its paragraph in `server.md`. Small, independent |
 | 19 | [no-automatic-fetch](no-automatic-fetch.md) | queued | — | 17 | **answers a deployment requirement**: a serving process that may make no outbound connection. `sync_interval=None` switches off both clocks, `sync()` with no argument does it explicitly, and `EmptyRegistryError` stops blaming the network for a state the bundled floor makes impossible |
+| 20 | [stream-chunk-fields](stream-chunk-fields.md) | queued | — | 11 *(implemented)* | **fixes what 11 left half-closed**: a stream chunk that is an object but whose `choices` are malformed still escapes the pool raw instead of failing over. Small, independent. **Take first** |
 
 Plans 1-5 touch disjoint files and may be taken in any order subject to the
 Blocked-by column. Plans 6 and 7 must reach a release together: 7 extracts the
@@ -61,9 +62,12 @@ The queued half is ordered so that every plan that *removes* something lands
 before the plans that would otherwise be written against what it removes.
 **9 fixed a defect and moved the seams** — `models.py`, `merge.py`, the broker
 constructor — which is what the skeletons would otherwise have been planned
-against. **11 is a behavior fix that blocks nothing and depends on nothing, and
-it is taken first for exactly that reason** — nothing it touches is reshaped by
-anything below, so deferring it only risks it never being taken.
+against. **11 was a behavior fix that blocked nothing and depended on nothing,
+and was taken first for exactly that reason** — nothing it touches is reshaped
+by anything below, so deferring it only risked it never being taken. **20 is the
+same case and goes ahead of the queued half for the same reason**: it finishes
+the guard 11 put one level too high, and 13 reshapes the seam between the two
+direct clients without touching the SSE helpers it edits.
 **10 renames what the reader sees** and now goes after the removals rather than
 before them: three plans rewrite the doc sections and CLI strings it was
 inventoried from, so renaming first would rename some of them into files that

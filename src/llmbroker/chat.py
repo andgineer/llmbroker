@@ -200,7 +200,8 @@ _SSE_DONE = "[DONE]"
 async def aiter_sse_chunks(response: httpx.Response) -> AsyncIterator[dict]:
     """Yield decoded JSON objects from an OpenAI-compatible SSE stream body.
 
-    ``data: [DONE]`` ends the stream; unparseable payloads are skipped.
+    ``data: [DONE]`` ends the stream; a payload that does not decode, or decodes to
+    a scalar or array, is skipped — every consumer here may assume an object.
     """
     async for raw in response.aiter_lines():
         line = raw.strip()
@@ -210,9 +211,11 @@ async def aiter_sse_chunks(response: httpx.Response) -> AsyncIterator[dict]:
         if payload == _SSE_DONE:
             return
         try:
-            yield json.loads(payload)
+            decoded = json.loads(payload)
         except json.JSONDecodeError:
             continue
+        if isinstance(decoded, dict):
+            yield decoded
 
 
 async def aiter_chat_chunks(resp: httpx.Response, model: str) -> AsyncIterator[dict]:

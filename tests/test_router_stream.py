@@ -6,6 +6,7 @@ from contextlib import aclosing
 import httpx
 import pytest
 
+from llmbroker.broker import router as router_module
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.router import Router
@@ -324,11 +325,20 @@ def test_sse_framed_error_payload_cools_down_and_fails_over():
     assert pool.state("a").phase is LifecyclePhase.COOLING
 
 
-def test_garbage_200_reads_the_same_from_the_router_and_the_direct_client():
+def test_garbage_200_reads_the_same_from_the_router_and_the_direct_client(monkeypatch):
     """One reader decides what makes a body a chat-completion stream, so the pooled
-    path journals exactly the detail the direct client raises."""
+    path raises byte-identically to the direct client — rendered message as well as
+    detail, which alone carries no model name and would not catch a divergence."""
     garbage = b'data: {"error": {"message": "upstream rate limit"}}\n\ndata: [DONE]\n\n'
     store = _RecordingStore()
+    routed: list[Exception] = []
+    real_classify = router_module._classify  # noqa: SLF001
+
+    def spy(exc, *, budget_bound):
+        routed.append(exc)
+        return real_classify(exc, budget_bound=budget_bound)
+
+    monkeypatch.setattr(router_module, "_classify", spy)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "a":
@@ -359,6 +369,106 @@ def test_garbage_200_reads_the_same_from_the_router_and_the_direct_client():
     err = asyncio.run(run())
     assert "no chat-completion chunks decoded" in (err.detail or "")
     assert store.calls[0].error_detail == err.detail
+    (routed_err,) = routed
+    assert str(routed_err) == str(err)
+    assert routed_err.detail == err.detail
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [b"5", b'"hi"', b"[1, 2, 3]"],
+    ids=["number", "string", "array"],
+)
+def test_non_object_sse_payload_is_a_garbage_200(payload):
+    """A payload decoding to a JSON scalar or array is not a chunk: it must reach
+    neither the router nor the direct client as a raw AttributeError/TypeError."""
+    store = _RecordingStore()
+    garbage = b"data: " + payload + b"\n\ndata: [DONE]\n\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "a":
+            return httpx.Response(
+                200, content=garbage, headers={"content-type": "text/event-stream"}
+            )
+        return httpx.Response(
+            200, content=_sse("ok"), headers={"content-type": "text/event-stream"}
+        )
+
+    async def run():
+        pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
+        router = Router(pool, store, scope=None)
+        _mount(router, handler)
+        deltas = await _drain(router)
+
+        client = AsyncDirectClient(
+            base_url="https://a/v1",
+            model="a",
+            api_key="k",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5.0),
+        )
+        with pytest.raises(InvalidProviderResponseError) as exc_info:
+            _ = [d async for d in client.stream("hi")]
+        await client.aclose()
+        return deltas, pool, exc_info.value
+
+    deltas, pool, err = asyncio.run(run())
+    assert deltas == ["ok"]  # failed over instead of escaping raw
+    assert [(c.llm_name, c.status) for c in store.calls] == [
+        ("a", CallStatus.ERROR),
+        ("b", CallStatus.OK),
+    ]
+    assert pool.state("a").phase is LifecyclePhase.COOLING
+    assert "no chat-completion chunks decoded" in (store.calls[0].error_detail or "")
+    assert "no chat-completion chunks decoded" in (err.detail or "")
+
+
+def test_a_non_object_payload_among_real_chunks_leaves_the_stream_working():
+    """The guard skips one payload, not the answer around it."""
+    store = _RecordingStore()
+
+    async def run():
+        pool = await _pool(_cfg("a", "a"))
+        router = Router(pool, store, scope=None)
+        _mount(
+            router,
+            lambda _r: httpx.Response(
+                200,
+                content=b"data: [1, 2, 3]\n\n"
+                b'data: {"choices": [{"delta": {"content": "ok"}}]}\n\n'
+                b"data: [DONE]\n\n",
+                headers={"content-type": "text/event-stream"},
+            ),
+        )
+        return await _drain(router), pool
+
+    deltas, pool = asyncio.run(run())
+    assert deltas == ["ok"]
+    assert [(c.llm_name, c.status) for c in store.calls] == [("a", CallStatus.OK)]
+    assert pool.state("a").phase is LifecyclePhase.AVAILABLE
+
+
+def test_stream_reraises_the_provider_error_when_every_candidate_rejects_the_request():
+    """A 4xx is the request's fault on the streaming path too: nothing is cooled, and
+    the provider's own error beats a generic `NoLLMAvailableError`."""
+    store = _RecordingStore()
+
+    async def run():
+        pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
+        router = Router(pool, store, scope=None)
+        _mount(router, lambda _r: httpx.Response(400, text="messages[0].role is invalid"))
+        with pytest.raises(httpx.HTTPStatusError) as exc_info:
+            await _drain(router)
+        return exc_info.value, pool
+
+    err, pool = asyncio.run(run())
+    assert err.response.status_code == 400  # noqa: PLR2004
+    assert [(c.llm_name, c.status) for c in store.calls] == [
+        ("a", CallStatus.ERROR),
+        ("b", CallStatus.ERROR),
+    ]
+    assert all(c.cooldown_until is None for c in store.calls)
+    assert pool.state("a").phase is LifecyclePhase.AVAILABLE
+    assert pool.state("b").phase is LifecyclePhase.AVAILABLE
 
 
 def test_empty_completion_is_a_success_not_a_garbage_200():

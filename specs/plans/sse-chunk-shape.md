@@ -84,3 +84,48 @@ None. `rules/call-path.md` already states the rule this makes the code obey.
 
 `invoke pre` clean, `python -m pytest` green with the pre-existing count plus the
 added tests.
+
+## Handover
+
+**Done, as written.** Work order steps 1 and 2, and all four test items.
+
+- **Step 1** — `chat.py::aiter_sse_chunks` now decodes into a local and yields
+  only when the result is a `dict`; a scalar or array payload is skipped by the
+  same rule that already skipped an undecodable one. Docstring updated to say so.
+  No other module changed: `aiter_chat_chunks`, `parse_usage`, `stream_delta`
+  and both consumers are safe through that single point.
+- **Step 2** — verified, unchanged. `_parse_completion` raises
+  `InvalidProviderResponseError` for a top-level array, number and string alike
+  (the `TypeError` branch), so the non-streaming path already obeys the rule.
+
+**Tests** (`tests/test_router_stream.py`, +5):
+
+- `test_non_object_sse_payload_is_a_garbage_200`, parametrized over `5`, `"hi"`
+  and `[1, 2, 3]` — router cools `a`, fails over to `b`, journals
+  `no chat-completion chunks decoded`; `AsyncDirectClient.stream` raises
+  `InvalidProviderResponseError` with the same detail. All three fail on the
+  pre-fix tree (`AttributeError`/`TypeError` escaping raw), confirmed by
+  stashing the `chat.py` change.
+- `test_a_non_object_payload_among_real_chunks_leaves_the_stream_working` — the
+  mixed body still yields its delta and journals `OK`.
+- `test_stream_reraises_the_provider_error_when_every_candidate_rejects_the_request`
+  — the 4xx gap the plan-2 review found: `httpx.HTTPStatusError` reaches the
+  caller instead of `NoLLMAvailableError`, neither model cooled.
+- `test_garbage_200_reads_the_same_from_the_router_and_the_direct_client`
+  tightened to compare the rendered message as well as the detail.
+
+**Decision taken during implementation, which the plan did not make.** The
+router never surfaces its `InvalidProviderResponseError` — it converts it to a
+verdict — so "byte-identical message" is not observable from outside. The
+tightened pinning test monkeypatches the router module's `_classify` with a spy
+that records the exception instance and delegates, which is the narrowest point
+where the router's own exception object exists. The alternative, wrapping
+`aiter_chat_chunks` in a capturing async generator, pins the same property with
+more machinery.
+
+**Left out deliberately:** nothing. No spec change — `rules/call-path.md`
+already states the rule this makes the code obey, per the plan.
+
+**Gate:** `invoke pre` clean (ruff, ruff-format, docstring cap, pyrefly:
+0 errors). `python -m pytest` → **1291 passed**, zero failures, zero skips
+(1286 before this plan).
