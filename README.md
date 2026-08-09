@@ -28,7 +28,7 @@
 | src/llmbroker/broker/source.py        |       48 |        2 |     96% |     29-30 |
 | src/llmbroker/broker/stamps.py        |       35 |        3 |     91% | 42, 56-57 |
 | src/llmbroker/broker/stats.py         |       17 |        0 |    100% |           |
-| src/llmbroker/chat.py                 |      160 |        6 |     96% |42, 128-129, 215, 262, 330 |
+| src/llmbroker/chat.py                 |      162 |        7 |     96% |42, 128-129, 215-216, 265, 333 |
 | src/llmbroker/cli.py                  |      209 |       20 |     90% |43-49, 130-132, 134-135, 145-146, 164, 167-168, 171, 189-194, 210-211, 280-282 |
 | src/llmbroker/direct.py               |      101 |        8 |     92% |94, 155, 159-160, 163, 166, 221-222 |
 | src/llmbroker/exceptions.py           |       43 |        0 |    100% |           |
@@ -59,7 +59,7 @@
 | src/llmbroker/sync.py                 |      103 |        1 |     99% |        95 |
 | src/llmbroker/util/atomic.py          |       17 |        3 |     82% |     29-31 |
 | src/llmbroker/vault/secrets.py        |       19 |        0 |    100% |           |
-| **TOTAL**                             | **3710** |  **111** | **97%** |           |
+| **TOTAL**                             | **3712** |  **112** | **97%** |           |
 
 
 ## Setup coverage badge
