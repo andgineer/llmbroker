@@ -62,10 +62,10 @@
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_6fff154f2ca533fe_store_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a id="nextFileLink" class="nav" href="z_81a6e6b1afe94825_secrets_py.html">&#xbb; next</a>
+            <a id="nextFileLink" class="nav" href="z_1ded881f1f8b2cca_atomic_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-08-07 05:31 +0000
+            created at 2026-08-09 06:57 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -197,7 +197,7 @@
     <p class="run run2"><span class="n"><a id="t115" href="#t115">115</a></span><span class="t">        <span class="nam">optimize</span><span class="op">:</span> <span class="nam">bool</span> <span class="op">|</span> <span class="nam">Optimizer</span> <span class="op">=</span> <span class="key">True</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t116" href="#t116">116</a></span><span class="t">        <span class="nam">scope</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t">        <span class="nam">have_keys</span><span class="op">:</span> <span class="nam">bool</span> <span class="op">|</span> <span class="nam">Sequence</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span> <span class="op">=</span> <span class="key">False</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t">        <span class="nam">sync</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="nam">Path</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="nam">_DEFAULT_SYNC_SOURCE</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t">        <span class="nam">sync</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="nam">_DEFAULT_SYNC_SOURCE</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t">        <span class="nam">sync_interval</span><span class="op">:</span> <span class="nam">float</span> <span class="op">=</span> <span class="nam">_DEFAULT_SYNC_INTERVAL</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t120" href="#t120">120</a></span><span class="t">        <span class="nam">home</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="nam">Path</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t121" href="#t121">121</a></span><span class="t">        <span class="nam">direct</span><span class="op">:</span> <span class="nam">Sequence</span><span class="op">[</span><span class="nam">str</span> <span class="op">|</span> <span class="nam">LLMConfig</span><span class="op">]</span> <span class="op">=</span> <span class="op">(</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -298,7 +298,7 @@
     <p class="run"><span class="n"><a id="t216" href="#t216">216</a></span><span class="t">    <span class="key">def</span> <span class="nam">snapshot</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span> <span class="op">-></span> <span class="nam">PoolSnapshot</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t217" href="#t217">217</a></span><span class="t">        <span class="key">return</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_run</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">_async</span><span class="op">.</span><span class="nam">snapshot</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t218" href="#t218">218</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">    <span class="key">def</span> <span class="nam">sync</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">source</span><span class="op">:</span> <span class="nam">RegistryProtocol</span> <span class="op">|</span> <span class="nam">str</span> <span class="op">|</span> <span class="nam">Path</span><span class="op">)</span> <span class="op">-></span> <span class="nam">SyncReport</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">    <span class="key">def</span> <span class="nam">sync</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">source</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="nam">SyncReport</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t220" href="#t220">220</a></span><span class="t">        <span class="key">return</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_run</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">_async</span><span class="op">.</span><span class="nam">sync</span><span class="op">(</span><span class="nam">source</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t221" href="#t221">221</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t222" href="#t222">222</a></span><span class="t">    <span class="op">@</span><span class="nam">property</span>&nbsp;</span><span class="r"></span></p>
@@ -353,10 +353,10 @@
         <p>
             <a class="nav" href="z_6fff154f2ca533fe_store_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a class="nav" href="z_81a6e6b1afe94825_secrets_py.html">&#xbb; next</a>
+            <a class="nav" href="z_1ded881f1f8b2cca_atomic_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-08-07 05:31 +0000
+            created at 2026-08-09 06:57 +0000
         </p>
     </div>
 </footer>
