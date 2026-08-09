@@ -9,11 +9,11 @@
 | src/llmbroker/aws/secrets.py          |       32 |        2 |     94% |    39, 50 |
 | src/llmbroker/backends/driver.py      |        8 |        0 |    100% |           |
 | src/llmbroker/backends/inmemory.py    |       36 |        1 |     97% |        19 |
-| src/llmbroker/backends/ports.py       |       93 |        0 |    100% |           |
+| src/llmbroker/backends/ports.py       |       94 |        0 |    100% |           |
 | src/llmbroker/backends/spec.py        |        7 |        0 |    100% |           |
 | src/llmbroker/broker/aliases.py       |       91 |        3 |     97% |75, 78, 118 |
 | src/llmbroker/broker/broker.py        |      228 |        9 |     96% |76, 84, 209-211, 357-359, 519 |
-| src/llmbroker/broker/catalog.py       |      200 |        5 |     98% |69, 79, 122, 239, 265 |
+| src/llmbroker/broker/catalog.py       |      201 |        5 |     98% |76, 86, 129, 249, 275 |
 | src/llmbroker/broker/keys.py          |       35 |        0 |    100% |           |
 | src/llmbroker/broker/learning.py      |      125 |        1 |     99% |       146 |
 | src/llmbroker/broker/lineup\_file.py  |       67 |        1 |     99% |        44 |
@@ -36,7 +36,7 @@
 | src/llmbroker/http\_status.py         |       18 |        0 |    100% |           |
 | src/llmbroker/integrations/alembic.py |        2 |        0 |    100% |           |
 | src/llmbroker/journal\_policy.py      |       17 |        0 |    100% |           |
-| src/llmbroker/models.py               |      184 |        0 |    100% |           |
+| src/llmbroker/models.py               |      186 |        0 |    100% |           |
 | src/llmbroker/mongodb/driver.py       |       87 |        4 |     95% |21, 63, 154-155 |
 | src/llmbroker/mongodb/registry.py     |        6 |        0 |    100% |           |
 | src/llmbroker/mongodb/secrets.py      |        6 |        0 |    100% |           |
@@ -59,7 +59,7 @@
 | src/llmbroker/sync.py                 |      103 |        1 |     99% |        95 |
 | src/llmbroker/util/atomic.py          |       17 |        3 |     82% |     29-31 |
 | src/llmbroker/vault/secrets.py        |       19 |        0 |    100% |           |
-| **TOTAL**                             | **3706** |  **111** | **97%** |           |
+| **TOTAL**                             | **3710** |  **111** | **97%** |           |
 
 
 ## Setup coverage badge
