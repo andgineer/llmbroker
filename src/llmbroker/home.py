@@ -1,9 +1,6 @@
-"""The one directory llmbroker keeps its own cached state in.
-
-Nothing here is authoritative: a preset can be re-fetched, a stamp only makes a
-check less frequent. So no step may raise — every candidate that cannot be
-written falls through to the next, and nowhere writable is a supported outcome.
-"""
+"""The one directory llmbroker keeps its own cached state in. Nothing here is
+authoritative, so no step may raise: an unwritable candidate falls through to the
+next, and nowhere writable is a supported outcome."""
 
 import contextlib
 import os
@@ -77,10 +74,9 @@ def _is_writable(path: Path) -> bool:
 
 
 def home_dir(override: str | Path | None = None) -> Path | None:
-    """Where llmbroker keeps what it caches on its own, first writable candidate
-    winning: ``override``, ``$LLMBROKER_HOME``, the platform cache directory, a
-    per-user temp directory. ``None`` when nowhere is writable — every caller
-    degrades to memory rather than failing."""
+    """First writable of ``override``, ``$LLMBROKER_HOME``, the platform cache dir, a
+    per-user temp dir. ``None`` when nowhere is — every caller then degrades to
+    memory rather than failing."""
     for candidate in _candidates(override):
         if _is_writable(candidate):
             return candidate

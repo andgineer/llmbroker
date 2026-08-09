@@ -32,6 +32,7 @@ def _broker(tmp_path, parallel: int | None) -> Broker:
         registry=_registry(tmp_path, parallel),
         secrets=DictSecrets({"K": "test"}),
         store=InMemoryStore(),
+        sync=None,
     )
 
 

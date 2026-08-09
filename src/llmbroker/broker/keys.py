@@ -53,10 +53,8 @@ class KeyProbe:
         return present
 
     def _visible(self, present: set[str]) -> bool:
-        """Per-user keys behind ``scope`` are one place a probe cannot prove absence;
-        a probe that resolved nothing at all is the other — the keys live in a store
-        this merge site cannot reach, and "no key anywhere" is indistinguishable from
-        "not my keys"."""
+        """The two places a probe cannot prove absence: per-user keys behind ``scope``,
+        and a probe that resolved nothing at all."""
         declared = self.have_keys is True or bool(declared_refs(self.have_keys))
         return bool(present) and (self.scope is None or declared)
 

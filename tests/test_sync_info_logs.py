@@ -30,6 +30,7 @@ def _broker(db: str) -> llmbroker.AsyncBroker:
     return llmbroker.AsyncBroker(
         registry=SqliteRegistry(db),
         secrets=SqliteSecrets(db),
+        sync=None,
     )
 
 

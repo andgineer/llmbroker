@@ -29,10 +29,10 @@ set it, as a field of the `LLMConfig` you declare.
 
 ### Your own paid models {#direct}
 
-The pool is exactly the curated free lineup, and nothing you declare ever joins
-it: what the pool sells is failover across interchangeable free endpoints, and
-your company gateway has no business being spilled onto by someone else's 429.
-Your own models are reached by name instead:
+Nothing you declare here ever joins the pool: what the pool sells is failover
+across interchangeable free endpoints, and your company gateway has no business
+being spilled onto by someone else's 429 unless you put it there
+[on purpose](#file). Declared models are reached by name instead:
 
 ```python
 llms = llmbroker.Broker(direct=["opus"])
@@ -61,16 +61,23 @@ curated preset name and nothing else. What you can name is a database:
 llms = llmbroker.Broker("postgresql://…")   # registry, keys and journal, all three
 ```
 
-See [Servers & clusters](server.md). If you must supply the pool yourself rather
-than follow our curation, pass an object implementing the registry protocol —
-together with `sync=None`:
+See [Servers & clusters](server.md). To supply the pool yourself, pass an object
+implementing the registry protocol and say what it follows:
 
 ```python
-llms = llmbroker.Broker(registry=MyRegistry(), sync=None)
+llms = llmbroker.Broker(registry=MyRegistry(), sync=None)        # only your entries
+llms = llmbroker.Broker(registry=MyRegistry(), sync="freetier")  # yours plus ours
 ```
 
-Without that second half llmbroker keeps following the preset and writes the
-merged lineup into whatever registry it was given, yours included.
+| you pass | `sync=` left out | entries you put there yourself |
+|---|---|---|
+| nothing, or a database URL | follows `"freetier"` | never touched by a refresh |
+| a registry object | an error — say which | never touched by a refresh |
+
+A refresh only ever rewrites what a sync itself wrote, so "the curated free pool
+plus two endpoints of my own, routed together" is just a registry with both in
+it. The one exception is an entry that follows a paid alias — that is what the
+alias asks for.
 
 ### Which model is tried first {#weight}
 

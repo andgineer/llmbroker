@@ -164,6 +164,22 @@ Any request to implement a plan — "выполни очередной план"
 ### Language
 - All comments, docstrings, plan files, and in-repo docs: **English only**.
 
+### Comments and docstrings — a hard cap, enforced by the gate
+- **A docstring is at most 3 prose lines; a run of `#` comment lines at most 2.** `invoke pre` runs
+  `scripts/check_docstrings.py` over `src/` and fails past that. Doctest lines do not count, so an
+  executable example is free.
+- **What fits in the cap:** one line saying what the thing is or returns, and — only when it is
+  genuinely non-obvious from the code — one or two more for the WHY: a hidden constraint, a library
+  quirk, an invariant, behavior that would surprise a reader.
+- **What never goes in:** what the code does (names say that), the rationale for a design (that is
+  `specs/reference/`), how to use the library (that is `docs/`), or a narration of the change being
+  made. If it takes a paragraph to justify a decision, the paragraph belongs in a spec and the code
+  gets a pointer at most.
+- **The surrounding file is not the standard.** A long docstring next to the one you are writing is
+  debt, not precedent, and "match the local comment density" does not apply here. Touching a
+  function whose docstring is over the cap means shrinking it in the same edit — that is how the
+  148 over-long docstrings this rule was written against came to exist.
+
 ### Imports
 - **No local (in-function) imports.** All imports at module top level, always. Narrow exception: a
   dispatch function that must select an optional backend package (e.g. sqlite/postgres/mongodb)
@@ -196,7 +212,6 @@ Any request to implement a plan — "выполни очередной план"
 - **A rule is written in exactly one place.** Everywhere else links to it. Duplicated rules drift, and a reader cannot tell which copy is current.
 - **`mission.md` is written for a human who will not read `rules/`, and every line in it obeys one test — predictive, not factual.** A statement belongs there when a reader who skips the rule files would otherwise mispredict how the library behaves, or would propose a change that fights the design without knowing it. Being true is not enough: most rules are true and still belong only in their own file. So the mission states *what* and *why*, never the mechanism that carries it out — no call counts, no HTTP-code classifications, no thresholds, no order of operations, no exception lists, no counts of what the curated lineup happens to hold today. That is not a style preference: every drift found between the mission and the code so far has been in a sentence that described machinery, and none in a sentence that described intent. The four sections divide as: the **requirements** say what it must do, one line each; **what it is not** states the boundaries, which are decisions and must be defended as such, not gaps; the **positioning** says what no alternative combines, in claims that survive being checked; **the design this produced** carries the load-bearing decisions, each a few lines, and is the strictest of the four. Adding an item anywhere is a claim that it changes what a reader would expect. Re-read the mission against the code whenever a subsystem it describes changes.
 - **Links point one way: a rule may cite the mission, the mission never cites a rule.** `mission.md` answers *what the library is for* and *why it is shaped that way*; a rule file answers *how*, and may name the mission requirement it serves. The reverse direction is a symptom, not a formatting choice: a mission sentence that needs a link into `rules/` is asserting a mechanism, and the fix is to raise the sentence back to the level of intent, not to add the link. This is also where the mission goes stale first — every place it has drifted from the code so far was a place it described machinery.
-- Module docstrings and code comments never document architecture in blocks (a design-essay docstring, a multi-paragraph "how this subsystem works" comment). Keep docstrings to 1-3 lines; if content explains *why* the system is shaped a certain way rather than a non-obvious local WHY, it belongs in `specs/reference/`, not in the code.
 
 ## Dependencies and optional extras
 

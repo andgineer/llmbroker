@@ -25,7 +25,13 @@ from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import InMemoryStore
 
-_OLD = LLMConfig(name="groq-old", base_url="https://groq/v1", model="m", api_key_ref="GROQ")
+_OLD = LLMConfig(
+    name="groq-old",
+    base_url="https://groq/v1",
+    model="m",
+    api_key_ref="GROQ",
+    synced=True,
+)
 
 _PRESET_GEMINI = (
     '[[llms]]\nname = "gemini"\nbase_url = "https://g/v1"\nmodel = "m"\n'
@@ -57,6 +63,7 @@ async def _seeded_db(tmp_path, configs=(_OLD,)):
 
 def _broker(db, **kwargs):
     kwargs.setdefault("secrets", DictSecrets({}))
+    kwargs.setdefault("sync", None)
     kwargs.setdefault("store", InMemoryStore())
     return AsyncBroker(registry=SqliteRegistry(db), **kwargs)
 
@@ -174,7 +181,7 @@ async def test_a_file_registry_is_regenerated_and_keeps_the_users_own_models(tmp
         '[[custom]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="big"\napi_key_ref="MY_KEY"\n'
         '[keys.MY_KEY]\nhelp = "my custom key"\n',
     )
-    broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore())
+    broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore(), sync=None)
     report = await broker.sync("freetier")
     try:
         assert {c.name for c in await broker._registry.load()} == {"gemini", "groq-old", "mine"}
@@ -207,7 +214,7 @@ async def test_a_file_syncs_alias_entry_follows_the_paid_catalog(tmp_path, monke
         '[[custom]]\nalias="opus"\nname="anthropic-claude-opus-4-8"\nmodel="claude-opus-4-8"'
         '\nbase_url="https://api.anthropic.com/v1"\napi_key_ref="ANTHROPIC_API_KEY"\n',
     )
-    broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore())
+    broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore(), sync=None)
     await broker.sync("freetier")
     await broker.aclose()
     (entry,) = tomllib.loads(target.read_text())["custom"]
@@ -245,6 +252,7 @@ async def test_both_targets_report_the_same_alias_move(tmp_path, monkeypatch, ca
             registry=FileRegistry(target),
             secrets=DictSecrets({}),
             store=InMemoryStore(),
+            sync=None,
         ),
     )
     from_db = await _lines(_broker(await _seeded_db(tmp_path, (_OPUS_V1,))))
@@ -366,7 +374,7 @@ async def test_a_kept_entry_does_not_duplicate_over_repeated_file_syncs(tmp_path
     target.write_text(
         '[[llms]]\nname="groq-old"\nbase_url="https://groq/v1"\nmodel="m"\napi_key_ref="GROQ"\n',
     )
-    broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore())
+    broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore(), sync=None)
     for _ in range(3):
         report = await broker.sync("freetier")
     await broker.aclose()
@@ -383,7 +391,7 @@ async def test_a_path_source_into_a_file_registry_is_refused(tmp_path):
         '[[custom]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="m"\napi_key_ref="MY_KEY"\n',
     )
     original = target.read_text()
-    broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore())
+    broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore(), sync=None)
     with pytest.raises(ValueError, match="unrecognized sync source"):
         await broker.sync(str(target))
     await broker.aclose()
@@ -403,7 +411,9 @@ async def test_the_file_branch_seeds_keys_into_a_mutable_secrets_backend(
         '[[llms]]\nname="groq-old"\nbase_url="https://groq/v1"\nmodel="m"\napi_key_ref="GROQ"\n',
     )
     secrets = SqliteSecrets(str(tmp_path / "secrets.db"))
-    broker = AsyncBroker(registry=FileRegistry(target), secrets=secrets, store=InMemoryStore())
+    broker = AsyncBroker(
+        registry=FileRegistry(target), secrets=secrets, store=InMemoryStore(), sync=None
+    )
     await broker.sync("freetier")
     await broker.aclose()
     assert await secrets.resolve("GEMINI") == "sk-from-env"
@@ -456,6 +466,7 @@ async def test_the_file_branch_reads_the_same_evidence(tmp_path, preset):
         registry=FileRegistry(target),
         secrets=DictSecrets({"GROQ": "sk"}),
         store=store,
+        sync=None,
     )
     report = await broker.sync("freetier")
     await broker.aclose()
@@ -565,7 +576,15 @@ async def test_a_no_op_run_says_so_at_debug_and_nowhere_else(tmp_path, preset, c
     preset["text"] = _PRESET_GROQ_NEW
     db = await _seeded_db(
         tmp_path,
-        [LLMConfig(name="groq-new", base_url="https://groq/v1", model="m", api_key_ref="GROQ")],
+        [
+            LLMConfig(
+                name="groq-new",
+                base_url="https://groq/v1",
+                model="m",
+                api_key_ref="GROQ",
+                synced=True,
+            )
+        ],
     )
     broker = _broker(db, secrets=DictSecrets({"GROQ": "sk"}))
     caplog.clear()

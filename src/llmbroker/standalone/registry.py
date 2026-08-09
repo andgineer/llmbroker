@@ -44,6 +44,8 @@ def config_from_entry(entry: dict, *, custom: bool) -> LLMConfig | None:
         api_key_ref=str(entry.get("api_key_ref", "")),
         parallel=_int_or_none(entry.get("parallel")),
         custom=custom,
+        # The file's sections are its ownerships: [[llms]] is what a sync merged.
+        synced=not custom,
         alias=str(alias) if alias is not None else None,
         weight=_weight_from_entry(entry.get("weight"), name),
     )

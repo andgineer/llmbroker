@@ -12,13 +12,16 @@ from llmbroker.models import KeyInfo, Lineup, LLMConfig, Retirement
 _EVIDENCE_TS = datetime(2030, 7, 2, tzinfo=UTC)
 
 
-def _cfg(name, ref="K", *, model="m", url="https://x/v1", custom=False):
+def _cfg(name, ref="K", *, model="m", url="https://x/v1", custom=False, synced=None):
+    """Curated by default, as a lineup file's two sections are: a [[custom]] entry
+    is the host's, everything else was written by a sync."""
     return LLMConfig(
         name=name,
         base_url=url,
         model=model,
         api_key_ref=ref,
         custom=custom,
+        synced=not custom if synced is None else synced,
     )
 
 

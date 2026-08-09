@@ -18,12 +18,8 @@ registry it fills itself
 
 **The merge writes into the registry the broker was built with, whatever brought
 that registry there** — a lineup file llmbroker owns, a connection string, or an
-object the host constructed. Being host-supplied does not make a registry
-read-only, and the removal rule below decides what happens to the entries the
-host put in it. A host that wants its own pool left alone stops following the
-curation as well ([`lineup-refresh.md`](lineup-refresh.md)); that is one choice
-made twice, and the cost of the alternative — inferring intent from how the
-registry was constructed — is a rule no reader could predict from the call.
+object the host constructed. What it may touch there is decided per entry, not
+per registry: see the partition below.
 
 Concurrent nodes are safe because the merge is a pure function of (arriving
 lineup, current lineup, resolved keys), and one registry means one secrets
@@ -52,11 +48,37 @@ A bare `Broker()` builds the first. The second is the deploy path: the host's ow
 entrypoint constructs its broker and calls `sync`, so the connection config and
 its secrets stay in one place.
 
+## The partition: a sync touches only what a sync wrote
+
+Every entry records whether a sync put it there
+([`decisions.md`](../decisions.md#a-sync-touches-only-what-a-sync-wrote)), and
+the merge partitions on that record. Entries a sync wrote are the ones
+everything below applies to. An entry the installation stated itself is carried
+through untouched, whatever the arriving lineup says — never removed, never
+replaced, never counted in the report's added/updated/removed. The default for a
+new entry is *not written by a sync*, so a host's own mirror call, a hand-written
+row or a backend filled before llmbroker ever ran are all protected without doing
+anything. It yields invariant 22.
+
+That makes the mixed pool statable: the routed pool is whatever the registry
+states as pool members, whether they came from the curation, from the
+installation, or from both. The two axes are independent — *who put it here*
+decides what a merge may do to it, *how it is called* decides whether the pool
+routes it.
+
+The one thing a refresh rewrites without having written it is an entry that
+follows a paid-catalog alias: the installation asked for exactly that when it
+named the alias instead of pinning a version
+([`direct-aliases.md`](direct-aliases.md)).
+
+A name the merge itself would carry twice is refused, and nothing is written.
+The fix is always to rename the installation's own entry — the arriving one's
+name is machine-formed and would be formed again on the next sync.
+
 ## The removal rule: the provider is the unit
 
-Only managed entries whose name is absent from the arriving lineup are
-candidates for removal. An entry still present is updated in place, and custom
-entries are never pruned.
+Only entries a sync wrote whose name is absent from the arriving lineup are
+candidates for removal. An entry still present is updated in place.
 
 **The unit of decision is the `api_key_ref`, not the entry.** Two entries on one
 ref are one quota and one failure domain. For each dropped entry, in order:
@@ -113,8 +135,8 @@ and nothing breaks; the lineup just keeps entries a better-informed run would
 have pruned. This is the only reason the parameter exists.
 
 **When a removal orphans a key** — the ref's key *is* here and nothing in the
-merged lineup references it any more, custom entries included — the report says
-the key is now unused and a human decides; the key's help section is kept while
+merged lineup references it any more, the installation's own entries
+included — the report says the key is now unused and a human decides; the key's help section is kept while
 any entry still references it. A ref with no key behind it is nothing to revoke,
 and saying otherwise would put an invented admin act into the one channel that
 exists to surface the real ones, on the commonest removal of all.

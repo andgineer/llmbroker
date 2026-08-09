@@ -5,12 +5,8 @@ from botocore.exceptions import ClientError
 
 
 class Secrets:
-    """AWS Secrets Manager-backed mutable secrets store.
-
-    A secretsmanager client is opened as an async context manager per call;
-    there is no shared client state, so ``aclose`` is a no-op. ``endpoint_url``
-    targets a non-default endpoint (e.g. LocalStack or a VPC endpoint).
-    """
+    """AWS Secrets Manager-backed mutable secrets store. A client is opened per
+    call, so there is no shared state and ``aclose`` is a no-op."""
 
     def __init__(
         self,

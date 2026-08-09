@@ -93,12 +93,8 @@ async def alias_targets_for(
     aliases: Iterable[str | None],
     presets: PresetSource,
 ) -> dict[str, AliasTarget]:
-    """What the catalog now recommends, read only when something follows an alias.
-
-    A catalog nobody can reach yields no targets, and every alias entry is then left
-    exactly as it is: a refresh that cannot see upstream has nothing to say about
-    where an alias points.
-    """
+    """What the catalog now recommends, read only when something follows an alias. A
+    catalog nobody can reach yields no targets, leaving every alias entry as it is."""
     if not any(aliases):
         return {}
     try:
@@ -115,15 +111,9 @@ async def resolve_declared(
     *,
     floor: bool = True,
 ) -> DeclaredModels:
-    """Turn what the caller declared with ``direct=`` into entries.
-
-    A config is taken verbatim and forced ``custom``; a string is a paid-catalog
-    alias, resolved afresh so a followed model is always the current version. The
-    catalog's key help comes back with them: nothing stores a declared model, so
-    this read is the only place that help is ever available.
-
-    ``floor=False`` is a re-resolution, which may not fall back to the wheel's copy.
-    """
+    """Turn what the caller declared with ``direct=`` into entries, with the
+    catalog's key help — nothing stores a declared model, so this read is the only
+    place that help is available. ``floor=False`` marks a re-resolution."""
     if not declared:
         return DeclaredModels()
     targets: Mapping[str, AliasTarget] = _NO_TARGETS
@@ -180,9 +170,8 @@ def _alias_facts(cfg: LLMConfig, target: AliasTarget) -> list[AliasFact]:
             AliasFact(change=AliasChange.MODEL, alias=alias, was=cfg.model, now=target.model),
         )
     if cfg.api_key_ref != target.api_key_ref:
-        # The one change that needs the user to do something. It can arrive without
-        # a model change at all — a catalog that re-spells a provider's ref refreshes
-        # to a lineup that silently wants an env var nobody set.
+        # The one change needing the user to act, and it can arrive without a model
+        # change: a re-spelled ref wants an env var nobody set.
         facts.append(
             AliasFact(
                 change=AliasChange.KEY_REF,

@@ -27,6 +27,7 @@ def _async_broker(tmp_path) -> AsyncBroker:
         registry=_registry(tmp_path),
         secrets=DictSecrets({"K": "test"}),
         store=InMemoryStore(),
+        sync=None,
     )
 
 
@@ -77,6 +78,7 @@ def test_sync_broker_record_quality_inherits_the_check(tmp_path):
         registry=_registry(tmp_path),
         secrets=DictSecrets({"K": "test"}),
         store=InMemoryStore(),
+        sync=None,
     )
     try:
         with pytest.raises(ValueError, match=r"\[0.0, 1.0\]"):
@@ -90,6 +92,7 @@ def test_sync_result_record_quality_inherits_the_check(tmp_path):
         registry=_registry(tmp_path),
         secrets=DictSecrets({"K": "test"}),
         store=InMemoryStore(),
+        sync=None,
     )
     try:
         with patch(_PATCH, new=AsyncMock(return_value=("ok", None, None))):

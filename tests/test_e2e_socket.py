@@ -102,6 +102,7 @@ async def test_rate_limited_model_fails_over_then_returns_after_its_cooldown(tmp
             registry=_write_registry(tmp_path, server_a.port, server_b.port),
             secrets=DictSecrets({"K": "test"}),
             store=InMemoryStore(),
+            sync=None,
         )
         async with broker:
             first = await broker.ask("hi")

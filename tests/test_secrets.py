@@ -142,7 +142,7 @@ def test_broker_resolves_key_not_on_config(tmp_path, monkeypatch):
     )
 
     async def run():
-        broker = llmbroker.AsyncBroker(registry=FileRegistry(toml))
+        broker = llmbroker.AsyncBroker(registry=FileRegistry(toml), sync=None)
         async with broker:
             await broker.ensure_pool()
             cfg = (await broker.get("p1")).config
@@ -165,6 +165,7 @@ def test_seed_seeds_secret_from_env(tmp_path, monkeypatch):
         broker = llmbroker.AsyncBroker(
             registry=SqliteRegistry(db),
             secrets=secrets,
+            sync=None,
         )
         await broker.sync("freetier")
         async with broker:
@@ -185,6 +186,7 @@ def test_seed_preserves_existing_secret(tmp_path, monkeypatch):
         broker = llmbroker.AsyncBroker(
             registry=SqliteRegistry(db),
             secrets=secrets,
+            sync=None,
         )
         await broker.sync("freetier")
         async with broker:
@@ -200,7 +202,7 @@ def test_missing_ref_with_readonly_secrets_does_not_block(tmp_path, monkeypatch)
     db = str(tmp_path / "b.db")
 
     async def run():
-        broker = llmbroker.AsyncBroker(registry=SqliteRegistry(db))
+        broker = llmbroker.AsyncBroker(registry=SqliteRegistry(db), sync=None)
         await broker.sync("freetier")
         async with broker:
             await broker.get("p1")

@@ -19,14 +19,8 @@ class MutableRegistryProtocol(RegistryProtocol, Protocol):
 
 @runtime_checkable
 class KeyInfoProtocol(Protocol):
-    """Optional capability: per-key onboarding metadata (help text plus a
-    free-form ``extra`` passthrough).
-
-    Maps each ``api_key_ref`` to a ``KeyInfo``. Keyed by the env-var name because
-    one key is usually shared by several LLMs. A source without such metadata
-    simply does not implement this protocol; callers probe with
-    ``isinstance(reg, KeyInfoProtocol)``. It is independent of the broker — hosts
-    query whichever registry they built.
-    """
+    """Optional capability: per-key onboarding metadata, keyed by ``api_key_ref``
+    because one key is usually shared by several LLMs. A source without it simply
+    does not implement this protocol, and callers probe with ``isinstance``."""
 
     async def key_info(self) -> dict[str, KeyInfo]: ...

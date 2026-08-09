@@ -30,7 +30,7 @@ _GROWN = _PRESET + (
     '[[llms]]\nname = "groq"\nbase_url = "https://q/v1"\nmodel = "m"\napi_key_ref = "GROQ"\n'
 )
 
-_OLD = LLMConfig(name="old", base_url="https://x/v1", model="m", api_key_ref="GEMINI")
+_OLD = LLMConfig(name="old", base_url="https://x/v1", model="m", api_key_ref="GEMINI", synced=True)
 
 
 @pytest.fixture
@@ -66,6 +66,7 @@ def never_fetches(monkeypatch):
 
 def _broker(tmp_path, name: str = "b.db", **kwargs) -> AsyncBroker:
     kwargs.setdefault("secrets", DictSecrets({"GEMINI": "sk", "GROQ": "sk"}))
+    kwargs.setdefault("sync", "freetier")
     kwargs.setdefault("store", InMemoryStore())
     return AsyncBroker(registry=SqliteRegistry(str(tmp_path / name)), **kwargs)
 
@@ -374,6 +375,7 @@ async def test_a_refresh_in_flight_is_cancelled_before_the_ports_close(tmp_path)
         registry=_ClosingRegistry(),
         secrets=DictSecrets({"GEMINI": "sk"}),
         store=InMemoryStore(),
+        sync="freetier",
     )
     with patch.object(LineupRefresher, "sync", new=_hang):
         await broker.ensure_pool()

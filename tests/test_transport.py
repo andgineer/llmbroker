@@ -29,6 +29,7 @@ def _broker(tmp_path) -> AsyncBroker:
         registry=_registry(tmp_path),
         secrets=DictSecrets({"K": "test"}),
         store=FileStore(tmp_path / "store"),
+        sync=None,
     )
 
 

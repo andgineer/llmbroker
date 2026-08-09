@@ -1,9 +1,5 @@
-"""Router: route one completion over the pool with per-LLM failover.
-
-Acquires a free slot, calls the provider, and journals every attempt; each
-failure's disposal — cool down and retry, fail over without cooling, or hand the
-caller back its own expired ``wait`` — is the error contract in call-path.md.
-"""
+"""Router: route one completion over the pool with per-LLM failover, journaling
+every attempt. How each failure is disposed of is the contract in call-path.md."""
 
 import asyncio
 import logging
@@ -121,11 +117,8 @@ async def _stream_deltas(
     progress: _StreamProgress,
 ) -> AsyncIterator[str]:
     """Open one streaming request and yield its text deltas, recording progress.
-
-    ``timeout`` bounds the wait for the first delta only: the client's own
-    per-operation ceiling bounds every read after it, so a slow *consumer* — which
-    suspends this generator between deltas — can never trip a deadline.
-    """
+    ``timeout`` bounds the first delta only, so a slow *consumer* suspending this
+    generator can never trip a deadline."""
     url, headers, body = request
     async with (
         asyncio.timeout(timeout) as bound,
@@ -251,18 +244,12 @@ class Router:
         wait: float | None,
         timeout_message: str,
     ) -> AsyncIterator[_Produced]:
-        """Run one call over the pool, failing over between LLMs: acquire a
-        candidate, pass on whatever its attempt produces, and act on the verdict
-        it leaves behind.
-
-        The sole owner of the failover decisions — a streaming attempt produces
-        deltas and a non-streaming one a single result, but which candidate comes
-        next, and which error the caller finally sees, is decided only here.
-        """
+        """Run one call over the pool, failing over between LLMs. The sole owner of
+        the failover decisions: which candidate comes next, and which error the
+        caller finally sees, is decided only here."""
         queue_deadline = None if wait is None else time.monotonic() + wait
         # wait=0 is "do not queue", not "answer instantly": it bounds slot
-        # acquisition only, leaving the attempt on the global ceiling. How far the
-        # deadline then reaches into the attempt is the attempt's own call.
+        # acquisition only, leaving the attempt on the global ceiling.
         answer_deadline = queue_deadline if wait else None
         client_failed: set[str] = set()
         last_client_error: httpx.HTTPStatusError | None = None
@@ -397,12 +384,8 @@ class Router:
         if verdict.cool_base is None:
             await self._pool.release(attempt.config)
             if isinstance(verdict.outcome, _BudgetExpired):
-                # Not a penalty: the only latency this model will ever report is the
-                # budget it just failed to meet, and the next caller offering no more
-                # than that should be handed a sibling first. Applied here as well as
-                # journaled, for the same reason the cooldown above is: this node's
-                # next caller must not wait on a rebuild to learn what this one paid
-                # for, and the pool must not depend on learning being switched on.
+                # Applied as well as journaled: the next caller on this node must not
+                # wait on a rebuild, nor on learning being switched on.
                 budget_ms = int(timeout * 1000)
                 self._pool.raise_budget_bound(attempt.config.name, timeout, datetime.now(UTC))
         else:
@@ -435,10 +418,8 @@ class Router:
         operation: str | None,
         trace_id: str | None,
     ) -> AsyncIterator[AsyncResult]:
-        """Run one LLM and yield its single result, or leave on ``outcome`` the
-        verdict the driver fails over on: ``None`` to try the next LLM after a
-        cooldown, ``_Failed`` to try the next without cooling this one, or
-        ``_BudgetExpired`` when the caller's own ``wait`` ran out."""
+        """Run one LLM and yield its single result, or leave on ``outcome`` the verdict
+        the driver fails over on."""
         attempt = self._new_attempt(config, operation=operation, trace_id=trace_id)
         backoff = self._backoff(config.name)
 
@@ -474,9 +455,8 @@ class Router:
         else:
             await self._finish_ok(attempt, usage)
             outcome.answered = True
-            # Outside the `try` on purpose: the consumer closes this generator on
-            # the yield, and a GeneratorExit caught above would journal the attempt
-            # a second time.
+            # Outside the `try`: the consumer closes this generator on the yield, and
+            # a GeneratorExit caught above would journal the attempt twice.
             yield AsyncResult(
                 text=content,
                 tool_calls=tool_calls,
@@ -533,12 +513,8 @@ class Router:
         operation: str | None,
         trace_id: str | None,
     ) -> AsyncIterator[str]:
-        """Stream one LLM, yielding its deltas.
-
-        Leaves a verdict on ``outcome`` when it died before the first delta — the
-        slot is settled and journaled by then, so only the next candidate is left
-        to decide.
-        """
+        """Stream one LLM, yielding its deltas. Leaves a verdict on ``outcome`` when it
+        died before the first delta; the slot is settled and journaled by then."""
         attempt = self._new_attempt(config, operation=operation, trace_id=trace_id)
         backoff = self._backoff(config.name)
         if self._http is None:
@@ -604,10 +580,9 @@ class Router:
         budget_bound: bool,
         started: bool,
     ) -> None:
-        """Settle a failed streaming attempt through the shared failure surface.
-        Before the first delta it reports the same verdict a ``chat`` attempt
-        would; once deltas have reached the caller nothing can rescue it, so it
-        raises ``StreamInterruptedError`` instead."""
+        """Settle a failed streaming attempt through the shared failure surface: the
+        same verdict a ``chat`` attempt would give, or ``StreamInterruptedError``
+        once deltas have already reached the caller."""
         verdict = _classify(exc, budget_bound=budget_bound and not started)
         await self._dispose(attempt, verdict, backoff=backoff, timeout=timeout)
         if started:
@@ -623,10 +598,8 @@ class Router:
             await self._store.record(call)
         except Exception:  # noqa: BLE001
             logger.exception("llmbroker: store.record failed")
-        # Guarded separately, and reached even when the write above failed: a journal
-        # nobody can write must not also blind the pool to what just happened — the
-        # cooldown streak and the dead-key drop are what keep the next call off a
-        # model this one proved unusable.
+        # Guarded separately and reached even when the write failed: a journal nobody
+        # can write must not also blind the pool to what just happened.
         if self._learner is not None:
             try:
                 await self._learner.observe(call)

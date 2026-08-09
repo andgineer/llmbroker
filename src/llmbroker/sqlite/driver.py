@@ -1,9 +1,6 @@
-"""SQLite ``Driver``: renders DDL and DML from ``backends.spec.TABLES``.
-
-One known installation, upgraded manually by its operator — on a fresh
-database the schema is created and stamped; on a version-marker mismatch
-``ensure_schema`` fails fast instead of attempting an in-place migration.
-"""
+"""SQLite ``Driver``: renders DDL and DML from ``backends.spec.TABLES``. Schema
+policy — create-if-missing, fail fast on a version-marker mismatch — is in
+``rules/backends.md``."""
 
 import json
 from collections.abc import AsyncIterator
@@ -112,9 +109,8 @@ async def _header_version(db: aiosqlite.Connection) -> int:
 async def _apply_ddl(db: aiosqlite.Connection) -> None:
     marker_table = await _has_table(db, _VERSION_TABLE)
     marker = await _marker_version(db) if marker_table else None
-    # The file header carries llmbroker's version only in a database an older
-    # release already wrote; with no llmbroker tables in the file, a non-zero
-    # value is far more likely to be the embedding application's own.
+    # The file header carries llmbroker's version only where an older release wrote
+    # it; with no llmbroker tables, a non-zero value is likely the application's own.
     legacy = 0
     if not marker_table and await _has_store_tables(db):
         legacy = await _header_version(db)
@@ -151,9 +147,8 @@ class SqliteDriver:
 
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)
-        # A ":memory:" database only exists for the lifetime of one connection —
-        # opening a fresh connection per call (the file-path pattern) would give
-        # each call its own empty database. Hold one connection open instead.
+        # A ":memory:" database lives only as long as one connection, so the
+        # file-path pattern would give every call its own empty database.
         self._memory_conn: aiosqlite.Connection | None = None
 
     @asynccontextmanager

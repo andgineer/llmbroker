@@ -73,6 +73,12 @@ source would have supplied — passing an already-constructed protocol object as
 the first argument skips dispatch entirely. The single-port secrets backends
 stay override-only.
 
+**A string moves the storage; an object moves the ownership.** A connection
+string says only where llmbroker keeps its own installation, so it keeps
+following the curated preset by default. A registry object is content the host
+owns, and there what the installation follows must be stated
+([`lineup-refresh.md`](lineup-refresh.md)).
+
 **The home directory.** Everything llmbroker caches or remembers on its own —
 the fetched preset text, the paid catalog, the refresh-check records — lives in
 one directory: machine-scoped by default, overridable per broker and per

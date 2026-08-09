@@ -65,24 +65,9 @@ def _weight_from_metadata(raw: object, name: str) -> float:
 
 @dataclass(frozen=True, slots=True)
 class LLMConfig:
-    """Pure stored config for one LLM — no secret, safe to expose.
-
-    Nothing but ``sync`` writes the registry, and which entries a sync keeps is
-    recomputed every time — so there is no retention or curation marker here.
-
-    ``custom`` carries the entry's whole role. A ``custom=True`` entry is
-    user-owned: ``sync`` never prunes it, the router never reaches it, and it is
-    called by name through ``direct``. Everything else is the curated pool, which
-    takes no user entries — so pool membership is not a field, it is ``not
-    custom``.
-
-    ``alias`` is the entry's eternal handle, set only on custom entries: ``name``
-    carries the model version and is rewritten by a catalog refresh, the alias
-    never is.
-
-    ``weight`` is a curated prior on the quality rating this entry is expected to
-    earn, on the same ``0..1`` scale as a host rating — not a routing hard-order.
-    """
+    """Pure stored config for one LLM — no secret, safe to expose. ``custom`` is
+    reached by name and never routed onto, ``synced`` was written by a sync and so is
+    rewritable by one; the two are independent axes."""
 
     name: str
     base_url: str
@@ -90,6 +75,7 @@ class LLMConfig:
     api_key_ref: str
     parallel: int | None = None
     custom: bool = False
+    synced: bool = False
     alias: str | None = None
     weight: float = 0.0
 
@@ -103,6 +89,8 @@ class LLMConfig:
         >>> followed = LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", alias="opus")
         >>> followed.to_metadata()
         {'alias': 'opus'}
+        >>> LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", synced=True).to_metadata()
+        {'synced': True}
         >>> LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", weight=0.7).to_metadata()
         {'weight': 0.7}
         """
@@ -111,6 +99,8 @@ class LLMConfig:
             metadata["parallel"] = self.parallel
         if self.custom:
             metadata["custom"] = True
+        if self.synced:
+            metadata["synced"] = True
         if self.alias is not None:
             metadata["alias"] = self.alias
         if self.weight:
@@ -133,6 +123,8 @@ class LLMConfig:
         parallel = raw_parallel if isinstance(raw_parallel, int) else None
         raw_custom = metadata.get("custom")
         custom = raw_custom if isinstance(raw_custom, bool) else False
+        raw_synced = metadata.get("synced")
+        synced = raw_synced if isinstance(raw_synced, bool) else False
         raw_alias = metadata.get("alias")
         alias = raw_alias if isinstance(raw_alias, str) else None
         return cls(
@@ -142,6 +134,7 @@ class LLMConfig:
             api_key_ref=api_key_ref,
             parallel=parallel,
             custom=custom,
+            synced=synced,
             alias=alias,
             weight=_weight_from_metadata(metadata.get("weight"), name),
         )
@@ -194,13 +187,8 @@ class Retirement:
 @dataclass(frozen=True, slots=True)
 class SyncReport:
     """What one sync did, as raw facts — no severity verdict, the host derives that.
-
-    ``kept`` names entries whose provider the arriving lineup no longer carries and
-    that this installation can still call; they keep routing and are recomputed on
-    every sync, never stored. ``keys_visible`` says whether a missing key was
-    evidence at all at this merge site, and ``keys_scoped`` which of the two ways
-    it was not.
-    """
+    ``kept`` names entries the arriving lineup dropped and this installation can still
+    call; they are recomputed on every sync, never stored."""
 
     source: str
     applied: bool
@@ -237,14 +225,9 @@ class Usage:
 
 @dataclass(frozen=True, slots=True)
 class Call:
-    """One append-only journal record: a call attempt (``kind="call"``) or a
-    self-contained quality rating (``kind="quality"``), interleaved in one stream.
-
-    A quality record fills only ``llm_name``, ``operation``, ``quality_score``,
-    ``ts``, and optionally ``call_id`` (an opaque host-UI passthrough — never
-    joined against the call row it rates); ``status`` is ``None`` exactly on
-    quality records.
-    """
+    """One append-only journal record: a call attempt or a self-contained quality
+    rating, interleaved in one stream. ``status`` is ``None`` exactly on a quality
+    record, whose ``call_id`` is an opaque passthrough that is never joined on."""
 
     id: str
     llm_name: str
@@ -330,12 +313,9 @@ def check_weight(weight: float) -> None:
 
 
 def check_unique_aliases(configs: "list[LLMConfig]") -> None:
-    """Reject a registry whose aliases do not name exactly one entry each.
-
-    Enforced by every registry on read, not just the one that parses a file: a
-    lookup by alias returns the first match, so a duplicate silently resolves to
-    one of two models instead of raising.
-    """
+    """Reject a registry whose aliases do not name exactly one entry each. Enforced on
+    every read, not just a file parse: a lookup returns the first match, so a
+    duplicate silently resolves to one of two models."""
     seen: set[str] = set()
     for cfg in configs:
         if cfg.alias is None:
@@ -373,12 +353,9 @@ class LLMStats:
 
 @dataclass(frozen=True, slots=True)
 class LLMSnapshot:
-    """Frozen point-in-time materialization of one LLM: raw facts, no status enum
-    or precedence rule — the host derives whatever presentation it wants.
-
-    ``demoted_operations`` may contain ``None``: the bucket for calls made without
-    an ``operation=`` label.
-    """
+    """Frozen point-in-time materialization of one LLM: raw facts, no status enum.
+    ``demoted_operations`` may contain ``None`` — the bucket for calls made with no
+    ``operation=`` label."""
 
     config: LLMConfig
     disabled: bool
@@ -432,12 +409,8 @@ class PoolSnapshot(Mapping[str, LLMSnapshot]):
     @property
     def direct_missing_keys(self) -> tuple[PendingKey, ...]:
         """Refs the host's own ``direct``-reachable models want and cannot resolve.
-
-        Kept apart from ``missing_keys``: those count the pool's failover capacity,
-        and a model that is never routed can neither degrade it nor be repaired by
-        it. A UI still has to be able to say which key is missing and where it
-        comes from, which is the whole of what this carries.
-        """
+        Kept apart from ``missing_keys``, which counts the pool's failover capacity —
+        a model that is never routed can neither degrade nor repair it."""
         return self._direct_missing_keys
 
     @property

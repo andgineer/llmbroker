@@ -46,8 +46,8 @@ class _NoSecrets:
         raise KeyError(ref)
 
 
-def _cfg(name, url="https://x/v1", model="m"):
-    return LLMConfig(name=name, base_url=url, model=model, api_key_ref="K")
+def _cfg(name, url="https://x/v1", model="m", *, synced=True):
+    return LLMConfig(name=name, base_url=url, model=model, api_key_ref="K", synced=synced)
 
 
 # ── apply(): writes the merged lineup, exactly as given ──────────────────────
@@ -290,6 +290,7 @@ async def test_broker_sync_mirrors_preset_into_sqlite_registry(tmp_path, served)
         registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
         store=InMemoryStore(),
+        sync=None,
     )
     await broker.sync("freetier")
     await broker.aclose()
@@ -303,6 +304,7 @@ async def test_broker_provision_without_sync_raises(tmp_path):
     broker = AsyncBroker(
         registry=SqliteRegistry(db),
         store=InMemoryStore(),
+        sync=None,
     )
     try:
         await broker.count()
@@ -318,6 +320,7 @@ async def test_broker_sync_then_provision_succeeds(tmp_path, served):
         registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
         store=InMemoryStore(),
+        sync=None,
     )
     await broker.sync("freetier")
     async with broker:
@@ -331,6 +334,7 @@ async def test_broker_sync_seeds_disabled_map(tmp_path, served):
         registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
         store=SqliteStore(db),
+        sync=None,
     )
     await broker.sync("freetier")
     await broker.aclose()
@@ -350,6 +354,7 @@ async def test_manual_latch_survives_sync_reseed(tmp_path, served):
         registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
         store=SqliteStore(db),
+        sync=None,
     )
     await broker.sync("freetier")
     async with broker:

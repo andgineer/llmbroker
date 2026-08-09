@@ -15,8 +15,8 @@ deleted the hand-named config file as a configuration form, and argued from the 
 is a boundary rather than a loss; that claim no longer holds for this batch as a whole.
 **Plans 1-8 are implemented and waiting on the maintainer — 1, 6, 7 and 8 are reviewed, and 6 was
 reviewed twice: its second round reversed the two-file split it introduced, for the reasons in its
-own `Review round 2` section. The next one to take is plan 9**, which came out of plan 8's review.
-A row stays here, with its status,
+own `Review round 2` section. Plan 9 is implemented and awaiting review; **the next one to take is
+plan 10**. A row stays here, with its status,
 until the maintainer asks for it to go after merge; "take the first row" means the first row still
 marked `queued`.
 
@@ -32,7 +32,7 @@ marked `queued`.
 | 6 | [lineup-file-ownership](lineup-file-ownership.md) | **implemented, reviewed ×2** | — | 5 *(implemented)* | stop assembling the config file as text; then split `upstream.py`. Largest plan. Round 2 reversed the file split: the lineup file has one author |
 | 7 | [lineup-refresher](lineup-refresher.md) | **implemented, reviewed** | — | 6 *(implemented)* | written in full against 6's result; **ships with 6** |
 | 8 | [curated-source-only](curated-source-only.md) | **implemented** | — | 6, 7 *(implemented)* | **removes a form**, not a simplification: a lineup arrives only as a curated preset name, and no host names a config file. Taken before the skeletons — they would otherwise have tidied code this deletes |
-| 9 | [registry-ownership](registry-ownership.md) | queued | — | 8 *(implemented)* | **fixes a trap 8 created**: a sync destroys entries the host put in its own registry. An entry records who wrote it, and a host-built registry object must state what it follows |
+| 9 | [registry-ownership](registry-ownership.md) | **implemented** | — | 8 *(implemented)* | **fixes a trap 8 created**: a sync destroys entries the host put in its own registry. An entry records who wrote it, and a host-built registry object must state what it follows |
 | 10 | [model-list-vocabulary](model-list-vocabulary.md) | queued | — | 9 | text only, no runtime change: `lineup` is a coined word that reaches the reader undefined — docs and program strings say "the model list" |
 | 11 | [sse-chunk-shape](sse-chunk-shape.md) | queued | — | 2 *(implemented)* | **fixes a spec divergence**: a non-object SSE payload escapes the pool raw instead of failing over. Small, and independent of everything |
 | 12 | [models-purity](models-purity.md) | queued | — | 6 *(implemented)* | **skeleton** — `models.py` logs, formats prose, and holds the validators |

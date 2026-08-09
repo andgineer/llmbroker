@@ -1,10 +1,6 @@
-"""Postgres ``Driver``: renders DDL and DML from ``backends.spec.TABLES``.
-
-The caller owns the pool (``pool = await asyncpg.create_pool(dsn)``); ``aclose()``
-is a no-op. One known installation, upgraded manually — on a fresh database the
-schema is created and stamped; on a version-marker mismatch ``ensure_schema``
-fails fast instead of attempting an in-place migration.
-"""
+"""Postgres ``Driver``: renders DDL and DML from ``backends.spec.TABLES``. Schema
+policy — create-if-missing, fail fast on a version-marker mismatch — is in
+``rules/backends.md``."""
 
 import asyncio
 import json
@@ -100,13 +96,9 @@ async def _apply_ddl(conn: asyncpg.pool.PoolConnectionProxy) -> None:
 
 
 class PostgresDriver:
-    """One asyncpg pool backing every ``llmbroker_*`` table.
-
-    Pass a pre-built ``pool`` when the caller owns it (``aclose()`` stays a
-    no-op, unchanged contract). Pass ``dsn=`` instead to let the driver create
-    and own its own pool lazily on first use (needed because pool creation is
-    async but this constructor is not) — ``aclose()`` then closes it.
-    """
+    """One asyncpg pool backing every ``llmbroker_*`` table. A pre-built ``pool`` stays
+    the caller's and ``aclose()`` is a no-op; with ``dsn=`` the driver creates its own
+    lazily — pool creation is async and this constructor is not — and closes it."""
 
     def __init__(self, pool: asyncpg.Pool | None = None, *, dsn: str | None = None) -> None:
         if pool is None and dsn is None:

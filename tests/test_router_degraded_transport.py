@@ -179,6 +179,7 @@ def test_oversized_token_count_still_reaches_a_real_journal(tmp_path):
             registry=FileRegistry(config),
             secrets=DictSecrets({"K": "k"}),
             store=SqliteStore(str(tmp_path / "s.db")),
+            sync=None,
         )
         async with broker:
             broker._router._http = _mock_client(lambda request: httpx.Response(200, json=body))

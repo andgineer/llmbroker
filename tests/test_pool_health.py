@@ -30,6 +30,7 @@ def _broker(tmp_path, *entries, present=(), keys=""):
         registry=_registry(tmp_path, *entries, keys=keys),
         secrets=DictSecrets({ref: "sk" for ref in present}),
         store=InMemoryStore(),
+        sync=None,
     )
 
 
@@ -135,6 +136,7 @@ async def test_recovery_logs_exactly_one_info(tmp_path, caplog):
         registry=_registry(tmp_path, ("a", "A"), ("b", "B")),
         secrets=secrets,
         store=InMemoryStore(),
+        sync=None,
     )
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         async with broker:
@@ -154,6 +156,7 @@ async def test_a_healthy_pool_that_loses_a_provider_alarms(tmp_path, caplog):
         registry=registry,
         secrets=DictSecrets({"A": "sk", "B": "sk"}),
         store=InMemoryStore(),
+        sync=None,
     )
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         async with broker:
@@ -174,6 +177,7 @@ async def test_the_last_provider_going_is_its_own_alarm(tmp_path, caplog):
         registry=registry,
         secrets=DictSecrets({"A": "sk"}),
         store=InMemoryStore(),
+        sync=None,
     )
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         async with broker:
@@ -190,7 +194,7 @@ async def test_gaining_a_further_provider_is_not_worth_a_line(tmp_path, caplog):
     """Every healthy count is one state: recovery is news, a fourth quota is not."""
     registry = _registry(tmp_path, ("a", "A"), ("b", "B"))
     secrets = DictSecrets({"A": "sk", "B": "sk"})
-    broker = AsyncBroker(registry=registry, secrets=secrets, store=InMemoryStore())
+    broker = AsyncBroker(registry=registry, secrets=secrets, store=InMemoryStore(), sync=None)
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         async with broker:
             await broker.count()
@@ -214,6 +218,7 @@ async def test_a_registry_that_pools_nothing_is_not_a_degraded_pool(tmp_path, ca
         registry=FileRegistry(target),
         secrets=DictSecrets({"P": "sk"}),
         store=InMemoryStore(),
+        sync=None,
     )
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         async with broker:
@@ -231,6 +236,7 @@ async def test_a_pool_that_empties_out_does_not_report_a_recovery(tmp_path, capl
         registry=registry,
         secrets=DictSecrets({"A": "sk"}),
         store=InMemoryStore(),
+        sync=None,
     )
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         async with broker:
@@ -249,6 +255,7 @@ async def test_a_revoked_key_deactivates_its_provider(tmp_path, caplog):
         registry=_registry(tmp_path, ("a", "A"), ("b", "B")),
         secrets=secrets,
         store=InMemoryStore(),
+        sync=None,
     )
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         async with broker:
@@ -280,6 +287,7 @@ async def test_a_fully_keyed_pool_never_reads_the_key_table(tmp_path):
         registry=registry,
         secrets=DictSecrets({"A": "sk", "B": "sk"}),
         store=InMemoryStore(),
+        sync=None,
     ) as broker:
         await broker.count()
         await broker._catalog.resync()

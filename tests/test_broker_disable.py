@@ -17,7 +17,7 @@ def _lineup(name: str) -> str:
 
 
 def _cfg(name: str = "p1") -> LLMConfig:
-    return LLMConfig(name=name, base_url="https://x/v1", model="m", api_key_ref="K")
+    return LLMConfig(name=name, base_url="https://x/v1", model="m", api_key_ref="K", synced=True)
 
 
 def _call(call_id: str, name: str = "p1", operation: str | None = None) -> Call:
@@ -35,6 +35,7 @@ async def test_persisted_manual_latch_applied_at_provision(tmp_path):
         registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
         store=SqliteStore(db),
+        sync=None,
     ) as broker:
         assert broker._pool.is_disabled("p1")
 
@@ -51,6 +52,7 @@ async def test_disable_enable_llm_round_trip_preserves_quality_window(tmp_path):
         secrets=DictSecrets({"K": "key"}),
         store=SqliteStore(db),
         optimize=opt,
+        sync=None,
     ) as broker:
         for i in range(5):
             call = _call(f"c{i}", operation="summarize")
@@ -86,6 +88,7 @@ async def test_disable_enable_llm_without_optimizer_still_persists(tmp_path):
         secrets=DictSecrets({"K": "key"}),
         store=SqliteStore(db),
         optimize=False,
+        sync=None,
     ) as broker:
         assert broker._optimizer is None
 
@@ -112,6 +115,7 @@ async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path, m
         registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
         store=SqliteStore(db),
+        sync=None,
     ) as broker:
         await broker.disable_llm("p1")
         assert broker._pool.is_disabled("p1")

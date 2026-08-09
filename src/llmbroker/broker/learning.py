@@ -1,11 +1,6 @@
-"""``Learner``: the observer of the journal stream.
-
-Drives ``Optimizer`` bookkeeping (backoff counters, quality windows) from the
-live event stream, and periodically rebuilds derived state — quality-window
-verdicts, shared cooldowns, budget bounds, snapshot metrics, registry
-membership, and the admin disabled-verdict map — from one cached read of the
-journal tail.
-"""
+"""``Learner``: the observer of the journal stream. Drives the optimizer's
+bookkeeping from live events, and periodically re-derives everything else from one
+cached read of the journal tail."""
 
 import logging
 import time
@@ -46,14 +41,9 @@ def budget_bounds_from_calls(
     *,
     since: datetime,
 ) -> dict[str, tuple[float, datetime]]:
-    """Per model, the largest budget it failed to answer within since ``since``, in
-    seconds, paired with when that miss was observed.
-
-    Two things retire a miss, and both are needed. A model's own success retires
-    everything older than it — past that row the misses describe a state the model
-    has left. ``since`` retires the rest on the clock, because a model that is
-    never picked never produces a success, and a bound nothing can clear would
-    invert the curated order for as long as the row stayed in the tail.
+    """Per model, the largest budget it failed to answer within since ``since``, and
+    when. Two things retire a miss and both are needed: the model's own success, and
+    the clock — a model never picked never succeeds, so nothing else would clear it.
     """
     bounds: dict[str, tuple[float, datetime]] = {}
     answered: set[str] = set()
@@ -105,9 +95,8 @@ class Learner:
         elif call.status == CallStatus.OK:
             self._opt.on_success(name)
         elif call.status == CallStatus.ERROR:
-            # A failure that cooled or dropped nothing has no shared state to
-            # propagate, so it must not buy a forced journal re-read: a spent wait
-            # budget is caller-triggered and would rebuild on every such call.
+            # A failure that cooled or dropped nothing has nothing to propagate, and a
+            # spent wait budget would otherwise rebuild on every such call.
             shared = True
             if call.http_status is not None and is_auth_failure(call.http_status):
                 cfg = self._pool.configs.get(name)
@@ -128,14 +117,9 @@ class Learner:
             await self.maybe_rebuild(force=shared)
 
     async def maybe_rebuild(self, *, force: bool = False, resync_registry: bool = True) -> None:
-        """Re-derive score windows, shared cooldowns, budget bounds and metrics from
-        one cached tail read; re-read the registry and disabled map so edits from
-        other processes/nodes propagate. Debounced to at most once per
-        ``_REBUILD_TTL`` unless ``force``.
-
-        ``resync_registry=False`` skips the registry re-read — used for the
-        provision-time warm start, where ``Catalog.provision()`` just resynced it.
-        """
+        """Re-derive everything from one cached tail read, and re-read the registry and
+        disabled map so other nodes' edits propagate. Debounced unless ``force``;
+        ``resync_registry=False`` is for the warm start, which just resynced."""
         now = time.monotonic()
         if not force and now < self._next_rebuild:
             return
@@ -149,12 +133,9 @@ class Learner:
         await self._resync_disabled()
 
     async def _safe_resync_registry(self) -> None:
-        """Picking up another process's edits must never fail the call that carried
-        it here: this runs off the journal write, so anything raised would surface
-        out of the user's own ``ask`` — and a rate limit, the commonest trigger of
-        all, is exactly what the pool exists to absorb. A registry nobody can read
-        leaves the pool as it is.
-        """
+        """Picking up another process's edits must never fail the call that carried it
+        here — this runs off the journal write, so anything raised would surface out of
+        the user's own ``ask``."""
         try:
             await self._resync_registry()
         except Exception:  # noqa: BLE001 - a background re-read may not break a request

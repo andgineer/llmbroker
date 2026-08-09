@@ -8,14 +8,9 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class TableSpec:
-    """One store's shape: name, identity columns, and portable column types.
-
-    Every key column is a single non-null text column: registry (``name``,),
-    disabled (``name``,), secrets (``ref``,) — the user scope rides inside the
-    ref string, so no scope columns exist anywhere. The calls journal has no
-    keyed access (append-only); its ``id`` column is listed for completeness
-    and uniqueness only.
-    """
+    """One store's shape: name, identity columns, and portable column types. Every
+    key column is a single non-null text column, and the user scope rides inside the
+    ref string rather than in a column of its own."""
 
     name: str
     key: tuple[str, ...]

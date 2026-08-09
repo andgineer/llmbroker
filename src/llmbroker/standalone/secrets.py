@@ -1,9 +1,6 @@
-"""Env-var and in-memory secrets resolvers — read-only, no external backend.
-
-``Secrets()`` resolves ``api_key_ref`` from ``os.environ``, optionally falling
-back to a ``.env`` file; ``DictSecrets`` from a mapping. Both are read-only. A
-plain callable is accepted and adapted.
-"""
+"""Read-only secrets resolvers with no external backend: ``Secrets`` over
+``os.environ`` with an optional ``.env`` behind it, ``DictSecrets`` over a mapping.
+A plain callable is accepted and adapted."""
 
 import inspect
 import os
@@ -42,12 +39,9 @@ def parse_env_file(text: str) -> dict[str, str]:
 
 
 class Secrets:
-    """Read-only env-backed secrets resolver (the default battery).
-
-    ``env_file`` adds a fallback consulted only when the real environment has no
-    such variable — an exported value always wins, and a missing file is simply
-    an empty fallback. A blank value, exported or in the file, counts as absent.
-    """
+    """Read-only env-backed secrets resolver (the default battery). ``env_file`` is
+    consulted only where the real environment has no such variable, and a blank value
+    counts as absent either way."""
 
     def __init__(self, env_file: str | Path | None = None) -> None:
         self._env_file = Path(env_file) if env_file is not None else None

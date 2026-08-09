@@ -73,6 +73,7 @@ def test_the_platform_directory_is_used_when_no_env_var_is_set(tmp_path, monkeyp
 
 
 def _broker(tmp_path, **kwargs) -> AsyncBroker:
+    kwargs.setdefault("sync", None)
     return AsyncBroker(
         registry=SqliteRegistry(str(tmp_path / "b.db")),
         secrets=DictSecrets({}),

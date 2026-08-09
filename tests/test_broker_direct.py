@@ -54,6 +54,7 @@ def _broker(tmp_path, secrets=None) -> AsyncBroker:
         registry=_registry(tmp_path),
         secrets=secrets or DictSecrets({"K": "test"}),
         store=FileStore(tmp_path / "store"),
+        sync=None,
     )
 
 
@@ -216,6 +217,7 @@ def test_sync_broker_direct_ask(tmp_path):
             registry=_registry(tmp_path),
             secrets=DictSecrets({"K": "test"}),
             store=FileStore(tmp_path / "store"),
+            sync=None,
         ) as broker:
             result = broker.direct("opus").ask("hi")
             with pytest.raises(PoolModelError):

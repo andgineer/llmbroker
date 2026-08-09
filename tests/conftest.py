@@ -229,6 +229,7 @@ class Stack:
     persistent: bool
 
     def make_broker(self, **kw) -> AsyncBroker:
+        kw.setdefault("sync", None)
         return AsyncBroker(
             self.registry,
             secrets=self.secrets,

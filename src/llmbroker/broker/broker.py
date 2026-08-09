@@ -1,25 +1,5 @@
-"""The ``AsyncBroker`` façade over the LLM pool and its collaborators.
-
-``AsyncBroker`` owns the external ports (registry, secrets, store),
-lazily provisions the live ``LLMPool`` once, and delegates each operation to
-the collaborator that owns it:
-
-* ``Catalog``       — pool membership in sync with the registry; ``apply``
-  writes a merged lineup into it (the only registry write path)
-* ``Router``        — routing a completion over the pool with failover
-* ``PoolView``       — read-only views of current pool state
-* ``Learner``       — quality windows, dead-key drops, and the debounced
-  journal rebuild feeding shared cooldowns, snapshot metrics, and the admin
-  disabled-verdict map (only wired when ``optimize`` is truthy)
-* ``LineupRefresher`` — the lineup this installation follows: when to look
-  upstream, and the merge that applies what arrived (``sync`` delegates to it)
-
-The call journal (``calls``) is a thin pass-through to a queryable store
-backend; each backend self-purges records past its retention horizon. There is
-no alerts API: the few human-actionable events (dead key, demotion flip,
-under-provisioned pool) are log lines; hosts poll ``snapshot()`` for current
-raw state or hook the ``llmbroker`` logger.
-"""
+"""The ``AsyncBroker`` façade: it owns the three ports, provisions the live pool
+once, and delegates each operation to the collaborator that owns it."""
 
 import asyncio
 import logging
@@ -87,6 +67,18 @@ _DEFAULT_SYNC_INTERVAL = 86_400.0  # seconds
 _DEFAULT_SYNC_SOURCE = "freetier"
 
 
+class _SyncDefault:
+    """``sync=`` left unstated — distinct from ``None``, which follows nothing."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<default>"
+
+
+_SYNC_DEFAULT = _SyncDefault()
+
+
 def _check_broker_args(scope: str | None, sync_interval: float) -> None:
     if scope == "":
         raise ValueError("scope must not be empty string; use None for unscoped")
@@ -94,33 +86,24 @@ def _check_broker_args(scope: str | None, sync_interval: float) -> None:
         raise ValueError("sync_interval must not be negative")
 
 
+def _resolve_sync(sync: str | None | _SyncDefault, registry: object) -> str | None:
+    """What this installation follows, refusing to guess for a registry the host built."""
+    if not isinstance(sync, _SyncDefault):
+        return sync
+    if registry is None or isinstance(registry, (str, Path)):
+        return _DEFAULT_SYNC_SOURCE
+    raise ValueError(
+        "a registry object holds a lineup this installation owns, so sync= must say"
+        f" what it follows: sync={_DEFAULT_SYNC_SOURCE!r} to keep following the curated"
+        " preset, or sync=None to follow nothing",
+    )
+
+
 class AsyncBroker:
     """Façade over the LLM pool: route completions, inspect state, edit the catalog.
 
-    ``registry`` is the data source, and *no* source is a source: with none given
-    the broker runs the curated free pool, resolving keys from the environment and
-    keeping its lineup and journal in the home directory.
-
-    ``direct`` declares paid models in two forms and no others: a paid-catalog
-    alias (``"opus"``), whose version llmbroker tracks, or a full ``LLMConfig``,
-    whose version the caller tracks. They are reached with ``broker.direct(...)``
-    and are never routed by the pool. Nothing is written for them — they are
-    re-resolved at every provision, which is what keeps an alias current.
-
-    ``have_keys`` declares refs this installation has a key for but the broker
-    cannot probe — per-user keys behind ``scope``, a secret injected only in
-    production. It is a promise, and it counts only when a sync weighs whether an
-    entry is still callable here: it never makes a model routable.
-
-    ``sync`` names the curated preset this installation follows — ``"freetier"`` by
-    default — and it is kept current on the ``sync_interval`` clock: a time gate
-    decides whether to go to the network at all, an identity gate decides whether
-    what arrived changes anything. The check is lazy on activity, so an idle broker
-    performs no I/O; it never raises, and its outcome is on ``last_sync_report``.
-    ``sync=None`` follows nothing, for a registry filled by other means.
-
-    ``home`` overrides where this broker keeps what llmbroker caches on its own;
-    two brokers given different ones share nothing.
+    Every constructor argument is documented in ``docs/`` — see "Usage" for the
+    source, ``sync`` and ``home``, and "Direct model calls" for ``direct``.
     """
 
     def __init__(  # noqa: PLR0913
@@ -132,12 +115,13 @@ class AsyncBroker:
         optimize: bool | Optimizer = True,
         scope: str | None = None,
         have_keys: bool | Sequence[str] = False,
-        sync: str | None = _DEFAULT_SYNC_SOURCE,
+        sync: str | None | _SyncDefault = _SYNC_DEFAULT,
         sync_interval: float = _DEFAULT_SYNC_INTERVAL,
         home: str | Path | None = None,
         direct: Sequence[str | LLMConfig] = (),
     ) -> None:
         _check_broker_args(scope, sync_interval)
+        source = _resolve_sync(sync, registry)
         self._home = home_dir(home)
         source_secrets: SecretsProtocol | None = None
         source_store: StoreProtocol | None = None
@@ -203,7 +187,7 @@ class AsyncBroker:
             store,
             self._probe,
             self._presets,
-            source=sync,
+            source=source,
             interval=sync_interval,
             home=self._home,
             declared=self._declared,
@@ -228,15 +212,8 @@ class AsyncBroker:
 
     async def _resolve_declared(self) -> DeclaredModels:
         """Re-resolve ``direct=``, keeping the resolution already in use when the
-        catalog cannot be read or no longer carries an alias.
-
-        The first resolution raises — a typo must be loud at start-up, and there is
-        nothing to fall back to. Every later one is a refresh, and a refresh that
-        cannot see upstream has nothing to say about where an alias points: the
-        same rule the stored ``[[custom]]`` half already follows. Without it a
-        catalog that dropped an alias, or a fetch that failed where nothing is
-        writable, would break calls the previous resolution was serving fine.
-        """
+        catalog cannot be read or no longer carries an alias. Only the first
+        resolution raises — see ``rules/direct-aliases.md``."""
         previous = self._last_declared
         try:
             resolved = await resolve_declared(
@@ -278,8 +255,8 @@ class AsyncBroker:
                             resync_registry=False,
                         )
                     self._provisioned = True
-        # Outside the lock on both paths: a refresh calls sync(), which touches the
-        # catalog, and inside the lock the catalog is mid-provision.
+        # Outside the lock: a refresh calls sync(), and inside it the catalog is
+        # mid-provision.
         self._refresher.schedule()
 
     @property
@@ -289,17 +266,9 @@ class AsyncBroker:
         return self._refresher.last_report
 
     async def sync(self, source: str) -> SyncReport:
-        """Merge a curated lineup into the registry and return what it did.
-
-        ``source`` is a curated preset name (``"freetier"``), fetching which is the
-        only networked operation in the library. An entry the lineup
-        drops is removed only when the same provider replaces it, when no key for
-        it exists here, or when this installation's journal proves it dead — so a
-        sync can never shrink the set of models this installation can actually
-        call. Explicit and idempotent: a merge whose result equals what is already
-        there writes nothing, applies nothing and logs at DEBUG. If the pool is
-        already provisioned a real change takes effect immediately.
-        """
+        """Merge the curated preset named by ``source`` into the registry and
+        return what it did. Idempotent, and it never costs this installation a
+        model it can call — see ``rules/sync-merge.md``."""
         return await self._refresher.sync(source)
 
     async def aclose(self) -> None:
@@ -371,12 +340,8 @@ class AsyncBroker:
         wait: float | None = None,
     ) -> AsyncIterator[str]:
         """Route a completion over the pool and yield text deltas as they arrive.
-
-        Fails over between models exactly like ``ask`` until the first delta;
-        after it the answer is already partly the caller's, so a death raises
-        ``StreamInterruptedError``. Async-only — the sync ``Broker`` has no
-        counterpart.
-        """
+        Fails over like ``ask`` until the first delta, then raises
+        ``StreamInterruptedError``. Async-only."""
         await self.ensure_pool()
         try:
             async with aclosing(
@@ -403,15 +368,10 @@ class AsyncBroker:
         *,
         name: str | None = None,
     ) -> AsyncDirectClient:
-        """Return a direct client for one of your own ``[[custom]]`` models.
+        """A client for exactly one model of your own — no pool, no failover.
 
-        Bypasses the pool and its failover entirely: the returned client calls
-        exactly this model and can stream. Pass exactly one of ``alias`` — the
-        eternal handle a catalog refresh re-points at the successor version — or
-        ``name=``, which pins the exact version and so fails loudly once a
-        refresh has moved on. Raises ``PoolModelError`` for a preset-managed pool
-        model, ``UnknownModelError`` if nothing matches, ``MissingKeyError`` if
-        the key is unset.
+        Takes exactly one of ``alias`` or ``name=``; raises ``PoolModelError``,
+        ``UnknownModelError`` or ``MissingKeyError``. See ``docs/`` "Direct model calls".
         """
         cfg, key = await self._resolve_direct(alias, name=name)
         if self._direct_http is None:
@@ -540,24 +500,16 @@ class AsyncBroker:
         operation: str | None = None,
     ) -> Mapping[str, LLMStats]:
         """Per-model counts of call records over a window, keyed by model name.
-
-        ``limit`` caps rows read, guarding against an anomalous window (a retry
-        storm); it is not the window itself. When the totals sum to ``limit`` the
-        window may be truncated, and ``first_at`` is then the oldest row *read*
-        rather than the oldest in the window. Never provisions the pool.
-        """
+        ``limit`` caps rows read, not the window: totals summing to it mean the
+        window may be truncated. Never provisions the pool."""
         rows = await self.calls(limit=limit, since=since, kind="call", operation=operation)
         return stats_from_calls(rows)
 
     def _maybe_alert_underprov(self, exc: NoLLMAvailableError) -> None:
-        """Fire when zero keyed configs are routable — the genuine "no usable models" alarm.
+        """Fire when zero *keyed* configs are routable — the genuine alarm.
 
-        A keyless config is never enqueued/acquired/cooled (see the partial-key framing
-        in the key-help rules), so it must be excluded here: with even one keyless config
-        present, an unfiltered check could never observe "all non-AVAILABLE", masking
-        the real alarm even when every *keyed* config is COOLING. Only a ``"timeout"``
-        reason means the pool is merely temporarily exhausted; every other reason
-        (no keys, all disabled, empty pool) already logs its own actionable line.
+        Keyless configs are excluded because they are never cooled, so one of them
+        would mask "every keyed model is COOLING"; other reasons log their own line.
         """
         if exc.reason != "timeout":
             return

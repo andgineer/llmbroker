@@ -207,3 +207,99 @@ broker constructor, which all three would otherwise be planned against.
 
 `invoke pre` clean and `python -m pytest` green after each batch. Docker up for
 the testcontainer tests.
+
+## Handover
+
+### Done, as planned
+
+- **Batch 1.** `LLMConfig` gains `synced`, defaulting to *not written by a sync*,
+  serialized into the metadata blob only when true. `parse_lineup` sets it from
+  the section split (`[[llms]]` → synced, `[[custom]]` → not). The DB registries
+  ride the existing `to_metadata`/`from_metadata` pair, so no driver changed.
+- **Batch 2.** `merge_upstream` and `retirement_candidates` partition on `synced`
+  instead of `custom`. Host-stated entries are carried through untouched and
+  appear in no report tuple. The name-clash message now points at the
+  installation's own entry.
+- **Batch 3.** A module-level `_SyncDefault` sentinel (`repr` `<default>`) is the
+  new `sync=` default on both `AsyncBroker` and `Broker`; a registry object with
+  the sentinel raises, naming both ways out.
+- **Batch 4.** Specs and docs below.
+
+### Done differently
+
+- **Test count.** The plan expected ~54 mechanical `sync=None` additions; it was
+  ~160 constructions across 27 files, applied by an AST script and then corrected
+  by hand where a test is *about* the refresh (`test_preset_autorefresh`,
+  `test_broker_sync_knob`, `test_direct_declaration` get `sync="freetier"`).
+  Constructions over a *connection string* were left alone — the default resolves
+  there, and forcing `sync=None` would have silently disabled the refresh those
+  tests measure.
+- **Invariant 4 was rewritten, though the plan did not name it.** It read
+  "Nothing a host declares enters the routed pool. […] an entry is pooled exactly
+  when it is not the host's own" — the second sentence is exactly the drift the
+  plan diagnoses in `mission.md`, in a file loaded on every task. It now reads
+  "nothing a host declares *in code*" and "not one reached by name".
+- **`decisions.md#nothing-declared-enters-the-pool` was narrowed** for the same
+  reason: it blocked "letting a host add its own models to routing", which this
+  plan makes a supported configuration. It now blocks a pool flag and `direct=`
+  reaching the router, and points at the new entry for the registry route.
+- **The identity-gate test is not the scenario the plan describes.** A stored
+  entry differing from the arriving one *only* in who wrote it is a name clash
+  under the new merge, so it is refused before any gate. The property is tested
+  where it actually lives: `synced` is part of `LLMConfig` equality, and it
+  survives the registry round trip.
+- The plan's `SyncReport` note ("`active_before`/`active_after` count the live
+  pool, host entries included") needed no change — both already count every
+  stored entry with a resolvable key.
+
+### Decisions taken during implementation
+
+- **The lineup file still renders on `custom`, not on `synced`.** In a file the
+  two are always each other's negation, and the file cannot express a host-owned
+  pool member — correctly, since the file is llmbroker's own and a host reaches
+  it only through `add-model`. A mixed pool is a database/registry-object shape.
+- **The sentinel is private** (`_SyncDefault`, `_SYNC_DEFAULT`), imported by
+  `sync.py` the way `_DEFAULT_SYNC_INTERVAL` already is. `_DEFAULT_SYNC_SOURCE`
+  stays and is what the error message quotes.
+
+### Upgrade note for the deployed installation
+
+A **database** registry filled by an earlier release has no `synced` marker on
+its rows, so after this change every stored entry reads as host-stated. The next
+sync then refuses with a name clash — the pool keeps serving, but stops
+following the curation. Fix: clear the `llmbroker_registry` rows once and let a
+sync refill them. A **file** installation is unaffected: the section split
+already carries the fact.
+
+### Specs and docs
+
+- `invariants.md` — new entry 22; entry 4 corrected (above).
+- `rules/sync-merge.md` — new "The partition" section; the paragraph describing
+  the trap (a host that wants its own pool left alone stops following the
+  curation) removed.
+- `rules/lineup-refresh.md`, `rules/backends.md`, `rules/direct-aliases.md` —
+  one passage each, as listed in the plan.
+- `mission.md` — both passages rewritten.
+- `decisions.md` — the two entries verbatim, plus the narrowing above.
+- `docs/{en,ru}/usage.md` — the two-worlds table; the `sync=None` warning block
+  deleted. `server.md`, `direct.md` — as listed.
+
+### Gate
+
+`invoke pre` clean. `python -m pytest` with Docker up — 1199 passed, zero
+failures, zero skips.
+
+### Out of plan, on maintainer request (same session)
+
+Docstrings and comments across `src/` were over-long and the rule against that was
+being ignored. Three things landed together, outside plan 9's scope:
+
+1. `CLAUDE.md` gains a **"Comments and docstrings — a hard cap"** subsection under
+   *Code conventions* (it previously sat as the last bullet of *Plan and spec
+   files*, where code work never looks). It states the cap numerically and
+   explicitly overrides "match the surrounding file".
+2. `scripts/check_docstrings.py` + a `pre-commit` local hook enforce it: docstring
+   ≤ 3 prose lines, `#` comment run ≤ 2. Doctest lines and banner rules do not
+   count.
+3. All 135 offences in `src/` were rewritten — reasoning moved to `specs/` or
+   `docs/` where it belonged, or cut. No behavior changed; the gate is green.

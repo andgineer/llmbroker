@@ -44,6 +44,7 @@ async def test_a_file_broker_reports_no_change_at_debug(tmp_path, caplog, monkey
         Registry(target),
         secrets=DictSecrets({"GEMINI_API_KEY": "sk"}),
         store=InMemoryStore(),
+        sync=None,
     )
     try:
         await broker.sync("freetier")
@@ -69,6 +70,7 @@ def served(monkeypatch):
 
 def _broker(tmp_path, **kwargs) -> AsyncBroker:
     kwargs.setdefault("secrets", DictSecrets({"Z_KEY": "sk", "A_KEY": "sk"}))
+    kwargs.setdefault("sync", None)
     return AsyncBroker(
         registry=SqliteRegistry(str(tmp_path / "b.db")),
         store=InMemoryStore(),
@@ -151,6 +153,7 @@ async def test_an_unchanged_sync_still_bootstraps_a_key_that_arrived(tmp_path, m
         registry=SqliteRegistry(db),
         secrets=SqliteSecrets(db),
         store=InMemoryStore(),
+        sync=None,
     )
     try:
         await broker.sync("freetier")

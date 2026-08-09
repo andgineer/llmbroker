@@ -40,9 +40,8 @@ class Optimizer:
     quality_confidence: float = 0.95  # z for the Wilson upper bound
     quality_window: int = 30  # ratings kept per (model, operation)
     quality_min_count: int = 10  # verdicts need at least this many
-    # Pseudo-ratings the curated weight is worth on an empty window, fading to none
-    # as the window fills. It loses its majority at about the point a demotion
-    # verdict becomes expressible at all.
+    # Pseudo-ratings the curated weight is worth on an empty window; it loses its
+    # majority about where a demotion verdict becomes expressible at all.
     prior_strength: float = 10.0
 
     _rl_fail_count: dict[str, int] = field(default_factory=dict, init=False, repr=False)
@@ -75,11 +74,7 @@ class Optimizer:
 
     def quality_score(self, llm_name: str, operation: str | None, weight: float) -> float:
         """The curated weight, displaced by the observed window as that window fills.
-
-        The weight only says where a model starts and how it ranks while evidence is
-        thin; a full window decides the order on its own. The Wilson bound answers
-        "is this definitely bad" and is deliberately optimistic on thin evidence;
-        this answers "which is better", where that optimism would make the
+        Not the Wilson bound, whose optimism on thin evidence would make the
         best-sampled model yield to a barely-tried one.
 
         >>> Optimizer().quality_score("m", None, 0.8)  # nothing observed yet

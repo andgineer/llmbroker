@@ -1,9 +1,5 @@
-"""The merge: an arriving lineup becomes the lineup this installation follows.
-
-One decision site for both targets — a file and a database registry alike. The
-removal rule and the guard live here exactly once; see
-``specs/reference/rules/sync-merge.md``.
-"""
+"""The merge: an arriving lineup becomes the lineup this installation follows. One
+decision site for a file and a database alike; see ``rules/sync-merge.md``."""
 
 import asyncio
 import logging
@@ -79,22 +75,16 @@ def retirement_candidates(
     current_configs: list[LLMConfig],
     evidence: KeyEvidence,
 ) -> list[str]:
-    """The entries the merge would otherwise keep, and only those: managed, with
-    name and provider both absent from the arriving lineup, that a missing key does
-    not already remove.
-
-    Empty on every ordinary sync, which is why the journal is normally not read.
-    Where a missing key proves nothing — per-user keys, a probe that resolved
-    nothing — every dropped entry is a candidate, since "nobody could call it" is
-    the only evidence such an installation can ever produce.
-    """
-    new_managed = [c for c in new_configs if not c.custom]
-    names = {c.name for c in new_managed}
-    refs = {c.api_key_ref for c in new_managed if c.api_key_ref}
+    """The entries the merge would otherwise keep, and only those. Empty on every
+    ordinary sync, which is why the journal is normally not read; where a missing
+    key proves nothing, every dropped entry is a candidate."""
+    arriving = [c for c in new_configs if c.synced]
+    names = {c.name for c in arriving}
+    refs = {c.api_key_ref for c in arriving if c.api_key_ref}
     return [
         c.name
         for c in current_configs
-        if not c.custom
+        if c.synced
         and c.name not in names
         and c.api_key_ref not in refs
         and (c.api_key_ref in evidence.present or not evidence.visible)
@@ -107,14 +97,9 @@ async def dead_entries(
     *,
     limit: int = _EVIDENCE_LIMIT,
 ) -> dict[str, Retirement]:
-    """Those of ``names`` whose journal tail proves them unusable here, each with
-    the evidence that condemned it.
-
-    Dead means at least one permanent client failure and no success at all in the
-    window; a bad week — 429s, 5xx — proves nothing. No key-hash condition: in a
-    scoped installation the rule reads as "nobody could call it", which is the
-    evidence wanted there. Reads nothing when there is nothing to decide.
-    """
+    """Those of ``names`` whose journal tail proves them unusable here, each with the
+    evidence that condemned it. No key-hash condition: in a scoped installation the
+    rule reads as "nobody could call it", which is the evidence wanted there."""
     wanted = set(names)
     if not wanted or not isinstance(store, QueryableStoreProtocol):
         return {}
@@ -142,8 +127,8 @@ async def dead_entries(
 # ── The merge ────────────────────────────────────────────────────────────────
 
 
-def _check_model_identity(new_managed: list[LLMConfig], current: dict[str, LLMConfig]) -> None:
-    for cfg in new_managed:
+def _check_model_identity(arriving: list[LLMConfig], current: dict[str, LLMConfig]) -> None:
+    for cfg in arriving:
         stored = current.get(cfg.name)
         if stored is not None and stored.model != cfg.model:
             raise ValueError(
@@ -154,14 +139,18 @@ def _check_model_identity(new_managed: list[LLMConfig], current: dict[str, LLMCo
 
 
 def _check_name_clash(merged: list[LLMConfig]) -> None:
-    seen: set[str] = set()
+    """Refuse a name the merge itself would carry twice."""
+    seen: dict[str, LLMConfig] = {}
     for cfg in merged:
-        if cfg.name in seen:
+        first = seen.get(cfg.name)
+        if first is not None:
+            hint = f"; {ALIAS_NAME_HINT}" if first.alias or cfg.alias else ""
             raise ValueError(
                 f"the merged lineup would carry two entries named '{cfg.name}' —"
-                f" rename the [[custom]] entry if it is pinned; {ALIAS_NAME_HINT}",
+                " rename the entry this installation stated itself, the curated one"
+                f" carries the name the preset formed{hint}",
             )
-        seen.add(cfg.name)
+        seen[cfg.name] = cfg
 
 
 def _removal_plan(
@@ -171,11 +160,8 @@ def _removal_plan(
     dead: Mapping[str, Retirement],
 ) -> tuple[list[LLMConfig], list[LLMConfig], list[Retirement]]:
     """The provider is the unit: which dropped entries go, which stay, which retire.
-
-    Two entries on one ``api_key_ref`` are one quota and one failure domain, so the
-    decision is about the ref, never about counting entries. Depends only on the
-    state of the world, which is what makes repeated syncs converge.
-    """
+    Depends only on the state of the world, which is what makes repeated syncs
+    converge."""
     removed: list[LLMConfig] = []
     kept: list[LLMConfig] = []
     retired: list[Retirement] = []
@@ -204,9 +190,8 @@ def _orphan_refs(
     present: frozenset[str],
 ) -> tuple[str, ...]:
     """Refs whose key exists here and which nothing in the merged lineup references
-    any more. A user-owned entry counts as a reference, which is what keeps a paid
-    direct model's key out of the "revoke it" advice; a ref with no key behind it is
-    nothing to revoke and would be pure noise on the commonest removal of all."""
+    any more. A ref with no key behind it is nothing to revoke, and would be noise
+    on the commonest removal of all."""
     still_used = {c.api_key_ref for c in merged if c.api_key_ref}
     return tuple(ref for ref in _distinct_refs(removed) if ref not in still_used and ref in present)
 
@@ -241,29 +226,27 @@ def merge_upstream(
 ) -> tuple[Lineup, SyncReport]:
     """Merge an arriving lineup into the current one. Pure — no I/O, no secrets.
 
-    ``dead`` names entries this installation's journal proved unusable.
-
-    Raises ``ValueError`` on a model-identity change or a name carried twice;
-    the caller has written nothing at that point.
+    The partition is on ``synced``, not ``custom``: what a sync wrote is all a sync
+    may replace or retire. Raises before the caller has written anything.
     """
-    new_managed = [c for c in new.configs if not c.custom]
-    current_managed = [c for c in current.configs if not c.custom]
-    custom = [c for c in current.configs if c.custom]
-    current_by_name = {c.name: c for c in current.configs}
+    arriving = [c for c in new.configs if c.synced]
+    stored_synced = [c for c in current.configs if c.synced]
+    owned = [c for c in current.configs if not c.synced]
+    current_by_name = {c.name: c for c in stored_synced}
 
-    _check_model_identity(new_managed, current_by_name)
+    _check_model_identity(arriving, current_by_name)
 
-    new_names = {c.name for c in new_managed}
-    lineup_refs = {c.api_key_ref for c in new_managed if c.api_key_ref}
-    dropped = [c for c in current_managed if c.name not in new_names]
-    arrived = [c for c in new_managed if c.name not in current_by_name]
+    new_names = {c.name for c in arriving}
+    lineup_refs = {c.api_key_ref for c in arriving if c.api_key_ref}
+    dropped = [c for c in stored_synced if c.name not in new_names]
+    arrived = [c for c in arriving if c.name not in current_by_name]
     removed, kept, retired = _removal_plan(dropped, lineup_refs, evidence, dead)
 
-    merged = [*new_managed, *kept, *custom]
+    merged = [*arriving, *kept, *owned]
     _check_name_clash(merged)
 
     keys = dict(new.keys)
-    for cfg in (*kept, *custom):
+    for cfg in (*kept, *owned):
         if cfg.api_key_ref and cfg.api_key_ref not in keys and cfg.api_key_ref in current.keys:
             keys[cfg.api_key_ref] = current.keys[cfg.api_key_ref]
 
@@ -272,9 +255,7 @@ def merge_upstream(
         applied=True,
         added=tuple(c.name for c in arrived),
         updated=tuple(
-            c.name
-            for c in new_managed
-            if c.name in current_by_name and current_by_name[c.name] != c
+            c.name for c in arriving if c.name in current_by_name and current_by_name[c.name] != c
         ),
         removed=tuple(c.name for c in removed),
         kept=tuple(c.name for c in kept),

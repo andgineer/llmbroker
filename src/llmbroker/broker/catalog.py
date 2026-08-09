@@ -1,9 +1,5 @@
-"""Catalog: keep the live pool's membership in sync with the registry.
-
-Loads configs from the registry, resolves their API keys via the secrets
-backend, and reflects every change into the ``LLMPool``. ``apply`` is the only
-registry write path; what it writes is decided in ``broker.merge``.
-"""
+"""Catalog: keep the live pool's membership in sync with the registry. ``apply`` is
+the only registry write path; what it writes is decided in ``broker.merge``."""
 
 import asyncio
 import logging
@@ -22,9 +18,8 @@ from llmbroker.standalone.secrets import Secrets
 
 logger = logging.getLogger("llmbroker.broker")
 
-# Every provider count that is not degraded is one state: recovery is worth a
-# line, gaining a fourth provider is not. Both sentinels are negative, so a
-# non-negative remembered state is exactly "was degraded".
+# Every provider count that is not degraded is one state. Both sentinels are
+# negative, so a non-negative remembered state is exactly "was degraded".
 _HEALTHY = -1
 _NO_POOL = -2
 
@@ -176,13 +171,9 @@ class Catalog:
         self._declared = None
 
     async def entries(self) -> list[LLMConfig]:
-        """The stored lineup with the models declared in code overlaid.
-
-        Declared models are code and are never written; what keeps a followed
-        alias on the catalog's current version is re-resolving it whenever the
-        catalog is refreshed. That is the clock, not this read: ``direct()``
-        comes through here on every call and must not pay a catalog parse.
-        """
+        """The stored lineup with the models declared in code overlaid. This read is
+        not the alias clock — ``direct()`` comes through here on every call and must
+        not pay a catalog parse."""
         configs = await self._registry.load()
         if self._overlay is None:
             return configs
@@ -191,21 +182,16 @@ class Catalog:
         return [*configs, *declared.configs]
 
     async def _resolve_overlay(self) -> DeclaredModels:
-        """Resolve ``direct=`` once, however many callers arrive together.
-
-        Serialized because the refresh drops the resolution and the callers that
-        find it gone are requests: without the lock every one of them in flight
-        would read and parse the catalog for itself, and where nothing is
-        writable each of those reads is its own network fetch.
-        """
+        """Resolve ``direct=`` once, however many callers arrive together: the callers
+        that find the resolution dropped are requests, and unserialized each would
+        parse — or where nothing is writable, fetch — the catalog for itself."""
         if self._declared is not None:
             return self._declared
         async with self._declared_lock:
             if self._declared is None and self._overlay is not None:
                 declared = await self._overlay()
-                # The same bootstrap the stored lineup gets from `sync`: a key the
-                # environment has must reach a writable secrets backend, or a
-                # declared model is unusable there while its stored twin works.
+                # The same bootstrap `sync` gives the stored lineup, without which a
+                # declared model is dead wherever secrets are not the environment.
                 await self.seed_secrets(declared.configs)
                 self._declared = declared
             return self._declared if self._declared is not None else DeclaredModels()
@@ -270,12 +256,9 @@ class Catalog:
         self._direct_missing_keys = self._pending(direct_held)
 
     async def _direct_without_keys(self, direct: list[LLMConfig]) -> dict[str, list[str]]:
-        """Which refs the host's own entries want and cannot resolve.
-
-        Named by the handle the caller passes to ``direct()``: the alias where
-        there is one, since a resolved ``name`` carries a model version the caller
-        never typed.
-        """
+        """Which refs the host's own entries want and cannot resolve, named by the
+        handle ``direct()`` takes — the alias where there is one, since a resolved
+        ``name`` carries a version the caller never typed."""
         missing: dict[str, list[str]] = {}
         for cfg in direct:
             if not cfg.api_key_ref:
@@ -337,13 +320,8 @@ class Catalog:
 
     def _report_missing_keys(self) -> None:
         """One line per ref the first time it turns up missing, carrying where to get
-        it — which is the only moment the help is worth the reader's attention.
-
-        Deduplicated on the set and not on a clock: a reconcile runs on every minute
-        of activity, and a key that stays missing must not fill the log. Reported per
-        ref rather than per entry because the ref is the unit everywhere else — two
-        entries behind one key are one thing to go and fetch.
-        """
+        it. Deduplicated on the set, not on a clock: a reconcile runs on every minute
+        of activity and a key that stays missing must not fill the log."""
         pending = (*self._health.missing_keys, *self._direct_missing_keys)
         pooled_refs = {k.api_key_ref for k in self._health.missing_keys}
         for key in pending:

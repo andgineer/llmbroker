@@ -12,14 +12,12 @@ from llmbroker.optimizer import Optimizer
 
 logger = logging.getLogger("llmbroker.broker")
 
-# A recorded bound and a caller's remaining budget both carry sub-millisecond noise,
-# so "the same wait twice" would otherwise be a coin flip. One second is a physical
-# statement, not a ratio: at LLM latencies, smaller budget differences are noise.
+# Both sides carry sub-millisecond noise, so "the same wait twice" would otherwise
+# be a coin flip. At LLM latencies a smaller difference is noise.
 _BUDGET_SLACK_SEC = 1.0
 
-# How long one observed miss keeps ordering weight. The router's own miss and the
-# rebuild's derivation from the tail both age by it, so evidence cannot outlive
-# itself in one path and not the other.
+# How long one observed miss keeps ordering weight; both the router's own miss and
+# the rebuild's derivation age by it, so neither outlives the other.
 BUDGET_BOUND_WINDOW_SEC = 600.0
 
 
@@ -86,12 +84,9 @@ class LLMPool:
     # ------------------------------------------------------------------
 
     async def add(self, cfg: LLMConfig, key: str | None, order: int | None = None) -> None:
-        """Register/refresh a config and the key it currently resolves to.
-
-        Upserts in place so an existing slot's live state (cooldown, fail count,
-        in-flight, disabled) survives a config refresh. ``order`` defaults to
-        insertion order when the caller has no curated position to assert.
-        """
+        """Register/refresh a config and the key it currently resolves to. Upserts in
+        place, so a slot's live state survives; ``order`` defaults to insertion
+        order where the caller asserts no curated position."""
         async with self._cond:
             resolved_order = order if order is not None else self._next_order
             self._next_order = max(self._next_order, resolved_order + 1)
@@ -101,9 +96,8 @@ class LLMPool:
             else:
                 slot.config = cfg
                 slot.order = resolved_order
-                # A key that no longer resolves withdraws the slot immediately.
-                # Keeping the old value would route real requests at a revoked
-                # key until the journal condemned it.
+                # A key that no longer resolves withdraws the slot at once: the old
+                # value would route real requests at a revoked key.
                 slot.key = key
             self._cond.notify_all()
 
@@ -151,12 +145,8 @@ class LLMPool:
         return self._optimizer.quality_score(slot.config.name, operation, slot.config.weight)
 
     async def apply_budget_bounds(self, observed: dict[str, tuple[float, datetime]]) -> None:
-        """Replace the map of recently-missed answer budgets, each given as the
-        budget in seconds and the instant it was observed.
-
-        Wholesale, like the quality windows: a rebuild is a fresh derivation over
-        the journal tail, not an increment on what is already here.
-        """
+        """Replace the map of recently-missed answer budgets — seconds and the instant
+        observed. Wholesale like the quality windows: a rebuild derives afresh."""
         async with self._cond:
             self._budget_bounds = {
                 name: _Bound(budget, at + timedelta(seconds=BUDGET_BOUND_WINDOW_SEC))
@@ -167,9 +157,8 @@ class LLMPool:
         """Record one just-observed miss, so the next caller offering no more than
         ``budget`` seconds is handed a sibling first."""
         current = self._budget_bounds.get(name)
-        # A lapsed window is spent evidence, not a floor to build on: carrying the
-        # old number over would let one small miss re-arm a far larger bound the
-        # window had already retired, for budgets nobody is offering any more.
+        # A lapsed window is spent evidence: carried over, one small miss would
+        # re-arm a far larger bound the window had already retired.
         previous = current.seconds if current is not None and current.until > observed_at else 0.0
         self._budget_bounds[name] = _Bound(
             max(previous, budget),
@@ -339,11 +328,8 @@ class LLMPool:
         fail_counts: dict[str, int] | None = None,
     ) -> None:
         """Raise each named slot's ``cooldown_until`` to at least the given value.
-
-        Called from the debounced journal rebuild — never lowers an already-later
-        local cooldown, and never touches ``in_flight`` (nothing was acquired in
-        this code path). The peer fail-streak folds in as ``max(local, peer)``.
-        """
+        Never lowers a later local one, never touches ``in_flight``; the peer
+        fail-streak folds in as ``max(local, peer)``."""
         fail_counts = fail_counts or {}
         async with self._cond:
             changed = False

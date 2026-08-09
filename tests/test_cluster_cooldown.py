@@ -35,7 +35,9 @@ async def _seed(stack) -> None:
 def _broker(stack, key: str) -> AsyncBroker:
     """A broker over the stack's shared registry/store with its own key value —
     the whole point is two nodes that differ only in the key they resolved."""
-    return AsyncBroker(stack.registry, secrets=DictSecrets({"KEY": key}), store=stack.store)
+    return AsyncBroker(
+        stack.registry, secrets=DictSecrets({"KEY": key}), store=stack.store, sync=None
+    )
 
 
 async def _fail_once(broker: AsyncBroker, error: httpx.HTTPStatusError) -> None:

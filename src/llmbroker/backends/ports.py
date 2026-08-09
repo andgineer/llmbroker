@@ -1,9 +1,5 @@
-"""Generic ports: the domain protocols implemented once over any ``Driver``.
-
-Registry and secrets are global — no user scope exists anywhere in this layer
-(the broker turns an opaque ``scope`` string into a secret-ref prefix and a
-journal attribution field instead).
-"""
+"""Generic ports: the domain protocols implemented once over any ``Driver``. No user
+scope exists in this layer — the broker turns ``scope`` into a ref prefix instead."""
 
 from datetime import UTC, datetime, timedelta
 

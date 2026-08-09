@@ -60,6 +60,14 @@ repos:
 
 
 
+  - repo: local
+    hooks:
+      - id: check-docstrings
+        name: docstring and comment length
+        entry: python scripts/check_docstrings.py
+        language: system
+        files: ^src/.*\.py$
+
   - repo: https://github.com/facebook/pyrefly-pre-commit
     rev: 1.0.0
     hooks:

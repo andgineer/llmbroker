@@ -1,9 +1,5 @@
-"""Synchronous Broker / LLM / Result — blocking proxies over AsyncBroker.
-
-``Broker`` runs an ``AsyncBroker`` on a dedicated background event-loop thread;
-its blocking methods submit coroutines to that loop and wait. The pool's
-concurrency persists across calls.
-"""
+"""Synchronous Broker / LLM / Result: blocking proxies that submit coroutines to an
+``AsyncBroker`` on a dedicated background event-loop thread."""
 
 import asyncio
 import threading
@@ -16,8 +12,9 @@ from typing import Any
 from llmbroker.broker.broker import (
     _DEFAULT_STATS_LIMIT,
     _DEFAULT_SYNC_INTERVAL,
-    _DEFAULT_SYNC_SOURCE,
+    _SYNC_DEFAULT,
     AsyncBroker,
+    _SyncDefault,
 )
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.direct import DirectClient
@@ -37,13 +34,8 @@ from llmbroker.protocols.store import StoreProtocol
 
 
 def _run_loop(loop: asyncio.AbstractEventLoop) -> None:
-    """Thread target: own ``loop`` until it is stopped.
-
-    Top-level (not a bound method) on purpose: the background thread must not
-    hold a reference to the ``Broker`` instance, or the running thread would
-    keep the instance reachable forever and its ``weakref.finalize`` cleanup
-    could never fire.
-    """
+    """Thread target: own ``loop`` until it is stopped. Top-level on purpose — a bound
+    method would keep the ``Broker`` reachable and its finalizer could never fire."""
     asyncio.set_event_loop(loop)
     loop.run_forever()
 
@@ -115,7 +107,7 @@ class Broker:
         optimize: bool | Optimizer = True,
         scope: str | None = None,
         have_keys: bool | Sequence[str] = False,
-        sync: str | None = _DEFAULT_SYNC_SOURCE,
+        sync: str | None | _SyncDefault = _SYNC_DEFAULT,
         sync_interval: float = _DEFAULT_SYNC_INTERVAL,
         home: str | Path | None = None,
         direct: Sequence[str | LLMConfig] = (),
@@ -140,9 +132,8 @@ class Broker:
             name="llmbroker-loop",
         )
         self._thread.start()
-        # Backstop: if the caller never closes the Broker, stop the loop and
-        # join the thread when the instance is garbage-collected. The callback
-        # holds only loop + thread (never self), so it does not pin the Broker.
+        # Backstop for a Broker nobody closes. The callback holds only loop + thread,
+        # never self, so it does not pin the instance it is registered on.
         self._finalizer = weakref.finalize(self, _shutdown, self._loop, self._thread)
 
     def _run(self, coro: Coroutine[Any, Any, Any]) -> Any:

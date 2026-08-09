@@ -43,6 +43,7 @@ async def _fire_three_concurrent_asks(tmp_path, parallel: int | None) -> int:
         registry=_registry(tmp_path, parallel),
         secrets=DictSecrets({"K": "test"}),
         store=InMemoryStore(),
+        sync=None,
     ) as broker:
         with patch(_PATCH, new=fake_call_provider):
             tasks = [asyncio.ensure_future(broker.ask("hi")) for _ in range(3)]

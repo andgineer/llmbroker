@@ -147,6 +147,7 @@ def test_broker_no_optimizer_when_optimize_false(tmp_path):
             registry=_registry(tmp_path),
             store=InMemoryStore(),
             optimize=False,
+            sync=None,
         ) as broker:
             assert broker._optimizer is None
             assert broker._router._optimizer is None
@@ -166,6 +167,7 @@ def test_broker_demoted_model_still_serves_as_last_resort(tmp_path):
             secrets=DictSecrets({"K": "test"}),
             store=InMemoryStore(),
             optimize=opt,
+            sync=None,
         ) as broker:
             picked = await broker._pool.acquire(0, operation=None)
             assert picked.name == "p1"
@@ -198,6 +200,7 @@ def test_underprovisioned_alert_when_all_cooling(tmp_path, caplog):
             secrets=DictSecrets({"K": "test"}),
             store=InMemoryStore(),
             optimize=True,
+            sync=None,
         ) as broker:
             _make_unavailable(broker, "p1")
             with caplog.at_level("WARNING", logger="llmbroker.broker"):
@@ -222,6 +225,7 @@ def test_underprov_alert_fires_despite_keyless_config_present(tmp_path, caplog):
             secrets=DictSecrets({"K": "test"}),  # p2's ref is left unresolved — stays keyless
             store=InMemoryStore(),
             optimize=True,
+            sync=None,
         ) as broker:
             assert not broker._pool.has_key("p2")
             _make_unavailable(broker, "p1")
@@ -241,6 +245,7 @@ def test_no_underprov_alert_when_some_available(tmp_path, caplog):
             secrets=DictSecrets({"K": "test"}),
             store=InMemoryStore(),
             optimize=True,
+            sync=None,
         ) as broker:
             # p1 stays AVAILABLE (default)
             with caplog.at_level("WARNING", logger="llmbroker.broker"):
@@ -258,6 +263,7 @@ def test_no_underprov_alert_when_optimize_false(tmp_path, caplog):
             registry=_registry(tmp_path),
             store=InMemoryStore(),
             optimize=False,
+            sync=None,
         ) as broker:
             _make_unavailable(broker, "p1")
             with caplog.at_level("WARNING", logger="llmbroker.broker"):
@@ -276,6 +282,7 @@ def test_underprov_alert_debounced(tmp_path, caplog):
             secrets=DictSecrets({"K": "test"}),
             store=InMemoryStore(),
             optimize=True,
+            sync=None,
         ) as broker:
             _make_unavailable(broker, "p1")
             with caplog.at_level("WARNING", logger="llmbroker.broker"):
@@ -296,6 +303,7 @@ def test_underprov_alert_via_ask_wiring(tmp_path, caplog):
             secrets=DictSecrets({"K": "test"}),
             store=InMemoryStore(),
             optimize=True,
+            sync=None,
         ) as broker:
             # Occupy the only slot so the next acquire raises TimeoutError → NoLLMAvailableError.
             # _make_unavailable marks p1 non-AVAILABLE so _maybe_alert_underprov fires.

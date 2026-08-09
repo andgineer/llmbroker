@@ -1,20 +1,6 @@
-"""File-backed and in-memory stores — no external backend.
-
-``InMemoryStore()`` implements only the minimal contract and keeps its
-disabled-verdict map in process memory (session-scoped learning). It is
-llmbroker's internal subsystem, not application logging — a host that wants
-logs uses ``logging`` itself.
-
-``FileStore(directory)`` is the default persistent store: a day-split
-JSON-lines call journal (``<directory>/calls/YYYY-MM-DD.jsonl``, chosen by
-each record's UTC date — pure storage layout, not aggregation, since rebuild
-needs raw per-record scores and a quality record can rate a call from an
-earlier day) plus a YAML admin disabled-verdict map
-(``<directory>/disabled.yml``, meant for hand-editing). It self-purges call
-records older than ``retention`` by unlinking whole expired day files — no
-rewrite, no race with concurrent appends — checked at most once per hour on
-write activity. The disabled map is never purged.
-"""
+"""File-backed and in-memory stores, no external backend. ``FileStore`` keeps a
+day-split JSON-lines journal beside a hand-editable disabled map, and purges by
+unlinking whole expired day files — no rewrite, no race with a concurrent append."""
 
 import asyncio
 import json
@@ -194,9 +180,8 @@ class FileStore:
         operation: str | None = None,
     ) -> list[Call]:
         """Newest-first tail of the journal, both kinds interleaved unless ``kind``
-        narrows them — unfiltered by scope (learning is global); ``scope`` is accepted
-        for the host-facing filter only. ``since`` must be timezone-aware and bounds
-        the timestamp inclusively."""
+        narrows them. Unfiltered by scope, which learning has no concept of; ``since``
+        must be timezone-aware and bounds the timestamp inclusively."""
         check_limit(limit)
         bound = to_utc(since, "since") if since is not None else None
         return await asyncio.to_thread(

@@ -45,9 +45,10 @@ every other node's check finds nothing to do. What the design avoids is a node
 reconciling the registry against a *local copy* of its own.
 
 `sync` takes a curated preset name and nothing else — no file path, no second
-registry. If you must supply the pool yourself rather than follow our curation,
-pass `registry=` an object of your own *and* `sync=None`: a registry that still
-follows the preset is one the refresh rewrites, whoever built it.
+registry. A connection string keeps following the curated preset; hand the broker
+a registry *object* and you must say what it follows, `sync="freetier"` or
+`sync=None`. Either way a refresh rewrites only the entries a sync itself
+wrote — rows you put in the registry yourself are left alone.
 
 ### Moving an installation between backends {#migrate}
 

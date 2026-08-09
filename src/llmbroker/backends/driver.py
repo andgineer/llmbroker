@@ -1,9 +1,6 @@
-"""The per-DB storage contract: record-shaped, not domain-shaped.
-
-A driver method body is the one statement that is genuinely DB-specific; the
-generic layer (``backends.ports``) owns lazy ``ensure_schema`` gating, JSON⇄dataclass
-translation, and ``KeyError`` semantics.
-"""
+"""The per-DB storage contract: record-shaped, not domain-shaped. A driver method
+body is the one statement that is genuinely DB-specific; everything else is
+``backends.ports``."""
 
 from datetime import datetime
 from typing import Protocol
@@ -44,13 +41,9 @@ class Driver(Protocol):
         match: Row | None = None,
         since: datetime | None = None,
     ) -> list[Row]:
-        """Newest-first tail; ``match`` is an optional equality filter.
-
-        ``since`` bounds the journal's ``called_at`` inclusively (rows at or
-        after it are returned) — meaningful only for the append-only journal.
-        Callers pass UTC; mongo floors both stored values and the bound to whole
-        milliseconds, since BSON dates carry no finer precision.
-        """
+        """Newest-first tail; ``match`` is an optional equality filter and ``since``
+        an inclusive UTC bound on ``called_at``. Mongo floors both stored values and
+        the bound to whole milliseconds — BSON dates carry no finer precision."""
         ...
 
     async def purge(self, table: str, before: datetime) -> int:

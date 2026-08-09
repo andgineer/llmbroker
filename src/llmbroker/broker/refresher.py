@@ -1,9 +1,5 @@
-"""Keeping the stored lineup following the curated one.
-
-Its own clock, its own background task, its own on-disk record of the last check,
-and its own failure policy: best-effort on the background path, raising on the
-explicit ``sync``. The rules are in ``specs/reference/rules/lineup-refresh.md``.
-"""
+"""Keeping the stored lineup following the curated one: its own clock, task, check
+record and failure policy. Rules in ``specs/reference/rules/lineup-refresh.md``."""
 
 import asyncio
 import contextlib
@@ -31,11 +27,8 @@ logger = logging.getLogger("llmbroker.broker")
 
 class LineupRefresher:
     """Merges a lineup into the registry, and decides when to go looking for one.
-
-    ``source`` is the curated preset this installation follows, ``None`` for a
-    registry filled by other means. ``live`` says whether the pool has been provisioned —
-    only then does an applied change have a running pool to reconcile.
-    """
+    ``source`` is the preset followed, ``None`` for none; ``live`` says whether there
+    is a running pool to reconcile an applied change into."""
 
     def __init__(  # noqa: PLR0913 - it assembles a subsystem: the ports plus its clock
         self,
@@ -75,18 +68,9 @@ class LineupRefresher:
     # ------------------------------------------------------------------
 
     async def before_provision(self) -> None:
-        """Decide what the lineup needs before the pool is provisioned.
-
-        An empty registry is filled here, blocking: ``provision()`` on one raises,
-        so there is no alternative. A check already on record inside the interval
-        needs nothing, and its remainder carries into this process. Otherwise the
-        pool is provisioned from what is stored and the refresh runs afterwards, off
-        the request path.
-
-        An installation that syncs no lineup still arms the clock when it follows an
-        alias: the paid catalog is what that alias resolves through, and it goes
-        stale on its own schedule.
-        """
+        """Decide what the lineup needs before the pool is provisioned: fill an empty
+        registry blocking, otherwise arm the clock and refresh off the request path.
+        An installation syncing nothing still arms it for the paid catalog."""
         if self._attempted:
             return
         self._attempted = True
@@ -133,11 +117,8 @@ class LineupRefresher:
     # ------------------------------------------------------------------
 
     async def _attempt(self, reason: str) -> None:
-        """Best-effort by construction: a refresh that cannot be fetched or cannot
-        be applied logs and leaves the running configuration alone. A process must
-        not fail to start, and a request must not fail, over a lineup refresh. The
-        explicit ``sync()`` call raises instead — that caller has a plan.
-        """
+        """Best-effort by construction: neither a start nor a request may fail over a
+        lineup refresh. The explicit ``sync()`` raises instead."""
         source = self._source
         try:
             if source is None:
@@ -151,11 +132,8 @@ class LineupRefresher:
             # What a refresh fails with in normal operation — offline, a throttled
             # CDN, a malformed body, an unwritable target. No traceback to keep.
             logger.warning("sync %s failed, continuing on the current config: %s", reason, exc)
-        # Anything else is a bug, and it still may not stop the refresh: on the
-        # background path it would be lost as an unretrieved task exception, and on
-        # the start path it would surface as "registry is empty", naming the network
-        # for a cause that is not it. Logged with its traceback, because a one-line
-        # warning off a broad catch is how a bug becomes unreportable.
+        # A bug here still may not stop the refresh, and a one-line warning off a
+        # broad catch is how a bug becomes unreportable — so: traceback.
         except Exception:  # noqa: BLE001 - a refresh may not fail the process
             logger.exception(
                 "sync %s failed unexpectedly, continuing on the current config",
@@ -165,13 +143,8 @@ class LineupRefresher:
             self._next_refresh = time.monotonic() + self._interval
 
     async def _refresh_paid_catalog(self) -> None:
-        """Keep the cached paid catalog current on the refresh clock.
-
-        A declared alias resolves through that cache, so without this an
-        installation that syncs no lineup would follow whatever version its wheel
-        shipped with for as long as the release stayed installed. Where a lineup
-        *is* synced this is redundant — ``sync`` reads the catalog itself.
-        """
+        """Keep the cached paid catalog current on the refresh clock — the only clock
+        a declared alias has where no lineup is synced. Redundant where one is."""
         if not self._follows_an_alias():
             return
         if self._home is not None:
@@ -210,10 +183,8 @@ class LineupRefresher:
         """Merge a lineup into the registry and return what it did. Raises."""
         src = await load_sync_source(source, self._presets)
         current = await self._registry.load()
-        # One place for both targets: an alias-following entry follows the catalog
-        # whether this installation keeps its lineup in a file or in a database. A
-        # `direct=` alias is stored nowhere and needs no refresh here, but it is
-        # what keeps the cached catalog current for the provision that resolves it.
+        # A `direct=` alias is stored nowhere and needs no refresh here — it is in
+        # the list only to keep the cached catalog current for the next provision.
         targets = await alias_targets_for(
             [*(c.alias for c in current), *(d for d in self._declared if isinstance(d, str))],
             self._presets,
@@ -284,11 +255,8 @@ class LineupRefresher:
         )
         self._log_alias_facts(src.label, outcome.refresh.facts)
         merged = outcome.lineup.configs
-        # Against what is stored, not against the alias-refreshed copy: a catalog
-        # move is a change and has to reach the registry. Keyed by name rather than
-        # compared as lists — a database registry hands its rows back ordered by
-        # name, so position here is the backend's, not the lineup's, and would
-        # report every no-op sync as a change.
+        # Against what is stored, so a catalog move reaches the registry; keyed by
+        # name, since a DB hands rows back in its own order (invariant 3).
         changed = {c.name: c for c in merged} != {c.name: c for c in stored}
         if changed:
             await self._catalog.apply(merged)

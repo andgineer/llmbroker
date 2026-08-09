@@ -1,15 +1,6 @@
 """Alembic coexistence hook — autogenerate ignores every ``llmbroker_*`` object.
-
-Wire into ``alembic/env.py``::
-
-    import llmbroker.integrations.alembic
-    context.configure(
-        ...,
-        include_object=llmbroker.integrations.alembic.include_object,
-    )
-
-Imports nothing from Alembic — it only inspects the object name.
-"""
+Wiring is in ``docs/`` "Servers & clusters"; nothing is imported from Alembic, the
+hook only inspects the object name."""
 
 
 def include_object(

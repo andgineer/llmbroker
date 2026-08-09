@@ -41,6 +41,7 @@ def test_single_dead_key_raises_instead_of_hanging(tmp_path):
             registry=_registry(tmp_path),
             secrets=DictSecrets({"K": "dead-key"}),
             store=FileStore(tmp_path / "store"),
+            sync=None,
         ) as broker:
             with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(401))):
                 with pytest.raises(NoLLMAvailableError):
@@ -55,6 +56,7 @@ def test_dead_key_drop_survives_rebuild(tmp_path):
             registry=_registry(tmp_path),
             secrets=DictSecrets({"K": "dead-key"}),
             store=FileStore(tmp_path / "store"),
+            sync=None,
         ) as broker:
             call_provider = AsyncMock(side_effect=_http_status_error(401))
             with patch(_PATCH, new=call_provider):
@@ -82,6 +84,7 @@ def test_replacing_secret_revives_model(tmp_path):
             registry=_registry(tmp_path),
             secrets=secrets,
             store=FileStore(tmp_path / "store"),
+            sync=None,
         ) as broker:
             with patch(_PATCH, new=AsyncMock(side_effect=_http_status_error(401))):
                 with pytest.raises(NoLLMAvailableError):

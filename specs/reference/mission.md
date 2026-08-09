@@ -119,23 +119,24 @@ configuration, and the lineup changes only when a sync merges one. There is no
 second state subsystem to reconcile, which is what lets a stateless cluster
 share what it learned without a running service of its own.
 
-**The routed pool is exactly the curated lineup.** Failover only works across
-endpoints curated as interchangeable, so a host's own model is never routed
-onto, never failed over from, and never learned about as a pool member.
-Reaching it by name is a separate act. Pinning a version is one way and stays
-the host's own; the other is to name a permanent alias, and then llmbroker owns
-that entry and keeps it pointing at the current version. Application code
-survives a version bump, at the price of an entry that is no longer the host's
-to hand-edit.
+**The routed pool is whatever the registry states as pool members.** Naming a
+model to call it is a different act from putting an endpoint in the pool: a
+model reached by name is never routed onto, never failed over from, and never
+learned about as a pool member. Where the pool members came from — our curation,
+the installation's own registry, or both — is the installation's business.
+Reaching a model by name means either pinning a version, which stays the host's
+own, or naming a permanent alias, and then llmbroker owns that entry and keeps it
+pointing at the current version. Application code survives a version bump, at the
+price of an entry that is no longer the host's to hand-edit.
 
 **The lineup keeps itself current, unconditionally.** Free endpoints are retired
 without notice, so a pinned lineup decays into nothing. The refresh rides on
 activity rather than on a timer of its own, and it may never cost the
-installation a provider it could reach. A curated preset is the only shape a
-lineup arrives in, so an installation that must not follow ours states the whole
-pool itself: it fills a registry of its own *and* stops following the curation,
-because a registry still following it is a registry the refresh still rewrites.
-What no installation gets is a second configuration form for us to keep in step.
+installation a provider it could reach: it removes only what a refresh added, and
+never rewrites what the installation stated itself — beyond the alias it asked us
+to follow. A curated preset is the only shape a lineup arrives in, so an
+installation that must not follow ours states the whole pool itself. What no
+installation gets is a second configuration form for us to keep in step.
 
 **Availability and quality are separate axes.** Cooldown is provider-driven,
 self-healing, and withdraws a model; quality demotion is host-driven, sticky,

@@ -56,13 +56,18 @@ llms.direct(name="frontier").ask("...")
 That one is yours down to the version: no refresh ever touches it, because
 llmbroker was never told which catalog line it follows.
 
-## The pool takes no model of yours
+## The pool takes no model you declare here
 
 Not "by default" — ever. A declared model is never routed, never failed over
 onto, never a pool member in `count()` or `snapshot()`. The pool's whole value is
 failover across interchangeable free endpoints curated as one set; a private
 gateway dropped into it would be spilled onto by a rate limit that has nothing to
 do with it, and would be handed traffic you meant for the free tier.
+
+An endpoint of your own *can* be a pool member — by putting it in [your own
+registry](usage.md#file), where a refresh never touches it. That is a decision
+you make once and record there, not a side effect of naming a model you wanted to
+call.
 
 ## In the lineup
 

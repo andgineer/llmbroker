@@ -47,17 +47,9 @@ class LLMRequestError(Exception):
 
 
 class NoLLMAvailableError(LLMRequestError):
-    """No LLM slot was available for this request.
-
-    ``reason`` is one of:
-
-    - ``"empty_pool"`` — the pool has zero slots.
-    - ``"no_keys"`` — slots exist but none has a resolved key.
-    - ``"all_disabled"`` — keyed slots exist but every one is admin-disabled.
-    - ``"excluded"`` — every candidate was excluded for this request (internal).
-    - ``"timeout"`` — the deadline expired (or nothing is free right now);
-      ``retry_at`` carries the earliest known return time, when known.
-    """
+    """No LLM slot was available for this request. ``reason`` is one of
+    ``empty_pool``, ``no_keys``, ``all_disabled``, ``excluded`` or ``timeout``, the
+    last carrying ``retry_at`` where a return time is known."""
 
     def __init__(
         self,
@@ -84,12 +76,8 @@ class PoolModelError(LLMRequestError):
 
 
 class MissingKeyError(LLMRequestError):
-    """The model's ``api_key_ref`` could not be resolved before the call.
-
-    Distinct from ``AuthError``: nothing was sent to the provider — the key is
-    simply not configured (set the env var or secrets backend). ``AuthError``
-    means a key *was* sent and the provider rejected it.
-    """
+    """The model's ``api_key_ref`` could not be resolved, so nothing was sent. Distinct
+    from ``AuthError``, which means a key *was* sent and rejected."""
 
 
 class LLMTimeoutError(LLMRequestError):
@@ -97,21 +85,15 @@ class LLMTimeoutError(LLMRequestError):
 
 
 class ToolLoopLimitError(LLMRequestError):
-    """The tool loop hit ``max_steps`` without a tool-call-free reply.
-
-    Raised rather than returning an empty string: the error contract admits a
-    result or an exception, never silence. A caller that prefers the partial
-    conversation catches this.
-    """
+    """The tool loop hit ``max_steps`` without a tool-call-free reply. Raised rather
+    than returning empty: the contract admits a result or an exception, never
+    silence."""
 
 
 class ProviderError(LLMRequestError):
-    """The provider returned an error response.
-
-    ``status`` is the HTTP status code; ``detail`` is a short snippet of the
-    response body, when available. Catch this to handle any provider failure
-    coarsely, or one of its subclasses to react to a specific class of failure.
-    """
+    """The provider returned an error response: ``status`` is the HTTP code, ``detail``
+    a short snippet of the body. Catch this for any provider failure, or a subclass
+    for one kind."""
 
     def __init__(self, message: str, *, status: int, detail: str | None = None) -> None:
         super().__init__(message)
@@ -120,12 +102,9 @@ class ProviderError(LLMRequestError):
 
 
 class InvalidProviderResponseError(LLMRequestError):
-    """The provider answered 200 with a body that is not a chat completion.
-
-    A 200 carrying garbage is a provider-side failure like a 5xx: the router
-    cools the model down and fails over. ``model`` names it; ``detail`` is a
-    truncated snippet of the body.
-    """
+    """The provider answered 200 with a body that is not a chat completion — a
+    provider-side failure like a 5xx, so the router cools the model and fails
+    over."""
 
     def __init__(self, message: str, *, model: str, detail: str | None = None) -> None:
         super().__init__(message)
@@ -134,13 +113,9 @@ class InvalidProviderResponseError(LLMRequestError):
 
 
 class StreamInterruptedError(LLMRequestError):
-    """A pooled stream died after it had already emitted deltas.
-
-    Failover is impossible once output has reached the caller, so the broker
-    raises instead of retrying elsewhere: the deltas already yielded stand, and
-    the rest of the answer is lost. ``llm_name`` names the model; ``__cause__``
-    carries the underlying provider or transport error.
-    """
+    """A pooled stream died after it had already emitted deltas. Failover is
+    impossible once output has reached the caller, so the deltas already yielded
+    stand and the rest of the answer is lost."""
 
     def __init__(self, message: str, *, llm_name: str) -> None:
         super().__init__(message)

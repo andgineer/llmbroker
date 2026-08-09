@@ -55,6 +55,7 @@ async def _resolved(broker: AsyncBroker, alias: str) -> LLMConfig:
 
 def _broker(tmp_path, **kwargs) -> AsyncBroker:
     kwargs.setdefault("secrets", DictSecrets(dict(_SECRETS)))
+    kwargs.setdefault("sync", "freetier")
     kwargs.setdefault("store", InMemoryStore())
     target = tmp_path / "llms.toml"
     if not target.exists():

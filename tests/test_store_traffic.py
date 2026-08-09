@@ -51,6 +51,7 @@ def test_optimize_false_never_reads_journal_and_records_every_call(tmp_path):
             secrets=DictSecrets({"K": "test"}),
             store=store,
             optimize=False,
+            sync=None,
         ) as broker:
             with patch(_PATCH, new=AsyncMock(return_value=("ok", None, None))):
                 for _ in range(5):
@@ -70,6 +71,7 @@ def test_optimize_true_reads_journal_exactly_once_for_warm_start(tmp_path):
             secrets=DictSecrets({"K": "test"}),
             store=store,
             optimize=True,
+            sync=None,
         ) as broker:
             with patch(_PATCH, new=AsyncMock(return_value=("ok", None, None))):
                 for _ in range(5):

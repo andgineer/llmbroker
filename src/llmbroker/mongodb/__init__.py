@@ -1,9 +1,6 @@
-"""MongoDB backend: registry, store, and secrets.
-
-Needs the ``motor`` driver (``llmbroker[mongodb]``); importing this package is
-how a host declares that dependency, so a bare ``import llmbroker`` stays
-driver-free. All collections are ``llmbroker_``-prefixed and owned by ``ensure_schema``.
-"""
+"""MongoDB backend: registry, store and secrets. Needs ``motor``
+(``llmbroker[mongodb]``); importing this package is how a host declares that
+dependency."""
 
 from llmbroker.mongodb.registry import Registry
 from llmbroker.mongodb.secrets import Secrets

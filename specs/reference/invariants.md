@@ -40,9 +40,9 @@ entry enters only by displacing another.
    order, so an entry's standing must be data on the entry. Nothing may read
    priority out of row position. → `backends.md`, `selection.md`
 
-4. **Nothing a host declares enters the routed pool.** Pool membership is not a
-   stored field — an entry is pooled exactly when it is not the host's own.
-   → `direct-aliases.md`
+4. **Nothing a host declares in code enters the routed pool.** Pool membership
+   is not a stored field — an entry is pooled exactly when it is not one reached
+   by name. → `direct-aliases.md`
 
 5. **Nothing but a host rating enters the quality window.** Demotion has no
    time-based recovery, so any auto-generated score — a failure count, an
@@ -121,3 +121,9 @@ entry enters only by displacing another.
     `KEY=` line, a backend returning `""` — all count as unset everywhere, since
     key presence also authorizes removals during a sync.
     → `presets.md`
+
+22. **A sync never removes or overwrites an entry it did not write.** Every
+    entry records whether a sync put it there, and the default is *no*, so
+    anything reaching a registry by any other route is protected without doing
+    anything. The one exception is the alias an entry asked us to follow.
+    → `sync-merge.md`

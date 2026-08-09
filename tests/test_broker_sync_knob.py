@@ -34,6 +34,7 @@ def preset(monkeypatch):
 
 def _broker(tmp_path, **kwargs):
     kwargs.setdefault("secrets", DictSecrets({"GEMINI": "sk"}))
+    kwargs.setdefault("sync", "freetier")
     return AsyncBroker(
         registry=SqliteRegistry(str(tmp_path / "b.db")),
         store=InMemoryStore(),
@@ -183,6 +184,51 @@ async def test_an_explicit_sync_still_raises(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="not found in catalog"):
         await broker.sync("freetier")
     await broker.aclose()
+
+
+# ── What an unstated sync= defaults to ───────────────────────────────────────
+
+
+def test_a_bare_broker_follows_the_curated_preset(tmp_path):
+    broker = AsyncBroker(home=tmp_path)
+    assert broker._refresher._source == "freetier"
+
+
+def test_a_connection_string_follows_the_curated_preset(tmp_path):
+    """The installation is still llmbroker's — the string only moved its storage."""
+    broker = AsyncBroker(str(tmp_path / "b.db"), store=InMemoryStore())
+    assert broker._refresher._source == "freetier"
+
+
+def test_a_registry_object_must_state_what_it_follows(tmp_path):
+    with pytest.raises(ValueError, match="sync=") as exc:
+        AsyncBroker(registry=SqliteRegistry(str(tmp_path / "b.db")), store=InMemoryStore())
+    assert "'freetier'" in str(exc.value)
+    assert "sync=None" in str(exc.value)
+
+
+def test_the_sync_wrapper_refuses_the_same_way(tmp_path):
+    with pytest.raises(ValueError, match="sync="):
+        Broker(registry=SqliteRegistry(str(tmp_path / "b.db")), store=InMemoryStore())
+
+
+def test_a_registry_object_with_an_explicit_preset_is_accepted(tmp_path, preset):
+    broker = _broker(tmp_path, sync="freetier")
+    assert broker._refresher._source == "freetier"
+
+
+async def test_sync_none_over_a_registry_object_never_goes_to_the_network(tmp_path, monkeypatch):
+    def _boom(name: str) -> str:
+        raise AssertionError(f"the catalog was fetched for {name!r}")
+
+    monkeypatch.setattr(presets, "fetch_preset_text", _boom)
+    db = str(tmp_path / "b.db")
+    await SqliteRegistry(db).mirror(
+        [LLMConfig(name="own", base_url="https://x/v1", model="m", api_key_ref="GEMINI")],
+    )
+    async with _broker(tmp_path, sync=None) as broker:
+        await broker.count()
+        await _settle(broker)
 
 
 def test_the_sync_wrapper_takes_the_same_knob(tmp_path, preset):

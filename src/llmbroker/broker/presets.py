@@ -38,9 +38,8 @@ def fetch_preset_text(name: str) -> str:
             f"invalid preset name '{name}' (use letters, digits, hyphens, underscores)",
         )
     url = _PRESET_URL.format(name=name)
-    # The read and the decode share the connect phase's try: a body that dies
-    # mid-stream raises TimeoutError/IncompleteRead, and a caller that treats a
-    # fetch failure as best-effort catches ValueError only.
+    # Read and decode share the connect phase's try: a body dying mid-stream raises
+    # TimeoutError/IncompleteRead, and best-effort callers catch ValueError only.
     try:
         with urllib.request.urlopen(url, timeout=_FETCH_TIMEOUT) as resp:  # noqa: S310 - validated
             text = resp.read().decode()
@@ -75,10 +74,9 @@ def _check_no_custom(name: str, data: dict) -> None:
 
 
 def _check_fetched_urls(name: str, data: dict) -> None:
-    """A fetched lineup decides where this installation's API keys are sent, so the
-    whole file is refused before any merge sees it. Not a defence against a
-    compromised catalog — that one would serve ``https://`` too — it removes
-    plaintext key transmission as an accident."""
+    """A fetched lineup decides where this installation's keys are sent, so the whole
+    file is refused before any merge sees it. Not a defence against a compromised
+    catalog — it removes plaintext key transmission as an accident."""
     for section in ("llms", "custom", "provider"):
         for entry in data.get(section, []):
             url = entry.get("base_url") if isinstance(entry, dict) else None
@@ -110,19 +108,9 @@ class PresetSource:
     cache_dir: Path | None = None
 
     def text(self, name: str, *, prefer_cache: bool = False, floor: bool = True) -> str:
-        """A curated text, by the precedence the caller's decision needs.
-
-        The default is a fetch with the copies already here behind it: a successful
-        fetch overwrites the cache, a failed one — offline, or throttled by the CDN's
-        per-IP limit — reads it, which is what keeps such an installation running on
-        what it last saw.
-
-        ``prefer_cache`` reads the cache first, for a resolution on the request path
-        that must not wait on the network. ``floor=False`` drops the copy bundled in
-        the wheel, for a read that decides where an entry someone *already has*
-        should point: that copy is older than the repository by construction, so
-        serving it there would roll a working model backwards.
-        """
+        """A curated text, by the precedence the caller's decision needs: fetch with
+        the local copies behind it, ``prefer_cache`` for a read on the request path,
+        ``floor=False`` to drop the wheel's copy. See ``rules/lineup-refresh.md``."""
         if prefer_cache:
             cached = self._cached(name)
             if cached is not None:
@@ -137,9 +125,8 @@ class PresetSource:
             bundled = bundled_preset_text(name) if floor else None
             if bundled is None:
                 raise
-            # Louder than the cached fallback, which serves what this machine last
-            # saw: the wheel's copy is frozen at the installed release, and what it
-            # seeds a lineup with is what the installation runs until the next one.
+            # Louder than the cached fallback: the wheel's copy is frozen at the
+            # installed release, and seeds a lineup that runs until the next one.
             logger.warning(
                 "preset %s: %s — falling back to the bundled copy, frozen at this"
                 " llmbroker release and possibly older than the curated one",

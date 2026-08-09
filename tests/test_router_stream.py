@@ -453,6 +453,7 @@ def test_broker_stream_end_to_end(tmp_path):
             registry=Registry(f),
             secrets=DictSecrets({"K": "test"}),
             store=FileStore(tmp_path / "store"),
+            sync=None,
         )
         async with broker:
             await broker.ensure_pool()

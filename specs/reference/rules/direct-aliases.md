@@ -28,7 +28,10 @@ learn.
 **Alias presence is the followed/pinned switch.** With an alias, the entry's
 provider fields are catalog-managed and a refresh rewrites them. Without one,
 the entry is entirely the user's and a refresh never touches it — a pin needs no
-syntax of its own.
+syntax of its own. A followed entry is the *only* thing a refresh rewrites
+without having written it
+([`sync-merge.md`](sync-merge.md#the-partition-a-sync-touches-only-what-a-sync-wrote)):
+naming an alias is what asks for that.
 
 **So a followed entry is not the host's to hand-edit — and neither is the file it
 sits in.** Both forms are added by command and stored in a file llmbroker

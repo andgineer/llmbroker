@@ -8,9 +8,8 @@ from pathlib import Path
 def write_atomic(target: Path, text: str) -> None:
     """Write through a sibling temp file and rename, so a crash mid-write cannot
     truncate the config the user already has."""
-    # NamedTemporaryFile creates at 0600 and os.replace carries that onto the
-    # target, so a runtime sync would lock everyone but its own user out of the
-    # config it just rewrote.
+    # NamedTemporaryFile creates at 0600 and os.replace carries that onto the target,
+    # locking everyone but one user out of the config a sync just rewrote.
     mode = target.stat().st_mode & 0o777 if target.exists() else None
     with tempfile.NamedTemporaryFile(
         "w",

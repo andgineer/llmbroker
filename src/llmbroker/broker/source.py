@@ -1,14 +1,6 @@
-"""Which ports a source becomes: dispatch of a string/``Path``, and the defaults
-each port falls back to when the caller named none.
-
-Dispatch is dumb and explicit: ``sqlite://`` / ``.db`` / ``.sqlite`` -> sqlite,
-one file backing all three ports; ``postgresql://`` / ``mongodb://`` -> by
-scheme, one driver shared by all three ports. Anything else raises a clear error
-naming the accepted forms.
-
-Each backend package is imported lazily here (never at module load) so a bare
-``import llmbroker`` never pulls in a driver package.
-"""
+"""Which ports a source string becomes, and the defaults each port falls back to
+when the caller named none. Every backend package is imported lazily here, so a bare
+``import llmbroker`` never pulls in a driver."""
 
 from pathlib import Path
 
@@ -92,19 +84,9 @@ def lineup_path(home: Path) -> Path:
 def zero_config_ports(
     home: Path | None,
 ) -> tuple[RegistryProtocol, SecretsProtocol, StoreProtocol]:
-    """The installation a broker builds for itself when given no source at all:
-    the curated pool in the home directory, keys from the environment with the
-    working directory's ``.env`` behind them, one journal per machine.
-
-    That journal is machine-global on purpose rather than by compromise. Keys here
-    come from the environment, so the quota it tracks really is one pool; a journal
-    scattered per working directory would make every run rediscover the same 429 and
-    pay for it again. Two projects on genuinely different keys are already separated
-    by the key hash, and ``home=`` separates everything else.
-
-    Nowhere writable is a supported outcome: the broker then keeps its lineup and
-    its journal in memory and simply remembers nothing between runs.
-    """
+    """The installation a broker builds for itself when given no source at all — see
+    ``rules/backends.md``. Nowhere writable is a supported outcome: everything then
+    lives in memory for that run."""
     secrets = EnvSecrets(Path(".env"))
     if home is None:
         return DriverRegistry(InMemoryDriver()), secrets, InMemoryStore()

@@ -1,9 +1,5 @@
-"""What a provider's HTTP status means, decided once.
-
-Pure predicates over a status code and no package imports, so every module that
-classifies a provider response reads the same vocabulary instead of comparing
-numbers of its own.
-"""
+"""What a provider's HTTP status means, decided once: pure predicates over a status
+code, with no package imports, so nothing compares numbers of its own."""
 
 ERROR_FLOOR = 400
 DETAIL_SNIPPET = 300

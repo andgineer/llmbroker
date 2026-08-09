@@ -1,12 +1,5 @@
-"""python -m llmbroker <command>.
-
-Subcommands: env (emit .env skeleton), add-model (append a paid model from the
-catalog).
-
-The CLI writes files only. Mirroring a lineup into a DB registry is the host's
-own entrypoint calling `broker.sync(...)`, so the connection config and its
-secrets stay in one place.
-"""
+"""python -m llmbroker <command> — ``env`` and ``add-model``. The CLI writes files
+only: a DB registry is filled by the host's own entrypoint calling ``broker.sync``."""
 
 import argparse
 import asyncio

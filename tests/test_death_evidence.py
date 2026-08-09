@@ -28,6 +28,7 @@ def _cfg(name, ref="K", *, custom=False):
         model="m",
         api_key_ref=ref,
         custom=custom,
+        synced=not custom,
     )
 
 

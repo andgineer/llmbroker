@@ -1,10 +1,5 @@
-"""Direct single-model client: call one named OpenAI-compatible model directly.
-
-No pool, no failover, no quality-routing, no journal — the streaming-capable
-counterpart the pooled ``AsyncBroker`` architecturally cannot be. Reuses the
-OpenAI-compatible request/response primitives in ``chat.py`` so nothing here
-re-implements request building or response parsing.
-"""
+"""Direct single-model client: no pool, no failover, no journal. Reuses the
+request/response primitives in ``chat.py``."""
 
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
@@ -74,12 +69,9 @@ def _result(resp: httpx.Response, model: str) -> DirectResult:
 
 
 class AsyncDirectClient:
-    """Async direct client for one named model — ``stream()`` and ``ask()``.
-
-    Single model, no pool, no failover. Pass an ``httpx.AsyncClient`` to reuse a
-    shared connection pool; otherwise one is opened lazily and closed by
-    ``aclose()`` (or the async context manager).
-    """
+    """Async direct client for one named model — ``stream()`` and ``ask()``. Pass an
+    ``httpx.AsyncClient`` to share a connection pool, or let it open and close its
+    own."""
 
     def __init__(
         self,
@@ -175,13 +167,9 @@ class AsyncDirectClient:
 
 
 class DirectClient:
-    """Synchronous direct client for one named model — ``ask()`` only.
-
-    Streaming is async-only; this blocking client is a single ``POST`` and needs
-    no event loop. Pass an ``httpx.Client`` to reuse a shared connection pool;
-    otherwise one is opened lazily and closed by ``close()`` (or the context
-    manager).
-    """
+    """Synchronous direct client for one named model — ``ask()`` only, since it is a
+    single ``POST`` and needs no event loop. Pass an ``httpx.Client`` to share a
+    connection pool, or let it open and close its own."""
 
     def __init__(
         self,

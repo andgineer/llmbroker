@@ -1,10 +1,6 @@
-"""OpenAI-compatible chat primitives and the host-agnostic tool-loop helpers.
-
-Request building, response parsing and retry parsing live here once, adapted to
-the new ``LLMConfig`` (the resolved key is passed in, never read off the config).
-``arun_tool_loop`` drives ``broker.chat()`` back-and-forth until a tool-call-free
-reply; ``run_tool_loop`` is its sync wrapper.
-"""
+"""OpenAI-compatible chat primitives and the tool-loop helpers. Request building,
+response parsing and retry parsing live here once; the resolved key is passed in,
+never read off the config."""
 
 import json
 import math
@@ -142,13 +138,9 @@ def _invalid_body(model: str, snippet: str) -> InvalidProviderResponseError:
 
 
 def _parse_completion(data: Any, model: str) -> tuple[str, list[dict] | None, Usage | None]:
-    """Pull (content, tool_calls, usage) out of a decoded chat-completion body.
-
-    Any shape the OpenAI schema does not admit raises ``InvalidProviderResponseError``
-    so the router can treat a garbage 200 the way it treats a 5xx. The caught set is
-    deliberately broad: an escape here reaches the caller raw and skips failover, so
-    the cost of over-catching is far below the cost of missing a case.
-    """
+    """Pull (content, tool_calls, usage) out of a decoded chat-completion body. The
+    caught set is deliberately broad: an escape here reaches the caller raw and skips
+    failover."""
     try:
         message = message_from_response(data)
         content = str(message.get("content") or "")
@@ -161,12 +153,9 @@ def completion_from_response(
     resp: httpx.Response,
     model: str,
 ) -> tuple[str, list[dict] | None, Usage | None]:
-    """Decode a successful chat-completion response and pull its parts out.
-
-    Both an undecodable body and one the OpenAI schema does not admit raise
-    ``InvalidProviderResponseError``, so no caller of a 200 ever sees a raw
-    decoding error.
-    """
+    """Decode a successful chat-completion response and pull its parts out. Anything
+    the schema does not admit raises ``InvalidProviderResponseError``, so no caller of
+    a 200 sees a raw decoding error."""
     try:
         data = resp.json()
     except ValueError as exc:
@@ -184,12 +173,8 @@ async def call_provider(  # noqa: PLR0913
     timeout: float | None = None,
 ) -> tuple[str, list[dict] | None, Usage | None]:
     """POST an OpenAI-compatible completion and return (content, tool_calls, usage).
-
-    With ``client`` passed, it is reused as-is (never closed here — the caller
-    owns its lifetime); with ``None``, an ephemeral client is opened and closed
-    for this single call. ``timeout`` bounds this one request, overriding the
-    client's own; ``None`` leaves the client's default in force.
-    """
+    A passed ``client`` is reused and never closed here; ``timeout`` bounds this one
+    request, overriding the client's own."""
     url, headers, body = build_chat_request(config.base_url, config.model, api_key, messages, tools)
     async with _resolve_client(client) as active:
         if timeout is None:
@@ -231,14 +216,9 @@ async def aiter_sse_chunks(response: httpx.Response) -> AsyncIterator[dict]:
 
 
 async def aiter_chat_chunks(resp: httpx.Response, model: str) -> AsyncIterator[dict]:
-    """Yield the decoded chunks of a chat-completion SSE body.
-
-    ``choices`` is what makes a chunk a chat completion, so a body that decodes
-    none — a proxy's error page, a plain JSON reply, a provider ignoring
-    ``stream``, an SSE-framed error payload — raises
-    ``InvalidProviderResponseError`` on exhaustion. Counting *deltas* instead
-    would reject a legitimately empty answer.
-    """
+    """Yield the decoded chunks of a chat-completion SSE body. ``choices`` is what
+    makes a chunk one, so a body decoding none raises on exhaustion; counting
+    *deltas* instead would reject a legitimately empty answer."""
     completions = 0
     async for chunk in aiter_sse_chunks(resp):
         completions += "choices" in chunk

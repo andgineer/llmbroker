@@ -272,13 +272,64 @@ case is thin, since a model with no key is already inactive.
 
 ### nothing-declared-enters-the-pool
 
-**Blocks:** a pool flag on an entry, letting a host add its own models to
-routing.
+**Blocks:** a pool flag on an entry; `direct=` reaching the router.
 **Why:** what the pool sells is failover across interchangeable free providers.
-A self-hosted endpoint or a company gateway dropped into it would be spilled
-onto by a 429 it has nothing to do with. So pool membership is not a field — it
-is "not the host's own" — and a field that is always another field's negation is
-a way to disagree with yourself later.
+A self-hosted endpoint or a company gateway dropped into it by a constructor
+argument would be spilled onto by a 429 it has nothing to do with. So pool
+membership is not a field — it is "not reached by name" — and a field that is
+always another field's negation is a way to disagree with yourself later. Putting
+an endpoint of one's own into one's *registry* is a different act, made
+deliberately and recorded there
+([`a-sync-touches-only-what-a-sync-wrote`](#a-sync-touches-only-what-a-sync-wrote)).
+
+### a-sync-touches-only-what-a-sync-wrote
+
+Every registry entry records whether a sync put it there. A merge partitions on
+that record: entries a sync wrote are the ones the removal rule may retire and
+the arriving lineup may replace; an entry the installation stated itself is
+carried through untouched, whatever the arriving lineup says. The default for a
+new entry is *not written by a sync*, so anything reaching a registry by any
+other route — a host's own mirror call, a hand-written row, a backend filled
+before llmbroker ever ran — is protected without doing anything.
+
+**Blocks:** deciding what a merge may remove from where the registry came from,
+or from whether the broker was constructed with an object; inferring ownership
+from the entry's shape; a per-registry "read-only" flag.
+**Why:** ownership is a property of the entry, not of the backend class or the
+constructor call. A host may implement a driver of its own that holds our
+curated pool, and may equally pass a connection string to a database it filled
+by hand — the construction path predicts nothing. It also makes the mixed pool
+statable: the routed pool is whatever the registry states as pool members,
+whether it came from the curation, from the host, or from both.
+**Accepted cost:** one more fact stored per entry. It rides in the metadata
+column that already carries the optional fields, so no schema changes; in the
+lineup file the fact is structural already — `[[llms]]` is written by a sync,
+`[[custom]]` is not — so the file format does not change either. An entry that
+follows a paid-catalog alias is the one thing a refresh still rewrites without
+having written it: the host asked for exactly that when it named the alias
+instead of pinning a version.
+
+### who-builds-the-registry-states-what-it-follows
+
+A broker constructed with no registry, or with a connection string, follows the
+curated preset by default: the installation is llmbroker's own and the string
+only says where to keep it. A broker handed an already-constructed registry
+object must be told what that registry follows — a preset name, or nothing at
+all — and refuses to be built otherwise.
+
+**Blocks:** a silent default for a host-supplied registry, in either direction;
+deriving the default from the registry's contents; requiring the argument in the
+zero-config or connection-string forms.
+**Why:** in the object form both silent readings are wrong — a host that wanted
+the curation would quietly not get it, and a host that did not would quietly get
+its pool mixed with ours. One error message prevents both, and it fires at
+construction, where the caller is looking. Deriving the default from what the
+registry already holds was rejected for making the same call behave differently
+on an empty and a populated database: a host that adds an entry of its own a
+year later would silently lose the refresh.
+**Accepted cost:** a cluster that constructs its registry object by hand writes
+the preset name once in the factory it already has. The connection-string form —
+what the docs use for that case — is unaffected.
 
 ### declared-models-are-not-stored
 
