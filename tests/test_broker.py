@@ -752,7 +752,7 @@ def test_sync_reconciles_registry_to_preset(tmp_path, monkeypatch):
         db = str(tmp_path / "b.db")
         sqlite_reg = SqliteRegistry(db)
         extra = LLMConfig(
-            name="extra", base_url="https://e/v1", model="m", api_key_ref="K", synced=True
+            name="extra", base_url="https://e/v1", model="m", api_key_ref="K", from_preset=True
         )
         await sqlite_reg.mirror([extra])
 
@@ -779,7 +779,7 @@ def test_sync_refuses_model_identity_change(tmp_path, monkeypatch):
                     base_url="https://x/v1",
                     model="model-a",
                     api_key_ref="K",
-                    synced=True,
+                    from_preset=True,
                 )
             ],
         )

@@ -3,17 +3,16 @@
 Standalone runbook. Hand this whole file to an LLM agent with repo access and
 **web access**, or follow it by hand. It regenerates `src/llmbroker/presets/paid-catalog.toml`
 — the curated catalog of paid providers and their current flagship models that
-`llmbroker add-model` reads to help a user drop a paid model into their config.
+`llmbroker list` prints and `direct=` resolves an alias against.
 
 Run it in the same pass as `freetier-refresh-prompt.md`: the free pool and the
 paid catalog are refreshed together, from the providers' own current pages.
 
 Background reading before you start (do not skip):
 
-- `src/llmbroker/standalone/registry.py` — how `[[custom]]` entries and
-  `[keys.*]` are parsed. The catalog's fields must map cleanly onto what a
-  `[[custom]]` entry needs: `base_url`, `model`, `api_key_ref`, and a `[keys]`
-  help blurb.
+- `src/llmbroker/broker/aliases.py` — how a declared alias resolves against this
+  file. The catalog's fields must map cleanly onto what a declared model needs:
+  `base_url`, `model`, `api_key_ref`, and a key help blurb.
 - [`../../../specs/reference/rules/direct-aliases.md`](../../../specs/reference/rules/direct-aliases.md) —
   llmbroker calls **only OpenAI-compatible** `/chat/completions` endpoints. A
   provider without an OpenAI-compatible endpoint cannot be in this catalog.
@@ -37,16 +36,15 @@ config depends on, so it is governed by a permanence contract:
 - **A model a shipped preset already pools does not belong here.** An alias
   entry's `name` is machine-formed `<provider id>-<model id>`, the same
   convention preset pool entries are named by, so a model this file shares with
-  `src/llmbroker/presets/freetier.toml` produces a name no lineup can carry twice —
-  `add-model` and the refresh both refuse it outright. Nor is there
-  anything to add: the endpoint and the `api_key_ref` are the same ones the
+  `src/llmbroker/presets/freetier.toml` produces a name that collides with a pool
+  entry, and a provision refuses it outright. Nor is there anything to add: the endpoint and the `api_key_ref` are the same ones the
   preset already uses, and the billing tier lives in the user's provider
   account, not in any config.
 
-Aliases are what a refresh follows: for each of the user's entries carrying an
-alias it rewrites `model`, `name`, `base_url`, and `api_key_ref` from this file.
-That is the whole point of a refresh — so an alias whose target you change here
-changes the model of every deployment following it.
+Aliases are what a re-resolution follows: for each alias a deployment declared it
+reads `model`, `name`, `base_url` and `api_key_ref` from this file. That is the
+whole point — so an alias whose target you change here changes the model of every
+deployment following it.
 
 ## 0. What "verified" means here (read first)
 
@@ -121,7 +119,7 @@ per curated model):
 
 ```toml
 # Curated paid providers and their current flagship models.
-# Consumed by `llmbroker add-model`. Refreshed via paid-catalog-refresh-prompt.md.
+# Read by `llmbroker list` and by `direct=`. Refreshed via paid-catalog-refresh-prompt.md.
 # refreshed = "YYYY-MM-DD"
 
 [[provider]]

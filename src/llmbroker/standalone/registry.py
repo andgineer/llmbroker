@@ -3,7 +3,7 @@
 import tomllib
 from pathlib import Path
 
-from llmbroker.models import KeyInfo, Lineup, LLMConfig, check_aliases, check_weight
+from llmbroker.models import KeyInfo, Lineup, LLMConfig, check_weight
 
 
 def _int_or_none(value: object) -> int | None:
@@ -26,15 +26,9 @@ def _weight_from_entry(raw: object, name: object) -> float:
     return numeric
 
 
-def config_from_entry(entry: dict, *, custom: bool) -> LLMConfig | None:
+def config_from_entry(entry: dict) -> LLMConfig | None:
     name = entry.get("name")
     base_url = entry.get("base_url")
-    alias = entry.get("alias")
-    if alias is not None and not custom:
-        raise ValueError(
-            f"Registry: [[llms]] entry {name!r} carries an 'alias' — aliases belong to"
-            " [[custom]] entries only; preset-managed pool models are anonymous",
-        )
     if not name or not base_url:
         return None
     return LLMConfig(
@@ -43,32 +37,20 @@ def config_from_entry(entry: dict, *, custom: bool) -> LLMConfig | None:
         model=str(entry.get("model", "")),
         api_key_ref=str(entry.get("api_key_ref", "")),
         parallel=_int_or_none(entry.get("parallel")),
-        custom=custom,
-        # The file's sections are its ownerships: [[llms]] is what a sync merged.
-        synced=not custom,
-        alias=str(alias) if alias is not None else None,
+        # The file is llmbroker's own output, so everything in it came from a preset.
+        from_preset=True,
         weight=_weight_from_entry(entry.get("weight"), name),
     )
 
 
-ALIAS_NAME_HINT = (
-    "an alias entry's name is machine-formed again on every refresh, so renaming it will"
-    " not stick — drop its 'alias' to pin it instead"
-)
-
-
 def _check_unique_names(configs: list[LLMConfig]) -> None:
-    """Refuse a name carried twice across ``[[llms]]`` and ``[[custom]]``."""
-    seen: dict[str, LLMConfig] = {}
+    seen: set[str] = set()
     for cfg in configs:
-        first = seen.get(cfg.name)
-        if first is not None:
-            hint = f"; {ALIAS_NAME_HINT}" if first.alias or cfg.alias else ""
+        if cfg.name in seen:
             raise ValueError(
-                f"Registry: duplicate name {cfg.name!r} — a name identifies exactly one"
-                f" entry, across [[llms]] and [[custom]] alike{hint}",
+                f"Registry: duplicate name {cfg.name!r} — a name identifies exactly one entry",
             )
-        seen[cfg.name] = cfg
+        seen.add(cfg.name)
 
 
 def key_info_from_entry(ref: str, raw: object) -> KeyInfo:
@@ -97,24 +79,33 @@ def _key_infos(data: dict) -> dict[str, KeyInfo]:
     return {str(ref): key_info_from_entry(str(ref), val) for ref, val in raw.items()}
 
 
+def _check_no_declared_entries(data: dict) -> None:
+    """Refused rather than dropped: silently ignoring the section a previous release
+    wrote would take models out of an installation without saying so."""
+    if data.get("custom"):
+        raise ValueError(
+            "Registry: the model list carries [[custom]] entries — a model reached by"
+            " name is declared in code with direct=[...], never stored. Remove the"
+            " section and declare those models where the broker is built",
+        )
+
+
 def parse_lineup(data: dict) -> Lineup:
-    """The one reader of a lineup: ``[[llms]]`` then ``[[custom]]`` in file order,
-    plus the ``[keys]`` metadata. Whether a lineup is valid is decided only here."""
+    """The one reader of a model list: the ``[[llms]]`` entries in file order plus the
+    ``[keys]`` metadata. Whether a list is valid is decided only here."""
+    _check_no_declared_entries(data)
     configs: list[LLMConfig] = []
-    for section, custom in (("llms", False), ("custom", True)):
-        for position, entry in enumerate(data.get(section, []), start=1):
-            if not isinstance(entry, dict):
-                # ValueError, not TypeError: a malformed lineup must stay inside the
-                # error type a background refresh catches rather than kill the process.
-                raise ValueError(  # noqa: TRY004
-                    f"Registry: [[{section}]] entry {position} is {type(entry).__name__},"
-                    " not a table",
-                )
-            cfg = config_from_entry(entry, custom=custom)
-            if cfg is not None:
-                configs.append(cfg)
+    for position, entry in enumerate(data.get("llms", []), start=1):
+        if not isinstance(entry, dict):
+            # ValueError, not TypeError: a malformed lineup must stay inside the
+            # error type a background refresh catches rather than kill the process.
+            raise ValueError(  # noqa: TRY004
+                f"Registry: [[llms]] entry {position} is {type(entry).__name__}, not a table",
+            )
+        cfg = config_from_entry(entry)
+        if cfg is not None:
+            configs.append(cfg)
     _check_unique_names(configs)
-    check_aliases(configs)
     return Lineup(configs=configs, keys=_key_infos(data))
 
 
@@ -134,8 +125,8 @@ def read_lineup(path: Path) -> Lineup:
 class Registry:
     """File-backed read-only registry over a TOML lineup.
 
-    The file is written by llmbroker's own commands and rewritten in full by a sync;
-    see ``specs/reference/rules/sync-merge.md``.
+    The file is llmbroker's own output, rewritten in full by a sync; see
+    ``specs/reference/rules/sync-merge.md``.
     """
 
     def __init__(self, path: str | Path) -> None:
@@ -146,7 +137,7 @@ class Registry:
         return self._path
 
     async def load(self) -> list[LLMConfig]:
-        """The ``[[llms]]`` and ``[[custom]]`` entries of the file, validated."""
+        """The ``[[llms]]`` entries of the file, validated."""
         return read_lineup(self._path).configs
 
     async def key_info(self) -> dict[str, KeyInfo]:

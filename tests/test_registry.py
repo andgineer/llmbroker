@@ -58,64 +58,38 @@ def test_load_empty_llms_section(tmp_path):
     assert asyncio.run(Registry(f).load()) == []
 
 
-def test_load_custom_array_flags_provenance(tmp_path):
-    """The array an entry sits in is the whole verdict; a legacy `pool` key is a
-    field that no longer exists and loads without complaint."""
+def test_load_flags_every_file_entry_as_the_presets(tmp_path):
+    """The file is llmbroker's own output, so everything in it came from a preset; a
+    legacy `pool` key is a field that no longer exists and loads without complaint."""
     f = tmp_path / "llms.toml"
     f.write_text(
         '[[llms]]\nname="m"\nbase_url="https://x/v1"\nmodel="a"\napi_key_ref="K"\n'
-        '[[custom]]\nname="c-plain"\nbase_url="https://y/v1"\nmodel="b"\napi_key_ref="K"\n'
-        '[[custom]]\nname="c-legacy"\nbase_url="https://z/v1"\nmodel="c"\napi_key_ref="K"\npool=true\n'
+        '[[llms]]\nname="legacy"\nbase_url="https://z/v1"\nmodel="c"\napi_key_ref="K"\npool=true\n'
     )
     configs = {c.name: c for c in asyncio.run(Registry(f).load())}
-    assert configs["m"].custom is False
-    assert configs["c-plain"].custom is True
-    assert configs["c-legacy"].custom is True
+    assert configs["m"].from_preset is True
+    assert configs["legacy"].from_preset is True
 
 
-# ── alias ────────────────────────────────────────────────────────────────────
-
-
-def test_load_alias_on_custom_entry(tmp_path):
+def test_load_refuses_a_declared_section(tmp_path):
+    """A model reached by name is declared in code, so the section a previous release
+    wrote is refused rather than silently dropped."""
     f = tmp_path / "llms.toml"
     f.write_text(
         '[[custom]]\nname="anthropic-claude-opus-4-8"\nalias="opus"\n'
-        'base_url="https://a/v1"\nmodel="claude-opus-4-8"\napi_key_ref="K"\npool=false\n'
-        '[[custom]]\nname="pinned"\nbase_url="https://b/v1"\nmodel="m"\napi_key_ref="K"\n'
+        'base_url="https://a/v1"\nmodel="claude-opus-4-8"\napi_key_ref="K"\n'
     )
-    configs = {c.name: c for c in asyncio.run(Registry(f).load())}
-    assert configs["anthropic-claude-opus-4-8"].alias == "opus"
-    assert configs["pinned"].alias is None
-
-
-def test_load_alias_on_llms_entry_is_a_config_error(tmp_path):
-    f = tmp_path / "llms.toml"
-    f.write_text(
-        '[[llms]]\nname="pool"\nalias="free"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
-    )
-    with pytest.raises(ValueError, match="aliases belong to"):
+    with pytest.raises(ValueError, match=r"direct=\[\.\.\.\]"):
         asyncio.run(Registry(f).load())
 
 
-def test_load_duplicate_aliases_refused(tmp_path):
-    f = tmp_path / "llms.toml"
-    f.write_text(
-        '[[custom]]\nname="a"\nalias="opus"\nbase_url="https://a/v1"\nmodel="m1"\napi_key_ref="K"\n'
-        '[[custom]]\nname="b"\nalias="opus"\nbase_url="https://b/v1"\nmodel="m2"\napi_key_ref="K"\n'
-    )
-    with pytest.raises(ValueError, match="duplicate alias"):
-        asyncio.run(Registry(f).load())
-
-
-def test_load_duplicate_names_across_arrays_refused(tmp_path):
-    """The shape a catalog refresh can produce: an alias entry renamed onto a
-    preset pool entry. A DB sync keys on the name and would lose one of them."""
+def test_load_duplicate_names_refused(tmp_path):
     f = tmp_path / "llms.toml"
     f.write_text(
         '[[llms]]\nname="google-gemini-2.5-flash"\nbase_url="https://g/v1"'
         '\nmodel="gemini-2.5-flash"\napi_key_ref="K"\n'
-        '[[custom]]\nalias="flash-mini"\nname="google-gemini-2.5-flash"'
-        '\nmodel="gemini-2.5-flash"\nbase_url="https://g/v1"\napi_key_ref="K"\npool=false\n'
+        '[[llms]]\nname="google-gemini-2.5-flash"\nbase_url="https://g/v1"'
+        '\nmodel="gemini-2.5-flash"\napi_key_ref="K"\n'
     )
     with pytest.raises(ValueError, match="duplicate name"):
         asyncio.run(Registry(f).load())
@@ -127,11 +101,10 @@ def test_llmconfig_alias_metadata_round_trip():
         base_url="u",
         model="claude-opus-4-8",
         api_key_ref="K",
-        custom=True,
         alias="opus",
     )
     metadata = cfg.to_metadata()
-    assert metadata == {"custom": True, "alias": "opus"}
+    assert metadata == {"alias": "opus"}
     assert (
         LLMConfig.from_metadata(
             name=cfg.name,
@@ -147,11 +120,11 @@ def test_llmconfig_alias_metadata_round_trip():
 # ── weight ───────────────────────────────────────────────────────────────────
 
 
-def test_load_weight_on_llms_and_custom_entries(tmp_path):
+def test_load_weight_on_entries(tmp_path):
     f = tmp_path / "llms.toml"
     f.write_text(
         '[[llms]]\nname="a"\nbase_url="https://a/v1"\nmodel="m"\napi_key_ref="K"\nweight=0.7\n'
-        '[[custom]]\nname="c"\nbase_url="https://c/v1"\nmodel="m"\napi_key_ref="K"\nweight=0.25\n'
+        '[[llms]]\nname="c"\nbase_url="https://c/v1"\nmodel="m"\napi_key_ref="K"\nweight=0.25\n'
         '[[llms]]\nname="b"\nbase_url="https://b/v1"\nmodel="m"\napi_key_ref="K"\n'
     )
     configs = {c.name: c for c in asyncio.run(Registry(f).load())}
@@ -305,20 +278,11 @@ def test_llmconfig_metadata_round_trip_with_parallel():
     assert restored == cfg
 
 
-def test_llmconfig_custom_metadata_round_trip():
-    cfg = LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", custom=True)
-    assert cfg.to_metadata() == {"custom": True}
+def test_llmconfig_ignores_a_stored_flag_that_no_longer_exists():
+    """A registry holds pool members and nothing else, so a row written when the kind
+    was stored still loads — it just says nothing."""
     restored = LLMConfig.from_metadata(
-        name="g", base_url="u", model="m", api_key_ref="K", metadata={"custom": True}
-    )
-    assert restored == cfg
-
-
-def test_llmconfig_ignores_a_stored_pool_flag():
-    """A field that no longer exists: a row written before the pool became `not
-    custom` still loads, it just says nothing."""
-    restored = LLMConfig.from_metadata(
-        name="g", base_url="u", model="m", api_key_ref="K", metadata={"pool": False}
+        name="g", base_url="u", model="m", api_key_ref="K", metadata={"pool": False, "custom": True}
     )
     assert restored == LLMConfig(name="g", base_url="u", model="m", api_key_ref="K")
 
@@ -372,7 +336,6 @@ async def test_mutable_registry_alias_round_trip(mutable_registry):
         base_url="https://x/v1",
         model="claude-opus-4-8",
         api_key_ref="K",
-        custom=True,
         alias="opus",
     )
     await mutable_registry.mirror([cfg])
@@ -386,7 +349,6 @@ def _aliased(name: str) -> LLMConfig:
         base_url="https://x/v1",
         model=name,
         api_key_ref="K",
-        custom=True,
         alias="opus",
     )
 

@@ -17,7 +17,12 @@ _NEW = (
 
 _DUPLICATE_NAME = (
     '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="A"\n'
-    '[[custom]]\nname="a"\nbase_url="https://y/v1"\nmodel="m"\napi_key_ref="B"\n'
+    '[[llms]]\nname="a"\nbase_url="https://y/v1"\nmodel="m"\napi_key_ref="B"\n'
+)
+
+_DECLARED_SECTION = (
+    '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="A"\n'
+    '[[custom]]\nname="mine"\nbase_url="https://y/v1"\nmodel="m"\napi_key_ref="B"\n'
 )
 
 
@@ -30,12 +35,6 @@ async def _sync(text: str, target) -> None:
     )
 
 
-_DUPLICATE_ALIAS = (
-    '[[custom]]\nname="one"\nalias="fast"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="A"\n'
-    '[[custom]]\nname="two"\nalias="fast"\nbase_url="https://y/v1"\nmodel="m"\napi_key_ref="B"\n'
-)
-
-
 async def test_registry_and_sync_path_refuse_the_same_duplicate_name(tmp_path):
     target = tmp_path / "llms.toml"
     target.write_text(_DUPLICATE_NAME)
@@ -46,14 +45,15 @@ async def test_registry_and_sync_path_refuse_the_same_duplicate_name(tmp_path):
     assert target.read_text() == _DUPLICATE_NAME
 
 
-async def test_registry_and_sync_path_refuse_the_same_duplicate_alias(tmp_path):
+async def test_registry_and_sync_path_refuse_the_same_declared_section(tmp_path):
+    """Both readers refuse it, and the message says where a named model goes instead."""
     target = tmp_path / "llms.toml"
-    target.write_text(_DUPLICATE_ALIAS)
-    with pytest.raises(ValueError, match="duplicate alias 'fast'"):
+    target.write_text(_DECLARED_SECTION)
+    with pytest.raises(ValueError, match=r"direct=\[\.\.\.\]"):
         await Registry(target).load()
-    with pytest.raises(ValueError, match="duplicate alias 'fast'"):
+    with pytest.raises(ValueError, match=r"\[\[custom\]\] entries"):
         await _sync(_NEW, target)
-    assert target.read_text() == _DUPLICATE_ALIAS
+    assert target.read_text() == _DECLARED_SECTION
 
 
 async def test_an_incoming_lineup_is_validated_too(tmp_path):
@@ -67,12 +67,12 @@ async def test_an_incoming_lineup_is_validated_too(tmp_path):
 def test_parse_lineup_reads_configs_and_keys_in_file_order():
     data = tomllib.loads(
         '[[llms]]\nname="a"\nbase_url="u"\nmodel="m"\napi_key_ref="A"\n'
-        '[[custom]]\nname="c"\nbase_url="u"\nmodel="m"\napi_key_ref="C"\n'
+        '[[llms]]\nname="c"\nbase_url="u"\nmodel="m"\napi_key_ref="C"\n'
         '[keys.A]\nhelp="a help"\n',
     )
     lineup = parse_lineup(data)
     configs, keys = lineup.configs, lineup.keys
-    assert [(c.name, c.custom) for c in configs] == [("a", False), ("c", True)]
+    assert [(c.name, c.from_preset) for c in configs] == [("a", True), ("c", True)]
     assert keys["A"].help == "a help"
 
 
@@ -81,17 +81,6 @@ def test_parse_lineup_refuses_a_non_table_entry():
     entry is a model missing from the pool with nothing to say so."""
     with pytest.raises(ValueError, match=r"\[\[llms\]\] entry 2 is str, not a table"):
         parse_lineup({"llms": [{"name": "a", "base_url": "u"}, "oops"]})
-
-
-def test_a_duplicate_alias_entry_name_says_how_to_pin_it():
-    """The collision a catalog move makes: two alias entries land on one name, and
-    renaming is the one fix that will not stick."""
-    data = tomllib.loads(
-        '[[custom]]\nname="dup"\nalias="fast"\nbase_url="u"\nmodel="m"\napi_key_ref="A"\n'
-        '[[custom]]\nname="dup"\nalias="cheap"\nbase_url="u"\nmodel="m"\napi_key_ref="B"\n',
-    )
-    with pytest.raises(ValueError, match="drop its 'alias' to pin it instead"):
-        parse_lineup(data)
 
 
 async def test_a_malformed_keys_table_is_refused_not_a_crash(tmp_path):
@@ -108,7 +97,11 @@ async def test_a_malformed_keys_table_is_refused_not_a_crash(tmp_path):
         await _sync(_NEW, target)
 
 
-def test_a_duplicate_plain_name_does_not_mention_aliases():
-    with pytest.raises(ValueError, match="duplicate name 'a'") as exc:
-        parse_lineup(tomllib.loads(_DUPLICATE_NAME))
-    assert "alias" not in str(exc.value)
+def test_an_alias_on_a_stored_entry_is_not_read_back():
+    """The keyspace a stored entry has no field for: a leftover key is ignored, not
+    turned into an entry that follows the paid catalog."""
+    data = tomllib.loads(
+        '[[llms]]\nname="a"\nalias="opus"\nbase_url="u"\nmodel="m"\napi_key_ref="A"\n'
+    )
+    (cfg,) = parse_lineup(data).configs
+    assert cfg.alias is None

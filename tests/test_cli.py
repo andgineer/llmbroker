@@ -1,7 +1,6 @@
 """Unit tests for the CLI (python -m llmbroker)."""
 
 import asyncio
-import tomllib
 import urllib.error
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -76,20 +75,18 @@ def test_env_without_key_help_has_no_comments(llmbroker_home, capsys):
     assert "KEY_A=" in out
 
 
-def test_env_includes_custom_entries(llmbroker_home, capsys):
+def test_env_reports_a_leftover_declared_section(llmbroker_home, capsys):
+    """A file a previous release wrote is refused, not half-read, and the message
+    says where those models go now."""
     _lineup(
         llmbroker_home,
         '[[llms]]\nname="pool"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="POOL_KEY"\n'
         '[[custom]]\nname="frontier"\nbase_url="https://y/v1"\nmodel="big"'
-        '\napi_key_ref="PAID_KEY"\n'
-        '[keys.PAID_KEY]\nhelp = "paid key help"\n',
+        '\napi_key_ref="PAID_KEY"\n',
     )
     rc = main(["env"])
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "POOL_KEY=" in out
-    assert "PAID_KEY=" in out  # the [[custom]] entry's key is emitted too
-    assert "paid key help" in out  # its help comes from the shared [keys] table
+    assert rc == 1
+    assert "direct=[...]" in capsys.readouterr().err
 
 
 def test_env_before_any_broker_has_run_says_so_instead_of_printing_nothing(
@@ -106,7 +103,7 @@ def test_env_before_any_broker_has_run_says_so_instead_of_printing_nothing(
     assert "llmbroker env freetier" in captured.err
 
 
-# --- add-model command ---
+# --- list: the curated model lists, read-only ---
 
 _CATALOG = (
     b'[[provider]]\nid="anthropic"\nlabel="Anthropic"\n'
@@ -118,276 +115,119 @@ _CATALOG = (
     b'  label="Sonnet"\n  verified="u"\n'
 )
 
+_POOL = (
+    b'[[llms]]\nname="groq-a"\nbase_url="https://api.groq.com/openai/v1"\n'
+    b'model="oss-120b"\napi_key_ref="GROQ_API_KEY"\nweight=0.5\n'
+    b'[[llms]]\nname="google-b"\nbase_url="https://gen.googleapis.com/v1beta/openai"\n'
+    b'model="gemini-flash"\napi_key_ref="GEMINI_API_KEY"\nweight=0.6\n'
+)
+
 
 def _lineup(
     home, body='[[llms]]\nname="pool"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="POOL_KEY"\n'
 ):
-    """`add-model` writes the lineup inside llmbroker's own directory, which the
-    autouse fixture points at a temp dir."""
+    """The model list lives inside llmbroker's own directory, which the autouse
+    fixture points at a temp dir."""
     f = home / "lineup.toml"
     f.write_text(body)
     return f
 
 
-def test_add_model_flags_appends_alias_custom(llmbroker_home):
-    f = _lineup(llmbroker_home)
-    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
-        rc = main(["add-model", "--provider", "anthropic", "--model", "claude-opus-4-8"])
-    assert rc == 0
-    data = tomllib.loads(f.read_text())
-    assert [e["name"] for e in data["llms"]] == ["pool"]  # existing entry preserved
-    (entry,) = data["custom"]
-    assert entry["alias"] == "opus"
-    assert entry["name"] == "anthropic-claude-opus-4-8"  # machine-formed
-    assert entry["model"] == "claude-opus-4-8"
-    assert entry["base_url"] == "https://api.anthropic.com/v1"
-    assert entry["api_key_ref"] == "ANTHROPIC_API_KEY"
-    assert "pool" not in entry  # a custom entry is direct-only by being custom
-    assert data["keys"]["ANTHROPIC_API_KEY"]["help"] == "console.anthropic.com"
+def _catalogs(name: str) -> bytes:
+    return _POOL if "freetier" in name else _CATALOG
 
 
-def test_add_model_pin_writes_name_only_block(llmbroker_home):
-    f = _lineup(llmbroker_home)
-    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
-        rc = main(
-            [
-                "add-model",
-                "--provider",
-                "anthropic",
-                "--model",
-                "claude-sonnet-5",
-                "--pin",
-                "--name",
-                "frontier",
-            ]
-        )
-    assert rc == 0
-    (entry,) = tomllib.loads(f.read_text())["custom"]
-    assert "alias" not in entry
-    assert entry["name"] == "frontier"
-    assert entry["model"] == "claude-sonnet-5"
-
-
-def test_add_model_pin_defaults_name_to_provider_id(llmbroker_home):
-    f = _lineup(llmbroker_home)
-    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
-        rc = main(
-            [
-                "add-model",
-                "--provider",
-                "anthropic",
-                "--model",
-                "claude-opus-4-8",
-                "--pin",
-            ]
-        )
-    assert rc == 0
-    (entry,) = tomllib.loads(f.read_text())["custom"]
-    assert entry["name"] == "anthropic"
-    assert "alias" not in entry
-
-
-def test_add_model_name_without_pin_errors(llmbroker_home, capsys):
-    f = _lineup(llmbroker_home)
-    rc = main(
-        [
-            "add-model",
-            "--provider",
-            "anthropic",
-            "--model",
-            "claude-opus-4-8",
-            "--name",
-            "mine",
-        ]
+def _fetch_both():
+    """`list` reads both curated presets, so the fake fetch answers by URL."""
+    return patch(
+        "urllib.request.urlopen",
+        side_effect=lambda url, **_kw: _mock_urlopen(_catalogs(str(url))),
     )
-    assert rc == 1
-    assert "--name is only valid with --pin" in capsys.readouterr().err
 
 
-def test_add_model_alias_collision_refused(llmbroker_home, capsys):
-    _lineup(
-        llmbroker_home,
-        '[[custom]]\nalias="opus"\nname="something-else"\nbase_url="https://x/v1"\n'
-        'model="old"\napi_key_ref="ANTHROPIC_API_KEY"\n',
+def test_list_shows_both_curated_presets(llmbroker_home, capsys):
+    with _fetch_both():
+        rc = main(["list"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "pool groq-a oss-120b https://api.groq.com/openai/v1 GROQ_API_KEY" in out
+    assert (
+        "pool google-b gemini-flash https://gen.googleapis.com/v1beta/openai GEMINI_API_KEY" in out
     )
-    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
-        rc = main(["add-model", "--provider", "anthropic", "--model", "claude-opus-4-8"])
-    assert rc == 1
-    assert "alias 'opus' is already used" in capsys.readouterr().err
+    assert "direct opus" in out
+    assert "direct sonnet" in out
 
 
-def test_add_model_catalog_model_without_alias_needs_pin(llmbroker_home, capsys):
+def test_list_carries_the_fields_a_pinned_declaration_needs(llmbroker_home, capsys):
+    with _fetch_both():
+        rc = main(["list"])
+    assert rc == 0
+    line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("direct opus "))
+    assert line.split() == [
+        "direct",
+        "opus",
+        "anthropic",
+        "claude-opus-4-8",
+        "https://api.anthropic.com/v1",
+        "ANTHROPIC_API_KEY",
+    ]
+
+
+def test_list_marks_a_catalog_model_with_no_alias(llmbroker_home, capsys):
     catalog = (
         b'[[provider]]\nid="x"\nlabel="X"\nbase_url="https://x/v1"\napi_key_ref="X_KEY"\n'
         b'  [[provider.models]]\n  model="m1"\n  label="M1"\n  verified="u"\n'
     )
-    f = _lineup(llmbroker_home)
-    with patch("urllib.request.urlopen", return_value=_mock_urlopen(catalog)):
-        rc = main(["add-model", "--provider", "x", "--model", "m1"])
-    assert rc == 1
-    assert "carries no alias" in capsys.readouterr().err
-
-
-def test_add_model_unknown_provider(llmbroker_home, capsys):
-    f = _lineup(llmbroker_home)
-    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
-        rc = main(["add-model", "--provider", "nope", "--model", "x"])
-    assert rc == 1
-    assert "unknown provider" in capsys.readouterr().err
-
-
-def test_add_model_unknown_model(llmbroker_home, capsys):
-    f = _lineup(llmbroker_home)
-    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
-        rc = main(["add-model", "--provider", "anthropic", "--model", "ghost"])
-    assert rc == 1
-    assert "unknown model" in capsys.readouterr().err
-
-
-def test_add_model_name_collision(llmbroker_home, capsys):
-    f = _lineup(llmbroker_home)
-    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
-        rc = main(
-            [
-                "add-model",
-                "--provider",
-                "anthropic",
-                "--model",
-                "claude-opus-4-8",
-                "--pin",
-                "--name",
-                "pool",
-            ]  # collides with the [[llms]] entry
-        )
-    assert rc == 1
-    assert "already exists" in capsys.readouterr().err
-
-
-def test_add_model_does_not_duplicate_existing_key(llmbroker_home):
-    f = _lineup(llmbroker_home, '[keys.ANTHROPIC_API_KEY]\nhelp = "existing help"\n')
-    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)):
-        rc = main(["add-model", "--provider", "anthropic", "--model", "claude-opus-4-8"])
-    assert rc == 0
-    data = tomllib.loads(f.read_text())  # still valid TOML, key kept once
-    assert data["keys"]["ANTHROPIC_API_KEY"]["help"] == "existing help"
-
-
-_SHORT_CATALOG = (
-    b'[[provider]]\nid="h"\nlabel="H"\nbase_url="https://h"\napi_key_ref="K"\n'
-    b'key_help="hh"\n  [[provider.models]]\n  alias="m"\n  model="m"\n'
-    b'  label="M"\n  verified="u"\n'
-)
-
-
-def test_add_model_keeps_a_short_entry_out_of_a_trailing_keys_table(llmbroker_home):
-    """A catalog entry short enough for tomli_w to render inline must still land as a
-    top-level [[custom]] entry, not inside the file's trailing [keys.*] table."""
-    f = _lineup(llmbroker_home, '[keys.POOL_KEY]\nhelp = "pool help"\n')
-    with patch("urllib.request.urlopen", return_value=_mock_urlopen(_SHORT_CATALOG)):
-        rc = main(
-            [
-                "add-model",
-                "--provider",
-                "h",
-                "--model",
-                "m",
-                "--pin",
-                "--name",
-                "x",
-            ]
-        )
-    assert rc == 0
-    data = tomllib.loads(f.read_text())
-    assert [e["name"] for e in data["custom"]] == ["x"]
-    assert "custom" not in data["keys"]["POOL_KEY"]
-    assert data["keys"]["K"]["help"] == "hh"
-
-
-def test_add_model_interactive(llmbroker_home, capsys):
-    f = _lineup(llmbroker_home)
-    with (
-        patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)),
-        patch("builtins.input", side_effect=["1", "2"]),  # provider, model
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=lambda url, **_kw: _mock_urlopen(_POOL if "freetier" in str(url) else catalog),
     ):
-        rc = main(["add-model"])
+        rc = main(["list"])
     assert rc == 0
-    assert "sonnet — Sonnet (claude-sonnet-5)" in capsys.readouterr().out  # alias-led menu
-    (entry,) = tomllib.loads(f.read_text())["custom"]
-    assert entry["alias"] == "sonnet"  # picked #2
-    assert entry["name"] == "anthropic-claude-sonnet-5"
-    assert entry["model"] == "claude-sonnet-5"
+    assert "direct - x m1 https://x/v1 X_KEY" in capsys.readouterr().out
 
 
-def test_add_model_offline_reads_the_bundled_catalog(llmbroker_home, capsys, bundled_presets):
-    """The catalog ships in the wheel, so picking a paid model needs no network."""
+def test_list_writes_nothing(llmbroker_home, capsys):
     f = _lineup(llmbroker_home)
-    exc = urllib.error.URLError(reason="offline")
-    with patch("urllib.request.urlopen", side_effect=exc):
-        rc = main(["add-model", "--provider", "anthropic", "--model", "opus"])
-    assert rc == 1  # the model id is wrong, but the catalog was read
-    assert "unknown model 'opus'" in capsys.readouterr().err
+    before = f.read_text()
+    with _fetch_both():
+        rc = main(["list"])
+    assert rc == 0
+    assert f.read_text() == before
 
 
-def test_add_model_reports_a_fetch_failure_with_nothing_to_fall_back_to(llmbroker_home, capsys):
-    f = _lineup(llmbroker_home)
-    exc = urllib.error.URLError(reason="offline")
-    with patch("urllib.request.urlopen", side_effect=exc):
-        rc = main(["add-model", "--provider", "anthropic", "--model", "claude-opus-4-8"])
+def test_list_offline_reads_the_bundled_presets(llmbroker_home, capsys, bundled_presets):
+    """Both curated lists ship in the wheel, so listing them needs no network."""
+    with patch("urllib.request.urlopen", side_effect=urllib.error.URLError(reason="offline")):
+        rc = main(["list"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "direct opus anthropic" in out
+    assert any(ln.startswith("pool ") for ln in out.splitlines())
+
+
+def test_list_reports_a_fetch_failure_with_nothing_to_fall_back_to(llmbroker_home, capsys):
+    with patch("urllib.request.urlopen", side_effect=urllib.error.URLError(reason="offline")):
+        rc = main(["list"])
     assert rc == 1
     assert "offline" in capsys.readouterr().err
-
-
-def test_env_offline_prints_the_bundled_presets_refs(capsys, bundled_presets):
-    exc = urllib.error.URLError(reason="offline")
-    with patch("urllib.request.urlopen", side_effect=exc):
-        rc = main(["env", "freetier"])
-    assert rc == 0
-    assert "GEMINI_API_KEY=" in capsys.readouterr().out
-
-
-def test_add_model_incomplete_catalog_entry_errors_cleanly(llmbroker_home, capsys):
-    # provider missing base_url/api_key_ref — must be a clean error, not a traceback
-    bad = (
-        b'[[provider]]\nid="x"\nlabel="X"\n'
-        b'  [[provider.models]]\n  model="m1"\n  label="M1"\n  verified="u"\n'
-    )
-    f = _lineup(llmbroker_home)
-    with patch("urllib.request.urlopen", return_value=_mock_urlopen(bad)):
-        rc = main(["add-model", "--provider", "x", "--model", "m1"])
-    assert rc == 1
-    assert "incomplete" in capsys.readouterr().err
-
-
-def test_add_model_interactive_honors_the_name_flag(llmbroker_home):
-    f = _lineup(llmbroker_home)
-    with (
-        patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)),
-        patch("builtins.input", side_effect=["1", "1", ""]),  # provider, model, name = default
-    ):
-        rc = main(["add-model", "--pin", "--name", "myclaude"])
-    assert rc == 0
-    (entry,) = tomllib.loads(f.read_text())["custom"]
-    assert entry["name"] == "myclaude"  # --name used as the prompt default, accepted blank
-
-
-def test_add_model_eof_aborts_cleanly(llmbroker_home, capsys):
-    f = _lineup(llmbroker_home)
-    with (
-        patch("urllib.request.urlopen", return_value=_mock_urlopen(_CATALOG)),
-        patch("builtins.input", side_effect=EOFError),
-    ):
-        rc = main(["add-model"])
-    assert rc == 1
-    assert "aborted" in capsys.readouterr().err
 
 
 # --- what the CLI is not ---
 
 
-@pytest.mark.parametrize("argv", [["sync", "preset.toml", "broker.db"], ["preset", "freetier"]])
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["sync", "preset.toml", "broker.db"],
+        ["preset", "freetier"],
+        ["add-model", "--provider", "anthropic", "--model", "claude-opus-5"],
+    ],
+)
 def test_the_removed_subcommands_stay_removed(capsys, argv):
-    """Mirroring a lineup is the host's own entrypoint, and printing the curated
-    text served a config file no host names any more."""
+    """Mirroring a model list is the host's own entrypoint, printing the curated text
+    served a config file no host names any more, and a model reached by name is
+    declared in code."""
     with pytest.raises(SystemExit):
         main(argv)
     assert f"invalid choice: '{argv[0]}'" in capsys.readouterr().err

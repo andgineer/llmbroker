@@ -6,7 +6,6 @@ The fetch is always monkeypatched — no test goes to the network.
 
 import logging
 import tomllib
-from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -30,7 +29,7 @@ _OLD = LLMConfig(
     base_url="https://groq/v1",
     model="m",
     api_key_ref="GROQ",
-    synced=True,
+    from_preset=True,
 )
 
 _PRESET_GEMINI = (
@@ -172,14 +171,14 @@ async def test_a_scoped_installation_still_retires_on_journal_evidence(tmp_path,
 # ── The file target ──────────────────────────────────────────────────────────
 
 
-async def test_a_file_registry_is_regenerated_and_keeps_the_users_own_models(tmp_path, preset):
-    """The broker's own write-back renders the whole file from the merge — the user's
-    models and the hints for their keys ride through it."""
+async def test_a_file_registry_is_regenerated_and_keeps_what_it_can_still_call(tmp_path, preset):
+    """The broker's own write-back renders the whole file from the merge — a kept
+    entry and the hints for its key ride through it."""
     target = tmp_path / "llms.toml"
     target.write_text(
         '[[llms]]\nname="groq-old"\nbase_url="https://groq/v1"\nmodel="m"\napi_key_ref="GROQ"\n'
-        '[[custom]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="big"\napi_key_ref="MY_KEY"\n'
-        '[keys.MY_KEY]\nhelp = "my custom key"\n',
+        '[[llms]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="big"\napi_key_ref="MY_KEY"\n'
+        '[keys.MY_KEY]\nhelp = "my own key"\n',
     )
     broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore(), sync=None)
     report = await broker.sync("freetier")
@@ -189,173 +188,46 @@ async def test_a_file_registry_is_regenerated_and_keeps_the_users_own_models(tmp
         await broker.aclose()
 
     data = tomllib.loads(target.read_text())
-    assert [e["name"] for e in data["llms"]] == ["gemini", "groq-old"]
-    assert [e["name"] for e in data["custom"]] == ["mine"]
+    assert [e["name"] for e in data["llms"]] == ["gemini", "groq-old", "mine"]
     assert data["keys"]["GEMINI"]["help"] == "get one at aistudio"
-    assert data["keys"]["MY_KEY"]["help"] == "my custom key"
-    assert report.kept == ("groq-old",)
+    assert data["keys"]["MY_KEY"]["help"] == "my own key"
+    assert set(report.kept) == {"groq-old", "mine"}
 
 
-async def test_a_file_syncs_alias_entry_follows_the_paid_catalog(tmp_path, monkeypatch):
-    """The broker's file write-back keeps the CLI's alias refresh — one network seam
-    serves both the preset and the catalog."""
-    catalog = (
-        '[[provider]]\nid="anthropic"\nbase_url="https://api.anthropic.com/v2"\n'
-        'api_key_ref="ANTHROPIC_API_KEY"\nkey_help="console.anthropic.com"\n'
-        '  [[provider.models]]\n  alias="opus"\n  model="claude-opus-5"\n'
-    )
-    monkeypatch.setattr(
-        presets,
-        "fetch_preset_text",
-        lambda name: catalog if name == "paid-catalog" else _PRESET_GEMINI,
-    )
-    target = tmp_path / "llms.toml"
-    target.write_text(
-        '[[custom]]\nalias="opus"\nname="anthropic-claude-opus-4-8"\nmodel="claude-opus-4-8"'
-        '\nbase_url="https://api.anthropic.com/v1"\napi_key_ref="ANTHROPIC_API_KEY"\n',
-    )
-    broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore(), sync=None)
-    await broker.sync("freetier")
-    await broker.aclose()
-    (entry,) = tomllib.loads(target.read_text())["custom"]
-    assert (entry["model"], entry["name"]) == ("claude-opus-5", "anthropic-claude-opus-5")
-
-
-async def test_both_targets_report_the_same_alias_move(tmp_path, monkeypatch, caplog):
-    """One refresh, one set of facts: the file and the database halves are the same
-    code now, and a change has to read identically out of either."""
-    catalog = (
-        '[[provider]]\nid="anthropic"\nbase_url="https://api.anthropic.com/v2"\n'
-        'api_key_ref="ANTHROPIC_API_KEY"\nkey_help="console.anthropic.com"\n'
-        '  [[provider.models]]\n  alias="opus"\n  model="claude-opus-5"\n'
-    )
-    monkeypatch.setattr(
-        presets,
-        "fetch_preset_text",
-        lambda name: catalog if name == "paid-catalog" else _PRESET_GEMINI,
-    )
-
-    async def _lines(broker) -> list[str]:
-        caplog.clear()
-        with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
-            await broker.sync("freetier")
-        await broker.aclose()
-        return [r.message for r in caplog.records if r.message.startswith("sync freetier: opus")]
-
-    target = tmp_path / "llms.toml"
-    target.write_text(
-        '[[custom]]\nalias="opus"\nname="anthropic-claude-opus-4-8"\nmodel="claude-opus-4-8"'
-        '\nbase_url="https://api.anthropic.com/v1"\napi_key_ref="ANTHROPIC_API_KEY"\n',
-    )
-    from_file = await _lines(
-        AsyncBroker(
-            registry=FileRegistry(target),
-            secrets=DictSecrets({}),
-            store=InMemoryStore(),
-            sync=None,
-        ),
-    )
-    from_db = await _lines(_broker(await _seeded_db(tmp_path, (_OPUS_V1,))))
-    assert from_file == from_db == ["sync freetier: opus: claude-opus-4-8 -> claude-opus-5"]
-
-
-_CATALOG_V1 = (
-    '[[provider]]\nid="anthropic"\nbase_url="https://api.anthropic.com/v1"\n'
-    'api_key_ref="ANTHROPIC_API_KEY"\nkey_help="console.anthropic.com"\n'
-    '  [[provider.models]]\n  alias="opus"\n  model="claude-opus-4-8"\n'
-)
-_CATALOG_V2 = _CATALOG_V1.replace("claude-opus-4-8", "claude-opus-5")
-
-
-@pytest.fixture
-def catalog(monkeypatch):
-    """The paid catalog and the free preset off one seam, each movable on its own."""
-    served = {"paid-catalog": _CATALOG_V1, "freetier": _PRESET_GEMINI}
-    monkeypatch.setattr(presets, "fetch_preset_text", lambda name: served[name])
-    return served
-
-
-_OPUS_V1 = LLMConfig(
+_OPUS_NAMED = LLMConfig(
     name="anthropic-claude-opus-4-8",
     base_url="https://api.anthropic.com/v1",
     model="claude-opus-4-8",
     api_key_ref="ANTHROPIC_API_KEY",
-    custom=True,
-    alias="opus",
+    from_preset=False,
+)
+
+_CATALOG_MOVED = (
+    '[[provider]]\nid="anthropic"\nbase_url="https://api.anthropic.com/v2"\n'
+    'api_key_ref="ANTHROPIC_API_KEY"\nkey_help="console.anthropic.com"\n'
+    '  [[provider.models]]\n  alias="opus"\n  model="claude-opus-5"\n'
 )
 
 
-async def test_a_db_registry_alias_entry_follows_the_catalog_across_syncs(tmp_path, catalog):
-    """The defect this fixes: the alias refresh used to be reachable only through the
-    file branch, so a database installation sat on the model id it was first synced
-    with, forever and silently."""
-    db = await _seeded_db(tmp_path, (_OPUS_V1,))
-    broker = _broker(db)
-    await broker.sync("freetier")
-    catalog["paid-catalog"] = _CATALOG_V2
-    report = await broker.sync("freetier")
-    await broker.aclose()
-
-    stored = {c.alias: c for c in await SqliteRegistry(db).load() if c.alias}
-    assert stored["opus"].model == "claude-opus-5"
-    assert stored["opus"].name == "anthropic-claude-opus-5"
-    assert report.applied
-
-
-async def test_a_db_alias_entry_that_did_not_move_is_still_a_no_op(tmp_path, catalog, caplog):
-    """The identity gate covers the refreshed lineup too — a catalog that recommends
-    what is already stored writes nothing and logs nothing."""
-    db = await _seeded_db(tmp_path, (_OPUS_V1,))
-    broker = _broker(db, secrets=DictSecrets({"GEMINI": "sk"}))
-    await broker.sync("freetier")
-    caplog.clear()
-    with caplog.at_level(logging.DEBUG, logger="llmbroker.broker"):
-        await broker.sync("freetier")
-    await broker.aclose()
-    assert [r.levelno for r in caplog.records if "sync" in r.message] == [logging.DEBUG]
-
-
-async def test_a_db_alias_the_catalog_dropped_warns_and_keeps_the_entry(tmp_path, catalog):
-    db = await _seeded_db(tmp_path, (replace(_OPUS_V1, alias="ghost"),))
-    broker = _broker(db)
-    await broker.sync("freetier")
-    await broker.aclose()
-    stored = {c.name for c in await SqliteRegistry(db).load()}
-    assert "anthropic-claude-opus-4-8" in stored
-
-
-async def test_an_unreachable_catalog_leaves_a_stored_alias_entry_alone(tmp_path, monkeypatch):
-    """The copy in the wheel is older than the repository by construction, so a
-    refresh that cannot see upstream must move nothing rather than roll a stored
-    entry back to the version this release shipped with."""
-
-    def _fetch(name: str) -> str:
-        if name == "freetier":
-            return _PRESET_GEMINI
-        raise ValueError("offline")
-
-    monkeypatch.setattr(presets, "fetch_preset_text", _fetch)
+async def test_a_sync_never_follows_an_alias_into_the_registry(tmp_path, monkeypatch):
+    """A model reached by name is declared in code, so an entry the installation put
+    in its own registry stays exactly as it wrote it however the catalog moves."""
     monkeypatch.setattr(
         presets,
-        "bundled_preset_text",
-        lambda name: _CATALOG_V1 if name == "paid-catalog" else None,
+        "fetch_preset_text",
+        lambda name: _CATALOG_MOVED if name == "paid-catalog" else _PRESET_GEMINI,
     )
-    stored = replace(_OPUS_V1, name="anthropic-claude-opus-5", model="claude-opus-5")
-    db = await _seeded_db(tmp_path, (stored,))
+    db = await _seeded_db(tmp_path, (_OPUS_NAMED,))
     broker = _broker(db)
     await broker.sync("freetier")
     await broker.aclose()
-
-    kept = {c.alias: c for c in await SqliteRegistry(db).load() if c.alias}
-    assert (kept["opus"].model, kept["opus"].name) == (
-        "claude-opus-5",
-        "anthropic-claude-opus-5",
-    )
+    stored = {c.name: c for c in await SqliteRegistry(db).load()}
+    assert stored["anthropic-claude-opus-4-8"].model == "claude-opus-4-8"
 
 
-async def test_a_registry_with_no_alias_entry_never_reads_the_catalog(tmp_path, monkeypatch):
-    """The catalog is a second network read; a lineup with nothing to follow must
-    not pay for it."""
+async def test_a_sync_with_nothing_declared_never_reads_the_catalog(tmp_path, monkeypatch):
+    """The catalog is a second network read; an installation that declares no alias
+    must not pay for it."""
     fetched: list[str] = []
 
     def _fetch(name: str) -> str:
@@ -582,7 +454,7 @@ async def test_a_no_op_run_says_so_at_debug_and_nowhere_else(tmp_path, preset, c
                 base_url="https://groq/v1",
                 model="m",
                 api_key_ref="GROQ",
-                synced=True,
+                from_preset=True,
             )
         ],
     )

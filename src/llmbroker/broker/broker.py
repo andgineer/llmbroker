@@ -12,13 +12,14 @@ from pathlib import Path
 import httpx
 
 from llmbroker.broker.aliases import resolve_declared
-from llmbroker.broker.catalog import Catalog, find_custom, resolve_key
+from llmbroker.broker.catalog import Catalog, find_declared, resolve_key
 from llmbroker.broker.keys import KeyProbe
 from llmbroker.broker.learning import TAIL_READ_LIMIT, Learner, metrics_from_calls
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.pool_view import PoolView
 from llmbroker.broker.presets import PresetSource
 from llmbroker.broker.refresher import LineupRefresher
+from llmbroker.broker.report import alias_lines
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.broker.router import Router
 from llmbroker.broker.source import (
@@ -216,10 +217,10 @@ class AsyncBroker:
         resolution raises — see ``rules/direct-aliases.md``."""
         previous = self._last_declared
         try:
-            resolved = await resolve_declared(
+            resolved, moved = await resolve_declared(
                 self._declared,
                 self._presets,
-                floor=previous is None,
+                previous=previous,
             )
         except (UnknownModelError, ValueError, OSError) as exc:
             if previous is None:
@@ -230,6 +231,8 @@ class AsyncBroker:
                 exc,
             )
             return previous
+        for line in alias_lines(moved):
+            logger.info("direct=: %s", line)
         self._last_declared = resolved
         return resolved
 
@@ -395,8 +398,8 @@ class AsyncBroker:
                 "direct() takes exactly one of alias (positional) or name= —"
                 " they are separate keyspaces",
             )
-        configs = await self._catalog.entries()
-        cfg = find_custom(configs, alias, name)
+        stored, declared = await self._catalog.entries()
+        cfg = find_declared(stored, declared, alias, name)
         ref = alias if alias is not None else name
         key = await resolve_key(self._secrets, cfg.api_key_ref, self._scope)
         if key is None:

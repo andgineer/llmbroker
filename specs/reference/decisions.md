@@ -303,11 +303,9 @@ statable: the routed pool is whatever the registry states as pool members,
 whether it came from the curation, from the host, or from both.
 **Accepted cost:** one more fact stored per entry. It rides in the metadata
 column that already carries the optional fields, so no schema changes; in the
-lineup file the fact is structural already — `[[llms]]` is written by a sync,
-`[[custom]]` is not — so the file format does not change either. An entry that
-follows a paid-catalog alias is the one thing a refresh still rewrites without
-having written it: the host asked for exactly that when it named the alias
-instead of pinning a version.
+lineup file the fact is structural already — the file is llmbroker's own output,
+so everything in it came from a preset — and the file format does not change
+either.
 
 ### who-builds-the-registry-states-what-it-follows
 
@@ -336,12 +334,14 @@ what the docs use for that case — is unaffected.
 **Blocks:** persisting a declared model to the registry.
 **Why:** it would create two sources of truth for one list — the constructor
 call and the stored row — and re-introduce exactly the drift alias-following
-exists to prevent.
+exists to prevent. There is also no stored named model to persist it *as*:
+declaring in code is the only form
+([`a-model-reached-by-name-is-declared-in-code`](#a-model-reached-by-name-is-declared-in-code)).
 
 ### the-paid-catalog-is-curated-too
 
 **Blocks:** dropping the curated paid catalog and alias-following, leaving a
-host to write its own `[[custom]]` entries by hand.
+host to state every paid model in full for itself.
 **Why:** weighed against the volume it costs and kept. An alias is the only
 thing that survives a model version bump, so without a curated catalog every
 host pins a version and silently runs a retired model until it breaks. The
@@ -349,18 +349,62 @@ curation rides the same configuration path as the free lineup — unreachable
 changes nothing, wrong cannot destroy a working config — so it adds no runtime
 dependency, only code.
 
+### a-model-reached-by-name-is-declared-in-code
+
+A model an application calls by name is stated where that application is
+configured: `direct=` takes a curated alias as a string, or a fully stated model
+as a config object. The registry holds pool members only. The CLI shows what the
+curated catalogs carry and writes nothing.
+
+**Blocks:** a stored entry reachable by name; a lineup-file section for one; a
+command that adds a model to a lineup; a pinned entry written by tooling.
+**Why:** the stored form buys one thing — reaching a model by name without
+touching application code — and pays for it with an entry class that is
+routed-or-named, curated-or-stated, followed-or-pinned in every combination the
+storage can express, of which half are meaningless and are held out by rules that
+must each be enforced at every write and every read. The declaration form encodes
+the same choice in the type of an argument, where an invalid combination cannot
+be typed. A deployment that wants the name without a redeploy is asking for
+configuration outside its own configuration, which is what a registry entry is
+for pool members and is not for a model one line of code calls by name.
+**Accepted cost:** an installation that reached a paid model by name after
+running one command now writes one line where it constructs the broker, and a
+cluster writes it once in the factory it already has. The catalog is still what
+supplies the alias, and the CLI still prints it.
+
+### the-kind-of-an-entry-is-not-a-stored-field
+
+One fact is recorded on an entry: whether our curated preset supplied its
+parameters. Which class it belongs to — routed, or reached by name — is not, and
+neither is the combination of the two. A stored entry is a pool member because a
+registry holds nothing else; a declared one is followed or stated by the type of
+the argument that declared it.
+
+**Blocks:** a `kind` enum on the entry; **a pair of booleans for class and
+source**; a per-entry flag for reachable-by-name.
+**Why:** an enum would carry four values of which storage could ever hold two,
+and the other two would exist to be validated against — the shape this decision
+exists to remove, re-introduced under a better name. The boolean pair is the same
+objection arithmetic: the class bit is constant in every row that could hold it,
+so it carries no information and buys no filter, because nothing holds routed and
+named entries in one collection to filter. What remains is one bit, and it is the
+one the merge already partitions on.
+**Accepted cost:** a host reading an entry cannot ask it what kind it is. Nothing
+does — the pool takes what the registry holds, `direct()` searches what was
+declared, and the merge partitions on the one recorded bit.
+
 ### the-lineup-file-is-generated-not-authored
 
 There is one lineup file and it is llmbroker's output. A sync renders it in full
-and `add-model` appends to it; nothing invites a human to write in it.
+and nothing else writes it; nothing invites a human to write in it.
 
 **Blocks:** splitting it into an llmbroker half and a host-owned half; editing it
 in place through a style-preserving TOML document library so hand-written
 comments survive; refusing to sync a file that carries a comment.
 **Why:** the alternatives all exist to protect text a human typed into the file,
 and no path puts it there. Both forms a host declares — a model described in full
-and a paid-catalog alias — arrive through `add-model` or through `direct=` in
-code, so the file has exactly one author. Splitting by ownership of the entry was
+and a paid-catalog alias — arrive through `direct=` in code, so the file has
+exactly one author. Splitting by ownership of the entry was
 tried and reversed: it made "is this entry rewritten" a question about which file
 an entry is in, but half the host's own models (the alias-following ones) still
 lived in the generated half, so it bought comment preservation for some of them

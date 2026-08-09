@@ -1,5 +1,5 @@
 # Curated paid providers and their current flagship models.
-# Consumed by `llmbroker add-model`.
+# Read by `llmbroker list` and by `direct=`.
 #
 # Model ids below were read from each provider's own authoritative docs on the
 # `verified` date. Re-run `src/llmbroker/presets/paid-catalog-refresh-prompt.md` to refresh

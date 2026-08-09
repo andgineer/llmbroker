@@ -5,7 +5,6 @@ never removed, never overwritten — and the pool routes it if it is a pool memb
 """
 
 import tomllib
-from dataclasses import replace
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -36,12 +35,12 @@ def preset(monkeypatch):
 
 
 def _own(name, ref="OWN", *, url="https://own/v1"):
-    """An entry the installation stated itself: nothing marks it as synced."""
+    """An entry the installation stated itself: nothing marks it as from_preset."""
     return LLMConfig(name=name, base_url=url, model="m", api_key_ref=ref)
 
 
 def _curated(name, ref="GEMINI", *, url="https://g/v1", model="m"):
-    return LLMConfig(name=name, base_url=url, model=model, api_key_ref=ref, synced=True)
+    return LLMConfig(name=name, base_url=url, model=model, api_key_ref=ref, from_preset=True)
 
 
 def _merge(new, current, present=()):
@@ -148,7 +147,7 @@ async def test_the_fact_survives_the_registry_round_trip(tmp_path, preset):
     would make every sync a no-op — or every no-op a write."""
     registry = SqliteRegistry(str(tmp_path / "b.db"))
     await registry.mirror([_curated("gemini"), _own("mine")])
-    assert {c.name: c.synced for c in await registry.load()} == {"gemini": True, "mine": False}
+    assert {c.name: c.from_preset for c in await registry.load()} == {"gemini": True, "mine": False}
 
 
 async def test_a_sync_marks_what_it_wrote(tmp_path, preset):
@@ -158,53 +157,18 @@ async def test_a_sync_marks_what_it_wrote(tmp_path, preset):
         await broker.sync("freetier")
     finally:
         await broker.aclose()
-    assert [(c.name, c.synced) for c in await registry.load()] == [("gemini", True)]
+    assert [(c.name, c.from_preset) for c in await registry.load()] == [("gemini", True)]
 
 
-# ── An alias belongs to an entry reached by name, on every route ────────────
+# ── The lineup file has one owner ───────────────────────────────────────────
 
 
-async def test_a_pool_member_may_not_follow_an_alias(tmp_path):
-    """A refresh re-points what follows an alias, so a pooled one would hand free-tier
-    traffic to whatever the paid catalog now recommends."""
-    registry = SqliteRegistry(str(tmp_path / "b.db"))
-    followed = LLMConfig(
-        name="mine",
-        base_url="https://own/v1",
-        model="m",
-        api_key_ref="OWN",
-        alias="opus",
-    )
-    with pytest.raises(ValueError, match="pool member and carries the alias"):
-        await registry.mirror([followed])
-
-
-async def test_a_pooled_alias_written_past_mirror_is_refused_on_load(tmp_path):
-    registry = SqliteRegistry(str(tmp_path / "b.db"))
-    await registry._driver.upsert(
-        "registry",
-        ("mine",),
-        {
-            "name": "mine",
-            "base_url": "https://own/v1",
-            "model": "m",
-            "api_key_ref": "OWN",
-            "metadata": {"synced": False, "alias": "opus"},
-        },
-    )
-    with pytest.raises(ValueError, match="pool member and carries the alias"):
-        await registry.load()
-
-
-# ── The lineup file says the same thing with its sections ───────────────────
-
-
-def test_the_file_carries_ownership_through_a_render():
-    """The file has no field for it: `[[llms]]` is a sync's, `[[custom]]` is not. A
-    renderer that stopped agreeing with the parser would silently re-own every entry."""
-    lineup = Lineup(configs=[_curated("gemini"), replace(_own("mine"), custom=True)])
+def test_a_render_and_parse_round_trip_states_the_file_as_a_syncs():
+    """The file is llmbroker's own output, so everything in it came from a preset — a
+    renderer that stopped agreeing with the parser would invent a second owner."""
+    lineup = Lineup(configs=[_curated("gemini"), _curated("groq")])
     reparsed = parse_lineup(tomllib.loads(render_lineup(lineup)))
-    assert {c.name: c.synced for c in reparsed.configs} == {"gemini": True, "mine": False}
+    assert {c.name: c.from_preset for c in reparsed.configs} == {"gemini": True, "groq": True}
 
 
 async def test_a_repeated_sync_over_a_host_entry_applies_nothing(tmp_path, preset):

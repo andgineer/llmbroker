@@ -12,8 +12,6 @@ The expectations here are the contract as written, verbatim:
 - `decisions.md#a-sync-touches-only-what-a-sync-wrote` — "anything reaching a registry
   by any other route — a host's own mirror call, a hand-written row, a backend filled
   before llmbroker ever ran — is protected without doing anything."
-- `rules/direct-aliases.md` — "an alias never sits on a pool member, and every registry
-  refuses one on read and on write."
 
 A red cell is therefore a place where the code and the contract disagree. Which of the
 two is wrong is a decision for the maintainer, and the point of the matrix is that the
@@ -31,7 +29,6 @@ from llmbroker.models import LLMConfig
 from llmbroker.mongodb import Registry as MongoRegistry
 from llmbroker.postgres import Registry as PostgresRegistry
 from llmbroker.sqlite import Registry as SqliteRegistry
-from llmbroker.standalone.registry import parse_lineup
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import InMemoryStore
 
@@ -82,16 +79,18 @@ _HOST_MIRRORED = LLMConfig(name="_", base_url="_", model="_", api_key_ref="_").t
 
 _PROVENANCE = [
     # The control: a sync wrote it, so a sync may retire and replace it.
-    Provenance("sync", {"synced": True}, owned=False),
+    Provenance("sync", {"from_preset": True}, owned=False),
     # The documented gesture — usage.md#own-entry.
     Provenance("mirror-llmconfig", _HOST_MIRRORED, owned=True),
     # Written straight into the table, past the protocol: a backend the installation
     # filled itself, carrying whatever it happened to care about.
-    Provenance("raw-marked", {"synced": False}, owned=True),
+    Provenance("raw-marked", {"from_preset": False}, owned=True),
     Provenance("raw-empty-metadata", {}, owned=True),
     Provenance("raw-no-metadata", None, owned=True),
     Provenance("raw-only-weight", {"weight": 0.5}, owned=True),
-    Provenance("raw-only-custom", {"custom": True}, owned=True),
+    # A key a past release wrote and this one no longer knows: it may not read as
+    # a sync's, which is the whole default this axis pins.
+    Provenance("raw-unknown-key", {"custom": True}, owned=True),
 ]
 
 
@@ -161,80 +160,3 @@ async def test_a_sync_never_silently_rewrites_what_it_did_not_write(
     stored = {c.name: c for c in await registry.load()}
     expected = "https://g/v1" if not provenance.owned else "https://own/v1"
     assert stored["gemini"].base_url == expected
-
-
-# ── Property 3: an alias never sits on a pool member, on every route ─────────
-
-
-def _pooled_alias() -> LLMConfig:
-    return LLMConfig(
-        name="mine",
-        base_url="https://own/v1",
-        model="m",
-        api_key_ref="OWN",
-        alias="opus",
-    )
-
-
-def test_alias_route_file_parse():
-    with pytest.raises(ValueError, match="alias"):
-        parse_lineup(
-            {
-                "llms": [
-                    {
-                        "name": "mine",
-                        "base_url": "https://own/v1",
-                        "model": "m",
-                        "api_key_ref": "OWN",
-                        "alias": "opus",
-                    },
-                ],
-            },
-        )
-
-
-async def test_alias_route_driver_mirror(ownership_registry):
-    with pytest.raises(ValueError, match="alias"):
-        await ownership_registry.mirror([_pooled_alias()])
-
-
-async def test_alias_route_driver_load(ownership_registry):
-    cfg = _pooled_alias()
-    await ownership_registry._driver.upsert(
-        "registry",
-        (cfg.name,),
-        {
-            "name": cfg.name,
-            "base_url": cfg.base_url,
-            "model": cfg.model,
-            "api_key_ref": cfg.api_key_ref,
-            "metadata": {"synced": False, "alias": "opus"},
-        },
-    )
-    with pytest.raises(ValueError, match="alias"):
-        await ownership_registry.load()
-
-
-class HostRegistry:
-    """A registry the host implemented itself — the route
-    ``decisions.md#a-sync-touches-only-what-a-sync-wrote`` blesses by name."""
-
-    def __init__(self, configs: list[LLMConfig]) -> None:
-        self._configs = list(configs)
-
-    async def load(self) -> list[LLMConfig]:
-        return list(self._configs)
-
-    async def mirror(self, configs: list[LLMConfig]) -> None:
-        self._configs = list(configs)
-
-
-async def test_alias_route_host_registry_object():
-    """Nothing between a host's own ``load`` and the pool re-checks the contract, so
-    the guard has to live above the registry, not inside one implementation of it."""
-    broker = _broker(HostRegistry([_pooled_alias()]))
-    try:
-        with pytest.raises(ValueError, match="alias"):
-            await broker.ensure_pool()
-    finally:
-        await broker.aclose()

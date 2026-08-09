@@ -17,7 +17,9 @@ def _lineup(name: str) -> str:
 
 
 def _cfg(name: str = "p1") -> LLMConfig:
-    return LLMConfig(name=name, base_url="https://x/v1", model="m", api_key_ref="K", synced=True)
+    return LLMConfig(
+        name=name, base_url="https://x/v1", model="m", api_key_ref="K", from_preset=True
+    )
 
 
 def _call(call_id: str, name: str = "p1", operation: str | None = None) -> Call:

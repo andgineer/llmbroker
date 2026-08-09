@@ -30,7 +30,9 @@ _GROWN = _PRESET + (
     '[[llms]]\nname = "groq"\nbase_url = "https://q/v1"\nmodel = "m"\napi_key_ref = "GROQ"\n'
 )
 
-_OLD = LLMConfig(name="old", base_url="https://x/v1", model="m", api_key_ref="GEMINI", synced=True)
+_OLD = LLMConfig(
+    name="old", base_url="https://x/v1", model="m", api_key_ref="GEMINI", from_preset=True
+)
 
 
 @pytest.fixture

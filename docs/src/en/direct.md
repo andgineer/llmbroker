@@ -5,10 +5,9 @@ Sometimes you want **one specific model**, called directly — a paid frontier
 model for a quality task. That is what `broker.direct(...)` gives you: a client
 for exactly that model, with **no pool, no failover**.
 
-Direct access is for **your own models** — declared with `direct=` in code, or
-stored as `[[custom]]` in the lineup by `add-model`. Pool models are anonymous: reach them
-with `ask`/`chat`/`stream`, which route and learn; naming one raises
-`PoolModelError`.
+Direct access is for **models you declare with `direct=`** where you build the
+broker. Pool models are anonymous: reach them with `ask`/`chat`/`stream`, which
+route and learn; naming one raises `PoolModelError`.
 
 ## Declare it and call it
 
@@ -67,100 +66,49 @@ do with it, and would be handed traffic you meant for the free tier.
 An endpoint of your own *can* be a pool member — by [writing it into your
 registry](usage.md#own-entry), where a refresh never touches it. That is a
 decision you make once and record there, not a side effect of naming a model you
-wanted to call. Such an entry carries no `alias`: an alias is what a refresh
-re-points, and a registry refuses one on a pool member.
+wanted to call. A registry holds pool members and nothing else, so putting a
+model there is the opposite choice from declaring it here.
 
-## In the lineup
+## Finding a paid model
 
-The same two forms, written down. A `[[custom]]` array holds models that are
-yours — the same fields as `[[llms]]`, parsed by the same code, but flagged
-`custom` so a sync never prunes them and the router never reaches them.
-
-### The lineup file is written for you
-
-The file holding these entries is llmbroker's own: a refresh regenerates it in
-full, and `add-model` is how anything gets into it. It lives in llmbroker's
-directory — you never need its path — and its first line says as much. Comments
-and keys llmbroker does not model do not survive a refresh, so it is not a place
-to keep notes.
-
-`add-model` picks from the paid catalog and writes the entry for you:
-
-```bash
-llmbroker add-model                             # interactive: pick provider, then model
-# or non-interactive:
-llmbroker add-model --provider anthropic --model claude-opus-4-8
-```
-
-It writes an alias entry: the `alias` you will call, plus a machine-formed `name`
-carrying the current version. Then set the key it prints.
-
-For the minority that must not move, `--pin` writes a name-only entry — no alias,
-so no refresh ever touches it:
-
-```bash
-llmbroker add-model --pin --name frontier \
-    --provider anthropic --model claude-opus-4-8
-```
-
-Either form lands as a `[[custom]]` entry:
-
-```toml
-[[custom]]
-name = "frontier"
-model = "claude-opus-4-8"
-base_url = "https://api.anthropic.com/v1"
-api_key_ref = "ANTHROPIC_API_KEY"
-```
-
-and you call it by name:
-
-```python
-client = await llms.direct(name="frontier")
-```
-
-`alias` and `name` are separate keyspaces, so a call site says which one it
-means. That makes `direct(name=...)` a **version assertion** as well as a
-lookup: point it at `anthropic-claude-opus-4-8` and the day a refresh moves the
-alias onward, the call fails loudly instead of quietly running a newer model.
-
-`add-model` prints the key line to set, with a hint for where to get it.
-
-A stored entry carries only the config (`base_url` / `model` / `api_key_ref`) —
-**never the key value**; the key is read from the env var or secrets backend at
-call time. Your entries are yours: a refresh never prunes them and a curated
-lineup can never overwrite them — one arriving with entries of its own is
-rejected whole.
-
-## Refresh without losing your models
-
-A refresh happens by itself, and `broker.sync("freetier")` forces one. Either way
-it does three things:
-
-- rewrites the `[[llms]]` (preset-managed) entries and their `[keys]` from the
-  fresh preset;
-- keeps every model the preset dropped for which nothing usable arrived, so a
-  refresh never costs you a working model;
-- re-points every **alias** entry at what the paid catalog now recommends —
-  `model`, `name`, `base_url` and `api_key_ref` — printing one line per change:
+`llmbroker list` prints both curated lists and writes nothing. A `direct` line
+gives you the alias to declare, then the provider id, model id, `base_url` and
+`api_key_ref` a pinned declaration states for itself:
 
 ```
-opus: claude-opus-4-8 -> claude-opus-5
+$ llmbroker list
+pool groq-gpt-oss-120b openai/gpt-oss-120b https://api.groq.com/openai/v1 GROQ_API_KEY
+...
+direct opus anthropic claude-opus-5 https://api.anthropic.com/v1 ANTHROPIC_API_KEY
+direct sonnet anthropic claude-sonnet-5 https://api.anthropic.com/v1 ANTHROPIC_API_KEY
 ```
 
-A pinned entry — one with no alias — is never re-pointed, and an alias the
-catalog no longer knows is a warning, not a rewrite.
+## `alias` and `name` are separate keyspaces
 
-A refreshed entry gets a new `name`, so its learned quality stats start clean —
-what one version was good at says nothing about the next.
+A call site says which one it means. That makes `direct(name=...)` a **version
+assertion** as well as a lookup: point it at `anthropic-claude-opus-5` and the
+day the catalog moves the alias onward, the call fails loudly instead of quietly
+running a newer model.
 
-The new `name` is machine-formed the same way pool entries are named, so it can
-occasionally land on one of them. The refresh refuses that outright and writes
-nothing. Renaming your entry will not help — the next refresh forms the name
-again — so drop its `alias` to pin it instead.
+Nothing you declare is written anywhere — no key value ever, and no config
+either. The key is read from the env var or secrets backend at call time.
 
-A refresh that moves an entry to another provider prints the new `api_key_ref`
-too: set that env var before the next call.
+## Following the catalog without losing your version
+
+A declared alias is re-resolved on the same daily clock the pool refreshes on.
+When the catalog moves it, one line is logged naming both versions:
+
+```
+direct=: opus: claude-opus-4-8 -> claude-opus-5
+```
+
+A re-resolution gives the model a new `name`, so its learned quality stats start
+clean — what one version was good at says nothing about the next. If it also
+moves to another provider, the line names the new `api_key_ref`: set that env var
+before the next call.
+
+A declaration you wrote out in full is never re-pointed: llmbroker was never told
+which catalog line it follows.
 
 ## Stream and ask (async)
 

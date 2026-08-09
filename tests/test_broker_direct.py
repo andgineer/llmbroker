@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from llmbroker.broker.broker import AsyncBroker
-from llmbroker.broker.catalog import find_custom
+from llmbroker.broker.catalog import find_declared
 from llmbroker.exceptions import MissingKeyError, PoolModelError, UnknownModelError
 from llmbroker.models import LLMConfig
 from llmbroker.standalone.registry import Registry
@@ -21,20 +21,18 @@ name="managed-a"
 base_url="https://pool/v1"
 model="m"
 api_key_ref="K"
-
-[[custom]]
-name="frontier"
-alias="opus"
-base_url="https://paid/v1"
-model="big"
-api_key_ref="K"
-
-[[custom]]
-name="extra"
-base_url="https://extra/v1"
-model="m"
-api_key_ref="K"
 """
+
+_DECLARED = [
+    LLMConfig(
+        name="frontier",
+        alias="opus",
+        base_url="https://paid/v1",
+        model="big",
+        api_key_ref="K",
+    ),
+    LLMConfig(name="extra", base_url="https://extra/v1", model="m", api_key_ref="K"),
+]
 
 _SSE = (
     b'data: {"choices": [{"delta": {"content": "Hel"}}]}\n\n'
@@ -55,6 +53,7 @@ def _broker(tmp_path, secrets=None) -> AsyncBroker:
         secrets=secrets or DictSecrets({"K": "test"}),
         store=FileStore(tmp_path / "store"),
         sync=None,
+        direct=_DECLARED,
     )
 
 
@@ -63,16 +62,14 @@ def _broker(tmp_path, secrets=None) -> AsyncBroker:
 # --------------------------------------------------------------------------- #
 
 
-def test_file_registry_parses_provenance(tmp_path):
-    configs = {c.name: c for c in asyncio.run(_registry(tmp_path).load())}
-    assert configs["managed-a"].custom is False
-    assert configs["frontier"].custom is True
-    assert configs["extra"].custom is True
+def test_the_registry_holds_pool_members_only(tmp_path):
+    configs = asyncio.run(_registry(tmp_path).load())
+    assert [c.name for c in configs] == ["managed-a"]
 
 
-def test_the_pool_is_the_curated_lineup_and_takes_no_user_entry(tmp_path):
-    """Rule 1: nothing a user declares ever joins the routed pool, whatever the
-    entry looks like — a `[[custom]]` block is direct-only by being custom."""
+def test_the_pool_is_the_curated_lineup_and_takes_no_declared_model(tmp_path):
+    """Rule 1: nothing a host declares in code ever joins the routed pool — the pool
+    is exactly what the registry holds."""
 
     async def run():
         async with _broker(tmp_path) as broker:
@@ -174,21 +171,14 @@ def test_direct_positional_pool_name_says_pool_straight_away(tmp_path):
     asyncio.run(run())
 
 
-def test_direct_by_name_prefers_the_custom_entry_over_a_pool_namesake():
-    """The file registry refuses a duplicate name, but a DB registry mirrored
-    before that check existed can still hand one back: the user's own entry is
-    what `name=` means, not the pool entry that happens to sort first."""
+def test_direct_by_name_searches_the_declared_models_only():
+    """`check_overlay` refuses this collision at provision, so it is unreachable
+    through a broker — but the lookup itself must still mean the declared model."""
     managed = LLMConfig(name="dup", base_url="https://pool/v1", model="m", api_key_ref="K")
-    mine = LLMConfig(
-        name="dup",
-        base_url="https://paid/v1",
-        model="big",
-        api_key_ref="K",
-        custom=True,
-    )
-    assert find_custom([managed, mine], None, "dup") is mine
+    mine = LLMConfig(name="dup", base_url="https://paid/v1", model="big", api_key_ref="K")
+    assert find_declared([managed], [mine], None, "dup") is mine
     with pytest.raises(PoolModelError):
-        find_custom([managed], None, "dup")
+        find_declared([managed], [], None, "dup")
 
 
 def test_direct_missing_key_raises(tmp_path):
@@ -218,6 +208,7 @@ def test_sync_broker_direct_ask(tmp_path):
             secrets=DictSecrets({"K": "test"}),
             store=FileStore(tmp_path / "store"),
             sync=None,
+            direct=_DECLARED,
         ) as broker:
             result = broker.direct("opus").ask("hi")
             with pytest.raises(PoolModelError):

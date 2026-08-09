@@ -207,33 +207,26 @@ def test_pending_key_without_help_renders_one_line():
 
 
 def test_a_moved_alias_renders_as_the_version_step():
-    notices, warnings = alias_lines(
+    lines = alias_lines(
         [
             AliasFact(
                 change=AliasChange.MODEL, alias="opus", was="claude-opus-4-8", now="claude-opus-5"
             )
         ],
     )
-    assert notices == ("opus: claude-opus-4-8 -> claude-opus-5",)
-    assert warnings == ()
+    assert lines == ("opus: claude-opus-4-8 -> claude-opus-5",)
 
 
 def test_a_moved_key_ref_says_what_to_set():
     """The one change that needs the user to do something, and it can arrive with no
     model change at all."""
-    notices, _warnings = alias_lines(
+    lines = alias_lines(
         [
             AliasFact(
                 change=AliasChange.KEY_REF, alias="opus", was="ANTHROPIC_KEY", now="CLAUDE_KEY"
             )
         ],
     )
-    assert notices == (
+    assert lines == (
         "opus: api_key_ref ANTHROPIC_KEY -> CLAUDE_KEY — set CLAUDE_KEY before the next call",
     )
-
-
-def test_an_unknown_alias_is_the_only_warning():
-    notices, warnings = alias_lines([AliasFact(change=AliasChange.UNKNOWN, alias="ghost")])
-    assert notices == ()
-    assert warnings == ("alias 'ghost' is not in the paid catalog — entry left untouched",)

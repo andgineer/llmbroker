@@ -61,15 +61,10 @@ row or a backend filled before llmbroker ever ran are all protected without doin
 anything. It yields invariant 22.
 
 That makes the mixed pool statable: the routed pool is whatever the registry
-states as pool members, whether they came from the curation, from the
-installation, or from both. The two axes are independent — *who put it here*
-decides what a merge may do to it, *how it is called* decides whether the pool
-routes it.
-
-The one thing a refresh rewrites without having written it is an entry that
-follows a paid-catalog alias: the installation asked for exactly that when it
-named the alias instead of pinning a version
-([`direct-aliases.md`](direct-aliases.md)).
+holds, whether it came from the curation, from the installation, or from both.
+The record answers one question only — whose parameters these are — and a
+registry holds pool members, so nothing else about an entry's kind is stored
+([`direct-aliases.md`](direct-aliases.md#the-four-kinds-and-where-each-is-stated)).
 
 A name the merge itself would carry twice is refused, and nothing is written.
 The fix is always to rename the installation's own entry — the arriving one's
@@ -176,8 +171,9 @@ that would fill it. The write is atomic and preserves the target's permissions.
 **No configuration file is the host's to maintain**
 ([`decisions.md`](../decisions.md#the-lineup-file-is-generated-not-authored)).
 The lineup file is generated: a sync renders it in full from the merged entries,
-and the CLI's add-model command is how anything else gets into it. It says so in
-its own first line. Nothing in its previous text is preserved, so anything
+and nothing else writes it. It says so in its own first line, and it holds one
+array — a model reached by name is declared in code, so there is no second
+section for one. Nothing in its previous text is preserved, so anything
 llmbroker does not model — a comment, an unknown key — does not survive a sync.
 A database registry is the same picture with rows instead of text.
 
@@ -186,13 +182,14 @@ possible at all, and rendering is what removes the read-back check an assembled
 file needed: there is no arriving text to splice, so there is nothing to verify
 the result against.
 
-**A generated file still carries what the host owns.** Their entries are part of
-the merge like any other — a name one uses is taken, a key one needs is reported
-as pending, a ref one references is not an orphan, and the help for that ref is
-rendered back beside it. That last one is the whole reason the help is modeled
-rather than left as prose: it is the only guidance llmbroker offers for the one
-irreducible admin act, so a sync that dropped it would erase the instructions for
-a key still missing.
+**A generated file still carries every entry the merge kept.** A kept entry is
+part of the merge like any other — a name it uses is taken, a key it needs is
+reported as pending, a ref it references is not an orphan, and the help for that
+ref is rendered back beside it. That last one is the whole reason the help is
+modeled rather than left as prose: it is the only guidance llmbroker offers for
+the one irreducible admin act, so a sync that dropped it would erase the
+instructions for a key still missing. An entry the installation stated itself
+lives in a registry it fills, which the same rule protects.
 
 ## The report
 
@@ -225,3 +222,7 @@ a key still missing.
   that raises cannot swallow the record of a change already applied.
 - A sync never writes to the journal; it only *reads* the bounded tail, and only
   when a provider it might retire has a candidate entry.
+- **A sync follows no alias.** Nothing stored has one; the catalog read a sync
+  makes on the way past exists only to keep the copy current for the resolution
+  that does follow one, so the report carries no alias facts
+  ([`direct-aliases.md`](direct-aliases.md)).

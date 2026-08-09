@@ -2,7 +2,7 @@
 
 You need none of this to use llmbroker — `Broker()` fetches the pool itself. The
 two commands cover the two things llmbroker cannot do for you: get you the
-provider keys, and pick the paid model you want to reach by name.
+provider keys, and show you which models the curated lists carry.
 
 Both work offline: a copy of both curated lists ships inside the package, so a
 machine with no network falls back to it rather than failing. That copy is frozen
@@ -24,8 +24,7 @@ OPENROUTER_API_KEY=
 ```
 
 With no argument it reads the lineup in llmbroker's own directory — the pool your
-broker already follows, plus anything `add-model` put beside it. That is the
-everyday form.
+broker already follows. That is the everyday form.
 
 Name a preset instead when there is no local lineup yet, or when your broker
 keeps its registry in a database and there is no local lineup at all:
@@ -37,20 +36,28 @@ Get the keys themselves from the providers and fill them in. A broker reads the
 always wins over it. Keys do not have to live in `.env` at all — see
 [API keys](secrets.md).
 
-## add-model — add a paid model of your own
+## list — show what the curated lists carry
 
 ```bash
-llmbroker add-model                                          # interactive
-llmbroker add-model --provider anthropic --model claude-opus-5
+llmbroker list
 ```
 
-Appends the model to this installation's lineup as your own entry, reachable with
-`broker.direct(...)` and never routed by the pool. See
-[Your own models](direct.md).
+One model per line and nothing written. A `pool` line is a model the pool routes
+over anonymously. A `direct` line is a paid model you can reach by name: the
+alias comes first, then the provider id, model id, `base_url` and `api_key_ref`.
+
+```
+pool groq-gpt-oss-120b openai/gpt-oss-120b https://api.groq.com/openai/v1 GROQ_API_KEY
+direct opus anthropic claude-opus-5 https://api.anthropic.com/v1 ANTHROPIC_API_KEY
+```
+
+Declare the alias where you build the broker — `Broker(direct=["opus"])` — and
+call it with `broker.direct("opus")`. See [Direct model calls](direct.md).
 
 ## What the CLI does not do
 
-There is no command that refreshes a lineup. A broker keeps its own lineup
+There is no command that writes a model list, and none that refreshes one.
+A model you reach by name is declared in your own code, never stored. A broker keeps its own lineup
 current by itself (see [Basic usage](usage.md#sync)), and a broker on a
 database registry is refreshed by its own entrypoint calling
 `broker.sync("freetier")` — see [Servers & clusters](server.md#sync). That keeps

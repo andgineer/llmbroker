@@ -65,17 +65,15 @@ def _weight_from_metadata(raw: object, name: str) -> float:
 
 @dataclass(frozen=True, slots=True)
 class LLMConfig:
-    """Pure stored config for one LLM — no secret, safe to expose. ``custom`` is
-    reached by name and never routed onto, ``synced`` was written by a sync and so is
-    rewritable by one; the two are independent axes."""
+    """Pure config for one LLM — no secret, safe to expose. ``from_preset`` says our
+    curated preset supplied these parameters, and so is what a sync may replace."""
 
     name: str
     base_url: str
     model: str
     api_key_ref: str
     parallel: int | None = None
-    custom: bool = False
-    synced: bool = False
+    from_preset: bool = False
     alias: str | None = None
     weight: float = 0.0
 
@@ -89,18 +87,17 @@ class LLMConfig:
         >>> followed = LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", alias="opus")
         >>> followed.to_metadata()
         {'alias': 'opus'}
-        >>> LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", synced=True).to_metadata()
-        {'synced': True}
+        >>> curated = LLMConfig(name="g", base_url="u", model="m", api_key_ref="K")
+        >>> replace(curated, from_preset=True).to_metadata()
+        {'from_preset': True}
         >>> LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", weight=0.7).to_metadata()
         {'weight': 0.7}
         """
         metadata: dict[str, object] = {}
         if self.parallel is not None:
             metadata["parallel"] = self.parallel
-        if self.custom:
-            metadata["custom"] = True
-        if self.synced:
-            metadata["synced"] = True
+        if self.from_preset:
+            metadata["from_preset"] = True
         if self.alias is not None:
             metadata["alias"] = self.alias
         if self.weight:
@@ -121,10 +118,8 @@ class LLMConfig:
         metadata = metadata or {}
         raw_parallel = metadata.get("parallel")
         parallel = raw_parallel if isinstance(raw_parallel, int) else None
-        raw_custom = metadata.get("custom")
-        custom = raw_custom if isinstance(raw_custom, bool) else False
-        raw_synced = metadata.get("synced")
-        synced = raw_synced if isinstance(raw_synced, bool) else False
+        raw_from_preset = metadata.get("from_preset")
+        from_preset = raw_from_preset if isinstance(raw_from_preset, bool) else False
         raw_alias = metadata.get("alias")
         alias = raw_alias if isinstance(raw_alias, str) else None
         return cls(
@@ -133,8 +128,7 @@ class LLMConfig:
             model=model,
             api_key_ref=api_key_ref,
             parallel=parallel,
-            custom=custom,
-            synced=synced,
+            from_preset=from_preset,
             alias=alias,
             weight=_weight_from_metadata(metadata.get("weight"), name),
         )
@@ -313,19 +307,12 @@ def check_weight(weight: float) -> None:
 
 
 def check_aliases(configs: "list[LLMConfig]") -> None:
-    """Reject a registry whose aliases do not each name one entry reached by name.
-    Enforced on every read, not just a file parse: a lookup returns the first match,
-    and a refresh re-points whatever follows an alias."""
+    """Reject a registry carrying one alias twice. Enforced on every read, not just a
+    file parse: a lookup returns the first match."""
     seen: set[str] = set()
     for cfg in configs:
         if cfg.alias is None:
             continue
-        if not cfg.custom:
-            raise ValueError(
-                f"Registry: entry {cfg.name!r} is a pool member and carries the alias"
-                f" {cfg.alias!r} — an alias belongs to an entry reached by name, whose"
-                " provider fields a refresh rewrites from the paid catalog",
-            )
         if cfg.alias in seen:
             raise ValueError(
                 f"Registry: duplicate alias {cfg.alias!r} — an alias names exactly one entry",

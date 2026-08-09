@@ -89,6 +89,23 @@ async def test_a_declared_alias_follows_the_catalog_on_the_refresh_clock(tmp_pat
         assert (await _resolved(restarted, "opus")).model == "claude-opus-5"
 
 
+async def test_a_re_resolution_logs_the_version_it_moved_to(tmp_path, served, caplog):
+    """A version move is the only notice a deployment gets that `direct("opus")` now
+    answers from a different model. The first resolution has nothing to compare."""
+    with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
+        async with _broker(tmp_path, direct=["opus"], sync_interval=0.0) as broker:
+            await _resolved(broker, "opus")
+            assert [r.message for r in caplog.records if r.message.startswith("direct=:")] == []
+            served["paid-catalog"] = _CATALOG_MOVED
+            broker._refresher._next_refresh = 0.0
+            await broker.count()
+            await _settle(broker)
+            await _resolved(broker, "opus")
+    assert [r.message for r in caplog.records if r.message.startswith("direct=:")] == [
+        "direct=: opus: claude-opus-4-8 -> claude-opus-5",
+    ]
+
+
 async def test_nothing_declared_is_ever_written_to_the_registry(tmp_path, served):
     target = tmp_path / "llms.toml"
     async with _broker(tmp_path, direct=["opus"]) as broker:
@@ -111,8 +128,8 @@ async def test_a_declared_config_is_used_verbatim_and_no_refresh_touches_it(tmp_
         assert set(await broker.snapshot()) == {"gemini"}
 
 
-async def test_a_declared_config_is_never_pooled_even_if_it_says_so(tmp_path, served):
-    """`custom` is forced: the pool is the curated lineup and takes no user entry."""
+async def test_a_declared_config_is_never_pooled(tmp_path, served):
+    """Pool membership is not a field: the pool is exactly what the registry holds."""
     mine = LLMConfig(name="mine", base_url="https://m/v1", model="m", api_key_ref="GEMINI")
     async with _broker(tmp_path, direct=[mine]) as broker:
         assert set(await broker.snapshot()) == {"gemini"}
@@ -128,7 +145,7 @@ async def test_a_typo_raises_at_provision_and_lists_the_aliases(tmp_path, served
 async def test_a_declared_alias_colliding_with_the_registry_names_both(tmp_path, served):
     target = tmp_path / "llms.toml"
     target.write_text(
-        '[[custom]]\nalias="opus"\nname="anthropic-claude-opus-4-8"\n'
+        '[[llms]]\nname="anthropic-claude-opus-4-8"\n'
         'model="claude-opus-4-8"\nbase_url="https://api.anthropic.com/v1"\n'
         'api_key_ref="ANTHROPIC_API_KEY"\n',
     )
@@ -302,7 +319,7 @@ async def test_a_declared_models_key_reaches_a_writable_secrets_backend(
 ):
     """The bootstrap a stored lineup gets from `sync`, applied to a model that is
     never stored. Without it `direct=` is dead wherever secrets live in a backend
-    rather than the environment, while its `[[custom]]` twin works."""
+    rather than the environment."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-env")
     db = str(tmp_path / "reg.db")
     await SqliteRegistry(db).mirror([])
@@ -381,7 +398,7 @@ async def test_a_collision_appearing_later_does_not_fail_a_call(tmp_path, served
     async with _broker(tmp_path, direct=["opus"], sync=None) as broker:
         await broker.ensure_pool()
         target.write_text(
-            _PRESET + '[[custom]]\nalias="opus"\nname="anthropic-claude-opus-4-8"\n'
+            _PRESET + '[[llms]]\nname="anthropic-claude-opus-4-8"\n'
             'model="claude-opus-4-8"\nbase_url="https://api.anthropic.com/v1"\n'
             'api_key_ref="ANTHROPIC_API_KEY"\n',
         )

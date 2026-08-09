@@ -71,7 +71,7 @@ class PoolModelError(LLMRequestError):
     """``direct()`` was pointed at a preset-managed pool entry.
 
     Pool models are anonymous: reach them through ``ask``/``chat``/``stream``,
-    which route and learn. A model you want to name is a ``[[custom]]`` entry.
+    which route and learn. A model you want to name is declared with ``direct=``.
     """
 
 

@@ -5,16 +5,15 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from llmbroker.broker.aliases import AliasFact, AliasTarget, alias_targets_for
 from llmbroker.broker.catalog import Catalog
 from llmbroker.broker.keys import KeyProbe
 from llmbroker.broker.lineup_file import sync_lineup_file
 from llmbroker.broker.merge import SyncSource, load_sync_source, merge_lineup
 from llmbroker.broker.presets import PAID_CATALOG, PresetSource
-from llmbroker.broker.report import alias_lines, format_report
+from llmbroker.broker.report import format_report
 from llmbroker.broker.stamps import stamp_age, write_stamp
 from llmbroker.exceptions import SyncRefusedError
 from llmbroker.models import Lineup, LLMConfig, SyncReport
@@ -142,14 +141,15 @@ class LineupRefresher:
         finally:
             self._next_refresh = time.monotonic() + self._interval
 
-    async def _refresh_paid_catalog(self) -> None:
+    async def _refresh_paid_catalog(self, *, stamp: bool = True) -> None:
         """Keep the cached paid catalog current on the refresh clock — the only clock
-        a declared alias has where no lineup is synced. Redundant where one is."""
+        a declared alias has, and what moves a declared model onto a new version."""
         if not self._follows_an_alias():
             return
         if self._home is not None:
             await asyncio.to_thread(self._presets.refresh, PAID_CATALOG)
-            write_stamp(self._home, self._stamp_key(PAID_CATALOG))
+            if stamp:
+                write_stamp(self._home, self._stamp_key(PAID_CATALOG))
         # With nowhere to cache, the resolution below fetches for itself; warming
         # a cache that cannot be written would only fetch the same body twice.
         self._catalog.invalidate_declared()
@@ -183,19 +183,20 @@ class LineupRefresher:
         """Merge a lineup into the registry and return what it did. Raises."""
         src = await load_sync_source(source, self._presets)
         current = await self._registry.load()
-        # A `direct=` alias is stored nowhere and needs no refresh here — it is in
-        # the list only to keep the cached catalog current for the next provision.
-        targets = await alias_targets_for(
-            [*(c.alias for c in current), *(d for d in self._declared if isinstance(d, str))],
-            self._presets,
-        )
-        # The read above refreshed the cached catalog, which is where a declared
-        # model resolves from: this is the clock it follows.
-        self._catalog.invalidate_declared()
+        # The clock a declared alias rides on, and a catalog nobody can reach may
+        # not fail the sync of the model list itself.
+        try:
+            await self._refresh_paid_catalog(stamp=False)
+        except (ValueError, OSError) as exc:
+            logger.warning(
+                "paid catalog unavailable (%s) — declared models stay on the resolution"
+                " already in use",
+                exc,
+            )
         if isinstance(self._registry, Registry):
-            report, changed = await self._file_target(src, self._registry.path, targets)
+            report, changed = await self._file_target(src, self._registry.path)
         else:
-            report, changed = await self._registry_target(src, current, targets)
+            report, changed = await self._registry_target(src, current)
         if changed and isinstance(self._store, DisabledMapProtocol):
             configs = await self._registry.load()
             await self._store.seed_disabled([c.name for c in configs])
@@ -211,37 +212,17 @@ class LineupRefresher:
             await self._catalog.resync()
         return report
 
-    def _log_alias_facts(self, label: str, facts: tuple[AliasFact, ...]) -> None:
-        notices, warnings = alias_lines(facts)
-        for notice in notices:
-            logger.info("sync %s: %s", label, notice)
-        for warning in warnings:
-            logger.warning("sync %s: %s", label, warning)
-
-    async def _file_target(
-        self,
-        src: SyncSource,
-        target: Path,
-        targets: Mapping[str, AliasTarget],
-    ) -> tuple[SyncReport, bool]:
-        outcome = await sync_lineup_file(
-            target,
-            src,
-            probe=self._probe,
-            store=self._store,
-            alias_targets=targets,
-        )
+    async def _file_target(self, src: SyncSource, target: Path) -> tuple[SyncReport, bool]:
+        outcome = await sync_lineup_file(target, src, probe=self._probe, store=self._store)
         # Outside the identity gate: a key that arrived in the environment is
         # bootstrapped by a sync whether or not the lineup itself moved.
         await self._catalog.seed_secrets(list(outcome.configs))
-        self._log_alias_facts(src.label, outcome.refresh.facts)
         return outcome.report, outcome.changed
 
     async def _registry_target(
         self,
         src: SyncSource,
         stored: list[LLMConfig],
-        targets: Mapping[str, AliasTarget],
     ) -> tuple[SyncReport, bool]:
         keys = (
             await self._registry.key_info() if isinstance(self._registry, KeyInfoProtocol) else {}
@@ -251,9 +232,7 @@ class LineupRefresher:
             Lineup(configs=stored, keys=keys),
             probe=self._probe,
             store=self._store,
-            alias_targets=targets,
         )
-        self._log_alias_facts(src.label, outcome.refresh.facts)
         merged = outcome.lineup.configs
         # Against what is stored, so a catalog move reaches the registry; keyed by
         # name, since a DB hands rows back in its own order (invariant 3).

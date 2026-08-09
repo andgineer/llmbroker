@@ -2,12 +2,14 @@
 copies already on the machine."""
 
 import http.client
+import tomllib
 import urllib.error
 
 import pytest
 
 from llmbroker.broker import presets
 from llmbroker.broker.presets import PresetSource, fetch_preset_text
+from llmbroker.standalone.registry import parse_lineup
 
 # ── Preset name parsing ──────────────────────────────────────────────────────
 
@@ -115,15 +117,15 @@ def test_a_plaintext_provider_in_the_paid_catalog_is_refused(monkeypatch):
         fetch_preset_text("paid-catalog")
 
 
-def test_a_fetched_preset_carrying_custom_entries_is_refused_whole(monkeypatch):
-    """`[[custom]]` means *the host's own*; a curated lineup declaring one is a
-    contradiction, and the pool entry beside it must not slip through either."""
+def test_a_fetched_preset_carrying_declared_entries_is_refused_whole(monkeypatch):
+    """A model list states the pool only, and the general rule refuses the section
+    wherever it is read — the pool entry beside it must not slip through either."""
     carrying = _HTTPS_PRESET + (
         '[[custom]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="m"\napi_key_ref="MY_KEY"\n'
     )
     monkeypatch.setattr(presets.urllib.request, "urlopen", _served(carrying))
-    with pytest.raises(ValueError, match=r"carries \[\[custom\]\]"):
-        fetch_preset_text("freetier")
+    with pytest.raises(ValueError, match=r"carries \[\[custom\]\] entries"):
+        parse_lineup(tomllib.loads(fetch_preset_text("freetier")))
 
 
 def test_an_https_preset_passes(monkeypatch):

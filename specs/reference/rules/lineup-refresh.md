@@ -41,6 +41,11 @@ across a cluster — N nodes cost N small GETs a day, unmeasurable against the
 fleet's own LLM traffic, and the identity gate already makes concurrent
 application a no-op.
 
+**The same interval carries the paid catalog.** A declared alias rides on that
+one clock and no other, whether or not this installation syncs a lineup at all
+([`direct-aliases.md`](direct-aliases.md)). A catalog nobody can reach may not
+fail the sync of the model list itself.
+
 **A fetched lineup is cached, and the cache is a fallback rather than a
 source**: a successful fetch overwrites it, a failed one — offline, or throttled
 by the CDN's per-IP limit — falls back to it. Unlike the check record, the cache

@@ -46,8 +46,8 @@ class _NoSecrets:
         raise KeyError(ref)
 
 
-def _cfg(name, url="https://x/v1", model="m", *, synced=True):
-    return LLMConfig(name=name, base_url=url, model=model, api_key_ref="K", synced=synced)
+def _cfg(name, url="https://x/v1", model="m", *, from_preset=True):
+    return LLMConfig(name=name, base_url=url, model=model, api_key_ref="K", from_preset=from_preset)
 
 
 # ── apply(): writes the merged lineup, exactly as given ──────────────────────

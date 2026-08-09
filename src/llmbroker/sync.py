@@ -186,7 +186,7 @@ class Broker:
         )
 
     def direct(self, alias: str | None = None, *, name: str | None = None) -> DirectClient:
-        """Return a synchronous direct client (``ask()`` only) for a ``[[custom]]`` model.
+        """Return a synchronous direct client (``ask()`` only) for a declared model.
 
         Streaming is async-only; use ``AsyncBroker.direct`` for deltas. Same
         alias/name keyspaces and errors as the async counterpart.

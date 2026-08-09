@@ -52,10 +52,11 @@ directory — `~/.cache/llmbroker` on Linux, `~/Library/Caches/llmbroker` on mac
 — and refreshes it there. Set `LLMBROKER_HOME` to move that directory, which is
 what a container without a writable cache needs.
 
-That file is written by llmbroker, not by you: a refresh regenerates it in full.
-Add your own models with [`add-model`](direct.md), not by editing it. There is no
-way to point a broker at a lineup file of your own — a lineup arrives as a
-curated preset name and nothing else. What you can name is a database:
+That file is written by llmbroker, not by you: a refresh regenerates it in full,
+and it holds the pool and nothing else — a model you reach by name is
+[declared in code](direct.md). There is no way to point a broker at a lineup file
+of your own — a lineup arrives as a curated preset name and nothing else. What
+you can name is a database:
 
 ```python
 llms = llmbroker.Broker("postgresql://…")   # registry, keys and journal, all three
@@ -76,8 +77,7 @@ llms = llmbroker.Broker(registry=MyRegistry(), sync="freetier")  # yours plus ou
 
 A refresh only ever rewrites what a sync itself wrote, so "the curated free pool
 plus two endpoints of my own, routed together" is just a registry with both in
-it. The one exception is an entry that follows a paid alias — that is what the
-alias asks for.
+it.
 
 #### An entry of your own, in the pool {#own-entry}
 
@@ -102,8 +102,7 @@ await registry.mirror([*await registry.load(), mine])
 
 Nothing marks it as ours, so no sync ever removes or rewrites it. It is a pool
 member and the router fails over onto it — an endpoint you want reached by name
-instead is [a declared model](direct.md), and carries an `alias` rather than
-sitting in the pool.
+instead is [a declared model](direct.md), which is not stored at all.
 
 ### Which model is tried first {#weight}
 

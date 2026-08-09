@@ -283,7 +283,7 @@ def test_broker_sync_reconciles_registry_to_preset(tmp_path, served):
     """sync() mirrors: adds new, updates existing, deletes entries absent from the preset."""
     db = str(tmp_path / "b.db")
     extra = LLMConfig(
-        name="extra", base_url="https://e/v1", model="m", api_key_ref="K", synced=True
+        name="extra", base_url="https://e/v1", model="m", api_key_ref="K", from_preset=True
     )
     asyncio.run(SqliteRegistry(db).mirror([extra]))
 

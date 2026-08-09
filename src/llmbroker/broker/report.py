@@ -7,24 +7,15 @@ from llmbroker.broker.aliases import AliasChange, AliasFact
 from llmbroker.models import SyncReport
 
 
-def alias_lines(facts: Iterable[AliasFact]) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """One line per fact, split into notices and warnings — an alias the catalog no
-    longer carries is the one a reader must act on."""
-    notices: list[str] = []
-    warnings: list[str] = []
-    for fact in facts:
-        if fact.change is AliasChange.UNKNOWN:
-            warnings.append(
-                f"alias '{fact.alias}' is not in the paid catalog — entry left untouched",
-            )
-        elif fact.change is AliasChange.KEY_REF:
-            notices.append(
-                f"{fact.alias}: api_key_ref {fact.was} -> {fact.now}"
-                f" — set {fact.now} before the next call",
-            )
-        else:
-            notices.append(f"{fact.alias}: {fact.was} -> {fact.now}")
-    return tuple(notices), tuple(warnings)
+def alias_lines(facts: Iterable[AliasFact]) -> tuple[str, ...]:
+    """One line per fact — a re-spelled key ref is the one a reader must act on, so
+    its line says what to set."""
+    return tuple(
+        f"{fact.alias}: api_key_ref {fact.was} -> {fact.now} — set {fact.now} before the next call"
+        if fact.change is AliasChange.KEY_REF
+        else f"{fact.alias}: {fact.was} -> {fact.now}"
+        for fact in facts
+    )
 
 
 def _kept_line(report: SyncReport) -> str:

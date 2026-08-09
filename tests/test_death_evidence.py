@@ -21,14 +21,13 @@ def _seen(*refs: str) -> KeyEvidence:
     return KeyEvidence(present=frozenset(refs), visible=True)
 
 
-def _cfg(name, ref="K", *, custom=False):
+def _cfg(name, ref="K", *, from_preset=True):
     return LLMConfig(
         name=name,
         base_url="https://x/v1",
         model="m",
         api_key_ref=ref,
-        custom=custom,
-        synced=not custom,
+        from_preset=from_preset,
     )
 
 
@@ -156,7 +155,7 @@ def test_only_entries_the_merge_would_otherwise_keep_are_candidates():
         _cfg("groq-old", "GROQ"),  # provider gone, key here — the one candidate
         _cfg("gemini", "GEMINI"),  # still in the lineup
         _cfg("cerebras-old", "CEREBRAS"),  # provider gone, no key: removed anyway
-        _cfg("mine", "GROQ", custom=True),  # custom entries are never pruned
+        _cfg("mine", "GROQ", from_preset=False),  # an own entry is never pruned
     ]
     new = [_cfg("gemini", "GEMINI")]
     assert retirement_candidates(new, current, _seen("GROQ", "GEMINI")) == ["groq-old"]

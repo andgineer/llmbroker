@@ -12,16 +12,15 @@ from llmbroker.models import KeyInfo, Lineup, LLMConfig, Retirement
 _EVIDENCE_TS = datetime(2030, 7, 2, tzinfo=UTC)
 
 
-def _cfg(name, ref="K", *, model="m", url="https://x/v1", custom=False, synced=None):
-    """Curated by default, as a lineup file's two sections are: a [[custom]] entry
-    is the host's, everything else was written by a sync."""
+def _cfg(name, ref="K", *, model="m", url="https://x/v1", from_preset=True):
+    """Written by a sync unless stated otherwise; `from_preset=False` is an entry the
+    installation put in its own registry."""
     return LLMConfig(
         name=name,
         base_url=url,
         model=model,
         api_key_ref=ref,
-        custom=custom,
-        synced=not custom if synced is None else synced,
+        from_preset=from_preset,
     )
 
 
@@ -120,11 +119,11 @@ def test_with_keys_invisible_the_entry_stays_whatever_present_says():
     assert (report.kept, report.removed) == (("groq-old",), ())
 
 
-def test_a_custom_entry_on_the_same_ref_keeps_it_out_of_the_orphan_advice():
-    """The paid direct model on the retired provider: the key is still in use."""
+def test_an_own_entry_on_the_same_ref_keeps_it_out_of_the_orphan_advice():
+    """The installation's own entry on the retired provider: the key is still in use."""
     _merged, _keys, report = _merge(
         [_cfg("gemini", "GEMINI")],
-        [_cfg("groq-old", "GROQ"), _cfg("groq-paid", "GROQ", custom=True)],
+        [_cfg("groq-old", "GROQ"), _cfg("groq-paid", "GROQ", from_preset=False)],
         present={"GEMINI", "GROQ"},
         dead={"groq-old"},
     )
@@ -218,13 +217,13 @@ def test_the_next_sync_removes_a_kept_entry_once_the_journal_condemns_it():
     assert (report.removed, report.kept, report.added) == ((), (), ())
 
 
-# ── Custom entries, keys, and the refusals ───────────────────────────────────
+# ── The installation's own entries, keys, and the refusals ──────────────────
 
 
-def test_custom_entries_and_their_keys_are_carried_over():
+def test_own_entries_and_their_keys_are_carried_over():
     merged, keys, report = _merge(
         [_cfg("groq-new", "GROQ")],
-        [_cfg("groq-old", "GROQ"), _cfg("mine", "MY_KEY", custom=True)],
+        [_cfg("groq-old", "GROQ"), _cfg("mine", "MY_KEY", from_preset=False)],
         current_keys={"MY_KEY": KeyInfo(api_key_ref="MY_KEY", help="my help", extra={})},
     )
     assert [c.name for c in merged] == ["groq-new", "mine"]
@@ -232,12 +231,12 @@ def test_custom_entries_and_their_keys_are_carried_over():
     assert "mine" not in report.removed + report.kept + report.added
 
 
-def test_an_arriving_lineups_own_custom_entry_never_replaces_the_stored_one():
-    """A curated lineup states the pool only — the fetch refuses `[[custom]]` — so
-    nothing arriving can move a model the host declared, and the report says so."""
+def test_an_arriving_entry_never_replaces_one_the_installation_wrote_itself():
+    """An arriving list is entirely a sync's, so nothing in it can move an entry the
+    installation put in its own registry, and the report says so."""
     merged, _keys, report = _merge(
-        [_cfg("mine", "MY_KEY", model="v2", url="https://new/v1", custom=True)],
-        [_cfg("mine", "MY_KEY", model="v1", custom=True)],
+        [_cfg("mine", "MY_KEY", model="v2", url="https://new/v1", from_preset=False)],
+        [_cfg("mine", "MY_KEY", model="v1", from_preset=False)],
     )
     assert [(c.name, c.model) for c in merged] == [("mine", "v1")]
     assert report.updated == ()
@@ -270,9 +269,9 @@ def test_a_kept_entry_without_key_help_is_not_an_error():
     ]
 
 
-def test_a_name_clash_between_managed_and_custom_is_refused():
+def test_a_name_clash_between_a_synced_and_an_own_entry_is_refused():
     with pytest.raises(ValueError, match="two entries named 'clash'"):
-        _merge([_cfg("clash", "A")], [_cfg("clash", "B", custom=True)])
+        _merge([_cfg("clash", "A")], [_cfg("clash", "B", from_preset=False)])
 
 
 def test_a_model_change_under_an_existing_name_is_refused():

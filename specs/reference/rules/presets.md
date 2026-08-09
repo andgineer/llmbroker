@@ -62,21 +62,19 @@ is in [`../freetier-providers.md`](../freetier-providers.md).
 ## The pool is exactly the curated lineup
 
 The pool is the curated preset and whatever a sync kept from an earlier one. A
-model the host declared — in a config block or in code — is reached by name
-through `direct` and is never routed, never failed over onto, never learned from
-as a pool member (invariant 4,
+model the host declared in code is reached by name through `direct` and is never
+routed, never failed over onto, never learned from as a pool member (invariant 4,
 [`decisions.md`](../decisions.md#nothing-declared-enters-the-pool)).
 
-A pool marker left in a hand-written custom block, or in a registry row written
-by an older release, is ignored rather than rejected: it is a field that no
-longer exists.
+A marker in a registry row written by an older release is ignored rather than
+rejected: it is a field that no longer exists.
 
-**A fetched lineup may not declare a host's own model at all**, and one that
-does is refused whole where the plaintext-URL refusal already lives — before any
-merge sees it. Curation names endpoints worth pooling; what is *the host's own*
-is knowledge no curator has, so an arriving lineup carrying it is malformed
-rather than opinionated. The consequence is that everything the host owns in a
-lineup got there locally and survives every sync untouched.
+**A model list states the pool and nothing else**, wherever it is read — the
+installation's own file, or a curated one just fetched. A list carrying the
+section a past release used for models reached by name is refused whole, naming
+where those models go now; silently dropping them would take models out of an
+installation without saying so. Curation names endpoints worth pooling; what is
+*the host's own* is knowledge no curator has.
 
 ## Key acquisition help
 
@@ -118,15 +116,18 @@ admin act, and the one thing llmbroker cannot decide for a host.
   registry is a database reads the curated keys at all. Onboarding is folded into
   this command rather than a separate setup/status command, to keep the CLI
   surface small.
-- **`add-model`** picks a paid provider and model from the curated catalog and
-  appends it as a custom entry, following the alias contract in
-  [`direct-aliases.md`](direct-aliases.md): it follows the catalog's alias by
-  default so later refreshes keep it current, and a pin flag writes a
-  version-pinned entry instead, which no refresh touches. Both land in the lineup
-  of the installation the command is run against, and a name or alias already in
-  it is refused. It is the only way a host's own model enters a lineup by hand:
-  everything else about that file is llmbroker's
-  ([`sync-merge.md`](sync-merge.md#the-lineup-file-is-written-never-authored)).
+- **`list`** shows what the two curated lists carry and writes nothing: the
+  routed pool's models, and the paid ones a host may reach by name. A paid line
+  carries what a caller needs to reach that model — the alias to declare, and the
+  provider fields a version-pinned declaration states for itself
+  ([`direct-aliases.md`](direct-aliases.md)). One model per line and no
+  decoration, so a later filter is a projection of the same rows rather than a
+  second formatter.
+
+**No command writes a model list.** A list is filled by a sync, and a model
+reached by name is declared where the application that calls it is configured, so
+there is nothing left for a command to append
+([`sync-merge.md`](sync-merge.md#the-lineup-file-is-written-never-authored)).
 
 **The CLI has no merge site.** Refreshing a lineup is the application's own
 entrypoint calling `broker.sync(...)`, built by the same factory the application

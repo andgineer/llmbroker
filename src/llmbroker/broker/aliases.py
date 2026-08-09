@@ -1,22 +1,19 @@
-"""The paid catalog and the entries that follow one of its aliases.
+"""The paid catalog and the declared models that follow one of its aliases.
 
-The alias contract — what a refresh may rewrite, and what it may never move — is
-in ``specs/reference/rules/direct-aliases.md``.
+The alias contract — what a re-resolution may rewrite, and what it may never move —
+is in ``specs/reference/rules/direct-aliases.md``.
 """
 
 import asyncio
-import logging
 import tomllib
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
 
 from llmbroker.broker.presets import PAID_CATALOG, PresetSource
 from llmbroker.exceptions import UnknownModelError
 from llmbroker.models import DeclaredModels, LLMConfig
-
-logger = logging.getLogger("llmbroker.broker")
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,17 +28,16 @@ class AliasTarget:
 
 
 class AliasChange(Enum):
-    """What a refresh found for one alias-following entry."""
+    """What a re-resolution found for one declared alias."""
 
     MODEL = "model"
     KEY_REF = "key_ref"
-    UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
 class AliasFact:
-    """One thing a refresh changed, or could not: the CLI prints these, the broker
-    logs them, and neither decides what they mean here."""
+    """One thing a re-resolution moved: the broker logs these and does not decide
+    what they mean here."""
 
     change: AliasChange
     alias: str
@@ -49,16 +45,7 @@ class AliasFact:
     now: str = ""
 
 
-@dataclass(frozen=True, slots=True)
-class AliasRefresh:
-    """What re-pointing the alias-following entries changed."""
-
-    key_help: dict[str, str]
-    facts: tuple[AliasFact, ...] = ()
-
-
 _NO_TARGETS: Mapping[str, AliasTarget] = MappingProxyType({})
-_NO_REFRESH = AliasRefresh(key_help={})
 
 
 def catalog_alias_targets(catalog: dict) -> dict[str, AliasTarget]:
@@ -89,50 +76,32 @@ def catalog_alias_targets(catalog: dict) -> dict[str, AliasTarget]:
     return targets
 
 
-async def alias_targets_for(
-    aliases: Iterable[str | None],
-    presets: PresetSource,
-) -> dict[str, AliasTarget]:
-    """What the catalog now recommends, read only when something follows an alias. A
-    catalog nobody can reach yields no targets, leaving every alias entry as it is."""
-    if not any(aliases):
-        return {}
-    try:
-        text = await asyncio.to_thread(presets.text, PAID_CATALOG, floor=False)
-    except ValueError as exc:
-        logger.warning("paid catalog unavailable (%s) — alias entries left untouched", exc)
-        return {}
-    return catalog_alias_targets(tomllib.loads(text))
-
-
 async def resolve_declared(
     declared: Sequence[str | LLMConfig],
     presets: PresetSource,
     *,
-    floor: bool = True,
-) -> DeclaredModels:
-    """Turn what the caller declared with ``direct=`` into entries, with the
-    catalog's key help — nothing stores a declared model, so this read is the only
-    place that help is available. ``floor=False`` marks a re-resolution."""
+    previous: DeclaredModels | None = None,
+) -> tuple[DeclaredModels, tuple[AliasFact, ...]]:
+    """Turn what the caller declared with ``direct=`` into entries, with the catalog's
+    key help — nothing stores a declared model, so this read is the only place that
+    help is available. ``previous`` marks a re-resolution and is what the facts diff."""
     if not declared:
-        return DeclaredModels()
+        return DeclaredModels(), ()
     targets: Mapping[str, AliasTarget] = _NO_TARGETS
     if any(isinstance(item, str) for item in declared):
         text = await asyncio.to_thread(
             presets.text,
             PAID_CATALOG,
             prefer_cache=True,
-            floor=floor,
+            floor=previous is None,
         )
         targets = catalog_alias_targets(tomllib.loads(text))
     configs = tuple(
-        replace(item, custom=True)
-        if isinstance(item, LLMConfig)
-        else _entry_for_alias(item, targets)
+        item if isinstance(item, LLMConfig) else _entry_for_alias(item, targets)
         for item in declared
     )
     wanted = {cfg.api_key_ref for cfg in configs}
-    return DeclaredModels(
+    resolved = DeclaredModels(
         configs=configs,
         key_help={
             t.api_key_ref: t.key_help
@@ -140,6 +109,22 @@ async def resolve_declared(
             if t.key_help and t.api_key_ref in wanted
         },
     )
+    return resolved, _moved(previous, resolved)
+
+
+def _moved(previous: DeclaredModels | None, current: DeclaredModels) -> tuple[AliasFact, ...]:
+    """What moved under the declared aliases since the last resolution. The first has
+    nothing to compare against, and a version move is the only notice a deployment
+    gets that ``direct("opus")`` now answers from a different model."""
+    if previous is None:
+        return ()
+    was = {c.alias: c for c in previous.configs if c.alias is not None}
+    facts: list[AliasFact] = []
+    for cfg in current.configs:
+        old = was.get(cfg.alias) if cfg.alias is not None else None
+        if old is not None:
+            facts.extend(_alias_facts(old, cfg))
+    return tuple(facts)
 
 
 def _entry_for_alias(alias: str, targets: Mapping[str, AliasTarget]) -> LLMConfig:
@@ -157,59 +142,26 @@ def _entry_for_alias(alias: str, targets: Mapping[str, AliasTarget]) -> LLMConfi
         base_url=target.base_url,
         model=target.model,
         api_key_ref=target.api_key_ref,
-        custom=True,
         alias=alias,
     )
 
 
-def _alias_facts(cfg: LLMConfig, target: AliasTarget) -> list[AliasFact]:
-    alias = cfg.alias or ""
+def _alias_facts(was: LLMConfig, now: LLMConfig) -> list[AliasFact]:
+    alias = now.alias or ""
     facts = []
-    if cfg.model != target.model:
+    if was.model != now.model:
         facts.append(
-            AliasFact(change=AliasChange.MODEL, alias=alias, was=cfg.model, now=target.model),
+            AliasFact(change=AliasChange.MODEL, alias=alias, was=was.model, now=now.model),
         )
-    if cfg.api_key_ref != target.api_key_ref:
+    if was.api_key_ref != now.api_key_ref:
         # The one change needing the user to act, and it can arrive without a model
         # change: a re-spelled ref wants an env var nobody set.
         facts.append(
             AliasFact(
                 change=AliasChange.KEY_REF,
                 alias=alias,
-                was=cfg.api_key_ref,
-                now=target.api_key_ref,
+                was=was.api_key_ref,
+                now=now.api_key_ref,
             ),
         )
     return facts
-
-
-def refresh_alias_configs(
-    configs: list[LLMConfig],
-    targets: Mapping[str, AliasTarget],
-) -> tuple[list[LLMConfig], AliasRefresh]:
-    """Re-point every alias-following entry at what the catalog now recommends."""
-    if not targets:
-        return configs, _NO_REFRESH
-    key_help: dict[str, str] = {}
-    facts: list[AliasFact] = []
-    result: list[LLMConfig] = []
-    for cfg in configs:
-        target = targets.get(cfg.alias) if cfg.alias is not None else None
-        if target is None:
-            if cfg.alias is not None:
-                facts.append(AliasFact(change=AliasChange.UNKNOWN, alias=cfg.alias))
-            result.append(cfg)
-            continue
-        facts.extend(_alias_facts(cfg, target))
-        result.append(
-            replace(
-                cfg,
-                name=target.name,
-                model=target.model,
-                base_url=target.base_url,
-                api_key_ref=target.api_key_ref,
-            ),
-        )
-        if target.key_help:
-            key_help[target.api_key_ref] = target.key_help
-    return result, AliasRefresh(key_help=key_help, facts=tuple(facts))

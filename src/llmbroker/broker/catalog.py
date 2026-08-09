@@ -13,7 +13,6 @@ from llmbroker.models import (
     LLMConfig,
     PendingKey,
     PoolHealth,
-    check_aliases,
 )
 from llmbroker.protocols.registry import (
     KeyInfoProtocol,
@@ -93,40 +92,46 @@ def check_overlay(stored: list[LLMConfig], declared: list[LLMConfig]) -> None:
 
 _POOL_MODEL_HINT = (
     "pool models are anonymous — reach them with ask()/chat()/stream(), which route and"
-    " learn; add a [[custom]] entry for the model if you need to call it by name"
+    " learn; declare the model with direct=[...] if you need to call it by name"
 )
 
 
-def find_custom(configs: list[LLMConfig], alias: str | None, name: str | None) -> LLMConfig:
-    """Resolve one user-owned entry from exactly one of the two keyspaces.
+def find_declared(
+    stored: list[LLMConfig],
+    declared: list[LLMConfig],
+    alias: str | None,
+    name: str | None,
+) -> LLMConfig:
+    """Resolve one model declared with ``direct=`` from exactly one of the two keyspaces.
 
-    A miss whose string exists in the *other* keyspace says so, since the two are
-    one typo apart at a call site.
+    A miss whose string exists in the *other* keyspace, or in the pool, says so —
+    those are one typo and one wrong expectation apart at a call site.
     """
     if alias is not None:
-        for cfg in configs:
-            if cfg.custom and cfg.alias == alias:
+        for cfg in declared:
+            if cfg.alias == alias:
                 return cfg
-        if any(c.custom and c.name == alias for c in configs):
+        if any(c.name == alias for c in declared):
             raise UnknownModelError(
-                f"no entry with alias {alias!r}; an entry with this name exists"
-                f" — call direct(name={alias!r})",
+                f"no declared model with alias {alias!r}; a declared model with this name"
+                f" exists — call direct(name={alias!r})",
             )
-        if any(c.name == alias for c in configs):
+        if any(c.name == alias for c in stored):
             # The pre-alias call shape: direct() took a name, and a pool name at that.
             # Sending it to direct(name=...) first would only spend an error saying so.
             raise PoolModelError(f"{alias!r} is a preset-managed pool model: {_POOL_MODEL_HINT}")
-        raise UnknownModelError(f"no entry with alias {alias!r} in the registry")
-    for cfg in configs:
-        if cfg.custom and cfg.name == name:
+        raise UnknownModelError(f"no model was declared with alias {alias!r}")
+    for cfg in declared:
+        if cfg.name == name:
             return cfg
-    if any(c.custom and c.alias == name for c in configs):
+    if any(c.alias == name for c in declared):
         raise UnknownModelError(
-            f"no entry named {name!r}; an entry with this alias exists — call direct({name!r})",
+            f"no declared model named {name!r}; a declared model with this alias exists"
+            f" — call direct({name!r})",
         )
-    if any(c.name == name for c in configs):
+    if any(c.name == name for c in stored):
         raise PoolModelError(f"{name!r} is a preset-managed pool model: {_POOL_MODEL_HINT}")
-    raise UnknownModelError(f"no model named {name!r} in the registry")
+    raise UnknownModelError(f"no model named {name!r} was declared with direct=")
 
 
 class Catalog:
@@ -177,16 +182,16 @@ class Catalog:
         """Drop the resolved overlay so the next read follows the catalog again."""
         self._declared = None
 
-    async def entries(self) -> list[LLMConfig]:
-        """The stored lineup with the models declared in code overlaid. This read is
-        not the alias clock — ``direct()`` comes through here on every call and must
-        not pay a catalog parse."""
+    async def entries(self) -> tuple[list[LLMConfig], list[LLMConfig]]:
+        """The stored pool and the models declared in code, apart. This read is not the
+        alias clock — ``direct()`` comes through here on every call and must not pay a
+        catalog parse."""
         configs = await self._registry.load()
         if self._overlay is None:
-            return configs
-        declared = await self._resolve_overlay()
-        check_overlay(configs, declared.configs)
-        return [*configs, *declared.configs]
+            return configs, []
+        declared = list((await self._resolve_overlay()).configs)
+        check_overlay(configs, declared)
+        return configs, declared
 
     async def _resolve_overlay(self) -> DeclaredModels:
         """Resolve ``direct=`` once, however many callers arrive together: the callers
@@ -206,14 +211,14 @@ class Catalog:
     async def provision(self) -> None:
         """Reconcile the pool with the registry. The caller serializes this
         one-time init; it is not re-entrant. Raises when there is nothing at all."""
-        configs = await self.entries()
-        if not configs:
+        stored, declared = await self.entries()
+        if not stored and not declared:
             raise EmptyRegistryError(
                 "registry is empty — no lineup is stored and none could be fetched."
                 ' Fill it with `await broker.sync("freetier")`, or from a deploy job,'
                 " or check network access to the preset catalog",
             )
-        await self._reconcile(configs)
+        await self._reconcile(stored, declared)
 
     async def resync(self) -> None:
         """Re-read the registry and reconcile pool membership — no emptiness check.
@@ -221,22 +226,18 @@ class Catalog:
         Called by the debounced journal rebuild so registry edits and key changes
         from other processes/nodes take effect on a running broker.
         """
-        await self._reconcile(await self.entries())
+        await self._reconcile(*(await self.entries()))
 
-    async def _reconcile(self, configs: list[LLMConfig]) -> None:
-        """Reconcile the managed entries into the live pool. A custom entry stays
-        in the registry (reachable via ``broker.direct``) and never joins it."""
-        managed = [c for c in configs if not c.custom]
-        # Here, not in a registry: a host may implement the port itself, and a refresh
-        # would re-point a pooled alias at whatever the paid catalog recommends.
-        check_aliases(managed)
-        names = {c.name for c in managed}
+    async def _reconcile(self, stored: list[LLMConfig], declared: list[LLMConfig]) -> None:
+        """Reconcile the pool with what the registry holds. A declared model is reached
+        by name through ``broker.direct`` and never joins it."""
+        names = {c.name for c in stored}
         for name in list(self._pool.configs):
             if name not in names:
                 await self._pool.drop(name)
-        for order, cfg in enumerate(managed):
+        for order, cfg in enumerate(stored):
             await self._pool.add(cfg, await self._resolve_key(cfg), order=order)
-        await self._measure(managed, [c for c in configs if c.custom])
+        await self._measure(stored, declared)
         self._report_health()
         self._report_missing_keys()
 

@@ -8,13 +8,13 @@ import logging
 import pytest
 
 from llmbroker.broker.broker import AsyncBroker
-from llmbroker.models import LLMSnapshot
+from llmbroker.models import LLMConfig, LLMSnapshot
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import InMemoryStore
 
 _ENTRY = '[[llms]]\nname="{name}"\nbase_url="https://{name}/v1"\nmodel="m"\napi_key_ref="{ref}"\n'
-_CUSTOM_ONLY = '[[custom]]\nname="paid"\nbase_url="https://paid/v1"\nmodel="m"\napi_key_ref="P"\n'
+_DECLARED = LLMConfig(name="paid", base_url="https://paid/v1", model="m", api_key_ref="P")
 
 
 def _registry(tmp_path, *entries, keys=""):
@@ -209,16 +209,17 @@ async def test_gaining_a_further_provider_is_not_worth_a_line(tmp_path, caplog):
 
 
 async def test_a_registry_that_pools_nothing_is_not_a_degraded_pool(tmp_path, caplog):
-    """A `[[custom]]` entry never joins the pool, so a registry of nothing else has
+    """A declared model never joins the pool, so an installation with nothing else has
     no pool to degrade — and "no provider has a key" would name a cause that is not
     the case here. `direct=` makes this shape ordinary."""
     target = tmp_path / "llms.toml"
-    target.write_text(_CUSTOM_ONLY)
+    target.write_text("")
     broker = AsyncBroker(
         registry=FileRegistry(target),
         secrets=DictSecrets({"P": "sk"}),
         store=InMemoryStore(),
         sync=None,
+        direct=[_DECLARED],
     )
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         async with broker:
@@ -242,7 +243,7 @@ async def test_a_pool_that_empties_out_does_not_report_a_recovery(tmp_path, capl
         async with broker:
             await broker.count()
             assert "no failover left" in _health_lines(caplog)[0][1]
-            registry.path.write_text(_CUSTOM_ONLY)
+            registry.path.write_text("")
             await broker._catalog.resync()
     assert len(_health_lines(caplog)) == 1
 

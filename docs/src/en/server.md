@@ -64,10 +64,12 @@ await new.mirror(await old.load())
 Secrets and the journal move the same way where you want them to, through their
 own backends; usually the keys are re-provisioned and the journal is left behind.
 
-`sync` also keeps a paid alias current here. An entry that follows a
-catalog alias is re-pointed at the version the catalog now recommends on every
-sync, in a database registry exactly as in a file — so a long-lived installation
-does not sit on the model id it was first deployed with.
+A paid model you reach by name is declared where the factory builds the broker —
+`AsyncBroker(dsn, direct=["opus"])` — not written into the registry. One line in
+the factory you already have covers the whole cluster, and every process
+re-resolves the alias on its own refresh clock, so a long-lived deployment does
+not sit on the model id it was first deployed with. See
+[Direct model calls](direct.md).
 
 `sync` never takes away a model this installation can call. A model whose
 provider the new lineup drops is removed when the same provider replaces it, when

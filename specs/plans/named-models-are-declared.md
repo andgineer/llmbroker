@@ -291,3 +291,92 @@ is why no plan for one is queued. Independent of 10, 11 and 16.
 
 `invoke pre` clean and `python -m pytest` green after each batch. Docker up for
 the testcontainer tests.
+
+## Handover
+
+### Done
+
+All six sections. The gate is green: `invoke pre` reports no ruff/pyrefly errors,
+`python -m pytest` is `1273 passed`, zero skips, zero errors (Docker up, so the
+Postgres/Mongo testcontainer cells of the conformance matrix ran).
+
+- **1. The command shows instead of writing** — `add-model` and everything reached
+  only from it are gone, including the `EOFError`/`KeyboardInterrupt` guard in
+  `main`, which existed only for the interactive prompts. `list` replaces it:
+  one model per line, `pool` lines then `direct` lines, no decoration. A paid line
+  is `direct <alias> <provider id> <model id> <base_url> <api_key_ref>`, with `-`
+  in the alias column for a catalog model that carries none. `POOL_PRESET` was
+  added beside `PAID_CATALOG` in `broker/presets.py` and `broker.py`'s default sync
+  source now reads it, so `"freetier"` is a literal in one place.
+- **2. The model list has one array** — `parse_lineup` reads `[[llms]]` only and
+  refuses a file carrying `[[custom]]`, naming `direct=[...]`. `render_lineup`
+  emits one array; `_entry_dict` no longer writes `alias`. The file header now
+  points at `direct=[...]` instead of `add-model`.
+- **3. The field goes** — `LLMConfig.custom` and its metadata serialization are
+  gone. `Catalog.entries()` returns the stored pool and the declared models as two
+  lists; `_reconcile` takes both; `find_custom` is now `find_declared(stored,
+  declared, alias, name)`. `check_overlay` is unchanged.
+- **4. The recorded bit** — `synced` is `from_preset`, field and metadata key,
+  across `src/` and `tests/`.
+- **5. The alias refresh moved** — `refresh_alias_configs`, `AliasRefresh`,
+  `alias_targets_for` and the `alias_targets` argument threaded through
+  `merge_lineup`/`sync_lineup_file` are gone. `resolve_declared` now takes
+  `previous` and returns `(DeclaredModels, facts)`; `AsyncBroker._resolve_declared`
+  logs one `direct=: …` line per moved alias. The sync still reads the catalog on
+  the way past — through `LineupRefresher._refresh_paid_catalog`, which the sync
+  path now calls with the fetch failure caught, so a catalog nobody can reach
+  cannot fail the sync of the model list.
+- **6. Specs and docs** — as listed in the plan, en and ru in step. Also updated:
+  `presets/paid-catalog-refresh-prompt.md`, `presets/freetier-refresh-prompt.md`
+  and `paid-catalog.toml`'s header, all of which named `add-model` or `[[custom]]`.
+
+### Done differently from the plan
+
+- **Batches 2 and 3 were implemented as one.** Removing the `[[custom]]` section
+  and removing the field break the same 43 tests; splitting them would have
+  rewritten those test files twice. Each source change still landed in the plan's
+  order, and the gate was run once at the end of the pair.
+- **`ALIAS_NAME_HINT` was deleted** (`standalone/registry.py`, and its use in
+  `merge._check_name_clash`). The plan does not mention it. It told a reader to
+  "drop its 'alias' to pin it instead" after a refresh re-formed an entry's name —
+  a mechanism this plan removes, so the hint is not merely dead but wrong.
+- **`check_aliases` is no longer called from `parse_lineup`.** The plan keeps the
+  function's uniqueness rule, and it is kept — but the file parser no longer reads
+  `alias` at all, so the call there could not fire. It stays live where it can:
+  `DriverRegistry.load`/`mirror`, where an alias can arrive in a hand-written
+  metadata blob.
+- **`AliasChange.UNKNOWN` was removed and `alias_lines` returns one tuple**, not
+  a (notices, warnings) pair. The plan says the three keep their shape. UNKNOWN
+  had exactly one producer — `refresh_alias_configs` — and this plan deletes it: a
+  re-resolution whose alias the catalog dropped raises out of `_entry_for_alias`
+  and is reported by `_resolve_declared`'s existing warning instead. Keeping the
+  member would have left an enum branch no code path can reach.
+- **`Catalog.entries()` changed return type** rather than gaining a sibling. The
+  plan only specifies `_reconcile`'s two arguments; the two callers of `entries()`
+  (`provision`/`resync` and `AsyncBroker._resolve_direct`) both need the split, so
+  a second accessor would have re-read the registry.
+
+### Decisions the plan did not make
+
+- **`list` output shape.** The leading token is `pool` / `direct` — the words a
+  caller actually types (`ask()` routes the pool, `direct=` declares) rather than
+  the `pool_preset`/`direct_preset` vocabulary of the kinds table, which is spec
+  language and not CLI language. A later `--aliases` is
+  `awk '$1=="direct" {print $2}'` over the same rows.
+- **What replaces the file-level tests that used `[[custom]]`.** In a file registry
+  every entry is now `from_preset=True`, so the "an entry the installation stated
+  itself survives a sync" property has no file-level expression at all — it lives
+  only in a DB registry. Those tests moved to the merge and the conformance matrix
+  (which already carry it), and the file tests they left behind now assert the
+  *kept*-entry path, which is the one a file can still exercise.
+- **The conformance matrix's `raw-only-custom` provenance cell** was kept, renamed
+  `raw-unknown-key`: a metadata blob carrying only a key this release no longer
+  knows must still read as the installation's own. That is the property the axis
+  exists to pin, and it survives the field's removal.
+
+### Left out
+
+- Nothing from the plan. The vocabulary sweep (`lineup` → "the model list") is
+  plan 10's and was not attempted; every user-facing string this plan *wrote* uses
+  10's wording already, and the strings it did not touch were left for 10 so its
+  inventory stays honest.

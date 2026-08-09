@@ -76,8 +76,8 @@ def default_store() -> StoreProtocol:
 
 
 def lineup_path(home: Path) -> Path:
-    """The lineup file inside llmbroker's own directory — the one a zero-config broker
-    keeps its pool in, and the one ``add-model`` adds to."""
+    """The lineup file inside llmbroker's own directory — where a zero-config broker
+    keeps its pool."""
     return home / "lineup.toml"
 
 

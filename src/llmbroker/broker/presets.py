@@ -21,6 +21,7 @@ logger = logging.getLogger("llmbroker.broker")
 
 PRESET_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 PAID_CATALOG = "paid-catalog"
+POOL_PRESET = "freetier"
 _PRESET_URL = (
     "https://raw.githubusercontent.com/andgineer/llmbroker/main/src/llmbroker/presets/{name}.toml"
 )
@@ -58,26 +59,14 @@ def fetch_preset_text(name: str) -> str:
     except tomllib.TOMLDecodeError as exc:
         raise ValueError(f"downloaded content for '{name}' is not valid TOML") from exc
     _check_fetched_urls(name, data)
-    _check_no_custom(name, data)
     return text
-
-
-def _check_no_custom(name: str, data: dict) -> None:
-    """``[[custom]]`` means *the host's own*, so a curated lineup declaring one is a
-    contradiction — and it would arrive as an entry the pool never routes and no sync
-    ever removes. Refused whole, like a plaintext base_url."""
-    if data.get("custom"):
-        raise ValueError(
-            f"preset '{name}' carries [[custom]] entries — a curated lineup states the"
-            " pool only, and your own models are yours to declare — refusing the whole file",
-        )
 
 
 def _check_fetched_urls(name: str, data: dict) -> None:
     """A fetched lineup decides where this installation's keys are sent, so the whole
     file is refused before any merge sees it. Not a defence against a compromised
     catalog — it removes plaintext key transmission as an accident."""
-    for section in ("llms", "custom", "provider"):
+    for section in ("llms", "provider"):
         for entry in data.get(section, []):
             url = entry.get("base_url") if isinstance(entry, dict) else None
             if url is not None and not str(url).startswith("https://"):

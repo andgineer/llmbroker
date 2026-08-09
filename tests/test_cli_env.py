@@ -136,7 +136,7 @@ def test_a_malformed_lineup_is_an_error_line_not_a_traceback(llmbroker_home, cap
     other bad argument."""
     body = (
         '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n'
-        '[[custom]]\nname="a"\nbase_url="https://y/v1"\nmodel="m"\napi_key_ref="KEY_B"\n'
+        '[[llms]]\nname="a"\nbase_url="https://y/v1"\nmodel="m"\napi_key_ref="KEY_B"\n'
     )
     _lineup(llmbroker_home, body)
     rc = main(["env"])

@@ -8,7 +8,6 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 
-from llmbroker.broker.aliases import AliasRefresh, AliasTarget, refresh_alias_configs
 from llmbroker.broker.keys import KeyEvidence, KeyProbe
 from llmbroker.broker.presets import PRESET_NAME_RE, PresetSource
 from llmbroker.exceptions import SyncRefusedError
@@ -24,7 +23,7 @@ from llmbroker.models import (
     SyncReport,
 )
 from llmbroker.protocols.store import QueryableStoreProtocol, StoreProtocol
-from llmbroker.standalone.registry import ALIAS_NAME_HINT, parse_lineup
+from llmbroker.standalone.registry import parse_lineup
 
 logger = logging.getLogger("llmbroker.broker")
 
@@ -32,7 +31,6 @@ logger = logging.getLogger("llmbroker.broker")
 # failure out of it; then there is no evidence and the entry stays.
 _EVIDENCE_LIMIT = 1000
 _NO_EVIDENCE: Mapping[str, Retirement] = MappingProxyType({})
-_NO_TARGETS: Mapping[str, AliasTarget] = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +47,6 @@ class MergeOutcome:
 
     report: SyncReport
     lineup: Lineup
-    refresh: AliasRefresh
 
 
 # ── Naming the source ────────────────────────────────────────────────────────
@@ -78,13 +75,13 @@ def retirement_candidates(
     """The entries the merge would otherwise keep, and only those. Empty on every
     ordinary sync, which is why the journal is normally not read; where a missing
     key proves nothing, every dropped entry is a candidate."""
-    arriving = [c for c in new_configs if c.synced]
+    arriving = [c for c in new_configs if c.from_preset]
     names = {c.name for c in arriving}
     refs = {c.api_key_ref for c in arriving if c.api_key_ref}
     return [
         c.name
         for c in current_configs
-        if c.synced
+        if c.from_preset
         and c.name not in names
         and c.api_key_ref not in refs
         and (c.api_key_ref in evidence.present or not evidence.visible)
@@ -140,17 +137,15 @@ def _check_model_identity(arriving: list[LLMConfig], current: dict[str, LLMConfi
 
 def _check_name_clash(merged: list[LLMConfig]) -> None:
     """Refuse a name the merge itself would carry twice."""
-    seen: dict[str, LLMConfig] = {}
+    seen: set[str] = set()
     for cfg in merged:
-        first = seen.get(cfg.name)
-        if first is not None:
-            hint = f"; {ALIAS_NAME_HINT}" if first.alias or cfg.alias else ""
+        if cfg.name in seen:
             raise ValueError(
                 f"the merged lineup would carry two entries named '{cfg.name}' —"
                 " rename the entry this installation stated itself, the curated one"
-                f" carries the name the preset formed{hint}",
+                " carries the name the preset formed",
             )
-        seen[cfg.name] = cfg
+        seen.add(cfg.name)
 
 
 def _removal_plan(
@@ -226,19 +221,19 @@ def merge_upstream(
 ) -> tuple[Lineup, SyncReport]:
     """Merge an arriving lineup into the current one. Pure — no I/O, no secrets.
 
-    The partition is on ``synced``, not ``custom``: what a sync wrote is all a sync
-    may replace or retire. Raises before the caller has written anything.
+    The partition is on what a sync wrote: that is all a sync may replace or retire.
+    Raises before the caller has written anything.
     """
-    arriving = [c for c in new.configs if c.synced]
-    stored_synced = [c for c in current.configs if c.synced]
-    owned = [c for c in current.configs if not c.synced]
-    current_by_name = {c.name: c for c in stored_synced}
+    arriving = [c for c in new.configs if c.from_preset]
+    stored_curated = [c for c in current.configs if c.from_preset]
+    owned = [c for c in current.configs if not c.from_preset]
+    current_by_name = {c.name: c for c in stored_curated}
 
     _check_model_identity(arriving, current_by_name)
 
     new_names = {c.name for c in arriving}
     lineup_refs = {c.api_key_ref for c in arriving if c.api_key_ref}
-    dropped = [c for c in stored_synced if c.name not in new_names]
+    dropped = [c for c in stored_curated if c.name not in new_names]
     arrived = [c for c in arriving if c.name not in current_by_name]
     removed, kept, retired = _removal_plan(dropped, lineup_refs, evidence, dead)
 
@@ -298,31 +293,25 @@ async def merge_lineup(
     *,
     probe: KeyProbe,
     store: StoreProtocol | None = None,
-    alias_targets: Mapping[str, AliasTarget] = _NO_TARGETS,
 ) -> MergeOutcome:
-    """Everything above the writer: re-point what follows an alias, weigh the keys,
-    read the death evidence the decision needs, merge, and refuse an emptying.
+    """Everything above the writer: weigh the keys, read the death evidence the
+    decision needs, merge, and refuse an emptying.
 
     Whoever holds the lineup, the decision is made here; only the write differs.
     """
-    configs, refresh = refresh_alias_configs(current.configs, alias_targets)
-    keys = dict(current.keys)
-    for ref, help_text in refresh.key_help.items():
-        # The catalog fills a gap only: help already in the lineup wins.
-        keys.setdefault(ref, KeyInfo(api_key_ref=ref, help=help_text, extra={}))
-    refreshed = Lineup(configs=configs, keys=keys)
-
-    evidence = await probe.evidence([c.api_key_ref for c in (*src.lineup.configs, *configs)])
+    evidence = await probe.evidence(
+        [c.api_key_ref for c in (*src.lineup.configs, *current.configs)],
+    )
     dead = await dead_entries(
-        retirement_candidates(src.lineup.configs, configs, evidence),
+        retirement_candidates(src.lineup.configs, current.configs, evidence),
         store,
     )
     merged, report = merge_upstream(
         src.lineup,
-        refreshed,
+        current,
         evidence,
         source=src.label,
         dead=dead,
     )
-    check_not_emptying(merged.configs, configs, report)
-    return MergeOutcome(report=report, lineup=merged, refresh=refresh)
+    check_not_emptying(merged.configs, current.configs, report)
+    return MergeOutcome(report=report, lineup=merged)
