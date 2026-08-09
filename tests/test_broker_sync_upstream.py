@@ -375,9 +375,8 @@ async def test_a_kept_entry_does_not_duplicate_over_repeated_file_syncs(tmp_path
     assert report.added == ()
 
 
-async def test_a_file_source_into_a_file_registry_is_refused(tmp_path):
-    """Rendering an arbitrary source into a .toml target duplicates its [[custom]]
-    blocks and leaves a file the broker cannot parse — so only a preset is taken."""
+async def test_a_path_source_into_a_file_registry_is_refused(tmp_path):
+    """A lineup is not a path a host names, and the refusal comes before the write."""
     target = tmp_path / "llms.toml"
     target.write_text(
         '[[llms]]\nname="groq-old"\nbase_url="https://groq/v1"\nmodel="m"\napi_key_ref="GROQ"\n'
@@ -385,24 +384,10 @@ async def test_a_file_source_into_a_file_registry_is_refused(tmp_path):
     )
     original = target.read_text()
     broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore())
-    with pytest.raises(ValueError, match="curated preset name only"):
+    with pytest.raises(ValueError, match="unrecognized sync source"):
         await broker.sync(str(target))
     await broker.aclose()
     assert target.read_text() == original
-
-
-async def test_a_json_file_registry_is_refused_by_name(tmp_path, preset):
-    """`sync_file` writes TOML; a .json registry could only ever be told 'not a .toml
-    target' about a target the caller never passed."""
-    target = tmp_path / "llms.json"
-    target.write_text(
-        '{"llms": [{"name": "groq-old", "base_url": "https://groq/v1",'
-        ' "model": "m", "api_key_ref": "GROQ"}]}'
-    )
-    broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore())
-    with pytest.raises(ValueError, match="llms.json cannot be synced"):
-        await broker.sync("freetier")
-    await broker.aclose()
 
 
 async def test_the_file_branch_seeds_keys_into_a_mutable_secrets_backend(
@@ -501,27 +486,23 @@ async def test_the_refusal_leaves_the_registry_untouched_and_carries_the_report(
 # ── Source dispatch and the returned report ──────────────────────────────────
 
 
-async def test_a_path_source_needs_no_network(tmp_path, monkeypatch):
-    def explode(_name):
-        raise AssertionError("a path source must never fetch")
-
-    monkeypatch.setattr(presets, "fetch_preset_text", explode)
-    src = tmp_path / "lineup.toml"
-    src.write_text(
-        '[[llms]]\nname="gemini"\nbase_url="https://g/v1"\nmodel="m"\napi_key_ref="GEMINI"\n',
-    )
+async def test_the_report_names_the_preset_it_came_from(tmp_path, preset):
     db = await _seeded_db(tmp_path)
     broker = _broker(db)
-    report = await broker.sync(str(src))
+    report = await broker.sync("freetier")
     await broker.aclose()
-    assert report.source == str(src)
+    assert report.source == "freetier"
     assert report.added == ("gemini",)
 
 
-async def test_an_unusable_source_string_names_both_accepted_forms(tmp_path):
+async def test_an_unusable_source_string_names_the_one_accepted_form(tmp_path, monkeypatch):
+    def explode(_name):
+        raise AssertionError("a refused source must never reach the network")
+
+    monkeypatch.setattr(presets, "fetch_preset_text", explode)
     broker = _broker(await _seeded_db(tmp_path))
-    with pytest.raises(ValueError, match="preset name"):
-        await broker.sync("not a preset/nor a path.toml")
+    with pytest.raises(ValueError, match="curated preset name"):
+        await broker.sync("./my-lineup.toml")
     await broker.aclose()
 
 

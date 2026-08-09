@@ -219,8 +219,8 @@ one quota scope by themselves. A string also avoids a `42` vs `"42"` collision.
 
 **Blocks:** a dedicated backend-bundling layer.
 **Why:** registry, store and secrets all derive from one parameter recognized by
-scheme or extension, with the driver imported lazily. Explicit port arguments
-remain for mixed configurations.
+its DSN form, with the driver imported lazily. Explicit port arguments remain
+for mixed configurations.
 
 ---
 
@@ -262,9 +262,10 @@ A bare broker runs the curated pool out of the home directory.
 by name.
 **Why:** the file used to be required of everyone while carrying a decision for
 almost nobody, and now that the lineup refreshes itself there is nothing in a
-copy to maintain — asking a user to keep one is asking them to hold our state. A
-file remains right for a lineup a team wants under version control. Selection by
-name was rejected with it: free-tier entry names carry the model version and are
+copy to maintain — asking a user to keep one is asking them to hold our state,
+and no host names a lineup file at all any more
+([`the-lineup-file-is-not-a-path-a-host-names`](#the-lineup-file-is-not-a-path-a-host-names)).
+Selection by name was rejected with it: free-tier entry names carry the model version and are
 rewritten on every bump, so it would need a permanent per-entry handle the
 preset does not have and the curator would have to guarantee forever — and the
 case is thin, since a model with no key is already inactive.
@@ -320,6 +321,46 @@ design left. Refusing on a comment stops a refresh the mission promises is
 unconditional, and llmbroker's own curated presets carry comments. The accepted
 cost is that a comment or an unknown key does not survive a sync; the note a
 command may one day attach to an entry belongs on the entry as data.
+
+### the-lineup-file-is-not-a-path-a-host-names
+
+A lineup reaches an installation as a curated preset name and in no other shape.
+The lineup file exists, but only as llmbroker's own storage inside its own
+directory: no host passes its path to the broker, and no host hands it to `sync`.
+A host that will not follow our curation supplies the whole pool through a
+registry object it implements, or fills a database registry itself — and stops
+following the curation there, since a registry that follows it is one the
+refresh rewrites, host-supplied or not
+([`sync-merge.md`](rules/sync-merge.md)).
+
+**Blocks:** accepting a `.toml` path as the broker's source; accepting a path or
+a registry object as a sync source; keeping the file registry on the public API
+so a path stays reachable through it; a read-only file registry; a
+freeze/pin knob that stops the refresh.
+**Why:** the mission names obtaining a provider key as the *one* irreducible
+admin act, and a lineup file a human maintains is a second one. The cost of
+keeping the form was never lines of code: while one file is both llmbroker's
+output and the host's input, every change to it has to answer *whose file is
+this*, and answering that produced a two-file split — a reserved filename, two
+refusals inside the second file, uniqueness across the pair — that was then
+reversed whole ([`the-lineup-file-is-generated-not-authored`](#the-lineup-file-is-generated-not-authored)).
+Removing the form makes the question unaskable. The variants all fail on the
+same point: a read-only file registry still has to be written by hand, which is
+the administration the mission excludes, and a frozen snapshot decays into
+nothing because free endpoints are retired without notice. Keeping the file
+registry public would drop the shorthand and keep the shape — the half-measure
+this decision exists to stop; it stays importable from its own module as the
+port the home lineup runs on. Accepting an object source while refusing a path
+would preserve one workflow at the cost of the whole point: one source, one
+sentence, no second answer to "where can a lineup come from".
+**Accepted cost:** an organisation that wanted to approve a lineup in review and
+roll it out from a deploy job loses that workflow — generating a file, reading
+its diff in a pull request, and merging it into a database registry under the
+removal rule. That persona wanted *control over what reaches production*, which
+is a different product from a free pool nobody administers; if it returns it
+returns as its own decision with a use case behind it, not as a leftover branch.
+Moving an installation between backends is unaffected: it is the public
+load/mirror pair, two lines in the deploy script that already holds both DSNs.
 
 ### the-floor-is-not-seeded-into-the-cache
 

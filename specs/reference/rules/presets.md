@@ -44,9 +44,8 @@ clock overwriting the cache underneath it, not the resolution going to look.
 
 **And when the floor is used, it says so.** Serving the wheel's copy is reported
 at warning level, unlike the cached fallback, which serves what this machine
-last saw. The difference matters most outside the library: the `preset` command
-hands someone a file they will keep, and one frozen at an installed release must
-not look like one just fetched.
+last saw: a copy frozen at an installed release must not pass for one just
+fetched, since it decides what an installation runs on until the next release.
 
 Presets are curated, multi-provider free-tier pools only. A paid-tier preset
 defeats the point — anyone willing to pay uses one good model directly — and a
@@ -71,6 +70,13 @@ as a pool member (invariant 4,
 A pool marker left in a hand-written custom block, or in a registry row written
 by an older release, is ignored rather than rejected: it is a field that no
 longer exists.
+
+**A fetched lineup may not declare a host's own model at all**, and one that
+does is refused whole where the plaintext-URL refusal already lives — before any
+merge sees it. Curation names endpoints worth pooling; what is *the host's own*
+is knowledge no curator has, so an arriving lineup carrying it is malformed
+rather than opinionated. The consequence is that everything the host owns in a
+lineup got there locally and survives every sync untouched.
 
 ## Key acquisition help
 
@@ -101,17 +107,17 @@ any newly resolvable secrets — never via a polling task.
 
 ## The CLI
 
-- **`env <config-or-preset>`** emits a `.env` skeleton of `api_key_ref` names,
-  in file declaration order, each with its help text. The argument is a local
-  config file when one exists at that path, otherwise a preset name fetched the
-  same way a preset is fetched — so a first-time user needs no local file at
-  all. Onboarding is folded into this command rather than a separate
-  setup/status command, to keep the CLI surface small.
-- **`preset <name>`** prints a curated preset to stdout, or regenerates a lineup
-  file from it: the pool entries and their keys from the preset, and every
-  alias-following entry from the paid catalog. It prints the `SyncReport`
-  on every run, no-ops included, and exits non-zero only on a failure — a
-  pending key or a kept entry is a valid state, not an error.
+Two commands, and they are the two the mission asks for: the one irreducible
+admin act, and the one thing llmbroker cannot decide for a host.
+
+- **`env`** emits a `.env` skeleton of `api_key_ref` names, in declaration order,
+  each with its help text. With no argument it reads this installation's own
+  lineup — the everyday form once there is one. Named a curated preset instead,
+  it fetches that preset the same way a sync would, which is how a first-time
+  user onboards before anything local exists, and how an installation whose
+  registry is a database reads the curated keys at all. Onboarding is folded into
+  this command rather than a separate setup/status command, to keep the CLI
+  surface small.
 - **`add-model`** picks a paid provider and model from the curated catalog and
   appends it as a custom entry, following the alias contract in
   [`direct-aliases.md`](direct-aliases.md): it follows the catalog's alias by
@@ -122,11 +128,9 @@ any newly resolvable secrets — never via a polling task.
   everything else about that file is llmbroker's
   ([`sync-merge.md`](sync-merge.md#the-lineup-file-is-written-never-authored)).
 
-**The CLI writes files only, and a DB-shaped refresh target is refused.**
-Mirroring a lineup into a registry is the application's own entrypoint calling
-`broker.sync(...)`, built by the same factory the application uses — the library
-owns the operation, the host owns the connection. A CLI that took a DSN would
-duplicate connection config the application already owns (syncing one database
-while serving from another is a silent failure) and would force DB credentials
-into the CLI's environment, which an application fetching its DSN from Vault
-cannot supply.
+**The CLI has no merge site.** Refreshing a lineup is the application's own
+entrypoint calling `broker.sync(...)`, built by the same factory the application
+uses — the library owns the operation, the host owns the connection. A CLI that
+merged would either duplicate connection config the application already owns
+(syncing one database while serving from another is a silent failure) or decide
+removals blind to keys only the running process can resolve.

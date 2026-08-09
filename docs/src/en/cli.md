@@ -1,30 +1,19 @@
 # CLI
 
 You need none of this to use llmbroker — `Broker()` fetches the pool itself. The
-commands are here for the key skeleton, and for a config file you want under
-version control.
+two commands cover the two things llmbroker cannot do for you: get you the
+provider keys, and pick the paid model you want to reach by name.
 
-Every command works offline: a copy of both curated lists ships inside the
-package, so a machine with no network falls back to it rather than failing. That
-copy is frozen at the llmbroker release you installed, so when it is used the
-command says so on stderr — a file you keep should not be silently older than the
-curated list.
-
-## preset — download a ready-made LLM list
-
-```bash
-llmbroker preset freetier > llms.toml
-```
-
-Available presets:
-
-- `freetier` — free endpoints from Groq, OpenRouter and Gemini
+Both work offline: a copy of both curated lists ships inside the package, so a
+machine with no network falls back to it rather than failing. That copy is frozen
+at the llmbroker release you installed, so when it is used the command says so on
+stderr.
 
 ## env — generate a .env with the keys
 
 ```bash
-llmbroker env llms.toml > .env   # from a local config
-llmbroker env freetier > .env    # or straight from a preset name, no local file
+llmbroker env > .env              # the keys this installation's own lineup needs
+llmbroker env freetier > .env     # or straight from a preset name, before there is one
 ```
 
 Prints a `.env` skeleton: above each key, a hint where to get it:
@@ -34,56 +23,37 @@ Prints a `.env` skeleton: above each key, a hint where to get it:
 OPENROUTER_API_KEY=
 ```
 
-The argument is a config file when one exists at that path, otherwise a preset
-name fetched from the catalog — the same names `preset` accepts.
+With no argument it reads the lineup in llmbroker's own directory — the pool your
+broker already follows, plus anything `add-model` put beside it. That is the
+everyday form.
 
-Get the keys themselves from the providers and fill them in. A broker built from
-a config file path reads that file's sibling `.env` automatically; an exported
-environment variable always wins over it. Keys do not have to live in `.env` at
-all — see [API keys](secrets.md).
+Name a preset instead when there is no local lineup yet, or when your broker
+keeps its registry in a database and there is no local lineup at all:
 
-## preset --sync — refresh your config from the preset
+- `freetier` — free endpoints from Groq, OpenRouter and Gemini
+
+Get the keys themselves from the providers and fill them in. A broker reads the
+`.env` in its working directory automatically; an exported environment variable
+always wins over it. Keys do not have to live in `.env` at all — see
+[API keys](secrets.md).
+
+## add-model — add a paid model of your own
 
 ```bash
-llmbroker preset freetier --sync llms.toml
+llmbroker add-model                                          # interactive
+llmbroker add-model --provider anthropic --model claude-opus-5
 ```
 
-Regenerates `llms.toml` from the preset: the pool models and their key hints, your
-own models carried over, and every alias-following entry re-pointed at what the
-paid catalog now recommends. Then it prints a report of what it did — on every
-run, no-ops included. The file is llmbroker's output, not a file to hand-edit.
+Appends the model to this installation's lineup as your own entry, reachable with
+`broker.direct(...)` and never routed by the pool. See
+[Your own models](direct.md).
 
-This is the **reviewable** path, not the only one: a broker keeps the same file
-current by itself (see [Basic usage](usage.md#syncing)). The command is for when
-you want the change in a diff you approve — so it always fetches and always prints
-the report, whatever a broker on this host may have checked a minute ago. It does
-tell that broker it looked, so the two share one clock instead of each fetching
-on its own schedule. A run that finds no news leaves the file byte-identical.
+## What the CLI does not do
 
-A model whose provider the preset dropped is removed only when you have no key
-for that provider, or when the journal next to your config proves the model dead
-(a 401/403/404 with no success). Otherwise it stays and keeps routing. So
-refreshing never leaves you with fewer working models.
-
-`--sync` takes a preset name and a **file** target. A database target and a file
-source are both refused, each for its own reason:
-
-- a DSN would duplicate connection config your application already owns, and
-  would need DB credentials in the CLI's environment — which an app that fetches
-  its DSN from Vault cannot provide;
-- a lineup you maintain by hand is rolled out to a database registry, so nothing
-  needs it rendered into a file target — the restriction costs no use case.
-
-Mirror into a registry from your own entrypoint instead: see
-[Servers & clusters](server.md#sync).
-
-**What the CLI can see.** Keys come from the environment and from the `.env` next
-to the target file — the same pair a file-configured broker resolves — and the
-death evidence from the `store/` directory next to it, when one exists. A config
-whose keys live in Vault, AWS or a database is therefore refreshed by
-`broker.sync("freetier")` from the application instead: only the application can
-see those keys, and a CLI that cannot see them would keep every entry.
-
-A pending key or a kept entry is a normal state and exits 0; only a real failure
-(catalog unreachable, a name the merged file would carry twice, a target
-directory that does not exist) exits non-zero.
+There is no command that refreshes a lineup. A broker keeps its own lineup
+current by itself (see [Basic usage](usage.md#sync)), and a broker on a
+database registry is refreshed by its own entrypoint calling
+`broker.sync("freetier")` — see [Servers & clusters](server.md#sync). That keeps
+the connection config and its secrets in one place, and it keeps the merge where
+it can see the keys your application will actually resolve: a merge that cannot
+see them would keep every entry.

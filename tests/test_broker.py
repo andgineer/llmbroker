@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from llmbroker.backends.ports import DriverStore
+from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.exceptions import EmptyRegistryError, NoLLMAvailableError
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
@@ -22,7 +23,7 @@ from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import FileStore, InMemoryStore
 
 
-def _registry(tmp_path, entries=None):
+def _registry(tmp_path, entries=None, filename="llms.toml"):
     if entries is None:
         entries = [("p1", "https://x/v1", "m", "K")]
     lines = []
@@ -34,7 +35,7 @@ def _registry(tmp_path, entries=None):
             f'model="{model}"',
             f'api_key_ref="{ref}"',
         ]
-    f = tmp_path / "llms.toml"
+    f = tmp_path / filename
     f.write_text("\n".join(lines) + "\n")
     return FileRegistry(f)
 
@@ -586,28 +587,24 @@ def test_learning_does_not_make_a_non_queryable_store_look_queryable(tmp_path):
     asyncio.run(run())
 
 
-def test_sync_into_a_file_registry_takes_a_preset_only(tmp_path):
-    """A file registry is a legitimate sync target — from a curated preset, which is
-    what makes a file-configured broker self-updating. Any other source is refused
-    before the write, so the target keeps whatever it already had."""
+def test_sync_takes_a_curated_preset_name_and_nothing_else(tmp_path):
+    """A path is not a sync source any more, and the refusal comes before the write,
+    so the target keeps whatever it already had."""
 
     async def run():
-        other = tmp_path / "other.toml"
-        other.write_text(
-            '[[llms]]\nname="p2"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
-        )
         target = _registry(tmp_path).path
         original = target.read_text()
         broker = AsyncBroker(registry=FileRegistry(target), store=InMemoryStore())
-        with pytest.raises(ValueError, match="curated preset name only"):
-            await broker.sync(FileRegistry(other))
+        with pytest.raises(ValueError, match="unrecognized sync source"):
+            await broker.sync(str(tmp_path / "other.toml"))
         assert target.read_text() == original
 
     asyncio.run(run())
 
 
-def test_sync_into_a_registry_that_can_neither_be_written_nor_named_raises(tmp_path):
+def test_sync_into_a_registry_that_can_neither_be_written_nor_named_raises(tmp_path, monkeypatch):
     """A read-only registry object has no file to rewrite and no mirror to call."""
+    _serve(monkeypatch)
 
     class _ReadOnly:
         async def load(self):
@@ -616,7 +613,7 @@ def test_sync_into_a_registry_that_can_neither_be_written_nor_named_raises(tmp_p
     async def run():
         broker = AsyncBroker(registry=_ReadOnly(), store=InMemoryStore())
         with pytest.raises(TypeError, match="does not support mutations"):
-            await broker.sync(_registry(tmp_path))
+            await broker.sync("freetier")
 
     asyncio.run(run())
 
@@ -670,28 +667,36 @@ def test_snapshot_carries_raw_facts_no_status_enum(tmp_path):
 # ── sync(): mirror semantics, empty-registry fail-fast ───────────────────────
 
 
-def _toml_registry(tmp_path, name="p1"):
-    f = tmp_path / "seed.toml"
-    f.write_text(f'[[llms]]\nname="{name}"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n')
-    return FileRegistry(f)
+def _serve(monkeypatch, model="m"):
+    """Serve a one-entry curated lineup to ``sync("freetier")``."""
+    monkeypatch.setattr(
+        presets,
+        "fetch_preset_text",
+        lambda _name: (
+            f'[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="{model}"\napi_key_ref="K"\n'
+        ),
+    )
 
 
-def test_sync_populates_a_fresh_db_registry(tmp_path):
+def test_sync_populates_a_fresh_db_registry(tmp_path, monkeypatch):
+    _serve(monkeypatch)
+
     async def run():
         db = str(tmp_path / "b.db")
         broker = AsyncBroker(
             registry=SqliteRegistry(db),
             store=InMemoryStore(),
         )
-        await broker.sync(_toml_registry(tmp_path))
+        await broker.sync("freetier")
         async with broker:
             assert (await broker.get("p1")).config.name == "p1"
 
     asyncio.run(run())
 
 
-def test_sync_is_idempotent_no_extra_warnings(tmp_path, caplog):
+def test_sync_is_idempotent_no_extra_warnings(tmp_path, caplog, monkeypatch):
     """Calling sync() twice with the same preset is a no-op the second time."""
+    _serve(monkeypatch)
 
     async def run():
         db = str(tmp_path / "b.db")
@@ -699,17 +704,18 @@ def test_sync_is_idempotent_no_extra_warnings(tmp_path, caplog):
             registry=SqliteRegistry(db),
             store=InMemoryStore(),
         )
-        await broker.sync(_toml_registry(tmp_path))
+        await broker.sync("freetier")
         caplog.clear()
-        await broker.sync(_toml_registry(tmp_path))
+        await broker.sync("freetier")
 
     with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
         asyncio.run(run())
     assert caplog.records == []
 
 
-def test_sync_reconciles_registry_to_preset(tmp_path):
+def test_sync_reconciles_registry_to_preset(tmp_path, monkeypatch):
     """sync() mirrors: adds new, updates existing, deletes entries absent from the preset."""
+    _serve(monkeypatch)
 
     async def run():
         db = str(tmp_path / "b.db")
@@ -718,7 +724,7 @@ def test_sync_reconciles_registry_to_preset(tmp_path):
         await sqlite_reg.mirror([extra])
 
         broker = AsyncBroker(registry=sqlite_reg, store=InMemoryStore())
-        await broker.sync(_toml_registry(tmp_path))
+        await broker.sync("freetier")
         async with broker:
             assert (await broker.get("p1")).config.name == "p1"
             with pytest.raises(KeyError):
@@ -727,7 +733,9 @@ def test_sync_reconciles_registry_to_preset(tmp_path):
     asyncio.run(run())
 
 
-def test_sync_refuses_model_identity_change(tmp_path):
+def test_sync_refuses_model_identity_change(tmp_path, monkeypatch):
+    _serve(monkeypatch, model="model-b")
+
     async def run():
         db = str(tmp_path / "b.db")
         sqlite_reg = SqliteRegistry(db)
@@ -735,12 +743,8 @@ def test_sync_refuses_model_identity_change(tmp_path):
             [LLMConfig(name="p1", base_url="https://x/v1", model="model-a", api_key_ref="K")],
         )
         broker = AsyncBroker(registry=sqlite_reg, store=InMemoryStore())
-        preset = tmp_path / "preset.toml"
-        preset.write_text(
-            '[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="model-b"\napi_key_ref="K"\n',
-        )
         with pytest.raises(ValueError, match="model-a"):
-            await broker.sync(FileRegistry(preset))
+            await broker.sync("freetier")
 
     asyncio.run(run())
 
@@ -845,12 +849,13 @@ def test_scope_without_own_key_falls_back_to_shared_ref(tmp_path):
 # ── default store wiring (no explicit store=) ────────────────────────
 
 
-def test_default_store_is_file_store_sibling_to_toml_registry(tmp_path):
-    """A file/TOML registry with no explicit store= gets a FileStore in a
-    `store/` dir sibling to the config file."""
+def test_default_store_is_file_store_inside_the_home_directory(tmp_path):
+    """A zero-config broker with no explicit store= keeps its journal in a
+    `store/` dir inside its own home."""
+    _registry(tmp_path, filename="lineup.toml")
 
     async def run():
-        async with AsyncBroker(registry=_registry(tmp_path)) as broker:
+        async with AsyncBroker(home=tmp_path, sync=None) as broker:
             await broker._store.record_quality("p1", None, 1.0)
 
     asyncio.run(run())

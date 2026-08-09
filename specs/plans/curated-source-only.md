@@ -314,3 +314,166 @@ rather than assume.
 
 `invoke pre` clean and `python -m pytest` green after each of the four batches.
 Docker up for the testcontainer tests.
+
+---
+
+## Handover
+
+### Done, by section
+
+**Work order 1 (the source)** — as written. `resolve_source` lost its
+`_FILE_SUFFIXES` branch and `file_target_path`; its `ValueError` now names the
+DSN forms, `Broker()`, and passing a registry object. `default_secrets` /
+`default_store` lost their file-registry branches. `standalone/registry.py` reads
+TOML only. `Registry` left `__init__.py` and its `__all__`.
+
+**Work order 2 (the sync source)** — as written, with one deviation below.
+`load_sync_source` takes a preset name, validates it, fetches off the loop and
+parses. `merge_upstream` dropped `new_custom`/`arriving_custom`; `updated` counts
+managed entries only. `refresh_alias`/`_stamp_key`/`sync` are `str`-typed
+throughout, and `_file_target`'s preset-only refusal is gone. `AsyncBroker` and
+the sync `Broker` take `sync: str | None` and `sync(source: str)`. A fetched
+preset carrying `[[custom]]` is refused whole beside the https check.
+
+**Work order 3 (the CLI)** — as written. `preset` and everything under it are
+gone; `env` takes an optional preset name and otherwise reads this installation's
+own lineup; `add-model`'s description now points a registry-owning host at
+`direct=[…]`.
+
+**Work order 4** — specs, docs (en and ru) and the queue, listed below.
+
+### Deviations from the plan
+
+- **`resolve_sync_source` was folded into `load_sync_source` rather than kept as
+  a preset-name validator.** With the path branch gone it was a five-line
+  private helper with one caller, and the validation it performs is the first
+  thing `load_sync_source` does. Keeping it would have named a step, not a
+  decision.
+- **`SyncSource` was kept**, minus `preset`. The plan left the call open. It is
+  now a two-field pair, but that pair travels through four signatures
+  (`load_sync_source` → `merge_lineup` / `sync_lineup_file`), and a bare
+  `(str, Lineup)` tuple there reads worse than the named type at no saving.
+- **`tests/test_packaging.py` does not assert the public surface** — the plan
+  said it did. That file is about the presets shipped in the wheel and asserts
+  nothing about `__all__`. The `Registry` assertion went into
+  `tests/test_source_dispatch.py` instead, beside the refusal it belongs to.
+- **`tests/test_cli.py`'s report section (the `preset --sync` report tests) went
+  too**, which the plan's line-range covered only implicitly. Every behaviour in
+  it survives: the report's own wording in `test_report.py`, the file-target
+  merge in `test_lineup_file.py`, the kept/retired/orphan rules in
+  `test_broker_sync_upstream.py`.
+- **`tests/test_lineup_file.py::test_a_local_file_source_may_still_use_a_plaintext_url`
+  was deleted.** Its subject was a local file *source*, which no longer exists;
+  the plaintext rule lives at the fetch and is tested in `test_presets.py`.
+- **More test modules were retargeted than the plan's four.** The plan named
+  `test_cli.py`, `test_source_dispatch.py`, `test_env_file_secrets.py` and
+  `test_file_learning.py`; in practice ten more built a sync source out of a file
+  path or a `Registry` object (`test_broker.py`, `test_catalog.py`,
+  `test_secrets.py`, `test_sync.py`, `test_sync_identity_gate.py`,
+  `test_sync_roundtrip.py`, `test_sync_info_logs.py`, `test_broker_disable.py`,
+  `test_broker_sync_knob.py`, `test_merge.py`). All were moved onto a
+  monkeypatched `fetch_preset_text` serving a lineup body, which is the pattern
+  `test_broker_sync_upstream.py` already used.
+- **`test_merge.py`'s two arriving-custom tests collapsed into one** asserting
+  the opposite: an arriving lineup's own `[[custom]]` entry never replaces the
+  stored one and never appears in `updated`.
+
+### Decisions taken during implementation
+
+- **`specs/reference/decisions.md` gained one entry only**,
+  `the-lineup-file-is-not-a-path-a-host-names`, as the plan specified. Two
+  existing entries were corrected rather than left to drift:
+  `single-source-parameter` ("recognized by scheme or extension" → by DSN form)
+  and `zero-config-default`, which still said a file was right for a lineup a
+  team keeps under version control.
+- **The https-refusal rule was not restated in `presets.md`.** It is already
+  stated in `lineup-refresh.md`'s *accepted exposure* section, and a rule is
+  written in exactly one place. `presets.md` states only the new `[[custom]]`
+  refusal, and says it is refused where the plaintext one already is.
+- **`sync-merge.md`'s three-tier table became a two-shape one under a heading
+  that says there is now exactly one merge site.** The tiers existed to
+  distinguish the CLI's merge from the broker's; with the CLI's gone, the
+  remaining distinction is only where the merged lineup lands.
+- **`server.md` gained the migration recipe in both languages**, as the plan
+  required, under its own `{#migrate}` anchor so it can be linked to.
+- **`docs/src/en/cli.md` had a broken anchor** (`usage.md#syncing`, no such
+  anchor) which was fixed to `#sync` while rewriting the file.
+
+### Left out deliberately
+
+Nothing from the plan. The `preset` command's offline/error-path tests
+(`invalid TOML`, `invalid encoding`, `timeout`, `body dying mid-read`) were
+deleted with the command; the code paths they covered live in
+`fetch_preset_text` and are still reached through `env <preset>` and through
+`sync`, but only the 404 case is now asserted at CLI level. If the reviewer wants
+the rest asserted directly against `fetch_preset_text`, that is a small addition
+to `tests/test_presets.py` — it was not in the plan and was not added.
+
+### One behaviour change worth naming to the reviewer
+
+Deleting `default_store`'s file-registry branch means a broker built on a
+*registry object the host constructed itself* no longer journals into a `store/`
+beside that registry's file — it falls back to `./store` under the working
+directory, the same unopinionated default a bare DB registry object already got.
+That branch was reachable only through the form this plan removes, but a host
+passing `registry=Registry(path)` directly still reaches it. It surfaced as one
+test writing a `store/` into the repository root; that test now chdirs, which is
+what documents the behaviour.
+
+### Gate
+
+`invoke pre` — all checks passed, pyrefly 0 errors.
+`python -m pytest` — **1196 passed**, zero failures, zero skips. Docker was up;
+the postgres/mongodb/localstack/vault testcontainer suites ran.
+
+---
+
+## Review round 1, and the fixes applied
+
+Two findings changed behaviour or told the reader something untrue; both are
+fixed here.
+
+**1. "llmbroker only reads a host-supplied registry" was false.** The plan's
+replacement for the removed file source is a registry the host fills, and the
+new text said in four places that llmbroker never writes to it. It does: `sync`
+defaults to the curated preset for every broker, and the merge mirrors into
+whatever registry the broker holds. A host passing its own registry and nothing
+else had its entries *removed* on the first check (`removed=('mine',)`).
+
+Fixed in the texts, not in the code. Distinguishing "a registry from a
+connection string" from "a registry object the host built" would have carried
+the N-nodes-on-one-database refresh — which `server.md` documents as a design
+point — into a rule nobody could predict from the call site. So the rule stated
+is the true one: the merge writes into the registry the broker was built with,
+however it got there, and an installation with its own pool stops following the
+curation as well. Rewritten: `mission.md` (intent level, no knob named),
+`sync-merge.md` (the rule, stated once), `lineup-refresh.md` (where `sync=`
+already lived), `decisions.md`, and `usage.md` / `server.md` in both languages.
+
+**2. `env` with no argument printed nothing, and exited 0.** Before any broker
+has run there is no lineup file, and an empty skeleton reads as "no keys
+needed" — on the command onboarding starts with, and which `secrets.md` puts
+first. It now reports the missing lineup on stderr, exits 1, and names
+`llmbroker env freetier`. Tested.
+
+**Also fixed:** the `TOMLDecodeError` branch of `fetch_preset_text` had lost its
+only test when the `preset` command went (the handover named four such branches;
+three were already covered in `test_presets.py`, this was the one that was not).
+Dead references to the removed command in `direct.md` (both languages), in the
+two curation prompts shipped inside the package, and in a comment in
+`presets.py`. `default_secrets` / `default_store` had been left taking a
+registry argument they no longer read — the parameter is gone rather than the
+functions, since `source.py` is where the per-port defaults are stated.
+`usage.md`'s advice to set `parallel = 1` "on its entry" was unactionable for
+pool entries once the lineup file stopped being the host's, and now says where
+the field is actually settable.
+
+**Not a code finding, but it blocks the commit:** `src/llmbroker/util/` has
+never been tracked, while `presets.py`, `stamps.py` and `lineup_file.py` import
+it — a fresh clone of `main` does not import. It is staged now and must go in
+with this work.
+
+### Gate after the fixes
+
+`invoke pre` — all checks passed, pyrefly 0 errors.
+`python -m pytest` — **1198 passed**, zero failures, zero skips.

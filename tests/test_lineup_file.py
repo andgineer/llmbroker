@@ -128,7 +128,7 @@ _NEW = (
 
 
 def _source(text: str, label: str = "freetier") -> SyncSource:
-    return SyncSource(label=label, lineup=parse_lineup(tomllib.loads(text)), preset=True)
+    return SyncSource(label=label, lineup=parse_lineup(tomllib.loads(text)))
 
 
 async def _sync(target, text=_NEW, *, secrets=None, source="freetier", **kwargs) -> FileSyncOutcome:
@@ -241,17 +241,6 @@ async def test_a_missing_target_is_created(tmp_path):
 async def test_a_non_toml_target_is_refused(tmp_path):
     with pytest.raises(ValueError, match=".toml"):
         await _sync(tmp_path / "llms.json")
-
-
-async def test_a_local_file_source_may_still_use_a_plaintext_url(tmp_path):
-    """The user's own config is not the catalog: a local gateway on http is theirs
-    to declare."""
-    target = _write_current(tmp_path, "")
-    local = (
-        '[[llms]]\nname="local"\nbase_url="http://127.0.0.1:8000/v1"\nmodel="m"\napi_key_ref="L"\n'
-    )
-    outcome = await _sync(target, local, secrets=DictSecrets({"L": "sk"}), source="llms.toml")
-    assert outcome.report.added == ("local",)
 
 
 async def test_an_alias_entry_is_re_pointed_and_its_key_help_arrives(tmp_path):

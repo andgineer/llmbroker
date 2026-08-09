@@ -38,8 +38,8 @@ pin differs only in that no refresh moves it.
 
 **A paid model is declared in code or in data, and the two forms follow the same
 rule.** Declaring on the broker takes a paid-catalog alias (whose version
-llmbroker tracks) or a full config (whose version the caller tracks); a custom
-config block is the same two forms written in a file. What differs is only when
+llmbroker tracks) or a full config (whose version the caller tracks); a stored
+custom entry is the same two forms written into the lineup. What differs is only when
 the alias is followed: a declared model is re-resolved at every provision, a
 stored one at every sync.
 
@@ -109,9 +109,9 @@ carrying a name twice does not raise an ambiguity to resolve later, it loses an
 entry at the next sync. An alias entry's name is machine-formed in the same
 convention preset pool entries use, so a catalog move can land one on the other;
 that is refused where it would be introduced rather than tolerated. Uniqueness
-of names and of aliases is decided when a lineup file is read, and reading one
-as a registry and reading it as a sync source are one judgement, so a file
-cannot be valid for one and invalid for the other. A collision the *merge*
+of names and of aliases is decided in the one place a lineup is parsed, so the
+stored lineup and an arriving curated one are held to one judgement and neither
+can be valid where the other is not. A collision the *merge*
 creates between two individually valid lineups is caught separately, on the
 result. Either way the error names the fix, and for an alias entry the fix is
 never a rename: the name is machine-formed again on the next refresh. When a
@@ -122,7 +122,7 @@ back.
 
 **An alias is followed at sync, wherever the lineup lives.** Every sync
 re-points the alias entries of the lineup it is merging at what the catalog now
-recommends — a config file and a database registry alike, from one place — and
+recommends — the lineup file and a database registry alike, from one place — and
 prints or logs one line per change; an alias the catalog no longer knows is a
 warning and its entry is left untouched. The catalog is read only when something
 actually follows an alias, so an installation with none pays no second network

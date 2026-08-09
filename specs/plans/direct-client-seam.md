@@ -37,6 +37,11 @@ and the two direct clients are copy-paste of each other.
 `direct.py` into `chat.py`. `AsyncDirectClient.stream` shrinks accordingly, so
 scope this plan against the file as it is *then*, not as described here.
 
+`registry-ownership` changes `sync.Broker.__init__` — its `sync` parameter takes
+a sentinel default — so the `sync.py:203` line number above will have moved.
+The finding itself is untouched: the private call and the separately
+constructed blocking client are both still there.
+
 ## Open questions for the real plan
 
 - Shape of the seam: `AsyncBroker.resolve_direct(alias, name=) -> DirectTarget`

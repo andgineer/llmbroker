@@ -56,6 +56,13 @@ expressed through that flag today. **Check how the rule survives step 6 before
 scoping**: it may already have a home, or it may have moved intact and still
 need one.
 
+`registry-ownership` changes what a sync may do to a stored entry, not when it
+drops a cached read, so finding 3's "a read that a sync invalidates" should
+still hold — verify it rather than assume. It also makes the broker refuse to be
+built when a registry object arrives without an explicit `sync`, which any
+example or test in the real plan that constructs a broker by hand will have to
+satisfy.
+
 ## Open questions for the real plan
 
 - Who invalidates? Today two broker call sites do. If the declared resolver

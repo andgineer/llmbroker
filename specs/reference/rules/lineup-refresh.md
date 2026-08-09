@@ -7,11 +7,13 @@ this file elaborates are in [`../invariants.md`](../invariants.md).
 **A broker following the curated preset re-checks it on an interval**, lazily on
 activity, and there is no off switch
 ([`decisions.md`](../decisions.md#unconditional-lineup-refresh)). An
-installation that must not follow our curation declares a lineup of its own,
+installation that must not follow our curation fills a registry of its own,
 which is a different pool rather than a frozen copy of ours.
 
-`sync=` names the lineup an installation follows — the curated preset unless it
-says otherwise, `None` for a registry filled by other means.
+`sync=` names the curated preset an installation follows, `None` for a registry
+filled by other means. `None` is what an installation with its own pool sets:
+following a preset is what makes the refresh rewrite a registry, and it rewrites
+whichever one the broker holds ([`sync-merge.md`](sync-merge.md)).
 
 ## Two gates
 

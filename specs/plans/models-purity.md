@@ -51,6 +51,17 @@ renderer beside its two consumers, and replaces the alias notices with typed
 facts. So finding 2 will be closed by then — **check before scoping**, and if
 it was closed, say so rather than re-doing it.
 
+`registry-ownership` adds a field to `LLMConfig` and rewrites the metadata
+round-trip around it, so every line number and the 515-line count above are
+stale by the time this is scoped — re-measure rather than trusting them. Check
+the fifth finding against it too: it touches `from_metadata`, next door to the
+weight parsing, and may have closed or moved that split already.
+
+`model-list-vocabulary` rewrites the user-facing prose this module emits, so
+whatever survives of finding 2 is text that has *already been corrected*. When
+relocating it, move it verbatim: re-typing a report line from what is written
+here would reintroduce the word that plan removed.
+
 ## Open questions for the real plan
 
 - Do the validators go to one `checks.py`, or to the module that owns each

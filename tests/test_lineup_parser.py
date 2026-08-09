@@ -25,7 +25,7 @@ async def _sync(text: str, target) -> None:
     """The sync path's own read of the same files the registry reads."""
     await sync_lineup_file(
         target,
-        SyncSource(label="freetier", lineup=parse_lineup(tomllib.loads(text)), preset=True),
+        SyncSource(label="freetier", lineup=parse_lineup(tomllib.loads(text))),
         probe=KeyProbe(DictSecrets({})),
     )
 

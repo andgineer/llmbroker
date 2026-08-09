@@ -1,5 +1,5 @@
-"""Tests for `env`'s output: file order, help lines, already-set annotation,
-and the preset-name form that needs no local file.
+"""Tests for `env`'s output: file order, help lines, already-set annotation, and
+the two forms it takes — this installation's own lineup, or a curated preset name.
 """
 
 import urllib.error
@@ -22,14 +22,14 @@ def _mock_urlopen(content: bytes):
     return resp
 
 
-def _write_toml(tmp_path, body: str) -> str:
-    f = tmp_path / "llms.toml"
-    f.write_text(body)
-    return str(f)
+def _lineup(home, body: str) -> None:
+    """Write the lineup this installation reads; the autouse home fixture points at
+    a temp dir."""
+    (home / "lineup.toml").write_text(body)
 
 
-def test_shipped_preset_prints_in_file_order(capsys):
-    rc = main(["env", "src/llmbroker/presets/freetier.toml"])
+def test_shipped_preset_prints_in_file_order(capsys, bundled_presets):
+    rc = main(["env", "freetier"])
     out = capsys.readouterr().out
     assert rc == 0
     order = [ref for ref in ("GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY") if ref in out]
@@ -38,41 +38,44 @@ def test_shipped_preset_prints_in_file_order(capsys):
     assert order == ["GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY"]
 
 
-def test_refs_print_in_llms_declaration_order(tmp_path, capsys):
+def test_refs_print_in_llms_declaration_order(llmbroker_home, capsys):
     body = (
         '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="ZZZ_KEY"\n'
         '[[llms]]\nname="b"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="AAA_KEY"\n'
     )
-    rc = main(["env", _write_toml(tmp_path, body)])
+    _lineup(llmbroker_home, body)
+    rc = main(["env"])
     out = capsys.readouterr().out
     assert rc == 0
     assert out.index("ZZZ_KEY=") < out.index("AAA_KEY=")
 
 
-def test_help_line_printed_before_ref(tmp_path, capsys):
+def test_help_line_printed_before_ref(llmbroker_home, capsys):
     body = (
         '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n'
         "[keys.KEY_A]\n"
         'help = "Create an account."\n'
     )
-    rc = main(["env", _write_toml(tmp_path, body)])
+    _lineup(llmbroker_home, body)
+    rc = main(["env"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "# KEY_A — Create an account." in out
     assert out.index("# KEY_A — Create an account.") < out.index("KEY_A=")
 
 
-def test_already_set_env_var_is_annotated(tmp_path, capsys, monkeypatch):
+def test_already_set_env_var_is_annotated(llmbroker_home, capsys, monkeypatch):
     monkeypatch.setenv("KEY_A", "already-here")
     body = '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n'
-    rc = main(["env", _write_toml(tmp_path, body)])
+    _lineup(llmbroker_home, body)
+    rc = main(["env"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "# KEY_A already set" in out
     assert "KEY_A=" not in out
 
 
-def test_preset_name_is_fetched_when_no_such_file_exists(capsys, monkeypatch):
+def test_a_preset_name_is_fetched_from_the_catalog(capsys, monkeypatch):
     monkeypatch.delenv("FETCHED_KEY", raising=False)
     with patch("urllib.request.urlopen", return_value=_mock_urlopen(_PRESET_TOML)) as urlopen:
         rc = main(["env", "freetier"])
@@ -83,22 +86,23 @@ def test_preset_name_is_fetched_when_no_such_file_exists(capsys, monkeypatch):
     assert "src/llmbroker/presets/freetier.toml" in urlopen.call_args[0][0]
 
 
-def test_existing_file_wins_over_a_same_named_preset(tmp_path, capsys, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "freetier").write_text("")  # not a real config, but it exists
-    body = '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="LOCAL_KEY"\n'
-    (tmp_path / "local.toml").write_text(body)
+def test_no_argument_reads_this_installations_own_lineup(llmbroker_home, capsys):
+    """The everyday form on a zero-config install: the keys the pool it already
+    follows needs, plus whatever `add-model` put beside them."""
+    _lineup(
+        llmbroker_home,
+        '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="LOCAL_KEY"\n',
+    )
     with patch("urllib.request.urlopen", side_effect=AssertionError("must not fetch")):
-        rc = main(["env", "local.toml"])
+        rc = main(["env"])
     assert rc == 0
     assert "LOCAL_KEY=" in capsys.readouterr().out
 
 
-def test_missing_file_that_is_not_a_preset_name_errors_clearly(capsys):
+def test_a_path_where_a_preset_name_belongs_errors_clearly(capsys):
     rc = main(["env", "no/such/config.toml"])
     err = capsys.readouterr().err
     assert rc == 1
-    assert "no such file" in err
     assert "not a valid preset name" in err
 
 
@@ -110,7 +114,7 @@ def test_unknown_preset_name_reports_the_catalog_miss(capsys):
     assert "not found in catalog" in capsys.readouterr().err
 
 
-def test_extra_fields_do_not_appear_in_output(tmp_path, capsys):
+def test_extra_fields_do_not_appear_in_output(llmbroker_home, capsys):
     """extra is a passthrough for host code — the env command only prints help lines."""
     body = (
         '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n'
@@ -119,30 +123,33 @@ def test_extra_fields_do_not_appear_in_output(tmp_path, capsys):
         'value = "good"\n'
         'help = "Create an account."\n'
     )
-    rc = main(["env", _write_toml(tmp_path, body)])
+    _lineup(llmbroker_home, body)
+    rc = main(["env"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "effort" not in out
     assert "value=good" not in out
 
 
-def test_a_malformed_lineup_is_an_error_line_not_a_traceback(tmp_path, capsys):
+def test_a_malformed_lineup_is_an_error_line_not_a_traceback(llmbroker_home, capsys):
     """The command onboarding starts with reports a bad file the way it reports every
     other bad argument."""
     body = (
         '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n'
         '[[custom]]\nname="a"\nbase_url="https://y/v1"\nmodel="m"\napi_key_ref="KEY_B"\n'
     )
-    rc = main(["env", _write_toml(tmp_path, body)])
+    _lineup(llmbroker_home, body)
+    rc = main(["env"])
     assert rc == 1
     assert "error: Registry: duplicate name 'a'" in capsys.readouterr().err
 
 
-def test_a_malformed_keys_table_is_an_error_line(tmp_path, capsys):
+def test_a_malformed_keys_table_is_an_error_line(llmbroker_home, capsys):
     body = (
         'keys = "KEY_A"\n'
         '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n'
     )
-    rc = main(["env", _write_toml(tmp_path, body)])
+    _lineup(llmbroker_home, body)
+    rc = main(["env"])
     assert rc == 1
     assert "[keys] is str, not a table" in capsys.readouterr().err

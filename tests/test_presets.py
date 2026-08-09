@@ -71,6 +71,19 @@ def test_a_url_error_still_reports_its_reason(monkeypatch):
         fetch_preset_text("freetier")
 
 
+def test_a_body_that_is_not_toml_is_a_value_error(monkeypatch):
+    """A CDN error page answers 200 with HTML, and the same promise has to hold for
+    it: a ValueError the caller already catches, not a TOMLDecodeError."""
+
+    class _Html(_Response):
+        def read(self):
+            return b"<html>404 not found</html>"
+
+    monkeypatch.setattr(presets.urllib.request, "urlopen", lambda *a, **k: _Html(None))
+    with pytest.raises(ValueError, match="not valid TOML"):
+        fetch_preset_text("freetier")
+
+
 # ── A fetched lineup may not send keys in the clear ──────────────────────────
 
 
@@ -100,6 +113,17 @@ def test_a_plaintext_provider_in_the_paid_catalog_is_refused(monkeypatch):
     monkeypatch.setattr(presets.urllib.request, "urlopen", _served(catalog))
     with pytest.raises(ValueError, match="non-https base_url"):
         fetch_preset_text("paid-catalog")
+
+
+def test_a_fetched_preset_carrying_custom_entries_is_refused_whole(monkeypatch):
+    """`[[custom]]` means *the host's own*; a curated lineup declaring one is a
+    contradiction, and the pool entry beside it must not slip through either."""
+    carrying = _HTTPS_PRESET + (
+        '[[custom]]\nname="mine"\nbase_url="https://mine/v1"\nmodel="m"\napi_key_ref="MY_KEY"\n'
+    )
+    monkeypatch.setattr(presets.urllib.request, "urlopen", _served(carrying))
+    with pytest.raises(ValueError, match=r"carries \[\[custom\]\]"):
+        fetch_preset_text("freetier")
 
 
 def test_an_https_preset_passes(monkeypatch):

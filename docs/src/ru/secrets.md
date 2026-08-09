@@ -1,19 +1,18 @@
 # API-ключи
 
-Каждая модель в `llms.toml` ссылается на свой ключ по имени; откуда берётся
+Каждая модель в списке ссылается на свой ключ по имени; откуда берётся
 значение — решает подключённый бэкенд секретов. По умолчанию — переменные
 окружения и `.env`:
 
 ```bash
-llmbroker env llms.toml > .env
+llmbroker env > .env
 ```
 
 Команда печатает заготовку с подсказкой над каждым ключом, где его получить.
-Те же подсказки доступны программно —
-[`Registry.key_info()`](reference.md#llmbroker.Registry.key_info).
+Те же подсказки доступны и вашему коду — через возможность реестра отдавать
+key-info.
 
-Брокер, созданный из файла конфига — `llmbroker.Broker("llms.toml")` или
-`registry=llmbroker.Registry("llms.toml")` — читает соседний с ним `.env` как
+Брокер без собственного источника читает `.env` из рабочего каталога как
 запасной источник. Переменная окружения всегда важнее файла, а отсутствующий
 `.env` — просто пустой запасной источник. Никаких зависимостей: файл разбирается
 стандартной библиотекой (строки `KEY=VALUE`, комментарии `#`, без подстановок).
@@ -39,7 +38,7 @@ secrets = llmbroker.DictSecrets({"GROQ_API_KEY": "gsk_..."})
 from llmbroker.aws import Secrets as AwsSecrets
 
 async with llmbroker.AsyncBroker(
-    registry=llmbroker.Registry("llms.toml"),
+    "postgresql://host/db",
     secrets=AwsSecrets(region_name="us-east-1"),
 ) as llms:
     reply = await llms.ask("Привет")

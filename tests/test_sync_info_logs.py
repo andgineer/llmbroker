@@ -8,8 +8,11 @@ gets logged more than once per resolution attempt.
 import asyncio
 import logging
 
+import pytest
+
 import llmbroker
 
+from llmbroker.broker import presets
 from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.sqlite import Secrets as SqliteSecrets
 
@@ -17,10 +20,10 @@ _KEY_REF = "TEST_LLM_SYNC_API_KEY"
 _TOML = f'[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="{_KEY_REF}"\n'
 
 
-def _src_registry(tmp_path):
-    f = tmp_path / "llms.toml"
-    f.write_text(_TOML)
-    return llmbroker.Registry(f)
+@pytest.fixture(autouse=True)
+def preset(monkeypatch):
+    """Serve the curated lineup to ``sync("freetier")`` without touching the network."""
+    monkeypatch.setattr(presets, "fetch_preset_text", lambda _name: _TOML)
 
 
 def _broker(db: str) -> llmbroker.AsyncBroker:
@@ -30,11 +33,11 @@ def _broker(db: str) -> llmbroker.AsyncBroker:
     )
 
 
-async def _seed_db(db: str, tmp_path) -> None:
+async def _seed_db(db: str) -> None:
     """Populate a fresh db's registry once, via an explicit sync() — mirrors the
     one-time DB-init workflow, separate from any later restart/reopen."""
     broker = _broker(db)
-    await broker.sync(_src_registry(tmp_path))
+    await broker.sync("freetier")
     await broker.aclose()
 
 
@@ -48,7 +51,7 @@ def test_fresh_db_env_set_zero_info_logs(tmp_path, monkeypatch, caplog):
     db = str(tmp_path / "b.db")
 
     async def run():
-        await _seed_db(db, tmp_path)
+        await _seed_db(db)
         async with _broker(db):
             pass
 
@@ -63,7 +66,7 @@ def test_fresh_db_env_absent_one_info_log(tmp_path, monkeypatch, caplog):
     db = str(tmp_path / "b.db")
 
     async def run():
-        await _seed_db(db, tmp_path)
+        await _seed_db(db)
         async with _broker(db):
             pass
 
@@ -79,7 +82,7 @@ def test_restart_secret_persisted_zero_info_logs(tmp_path, monkeypatch, caplog):
     db = str(tmp_path / "b.db")
 
     async def seed():
-        await _seed_db(db, tmp_path)
+        await _seed_db(db)
         secrets = SqliteSecrets(db)
         await secrets.set(_KEY_REF, "persisted")
         async with _broker(db):
@@ -104,7 +107,7 @@ def test_restart_secret_absent_everywhere_exactly_one_info_log(tmp_path, monkeyp
     db = str(tmp_path / "b.db")
 
     async def first():
-        await _seed_db(db, tmp_path)
+        await _seed_db(db)
         async with _broker(db):
             pass
 
@@ -128,7 +131,7 @@ def test_restart_env_set_sqlite_missing_zero_info_logs(tmp_path, monkeypatch, ca
     db = str(tmp_path / "b.db")
 
     async def first():
-        await _seed_db(db, tmp_path)
+        await _seed_db(db)
         async with _broker(db):
             pass
 
@@ -138,7 +141,7 @@ def test_restart_env_set_sqlite_missing_zero_info_logs(tmp_path, monkeypatch, ca
 
     async def restart():
         broker = _broker(db)
-        await broker.sync(_src_registry(tmp_path))
+        await broker.sync("freetier")
         async with broker:
             pass
 

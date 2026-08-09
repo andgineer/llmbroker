@@ -11,7 +11,7 @@ Every host plugs in up to three backends; only the registry is required.
 
 | Port | Contract | Default (zero-dependency) | What it is |
 |---|---|---|---|
-| **config** | `RegistryProtocol` | a file registry (`.toml`/`.json`) | where LLM configurations are stored — the merged lineup |
+| **config** | `RegistryProtocol` | the TOML lineup in llmbroker's own directory | where LLM configurations are stored — the merged lineup |
 | **secrets** | `SecretsProtocol` | env vars, with an optional `.env` fallback | how `api_key_ref` names resolve to real keys |
 | **store** | `StoreProtocol` | a `store/` directory | the append-only call journal plus the admin disabled-verdict map |
 
@@ -30,10 +30,10 @@ backend is one new driver file and no edit to the ports**. A custom backend
 outside the package implements either one driver, to reuse the shared ports, or
 a full port protocol directly.
 
-**The default secrets backend reads a `.env` file, without a dependency.** A
-broker whose config source is a file defaults to that file's sibling `.env` as a
-fallback consulted only when the real environment has no such variable — the
-exported value always wins, and a missing file is simply an empty fallback. The
+**The default secrets backend reads a `.env` file, without a dependency.** The
+zero-config installation takes the working directory's `.env` as a fallback
+consulted only when the real environment has no such variable — the exported
+value always wins, and a missing file is simply an empty fallback. The
 parser is stdlib-only (`KEY=VALUE` lines, `#` comments, no interpolation) and a
 malformed line is skipped rather than fatal. An unfilled `KEY=` line counts as
 absent (invariant 21): the skeleton the `env` command prints is all unfilled
@@ -48,8 +48,8 @@ object is unaffected.
 curated free pool: the merged lineup in the home directory (seeded on first use
 from the fetched, cached or bundled preset), keys from the environment with the
 working directory's `.env` behind them, the journal in the home directory too.
-The lineup file is a file registry like any other, so the refresh applies to it
-unchanged. Where nothing is writable, the lineup and the journal live in process
+That lineup is what a sync rewrites, and llmbroker is its only author. Where
+nothing is writable, the lineup and the journal live in process
 memory for that run — the broker still routes, it just remembers nothing between
 runs.
 
@@ -60,12 +60,14 @@ genuinely different keys are already separated, since 429 and dead-key evidence
 scope by key hash, and a project wanting full isolation passes its own home.
 
 **Source-parameter dispatch.** The broker's first positional argument is the
-data source; passing a plain string or path dispatches on its form: a config
-file extension gives a file registry with env-var secrets; a sqlite path or URL
-gives sqlite backing all three ports from one file; a postgres or mongodb URL
-gives that driver backing all three ports. An unrecognized form raises a clear
-error naming the accepted ones; a missing extra raises an actionable install
-message. Each backend package is imported lazily so a bare `import llmbroker`
+data source; passing a plain string or path dispatches on its form, and every
+form is a database: a sqlite path or URL gives sqlite backing all three ports
+from one file; a postgres or mongodb URL gives that driver backing all three
+ports. A file path is not among them — a lineup is not a path a host names
+([`decisions.md`](../decisions.md#the-lineup-file-is-not-a-path-a-host-names)) —
+so an unrecognized form raises a clear error naming the DSN forms, the bare
+broker, and passing a registry object; a missing extra raises an actionable
+install message. Each backend package is imported lazily so a bare `import llmbroker`
 never pulls in a driver. Explicit port arguments always win over whatever the
 source would have supplied — passing an already-constructed protocol object as
 the first argument skips dispatch entirely. The single-port secrets backends

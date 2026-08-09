@@ -3,6 +3,7 @@
 import asyncio
 import sys
 
+import llmbroker
 import pytest
 
 from llmbroker.backends.ports import DriverStore, DriverRegistry, DriverSecrets
@@ -45,15 +46,28 @@ def test_sqlite_source_dot_sqlite_suffix_and_url_form_both_dispatch(tmp_path):
         assert isinstance(registry._driver, SqliteDriver)  # noqa: SLF001
 
 
-def test_toml_source_dispatches_to_file_registry_with_env_secrets_default(tmp_path):
+def test_a_config_file_path_is_refused_and_names_the_forms_that_work(tmp_path):
+    """A lineup is not a path a host names: the refusal has to point at the three
+    shapes that remain, or the host has nowhere to go."""
     f = tmp_path / "llms.toml"
     f.write_text('[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n')
 
-    async def run():
-        async with AsyncBroker(str(f)) as broker:
-            assert await broker.count() == 1
+    with pytest.raises(ValueError, match="unrecognized registry source") as exc:
+        resolve_source(str(f))
+    message = str(exc.value)
+    assert "Broker()" in message
+    assert "sqlite" in message and "postgresql" in message and "mongodb" in message
+    assert "registry object" in message
 
-    asyncio.run(run())
+    with pytest.raises(ValueError, match="unrecognized registry source"):
+        AsyncBroker(str(f))
+
+
+def test_the_file_registry_is_not_public_api():
+    """It stays importable from its own module — it is the port the home lineup runs
+    on — but exporting it would keep alive the shape the path form was removed to close."""
+    assert "Registry" not in llmbroker.__all__
+    assert not hasattr(llmbroker, "Registry")
 
 
 def test_unrecognized_source_raises_clear_error():

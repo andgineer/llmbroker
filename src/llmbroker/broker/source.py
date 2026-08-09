@@ -1,12 +1,10 @@
 """Which ports a source becomes: dispatch of a string/``Path``, and the defaults
 each port falls back to when the caller named none.
 
-Dispatch is dumb and explicit: ``.toml``/``.json`` -> file registry + env
-secrets with the config file's sibling ``.env`` as fallback (the ``store/``
-sibling default below completes it); ``sqlite://``
-/ ``.db`` / ``.sqlite`` -> sqlite, one file backing all three ports;
-``postgresql://`` / ``mongodb://`` -> by scheme, one driver shared by all three
-ports. Anything else raises a clear error naming the accepted forms.
+Dispatch is dumb and explicit: ``sqlite://`` / ``.db`` / ``.sqlite`` -> sqlite,
+one file backing all three ports; ``postgresql://`` / ``mongodb://`` -> by
+scheme, one driver shared by all three ports. Anything else raises a clear error
+naming the accepted forms.
 
 Each backend package is imported lazily here (never at module load) so a bare
 ``import llmbroker`` never pulls in a driver package.
@@ -24,20 +22,14 @@ from llmbroker.standalone.secrets import Secrets as EnvSecrets
 from llmbroker.standalone.store import FileStore, InMemoryStore
 
 _SQLITE_SUFFIXES = (".db", ".sqlite")
-_FILE_SUFFIXES = (".toml", ".json")
 
 
 def resolve_source(
     source: str | Path,
 ) -> tuple[RegistryProtocol, SecretsProtocol, StoreProtocol | None]:
     """Returns ``(registry, secrets, store)``; a ``None`` store means
-    "use the caller's own default" (the file-registry ``store/`` sibling)."""
+    "use the caller's own default"."""
     source = str(source)
-    if source.endswith(_FILE_SUFFIXES):
-        # The config file's own directory is where the quickstart's
-        # `llmbroker env llms.toml > .env` puts the keys.
-        return FileRegistry(source), EnvSecrets(Path(source).parent / ".env"), None
-
     sqlite_path = source.removeprefix("sqlite://")
     if source.startswith("sqlite://") or source.endswith(_SQLITE_SUFFIXES):
         try:
@@ -73,27 +65,21 @@ def resolve_source(
         return DriverRegistry(driver), DriverSecrets(driver), DriverStore(driver)
 
     raise ValueError(
-        f"unrecognized registry source {source!r} — expected a .toml/.json file path,"
-        " a sqlite path/URL (.db, .sqlite, sqlite://...), or a postgresql://... /"
-        " mongodb://... URL",
+        f"unrecognized registry source {source!r} — expected a sqlite path/URL"
+        " (.db, .sqlite, sqlite://...), or a postgresql://... / mongodb://... URL."
+        " A lineup is not a file a host names: use Broker() for the curated pool in"
+        " llmbroker's own directory, or pass a registry object of your own",
     )
 
 
-def default_secrets(registry: RegistryProtocol) -> SecretsProtocol:
-    """A file/TOML registry resolves keys from the environment with its own
-    sibling ``.env`` as fallback — the file ``llmbroker env`` writes. Any other
-    registry gets the plain environment resolver."""
-    if isinstance(registry, FileRegistry):
-        return EnvSecrets(registry.path.parent / ".env")
+def default_secrets() -> SecretsProtocol:
+    """A registry the host brought itself gets the plain environment resolver."""
     return EnvSecrets()
 
 
-def default_store(registry: RegistryProtocol) -> StoreProtocol:
-    """A file/TOML registry gets a ``store/`` dir sibling to its config file;
-    any other registry (a bare DB registry, a custom object) falls back to
-    ``./store`` under the CWD — not an error, just an unopinionated default."""
-    if isinstance(registry, FileRegistry):
-        return FileStore(registry.path.parent / "store")
+def default_store() -> StoreProtocol:
+    """A registry the host brought itself falls back to ``./store`` under the CWD —
+    not an error, just an unopinionated default."""
     return FileStore(Path("store"))
 
 
@@ -123,14 +109,3 @@ def zero_config_ports(
     if home is None:
         return DriverRegistry(InMemoryDriver()), secrets, InMemoryStore()
     return FileRegistry(lineup_path(home)), secrets, FileStore(home / "store")
-
-
-def file_target_path(registry: FileRegistry) -> Path:
-    """A file registry is rewritten as TOML, so only a ``.toml`` config can be synced."""
-    if registry.path.suffix.lower() != ".toml":
-        raise ValueError(
-            f"registry {registry.path} cannot be synced: a file registry is rewritten as"
-            " TOML, so only a .toml config is a sync target — convert it, or move the"
-            " lineup into a database registry",
-        )
-    return registry.path

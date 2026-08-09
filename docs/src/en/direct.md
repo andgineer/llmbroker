@@ -6,7 +6,7 @@ model for a quality task. That is what `broker.direct(...)` gives you: a client
 for exactly that model, with **no pool, no failover**.
 
 Direct access is for **your own models** — declared with `direct=` in code, or
-written as `[[custom]]` in a config file. Pool models are anonymous: reach them
+stored as `[[custom]]` in the lineup by `add-model`. Pool models are anonymous: reach them
 with `ask`/`chat`/`stream`, which route and learn; naming one raises
 `PoolModelError`.
 
@@ -64,7 +64,7 @@ failover across interchangeable free endpoints curated as one set; a private
 gateway dropped into it would be spilled onto by a rate limit that has nothing to
 do with it, and would be handed traffic you meant for the free tier.
 
-## In a config file
+## In the lineup
 
 The same two forms, written down. A `[[custom]]` array holds models that are
 yours — the same fields as `[[llms]]`, parsed by the same code, but flagged
@@ -122,14 +122,14 @@ alias onward, the call fails loudly instead of quietly running a newer model.
 
 A stored entry carries only the config (`base_url` / `model` / `api_key_ref`) —
 **never the key value**; the key is read from the env var or secrets backend at
-call time. Your entries are yours: a refresh never prunes them, and `sync` is
-what mirrors them into a DB registry.
+call time. Your entries are yours: a refresh never prunes them and a curated
+lineup can never overwrite them — one arriving with entries of its own is
+rejected whole.
 
 ## Refresh without losing your models
 
-A refresh happens by itself, and `llmbroker preset freetier --sync FILE`
-regenerates a lineup file on demand — for a deploy that wants the change as a
-reviewable diff. Either way it does three things:
+A refresh happens by itself, and `broker.sync("freetier")` forces one. Either way
+it does three things:
 
 - rewrites the `[[llms]]` (preset-managed) entries and their `[keys]` from the
   fresh preset;
@@ -149,7 +149,7 @@ A refreshed entry gets a new `name`, so its learned quality stats start clean �
 what one version was good at says nothing about the next.
 
 The new `name` is machine-formed the same way pool entries are named, so it can
-occasionally land on one of them. `--sync` refuses that outright and writes
+occasionally land on one of them. The refresh refuses that outright and writes
 nothing. Renaming your entry will not help — the next refresh forms the name
 again — so drop its `alias` to pin it instead.
 

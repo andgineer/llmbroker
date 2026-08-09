@@ -229,23 +229,15 @@ def test_custom_entries_and_their_keys_are_carried_over():
     assert "mine" not in report.removed + report.kept + report.added
 
 
-def test_a_custom_entry_in_the_new_lineup_wins_over_the_stored_one():
-    """Syncing a vendored file into a DB must carry the file's own custom edits."""
-    merged, _keys, _report = _merge(
-        [_cfg("mine", "MY_KEY", model="v2", custom=True)],
-        [_cfg("mine", "MY_KEY", model="v1", custom=True)],
-    )
-    assert [(c.name, c.model) for c in merged] == [("mine", "v2")]
-
-
-def test_a_replaced_user_model_is_reported_as_updated():
-    """It wins silently otherwise: a vendored source can move a named model onto a
-    different endpoint, and an admin reading the report would see nothing at all."""
-    _merged, _keys, report = _merge(
+def test_an_arriving_lineups_own_custom_entry_never_replaces_the_stored_one():
+    """A curated lineup states the pool only — the fetch refuses `[[custom]]` — so
+    nothing arriving can move a model the host declared, and the report says so."""
+    merged, _keys, report = _merge(
         [_cfg("mine", "MY_KEY", model="v2", url="https://new/v1", custom=True)],
         [_cfg("mine", "MY_KEY", model="v1", custom=True)],
     )
-    assert report.updated == ("mine",)
+    assert [(c.name, c.model) for c in merged] == [("mine", "v1")]
+    assert report.updated == ()
 
 
 def test_key_help_for_a_kept_entry_is_carried_over():

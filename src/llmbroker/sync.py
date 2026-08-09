@@ -115,7 +115,7 @@ class Broker:
         optimize: bool | Optimizer = True,
         scope: str | None = None,
         have_keys: bool | Sequence[str] = False,
-        sync: str | Path | None = _DEFAULT_SYNC_SOURCE,
+        sync: str | None = _DEFAULT_SYNC_SOURCE,
         sync_interval: float = _DEFAULT_SYNC_INTERVAL,
         home: str | Path | None = None,
         direct: Sequence[str | LLMConfig] = (),
@@ -216,7 +216,7 @@ class Broker:
     def snapshot(self) -> PoolSnapshot:
         return self._run(self._async.snapshot())
 
-    def sync(self, source: RegistryProtocol | str | Path) -> SyncReport:
+    def sync(self, source: str) -> SyncReport:
         return self._run(self._async.sync(source))
 
     @property

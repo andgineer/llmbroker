@@ -1,8 +1,7 @@
 """python -m llmbroker <command>.
 
-Subcommands: env (emit .env skeleton), preset (download curated preset TOML, or
---sync it into a config file, refreshing alias-following custom entries from the
-paid catalog), add-model (append a paid model from the catalog).
+Subcommands: env (emit .env skeleton), add-model (append a paid model from the
+catalog).
 
 The CLI writes files only. Mirroring a lineup into a DB registry is the host's
 own entrypoint calling `broker.sync(...)`, so the connection config and its
@@ -20,25 +19,12 @@ from pathlib import Path
 
 import tomli_w
 
-from llmbroker.broker.aliases import alias_targets_for
-from llmbroker.broker.keys import KeyProbe
-from llmbroker.broker.lineup_file import FileSyncOutcome, entry_block, sync_lineup_file
-from llmbroker.broker.merge import SyncSource
+from llmbroker.broker.lineup_file import entry_block
 from llmbroker.broker.presets import PAID_CATALOG, PRESET_NAME_RE, PresetSource
-from llmbroker.broker.report import alias_lines, format_report
 from llmbroker.broker.source import lineup_path
-from llmbroker.broker.stamps import write_stamp
-from llmbroker.exceptions import SyncRefusedError
 from llmbroker.home import HOME_ENV_VAR, home_dir
 from llmbroker.models import KeyInfo, LLMConfig
-from llmbroker.standalone.registry import (
-    Registry,
-    key_info_from_entry,
-    parse_lineup,
-    read_lineup,
-)
-from llmbroker.standalone.secrets import Secrets
-from llmbroker.standalone.store import FileStore
+from llmbroker.standalone.registry import Registry, key_info_from_entry
 from llmbroker.util.atomic import write_atomic
 
 
@@ -56,32 +42,52 @@ def _read_env_data(reg: Registry) -> tuple[list[LLMConfig], dict[str, KeyInfo]] 
         return None
 
 
-def _env_source_data(source: str) -> tuple[list[LLMConfig], dict[str, KeyInfo]] | None:
-    """Load the ``env`` argument as an existing config file, or as a preset name
-    fetched from the catalog — so onboarding needs no local file at all."""
-    path = Path(source)
-    if path.exists():
-        return _read_env_data(Registry(path))
-    if not PRESET_NAME_RE.match(source):
+def _env_own_lineup() -> tuple[list[LLMConfig], dict[str, KeyInfo]] | None:
+    """The keys this installation's own lineup needs — the pool it already follows
+    plus whatever ``add-model`` put beside it."""
+    home = home_dir()
+    if home is None:
         print(
-            f"error: no such file: {path} (and {source!r} is not a valid preset name)",
+            "error: llmbroker found no writable directory of its own, so this"
+            " installation has no lineup to read. Name a curated preset instead"
+            f" (e.g. `llmbroker env freetier`), or set {HOME_ENV_VAR}",
             file=sys.stderr,
         )
         return None
+    path = lineup_path(home)
+    # Onboarding runs this before any broker has ever run, so the file is normally
+    # absent on the first go: an empty skeleton would read as "no keys needed".
+    if not path.exists():
+        print(
+            f"error: this installation has no lineup yet ({path} does not exist) — a"
+            " broker writes it on its first run. Name a curated preset to get the keys"
+            " now: `llmbroker env freetier`",
+            file=sys.stderr,
+        )
+        return None
+    return _read_env_data(Registry(path))
+
+
+def _env_preset(name: str) -> tuple[list[LLMConfig], dict[str, KeyInfo]] | None:
+    """The keys a curated preset needs, fetched from the catalog — so onboarding
+    needs no local lineup at all."""
+    if not PRESET_NAME_RE.match(name):
+        print(f"error: {name!r} is not a valid preset name", file=sys.stderr)
+        return None
     try:
-        text = PresetSource(home_dir()).text(source)
+        text = PresetSource(home_dir()).text(name)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return None
     with tempfile.TemporaryDirectory() as tmp:
-        staged = Path(tmp) / f"{source}.toml"
+        staged = Path(tmp) / f"{name}.toml"
         staged.write_text(text, encoding="utf-8")
         return _read_env_data(Registry(staged))
 
 
 def _cmd_env(args: argparse.Namespace) -> int:
     # llms in file order; infos maps ref -> KeyInfo only for refs with a [keys] entry.
-    data = _env_source_data(args.config)
+    data = _env_own_lineup() if args.preset is None else _env_preset(args.preset)
     if data is None:
         return 1
     configs, infos = data
@@ -102,77 +108,6 @@ def _cmd_env(args: argparse.Namespace) -> int:
         else:
             lines.append(f"{ref}=")
     print("\n".join(lines))
-    return 0
-
-
-def _cmd_preset(args: argparse.Namespace) -> int:
-    try:
-        text = PresetSource(home_dir()).text(args.name)
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    if args.sync is not None:
-        return _sync_preset_into(text, args.name, args.sync)
-    sys.stdout.write(text)
-    return 0
-
-
-_DB_TARGET_SUFFIXES = (".db", ".sqlite")
-_DB_TARGET_SCHEMES = ("sqlite://", "postgresql://", "mongodb://")
-
-
-async def _sync_target(text: str, name: str, target: Path) -> FileSyncOutcome:
-    """The CLI's own merge site: env plus the target's sibling ``.env`` for keys,
-    and the sibling ``store/`` for death evidence when the broker put one there."""
-    presets = PresetSource(home_dir())
-    store_dir = target.parent / "store"
-    src = SyncSource(label=name, lineup=parse_lineup(tomllib.loads(text)), preset=True)
-    return await sync_lineup_file(
-        target,
-        src,
-        probe=KeyProbe(Secrets(target.parent / ".env")),
-        store=FileStore(store_dir) if store_dir.is_dir() else None,
-        alias_targets=await alias_targets_for(
-            [c.alias for c in read_lineup(target).configs],
-            presets,
-        ),
-    )
-
-
-def _sync_preset_into(text: str, name: str, raw_target: str) -> int:
-    """Merge the fetched preset into the target file and print what it did.
-
-    Keys come from the target's own environment and sibling ``.env`` — the same
-    pair a file-configured broker resolves — so what this decides is what the
-    application would have decided.
-    """
-    # The raw argument, not a Path: Path() collapses the "//" of a DSN.
-    if raw_target.endswith(_DB_TARGET_SUFFIXES) or raw_target.startswith(_DB_TARGET_SCHEMES):
-        print(
-            f"error: --sync writes a config file, and {raw_target} is a database."
-            " A registry is synced from your own code: build the broker with the factory"
-            f' your application already uses and call `await broker.sync("{name}")`'
-            " — that keeps the connection config and its secrets in one place",
-            file=sys.stderr,
-        )
-        return 1
-    target = Path(raw_target)
-    try:
-        outcome = asyncio.run(_sync_target(text, name, target))
-    except (SyncRefusedError, ValueError, OSError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    # Written, never read: an explicitly typed command always does the thing, but
-    # an application on this host shares the clock it just advanced.
-    write_stamp(home_dir(), f"{name} {target.resolve()}")
-    notices, warnings = alias_lines(outcome.refresh.facts)
-    for warning in warnings:
-        print(f"warning: {warning}", file=sys.stderr)
-    for notice in notices:
-        print(notice)
-    # Printed on every run, no-ops included: a kept entry and a missing key stay
-    # visible in each deploy log until an admin resolves them.
-    print(format_report(outcome.report))
     return 0
 
 
@@ -378,7 +313,7 @@ def _append_custom_entry(
 
     reach = f"direct({alias!r})" if alias is not None else f"direct(name={name!r})"
     print(f"added [[custom]] '{name}' ({model_id}) to {target} — reach it with {reach}")
-    print(f"next: set {ref} (e.g. `llmbroker env {target} >> .env`) and sync your config")
+    print(f"next: set {ref} (e.g. `llmbroker env >> .env`)")
     return 0
 
 
@@ -394,34 +329,19 @@ def main(argv: list[str] | None = None) -> int:
         "env",
         help="emit a .env skeleton of api_key_ref names",
         description=(
-            "Emit a .env skeleton of the api_key_ref names a config needs, in file order,"
-            " each with its help text. The argument is a local .toml/.json config file or,"
-            " when no such file exists, a curated preset name fetched from the catalog —"
-            " so `llmbroker env freetier > .env` onboards without any local file."
+            "Emit a .env skeleton of the api_key_ref names a lineup needs, in file order,"
+            " each with its help text. With no argument it reads this installation's own"
+            " lineup; name a curated preset instead — `llmbroker env freetier > .env` —"
+            " to onboard before anything local exists, or to read the curated keys on an"
+            " installation whose registry is a database."
         ),
     )
-    env_p.add_argument("config", help="path to a .toml/.json config file, or a preset name")
-    env_p.set_defaults(func=_cmd_env)
-
-    preset_p = sub.add_parser(
+    env_p.add_argument(
         "preset",
-        help="print a curated preset TOML to stdout",
-        description=(
-            "Print a curated preset TOML to stdout. With --sync FILE, regenerate FILE from"
-            " the preset: the pool models, the keys they need, your own models carried over,"
-            " and every alias-following entry re-pointed at whatever the paid catalog now"
-            " recommends. A model the preset dropped stays in FILE until a replacement you"
-            " can actually call arrives, so an update never shrinks your pool. FILE is"
-            " written by llmbroker and is not meant to be edited by hand."
-        ),
+        nargs="?",
+        help="curated preset name (e.g. freetier); omit to read this installation's lineup",
     )
-    preset_p.add_argument("name", help="preset name (e.g. freetier)")
-    preset_p.add_argument(
-        "--sync",
-        metavar="FILE",
-        help="sync into FILE: regenerate it from the preset (instead of stdout)",
-    )
-    preset_p.set_defaults(func=_cmd_preset)
+    env_p.set_defaults(func=_cmd_env)
 
     addm_p = sub.add_parser(
         "add-model",
@@ -432,8 +352,8 @@ def main(argv: list[str] | None = None) -> int:
             " to run non-interactively. The entry follows the catalog's alias — call it as"
             " direct('opus') and a refresh keeps it on the current version; --pin writes a"
             f" version-pinned entry no refresh touches. The lineup lives in llmbroker's own"
-            f" directory (set {HOME_ENV_VAR} to move it). A broker whose registry is a"
-            " database takes its own models from direct=[...] in your code instead."
+            f" directory (set {HOME_ENV_VAR} to move it). A host that owns its own registry"
+            " declares its models with direct=[...] in code instead."
         ),
     )
     addm_p.add_argument(

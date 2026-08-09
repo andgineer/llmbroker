@@ -19,7 +19,6 @@ from llmbroker.broker.lineup_file import sync_lineup_file
 from llmbroker.broker.merge import SyncSource, load_sync_source, merge_lineup
 from llmbroker.broker.presets import PAID_CATALOG, PresetSource
 from llmbroker.broker.report import alias_lines, format_report
-from llmbroker.broker.source import file_target_path
 from llmbroker.broker.stamps import stamp_age, write_stamp
 from llmbroker.exceptions import SyncRefusedError
 from llmbroker.models import Lineup, LLMConfig, SyncReport
@@ -33,8 +32,8 @@ logger = logging.getLogger("llmbroker.broker")
 class LineupRefresher:
     """Merges a lineup into the registry, and decides when to go looking for one.
 
-    ``source`` names the lineup this installation follows, ``None`` for a registry
-    filled by other means. ``live`` says whether the pool has been provisioned —
+    ``source`` is the curated preset this installation follows, ``None`` for a
+    registry filled by other means. ``live`` says whether the pool has been provisioned —
     only then does an applied change have a running pool to reconcile.
     """
 
@@ -46,7 +45,7 @@ class LineupRefresher:
         probe: KeyProbe,
         presets: PresetSource,
         *,
-        source: str | Path | None,
+        source: str | None,
         interval: float,
         home: Path | None,
         declared: Sequence[str | LLMConfig] = (),
@@ -112,7 +111,7 @@ class LineupRefresher:
         self._next_refresh = time.monotonic() + self._interval
         self._task = asyncio.create_task(self._attempt("refresh"))
 
-    def _arm(self, source: str | Path) -> None:
+    def _arm(self, source: str) -> None:
         age = stamp_age(self._home, self._stamp_key(source))
         self._next_refresh = (
             time.monotonic() + (self._interval - age)
@@ -189,12 +188,11 @@ class LineupRefresher:
     # The check record
     # ------------------------------------------------------------------
 
-    def _stamp_key(self, source: RegistryProtocol | str | Path) -> str:
+    def _stamp_key(self, source: str) -> str:
         """What was checked, and for whom. Keyed by both because two projects on one
         machine have two lineups to keep current, and one project's check must not
         gate the other's."""
-        label = str(source) if isinstance(source, (str, Path)) else type(source).__name__
-        return f"{label} {self._target_identity()}"
+        return f"{source} {self._target_identity()}"
 
     def _target_identity(self) -> str:
         if isinstance(self._registry, Registry):
@@ -208,7 +206,7 @@ class LineupRefresher:
     # The explicit sync
     # ------------------------------------------------------------------
 
-    async def sync(self, source: RegistryProtocol | str | Path) -> SyncReport:
+    async def sync(self, source: str) -> SyncReport:
         """Merge a lineup into the registry and return what it did. Raises."""
         src = await load_sync_source(source, self._presets)
         current = await self._registry.load()
@@ -224,11 +222,7 @@ class LineupRefresher:
         # model resolves from: this is the clock it follows.
         self._catalog.invalidate_declared()
         if isinstance(self._registry, Registry):
-            report, changed = await self._file_target(
-                src,
-                file_target_path(self._registry),
-                targets,
-            )
+            report, changed = await self._file_target(src, self._registry.path, targets)
         else:
             report, changed = await self._registry_target(src, current, targets)
         if changed and isinstance(self._store, DisabledMapProtocol):
@@ -259,13 +253,6 @@ class LineupRefresher:
         target: Path,
         targets: Mapping[str, AliasTarget],
     ) -> tuple[SyncReport, bool]:
-        if not src.preset:
-            raise ValueError(
-                f"cannot sync {src.label} into the file registry {target}: a .toml registry"
-                ' takes a curated preset name only (e.g. broker.sync("freetier")). A file or'
-                " registry source syncs into a database registry — the vendored-lockfile"
-                " deploy path",
-            )
         outcome = await sync_lineup_file(
             target,
             src,

@@ -59,7 +59,19 @@ def fetch_preset_text(name: str) -> str:
     except tomllib.TOMLDecodeError as exc:
         raise ValueError(f"downloaded content for '{name}' is not valid TOML") from exc
     _check_fetched_urls(name, data)
+    _check_no_custom(name, data)
     return text
+
+
+def _check_no_custom(name: str, data: dict) -> None:
+    """``[[custom]]`` means *the host's own*, so a curated lineup declaring one is a
+    contradiction — and it would arrive as an entry the pool never routes and no sync
+    ever removes. Refused whole, like a plaintext base_url."""
+    if data.get("custom"):
+        raise ValueError(
+            f"preset '{name}' carries [[custom]] entries — a curated lineup states the"
+            " pool only, and your own models are yours to declare — refusing the whole file",
+        )
 
 
 def _check_fetched_urls(name: str, data: dict) -> None:
@@ -126,8 +138,8 @@ class PresetSource:
             if bundled is None:
                 raise
             # Louder than the cached fallback, which serves what this machine last
-            # saw: the wheel's copy is frozen at the installed release, and a `preset`
-            # command writing it into a file the user then keeps must not look fresh.
+            # saw: the wheel's copy is frozen at the installed release, and what it
+            # seeds a lineup with is what the installation runs until the next one.
             logger.warning(
                 "preset %s: %s — falling back to the bundled copy, frozen at this"
                 " llmbroker release and possibly older than the curated one",

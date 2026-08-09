@@ -1,7 +1,7 @@
 # Servers & clusters
 
-The same broker scales to multiple processes and hosts: switch it from a file to
-a shared DB — the calling code stays the same.
+The same broker scales to multiple processes and hosts: point it at a shared DB
+instead of letting it keep its own state — the calling code stays the same.
 
 ## Shared DB {#datasource}
 
@@ -9,7 +9,7 @@ The broker's first argument sets the model pool, the keys and the journal all at
 once:
 
 ```python
-llmbroker.Broker("llms.toml")               # files + keys from the environment
+llmbroker.Broker()                          # llmbroker's own directory + keys from the environment
 llmbroker.Broker("broker.db")               # sqlite
 llmbroker.Broker("postgresql://host/db")    # postgres
 llmbroker.Broker("mongodb://host/db")       # mongodb
@@ -27,7 +27,7 @@ the DSN and its secrets live in exactly one place:
 ```python
 llms = build_broker()                     # your app's own factory
 try:
-    print(await llms.sync("freetier"))    # or a vendored file: llms.sync("llms.toml")
+    print(await llms.sync("freetier"))    # the curated preset — the one source there is
 finally:
     await llms.aclose()
 ```
@@ -42,14 +42,26 @@ processes re-check the curated lineup themselves, about once a day, on a call th
 were making anyway. N nodes checking is safe because they all compute the same
 merge from the same upstream and the same keys, so the first write settles it and
 every other node's check finds nothing to do. What the design avoids is a node
-reconciling the registry against a *local copy* of its own — which is why a
-vendored file belongs in the deploy job above, not in every node's startup.
+reconciling the registry against a *local copy* of its own.
 
-A vendored file or another registry as the source is a **database** target only.
-A `.toml` registry is synced from a curated preset name; anything else is refused
-before the write — not because it could not be rendered, but because nothing needs
-it: a lineup you maintain by hand is rolled out to a database registry, where the
-deploy job that owns it already lives.
+`sync` takes a curated preset name and nothing else — no file path, no second
+registry. If you must supply the pool yourself rather than follow our curation,
+pass `registry=` an object of your own *and* `sync=None`: a registry that still
+follows the preset is one the refresh rewrites, whoever built it.
+
+### Moving an installation between backends {#migrate}
+
+There is no migrate command; the two registries already expose everything it
+would need, so it is two lines in the same deploy script that holds both DSNs:
+
+```python
+old = llmbroker.postgres.Registry(old_pool)
+new = llmbroker.mongodb.Registry(new_db)
+await new.mirror(await old.load())
+```
+
+Secrets and the journal move the same way where you want them to, through their
+own backends; usually the keys are re-provisioned and the journal is left behind.
 
 `sync` also keeps a paid alias current here. An entry that follows a
 catalog alias is re-pointed at the version the catalog now recommends on every

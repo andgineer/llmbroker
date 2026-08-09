@@ -30,7 +30,6 @@ from llmbroker.models import (
     SyncReport,
 )
 from llmbroker.optimizer import Optimizer
-from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets, Secrets
 from llmbroker.standalone.store import FileStore, InMemoryStore
 from llmbroker.sync import LLM, Broker, Result
@@ -68,7 +67,6 @@ __all__ = [
     "SyncReport",
     "ToolLoopLimitError",
     "UnknownModelError",
-    "Registry",
     "Result",
     "Secrets",
     "arun_tool_loop",

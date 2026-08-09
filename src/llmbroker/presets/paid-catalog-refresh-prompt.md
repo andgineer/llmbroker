@@ -26,9 +26,9 @@ config depends on, so it is governed by a permanence contract:
 
 - **A published alias never disappears and never renames.** A generation change
   re-points the existing alias at the successor model; it does not mint a new one.
-  Dropping a model that still has a live alias breaks every config following it —
+  Dropping a model that still has a live alias breaks every lineup following it —
   either keep the alias pointing at the provider's successor, or accept that
-  `preset --sync` will warn on it forever.
+  every refresh will warn on it forever.
 - **No version substring in an alias.** `opus`, `gpt-mini`, `flash` are aliases;
   `opus-4-8`, `gpt-5`, `flash-2-5` are not. The alias outlives the version by
   construction, so a version inside it is a contradiction.
@@ -37,16 +37,16 @@ config depends on, so it is governed by a permanence contract:
 - **A model a shipped preset already pools does not belong here.** An alias
   entry's `name` is machine-formed `<provider id>-<model id>`, the same
   convention preset pool entries are named by, so a model this file shares with
-  `src/llmbroker/presets/freetier.toml` produces a name no config can carry twice —
-  `add-model` and `preset --sync` both refuse it outright. Nor is there
+  `src/llmbroker/presets/freetier.toml` produces a name no lineup can carry twice —
+  `add-model` and the refresh both refuse it outright. Nor is there
   anything to add: the endpoint and the `api_key_ref` are the same ones the
   preset already uses, and the billing tier lives in the user's provider
   account, not in any config.
 
-Aliases are what `llmbroker preset <name> --sync FILE` follows: for each of the
-user's entries carrying an alias it rewrites `model`, `name`, `base_url`, and
-`api_key_ref` from this file. That is the whole point of a refresh — so an alias
-whose target you change here changes the model of every deployment following it.
+Aliases are what a refresh follows: for each of the user's entries carrying an
+alias it rewrites `model`, `name`, `base_url`, and `api_key_ref` from this file.
+That is the whole point of a refresh — so an alias whose target you change here
+changes the model of every deployment following it.
 
 ## 0. What "verified" means here (read first)
 

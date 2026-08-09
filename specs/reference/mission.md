@@ -131,8 +131,11 @@ to hand-edit.
 **The lineup keeps itself current, unconditionally.** Free endpoints are retired
 without notice, so a pinned lineup decays into nothing. The refresh rides on
 activity rather than on a timer of its own, and it may never cost the
-installation a provider it could reach. An installation that must not follow our
-curation states a lineup of its own instead of freezing ours.
+installation a provider it could reach. A curated preset is the only shape a
+lineup arrives in, so an installation that must not follow ours states the whole
+pool itself: it fills a registry of its own *and* stops following the curation,
+because a registry still following it is a registry the refresh still rewrites.
+What no installation gets is a second configuration form for us to keep in step.
 
 **Availability and quality are separate axes.** Cooldown is provider-driven,
 self-healing, and withdraws a model; quality demotion is host-driven, sticky,

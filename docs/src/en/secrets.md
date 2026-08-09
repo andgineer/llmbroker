@@ -1,20 +1,18 @@
 # API keys
 
-Every model in `llms.toml` refers to its key by name; where the value comes from
+Every model in the lineup refers to its key by name; where the value comes from
 is up to the configured secrets backend. The default is environment variables
 and `.env`:
 
 ```bash
-llmbroker env llms.toml > .env
+llmbroker env > .env
 ```
 
 The command prints a skeleton with a hint above each key, where to get it. The
-same hints are available programmatically —
-[`Registry.key_info()`](reference.md#llmbroker.Registry.key_info).
+same hints reach your own code through the registry's key-info capability.
 
-A broker built from a config file — `llmbroker.Broker("llms.toml")` or
-`registry=llmbroker.Registry("llms.toml")` — reads that file's sibling `.env` as
-a fallback. An exported environment variable always wins over the file, and a
+A broker with no source of its own reads the `.env` in its working directory as a
+fallback. An exported environment variable always wins over the file, and a
 missing `.env` is simply no fallback. Nothing is installed for this: the file is
 parsed with the standard library (`KEY=VALUE` lines, `#` comments, no
 interpolation). Point it elsewhere explicitly with
@@ -40,7 +38,7 @@ Install the `llmbroker[aws]` extra ([Installation](installation.md)):
 from llmbroker.aws import Secrets as AwsSecrets
 
 async with llmbroker.AsyncBroker(
-    registry=llmbroker.Registry("llms.toml"),
+    "postgresql://host/db",
     secrets=AwsSecrets(region_name="us-east-1"),
 ) as llms:
     reply = await llms.ask("Hello")

@@ -1,4 +1,4 @@
-"""`.env` support: the documented quickstart (`llmbroker env llms.toml > .env`)
+"""`.env` support: the documented quickstart (`llmbroker env freetier > .env`)
 must actually resolve keys, without adding a dependency.
 """
 
@@ -8,16 +8,15 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from llmbroker.broker.broker import AsyncBroker
-from llmbroker.broker.source import resolve_source
-from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import Secrets, parse_env_file
 from llmbroker.standalone.store import InMemoryStore
 
 _PATCH = "llmbroker.broker.router.call_provider"
 
 
-def _write_config(tmp_path):
-    f = tmp_path / "llms.toml"
+def _write_lineup(home):
+    """The lineup a zero-config broker with ``home=`` reads."""
+    f = home / "lineup.toml"
     f.write_text('[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n')
     return f
 
@@ -101,37 +100,32 @@ def test_file_is_reread_when_it_changes(tmp_path):
 def test_quickstart_skeleton_leaves_the_model_inactive(tmp_path, monkeypatch):
     """The whole generated skeleton, nothing filled in: the pool must be empty of
     keys, not full of models routing with an empty credential."""
-    config = _write_config(tmp_path)
+    _write_lineup(tmp_path)
+    monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("# K — get it at https://example\nK=\n", encoding="utf-8")
     monkeypatch.delenv("K", raising=False)
 
     async def run():
-        async with AsyncBroker(str(config), store=InMemoryStore()) as broker:
+        async with AsyncBroker(home=tmp_path, sync=None, store=InMemoryStore()) as broker:
             assert not broker._pool.has_key("p1")
 
     asyncio.run(run())
 
 
 # ---------------------------------------------------------------------------
-# Wiring: the sibling .env of a file config
+# Wiring: the working directory's .env
 # ---------------------------------------------------------------------------
 
 
-def test_source_dispatch_points_at_the_sibling_env_file(tmp_path):
-    config = _write_config(tmp_path)
-    (tmp_path / ".env").write_text("K=sibling\n")
-    _registry, secrets, _store = resolve_source(str(config))
-    assert asyncio.run(secrets.resolve("K")) == "sibling"
-
-
 def test_quickstart_tree_resolves_keys_without_exported_vars(tmp_path, monkeypatch):
-    """`llms.toml` + `.env`, nothing exported: `AsyncBroker("llms.toml")` routes."""
-    config = _write_config(tmp_path)
+    """`llmbroker env freetier > .env`, nothing exported: a zero-config broker routes."""
+    _write_lineup(tmp_path)
+    monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("# GROQ hint\nK=sk-from-dot-env\n")
     monkeypatch.delenv("K", raising=False)
 
     async def run():
-        async with AsyncBroker(str(config), store=InMemoryStore()) as broker:
+        async with AsyncBroker(home=tmp_path, sync=None, store=InMemoryStore()) as broker:
             with patch(_PATCH, new=AsyncMock(return_value=("ok", None, None))):
                 result = await broker.ask("hi")
             assert result.text == "ok"
@@ -140,14 +134,20 @@ def test_quickstart_tree_resolves_keys_without_exported_vars(tmp_path, monkeypat
     asyncio.run(run())
 
 
-def test_registry_object_also_gets_its_sibling_env_file(tmp_path, monkeypatch):
-    """Passing the same config as a ``Registry`` object must not silently lose it."""
-    config = _write_config(tmp_path)
-    (tmp_path / ".env").write_text("K=sk-from-dot-env\n")
+def test_the_env_file_is_the_working_directorys_not_the_lineups_sibling(tmp_path, monkeypatch):
+    """A `.env` beside the lineup in llmbroker's own home is not read: keys come from
+    the environment, with the working directory's `.env` behind them."""
+    home = tmp_path / "home"
+    home.mkdir()
+    _write_lineup(home)
+    (home / ".env").write_text("K=beside-the-lineup\n")
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
     monkeypatch.delenv("K", raising=False)
 
     async def run():
-        async with AsyncBroker(registry=Registry(config), store=InMemoryStore()) as broker:
-            assert broker._pool.resolved_key("p1") == "sk-from-dot-env"
+        async with AsyncBroker(home=home, sync=None, store=InMemoryStore()) as broker:
+            assert not broker._pool.has_key("p1")
 
     asyncio.run(run())

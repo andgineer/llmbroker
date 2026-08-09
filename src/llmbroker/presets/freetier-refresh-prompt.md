@@ -117,8 +117,8 @@ For each candidate provider/model, using the taxonomies fixed in
 - **A model `src/llmbroker/presets/paid-catalog.toml` lists does not belong in this pool.**
   Pool entries here are named `<provider id>-<model id>`, and an entry added
   from the catalog takes a machine-formed name of exactly that shape, so a model
-  held by both files makes a name no config can carry twice — `add-model` and
-  `preset --sync` refuse it. If the
+  held by both files makes a name no lineup can carry twice — `add-model` and
+  the refresh refuse it. If the
   model belongs in the free pool, take it out of the catalog instead: the
   endpoint and the `api_key_ref` are the same either way, and the billing tier
   lives in the user's provider account, not in a config field.

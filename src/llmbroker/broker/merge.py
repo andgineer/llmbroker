@@ -10,7 +10,6 @@ import logging
 import tomllib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
-from pathlib import Path
 from types import MappingProxyType
 
 from llmbroker.broker.aliases import AliasRefresh, AliasTarget, refresh_alias_configs
@@ -28,9 +27,8 @@ from llmbroker.models import (
     Retirement,
     SyncReport,
 )
-from llmbroker.protocols.registry import KeyInfoProtocol, RegistryProtocol
 from llmbroker.protocols.store import QueryableStoreProtocol, StoreProtocol
-from llmbroker.standalone.registry import ALIAS_NAME_HINT, Registry, parse_lineup, read_lineup
+from llmbroker.standalone.registry import ALIAS_NAME_HINT, parse_lineup
 
 logger = logging.getLogger("llmbroker.broker")
 
@@ -43,12 +41,10 @@ _NO_TARGETS: Mapping[str, AliasTarget] = MappingProxyType({})
 
 @dataclass(frozen=True, slots=True)
 class SyncSource:
-    """An arriving lineup, however it was named. ``preset`` marks the one form that
-    came off the network."""
+    """An arriving lineup and the curated preset name it came from."""
 
     label: str
     lineup: Lineup
-    preset: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,37 +59,16 @@ class MergeOutcome:
 # ── Naming the source ────────────────────────────────────────────────────────
 
 
-def resolve_sync_source(source: str) -> tuple[str, bool]:
-    """Read a string source as an existing path, or as a curated preset name."""
-    if Path(source).exists():
-        return source, False
-    if PRESET_NAME_RE.match(source) and not Path(source).suffix:
-        return source, True
-    raise ValueError(
-        f"unrecognized sync source {source!r} — expected a curated preset name"
-        " (e.g. 'freetier') or the path of an existing .toml/.json config file",
-    )
-
-
-async def load_sync_source(
-    source: RegistryProtocol | str | Path,
-    presets: PresetSource,
-) -> SyncSource:
-    """Load whatever was named into the lineup to merge. Only a preset name goes to
-    the network, and it does so off the event loop."""
-    if isinstance(source, str):
-        name, is_preset = resolve_sync_source(source)
-        if is_preset:
-            text = await asyncio.to_thread(presets.text, name)
-            return SyncSource(label=name, lineup=parse_lineup(tomllib.loads(text)), preset=True)
-        source = Path(name)
-    if isinstance(source, Path):
-        if not source.exists():
-            raise ValueError(f"no such file: {source}")
-        return SyncSource(label=str(source), lineup=read_lineup(source))
-    keys = await source.key_info() if isinstance(source, KeyInfoProtocol) else {}
-    label = str(source.path) if isinstance(source, Registry) else type(source).__name__
-    return SyncSource(label=label, lineup=Lineup(configs=await source.load(), keys=keys))
+async def load_sync_source(source: str, presets: PresetSource) -> SyncSource:
+    """Fetch the named curated preset and parse it into the lineup to merge. The
+    fetch is the library's one networked operation, and it runs off the event loop."""
+    if not PRESET_NAME_RE.match(source):
+        raise ValueError(
+            f"unrecognized sync source {source!r} — a lineup arrives as a curated preset"
+            " name (e.g. 'freetier') and nothing else",
+        )
+    text = await asyncio.to_thread(presets.text, source)
+    return SyncSource(label=source, lineup=parse_lineup(tomllib.loads(text)))
 
 
 # ── Death evidence, read from this installation's own journal ────────────────
@@ -272,9 +247,8 @@ def merge_upstream(
     the caller has written nothing at that point.
     """
     new_managed = [c for c in new.configs if not c.custom]
-    new_custom = [c for c in new.configs if c.custom]
     current_managed = [c for c in current.configs if not c.custom]
-    current_custom = [c for c in current.configs if c.custom]
+    custom = [c for c in current.configs if c.custom]
     current_by_name = {c.name: c for c in current.configs}
 
     _check_model_identity(new_managed, current_by_name)
@@ -285,8 +259,6 @@ def merge_upstream(
     arrived = [c for c in new_managed if c.name not in current_by_name]
     removed, kept, retired = _removal_plan(dropped, lineup_refs, evidence, dead)
 
-    arriving_custom = {c.name for c in new_custom}
-    custom = [*new_custom, *(c for c in current_custom if c.name not in arriving_custom)]
     merged = [*new_managed, *kept, *custom]
     _check_name_clash(merged)
 
@@ -301,7 +273,7 @@ def merge_upstream(
         added=tuple(c.name for c in arrived),
         updated=tuple(
             c.name
-            for c in (*new_managed, *new_custom)
+            for c in new_managed
             if c.name in current_by_name and current_by_name[c.name] != c
         ),
         removed=tuple(c.name for c in removed),

@@ -243,29 +243,33 @@ def test_broker_disable_llm_persists_to_store_disabled_map(tmp_path):
 # ── sync() ────────────────────────────────────────────────────────────────
 
 
-def _seed_registry(tmp_path, name="p1"):
-    f = tmp_path / "seed.toml"
-    f.write_text(f'[[llms]]\nname="{name}"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n')
-    return FileRegistry(f)
+@pytest.fixture
+def served(monkeypatch):
+    """Serve a one-entry curated lineup to ``sync("freetier")``."""
+    monkeypatch.setattr(
+        presets,
+        "fetch_preset_text",
+        lambda _name: '[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n',
+    )
 
 
-def test_broker_sync_populates_a_fresh_db(tmp_path):
+def test_broker_sync_populates_a_fresh_db(tmp_path, served):
     db = str(tmp_path / "b.db")
     broker = Broker(registry=SqliteRegistry(db), store=InMemoryStore())
-    broker.sync(_seed_registry(tmp_path))
+    broker.sync("freetier")
     with broker:
         assert broker.count() == 1
         assert broker.get("p1").config.name == "p1"
 
 
-def test_broker_sync_reconciles_registry_to_preset(tmp_path):
+def test_broker_sync_reconciles_registry_to_preset(tmp_path, served):
     """sync() mirrors: adds new, updates existing, deletes entries absent from the preset."""
     db = str(tmp_path / "b.db")
     extra = LLMConfig(name="extra", base_url="https://e/v1", model="m", api_key_ref="K")
     asyncio.run(SqliteRegistry(db).mirror([extra]))
 
     broker = Broker(registry=SqliteRegistry(db), store=InMemoryStore())
-    broker.sync(_seed_registry(tmp_path))
+    broker.sync("freetier")
     with broker:
         assert broker.get("p1").config.name == "p1"
         with pytest.raises(KeyError):
@@ -291,13 +295,13 @@ def test_broker_sync_into_a_file_registry_returns_the_report(tmp_path, monkeypat
     assert [e["name"] for e in tomllib.loads(registry.path.read_text())["llms"]] == ["p2"]
 
 
-def test_broker_sync_into_a_file_registry_refuses_a_file_source(tmp_path):
+def test_broker_sync_refuses_a_path_source(tmp_path):
     """The one path that could render an arbitrary source into a live .toml."""
     registry = _registry(tmp_path)
     broker = Broker(registry=registry, store=InMemoryStore())
     try:
-        with pytest.raises(ValueError, match="curated preset name only"):
-            broker.sync(_seed_registry(tmp_path, "p2"))
+        with pytest.raises(ValueError, match="unrecognized sync source"):
+            broker.sync(str(tmp_path / "seed.toml"))
     finally:
         broker.close()
     assert [e["name"] for e in tomllib.loads(registry.path.read_text())["llms"]] == ["p1"]

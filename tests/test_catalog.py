@@ -5,6 +5,7 @@ import logging
 
 import pytest
 
+from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.catalog import Catalog
 from llmbroker.broker.pool import LLMPool
@@ -273,19 +274,24 @@ async def test_seed_replaces_a_blank_existing_value(monkeypatch):
 # ── Broker-level: AsyncBroker.sync() end to end ─────────────────────────────
 
 
-async def test_broker_sync_mirrors_preset_into_sqlite_registry(tmp_path):
-    db = str(tmp_path / "b.db")
-    seed_path = tmp_path / "preset.toml"
-    seed_path.write_text(
-        '[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
+@pytest.fixture
+def served(monkeypatch):
+    """Serve a one-entry curated lineup to ``sync("freetier")``."""
+    monkeypatch.setattr(
+        presets,
+        "fetch_preset_text",
+        lambda _name: '[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n',
     )
 
+
+async def test_broker_sync_mirrors_preset_into_sqlite_registry(tmp_path, served):
+    db = str(tmp_path / "b.db")
     broker = AsyncBroker(
         registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
         store=InMemoryStore(),
     )
-    await broker.sync(seed_path)
+    await broker.sync("freetier")
     await broker.aclose()
 
     reg = SqliteRegistry(db)
@@ -306,43 +312,33 @@ async def test_broker_provision_without_sync_raises(tmp_path):
         raise AssertionError("expected EmptyRegistryError")
 
 
-async def test_broker_sync_then_provision_succeeds(tmp_path):
+async def test_broker_sync_then_provision_succeeds(tmp_path, served):
     db = str(tmp_path / "b.db")
-    seed_path = tmp_path / "preset.toml"
-    seed_path.write_text(
-        '[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
-    )
-
     broker = AsyncBroker(
         registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
         store=InMemoryStore(),
     )
-    await broker.sync(seed_path)
+    await broker.sync("freetier")
     async with broker:
         assert await broker.count() == 1
         assert (await broker.get("p1")).config.name == "p1"
 
 
-async def test_broker_sync_seeds_disabled_map(tmp_path):
+async def test_broker_sync_seeds_disabled_map(tmp_path, served):
     db = str(tmp_path / "b.db")
-    seed_path = tmp_path / "preset.toml"
-    seed_path.write_text(
-        '[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
-    )
-
     broker = AsyncBroker(
         registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
         store=SqliteStore(db),
     )
-    await broker.sync(seed_path)
+    await broker.sync("freetier")
     await broker.aclose()
 
     assert await SqliteStore(db).get_disabled("p1") is False
 
 
-async def test_manual_latch_survives_sync_reseed(tmp_path):
+async def test_manual_latch_survives_sync_reseed(tmp_path, served):
     """The disabled verdict lives in the store disabled-map, not the registry —
     a sync that re-mirrors the preset never touches it."""
     db = str(tmp_path / "b.db")
@@ -350,17 +346,12 @@ async def test_manual_latch_survives_sync_reseed(tmp_path):
     await reg.mirror([_cfg("p1")])
     await SqliteStore(db).set_disabled("p1", True)
 
-    seed_path = tmp_path / "preset.toml"
-    seed_path.write_text(
-        '[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
-    )
-
     broker = AsyncBroker(
         registry=SqliteRegistry(db),
         secrets=DictSecrets({"K": "key"}),
         store=SqliteStore(db),
     )
-    await broker.sync(seed_path)
+    await broker.sync("freetier")
     async with broker:
         assert broker._pool.is_disabled("p1")
         assert await SqliteStore(db).get_disabled("p1") is True

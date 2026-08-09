@@ -4,6 +4,8 @@ writes nothing, applies nothing and stays out of the INFO log."""
 import logging
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.catalog import Catalog
@@ -57,10 +59,12 @@ async def test_a_file_broker_reports_no_change_at_debug(tmp_path, caplog, monkey
 # ── The registry target ──────────────────────────────────────────────────────
 
 
-def _preset(tmp_path, body: str, name: str = "preset.toml") -> str:
-    src = tmp_path / name
-    src.write_text(body)
-    return str(src)
+@pytest.fixture
+def served(monkeypatch):
+    """What the catalog serves for ``sync("freetier")``; a test rolls it forward."""
+    state = {"text": _UNSORTED}
+    monkeypatch.setattr(presets, "fetch_preset_text", lambda _name: state["text"])
+    return state
 
 
 def _broker(tmp_path, **kwargs) -> AsyncBroker:
@@ -72,49 +76,47 @@ def _broker(tmp_path, **kwargs) -> AsyncBroker:
     )
 
 
-async def test_an_unchanged_registry_sync_writes_nothing(tmp_path, caplog):
-    src = _preset(tmp_path, _UNSORTED)
+async def test_an_unchanged_registry_sync_writes_nothing(tmp_path, caplog, served):
     broker = _broker(tmp_path)
     try:
-        report = await broker.sync(src)
+        report = await broker.sync("freetier")
         assert report.added == ("zeta", "alpha")
         with (
             patch.object(Catalog, "apply", new=AsyncMock()) as apply,
             caplog.at_level(logging.DEBUG, logger="llmbroker.broker"),
         ):
-            await broker.sync(src)
+            await broker.sync("freetier")
         assert apply.await_count == 0
     finally:
         await broker.aclose()
     assert any("no change" in r.message for r in caplog.records)
 
 
-async def test_the_gate_ignores_the_order_a_registry_returns_rows_in(tmp_path):
+async def test_the_gate_ignores_the_order_a_registry_returns_rows_in(tmp_path, served):
     """The lineup arrives in curated order and comes back name-sorted; comparing
     the two as lists would report every no-op sync as a change."""
-    src = _preset(tmp_path, _UNSORTED)
     broker = _broker(tmp_path)
     try:
-        await broker.sync(src)
+        await broker.sync("freetier")
         stored = await broker._registry.load()
         assert [c.name for c in stored] == ["alpha", "zeta"]  # not the lineup's order
         with patch.object(Catalog, "apply", new=AsyncMock()) as apply:
-            await broker.sync(src)
+            await broker.sync("freetier")
         assert apply.await_count == 0
     finally:
         await broker.aclose()
 
 
-async def test_a_real_change_still_applies_and_logs_at_info(tmp_path, caplog):
+async def test_a_real_change_still_applies_and_logs_at_info(tmp_path, caplog, served):
     broker = _broker(tmp_path)
     try:
-        await broker.sync(_preset(tmp_path, _UNSORTED))
-        grown = _UNSORTED + (
+        await broker.sync("freetier")
+        served["text"] = _UNSORTED + (
             '[[llms]]\nname = "mid"\nbase_url = "https://m/v1"\nmodel = "m"\n'
             'api_key_ref = "M_KEY"\n'
         )
         with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
-            report = await broker.sync(_preset(tmp_path, grown, "grown.toml"))
+            report = await broker.sync("freetier")
         assert report.added == ("mid",)
         assert [c.name for c in await broker._registry.load()] == ["alpha", "mid", "zeta"]
     finally:
@@ -122,27 +124,28 @@ async def test_a_real_change_still_applies_and_logs_at_info(tmp_path, caplog):
     assert any(r.levelno == logging.INFO and "sync" in r.message for r in caplog.records)
 
 
-async def test_a_reweighted_lineup_is_a_change_to_the_registry_target(tmp_path):
+async def test_a_reweighted_lineup_is_a_change_to_the_registry_target(tmp_path, served):
     """The registry branch compares entries by name, so a new persisted field joins
     that comparison by itself — a weight-only edit must not read as a no-op."""
     broker = _broker(tmp_path)
     try:
-        await broker.sync(_preset(tmp_path, _UNSORTED))
-        reweighted = _UNSORTED.replace('api_key_ref = "Z_KEY"', 'api_key_ref = "Z_KEY"\nweight=0.8')
+        await broker.sync("freetier")
+        served["text"] = _UNSORTED.replace(
+            'api_key_ref = "Z_KEY"', 'api_key_ref = "Z_KEY"\nweight=0.8'
+        )
         with patch.object(Catalog, "apply", new=AsyncMock()) as apply:
-            await broker.sync(_preset(tmp_path, reweighted, "reweighted.toml"))
+            await broker.sync("freetier")
         assert apply.await_count == 1
     finally:
         await broker.aclose()
 
 
-async def test_an_unchanged_sync_still_bootstraps_a_key_that_arrived(tmp_path, monkeypatch):
+async def test_an_unchanged_sync_still_bootstraps_a_key_that_arrived(tmp_path, monkeypatch, served):
     """The gate covers the lineup, not the keys: a key exported after the first
     sync is what the next explicit sync is called for."""
     db = str(tmp_path / "b.db")
     monkeypatch.delenv("Z_KEY", raising=False)
     monkeypatch.delenv("A_KEY", raising=False)
-    src = _preset(tmp_path, _UNSORTED)
 
     broker = AsyncBroker(
         registry=SqliteRegistry(db),
@@ -150,9 +153,9 @@ async def test_an_unchanged_sync_still_bootstraps_a_key_that_arrived(tmp_path, m
         store=InMemoryStore(),
     )
     try:
-        await broker.sync(src)
+        await broker.sync("freetier")
         monkeypatch.setenv("Z_KEY", "sk-late")
-        await broker.sync(src)
+        await broker.sync("freetier")
     finally:
         await broker.aclose()
 

@@ -112,7 +112,7 @@ class AsyncBroker:
     production. It is a promise, and it counts only when a sync weighs whether an
     entry is still callable here: it never makes a model routable.
 
-    ``sync`` names the lineup this installation follows — the curated preset by
+    ``sync`` names the curated preset this installation follows — ``"freetier"`` by
     default — and it is kept current on the ``sync_interval`` clock: a time gate
     decides whether to go to the network at all, an identity gate decides whether
     what arrived changes anything. The check is lazy on activity, so an idle broker
@@ -132,7 +132,7 @@ class AsyncBroker:
         optimize: bool | Optimizer = True,
         scope: str | None = None,
         have_keys: bool | Sequence[str] = False,
-        sync: str | Path | None = _DEFAULT_SYNC_SOURCE,
+        sync: str | None = _DEFAULT_SYNC_SOURCE,
         sync_interval: float = _DEFAULT_SYNC_INTERVAL,
         home: str | Path | None = None,
         direct: Sequence[str | LLMConfig] = (),
@@ -149,11 +149,9 @@ class AsyncBroker:
             registry, source_secrets, source_store = resolve_source(registry)
 
         secrets = (
-            as_secrets(secrets)
-            if secrets is not None
-            else (source_secrets or default_secrets(registry))
+            as_secrets(secrets) if secrets is not None else (source_secrets or default_secrets())
         )
-        store = store if store is not None else (source_store or default_store(registry))
+        store = store if store is not None else (source_store or default_store())
 
         if isinstance(optimize, Optimizer):
             self._optimizer: Optimizer | None = optimize
@@ -290,12 +288,11 @@ class AsyncBroker:
         run. A host forwards it to its own admin channel."""
         return self._refresher.last_report
 
-    async def sync(self, source: RegistryProtocol | str | Path) -> SyncReport:
-        """Merge a lineup into the registry and return what it did.
+    async def sync(self, source: str) -> SyncReport:
+        """Merge a curated lineup into the registry and return what it did.
 
-        ``source`` is a curated preset name (``"freetier"`` — the only networked
-        operation in the library), or the path of a config file, or a registry;
-        a ``.toml`` file registry takes the preset form only. An entry the lineup
+        ``source`` is a curated preset name (``"freetier"``), fetching which is the
+        only networked operation in the library. An entry the lineup
         drops is removed only when the same provider replaces it, when no key for
         it exists here, or when this installation's journal proves it dead — so a
         sync can never shrink the set of models this installation can actually

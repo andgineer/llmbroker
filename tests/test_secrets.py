@@ -8,6 +8,7 @@ import llmbroker
 import pytest
 
 from llmbroker.aws import Secrets as AwsSecrets
+from llmbroker.broker import presets
 from llmbroker.models import LLMConfig
 from llmbroker.mongodb import Secrets as MongoSecrets
 from llmbroker.postgres import Secrets as PostgresSecrets
@@ -120,8 +121,21 @@ def test_sqlite_secrets_missing_raises(tmp_path):
         asyncio.run(secrets.resolve("MISSING"))
 
 
+def _serve(monkeypatch, ref: str) -> None:
+    """Serve a one-entry curated lineup to ``sync("freetier")``, keyed by ``ref``."""
+    monkeypatch.setattr(
+        presets,
+        "fetch_preset_text",
+        lambda _name: (
+            f'[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="{ref}"\n'
+        ),
+    )
+
+
 def test_broker_resolves_key_not_on_config(tmp_path, monkeypatch):
     monkeypatch.setenv("MY_API_KEY", "the-secret")
+    # A registry the host brought itself journals into ./store under the CWD.
+    monkeypatch.chdir(tmp_path)
     toml = tmp_path / "llms.toml"
     toml.write_text(
         '[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="MY_API_KEY"\n',
@@ -143,11 +157,8 @@ def test_broker_resolves_key_not_on_config(tmp_path, monkeypatch):
 def test_seed_seeds_secret_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("SEED_KEY", "from-env")
     monkeypatch.chdir(tmp_path)
+    _serve(monkeypatch, "SEED_KEY")
     db = str(tmp_path / "b.db")
-    src = tmp_path / "llms.toml"
-    src.write_text(
-        '[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="SEED_KEY"\n',
-    )
 
     async def run():
         secrets = SqliteSecrets(db)
@@ -155,7 +166,7 @@ def test_seed_seeds_secret_from_env(tmp_path, monkeypatch):
             registry=SqliteRegistry(db),
             secrets=secrets,
         )
-        await broker.sync(FileRegistry(src))
+        await broker.sync("freetier")
         async with broker:
             return await secrets.resolve("SEED_KEY")
 
@@ -165,11 +176,8 @@ def test_seed_seeds_secret_from_env(tmp_path, monkeypatch):
 def test_seed_preserves_existing_secret(tmp_path, monkeypatch):
     monkeypatch.setenv("SEED_KEY", "from-env")
     monkeypatch.chdir(tmp_path)
+    _serve(monkeypatch, "SEED_KEY")
     db = str(tmp_path / "b.db")
-    src = tmp_path / "llms.toml"
-    src.write_text(
-        '[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="SEED_KEY"\n',
-    )
 
     async def run():
         secrets = SqliteSecrets(db)
@@ -178,7 +186,7 @@ def test_seed_preserves_existing_secret(tmp_path, monkeypatch):
             registry=SqliteRegistry(db),
             secrets=secrets,
         )
-        await broker.sync(FileRegistry(src))
+        await broker.sync("freetier")
         async with broker:
             return await secrets.resolve("SEED_KEY")
 
@@ -188,15 +196,12 @@ def test_seed_preserves_existing_secret(tmp_path, monkeypatch):
 def test_missing_ref_with_readonly_secrets_does_not_block(tmp_path, monkeypatch):
     monkeypatch.delenv("ABSENT_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
+    _serve(monkeypatch, "ABSENT_KEY")
     db = str(tmp_path / "b.db")
-    src = tmp_path / "llms.toml"
-    src.write_text(
-        '[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="ABSENT_KEY"\n',
-    )
 
     async def run():
         broker = llmbroker.AsyncBroker(registry=SqliteRegistry(db))
-        await broker.sync(FileRegistry(src))
+        await broker.sync("freetier")
         async with broker:
             await broker.get("p1")
             return True

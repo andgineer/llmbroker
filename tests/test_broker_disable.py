@@ -3,6 +3,7 @@
 Uses sqlite (registry + store disabled-map) for determinism/speed.
 """
 
+from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.models import Call, CallStatus, LLMConfig
 from llmbroker.optimizer import Optimizer
@@ -11,12 +12,8 @@ from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.standalone.secrets import DictSecrets
 
 
-class _OneConfigSource:
-    def __init__(self, cfg: LLMConfig) -> None:
-        self._cfg = cfg
-
-    async def load(self) -> list[LLMConfig]:
-        return [self._cfg]
+def _lineup(name: str) -> str:
+    return f'[[llms]]\nname="{name}"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
 
 
 def _cfg(name: str = "p1") -> LLMConfig:
@@ -101,13 +98,15 @@ async def test_disable_enable_llm_without_optimizer_still_persists(tmp_path):
         assert await SqliteStore(db).get_disabled("p1") is False
 
 
-async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path):
+async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path, monkeypatch):
     """Regression: removing a benched model used to leave the pool's stale benched
     latch behind, so a fresh config re-added under the same name was silently stuck
     non-routable — no error, just never acquirable."""
     db = str(tmp_path / "b.db")
     reg = SqliteRegistry(db)
     await reg.mirror([_cfg()])
+    served = {"text": _lineup("p1")}
+    monkeypatch.setattr(presets, "fetch_preset_text", lambda _name: served["text"])
 
     async with AsyncBroker(
         registry=SqliteRegistry(db),
@@ -119,10 +118,12 @@ async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path):
 
         # A same-key arrival is what pays for a removal, so this is how an entry
         # actually leaves the registry — and then comes back under its old name.
-        await broker.sync(_OneConfigSource(_cfg("p2")))
+        served["text"] = _lineup("p2")
+        await broker.sync("freetier")
         assert "p1" not in broker._pool
 
-        await broker.sync(_OneConfigSource(_cfg()))
+        served["text"] = _lineup("p1")
+        await broker.sync("freetier")
         assert not broker._pool.is_disabled("p1")
         picked = await broker._pool.acquire(0)
         assert picked.name == "p1"

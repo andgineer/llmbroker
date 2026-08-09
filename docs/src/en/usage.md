@@ -22,8 +22,10 @@ llmbroker env freetier > .env
 key simply stays inactive, it is not an error. The broker reads the `.env` in your
 working directory; an exported variable wins over it.
 
-For a provider that cannot handle parallel requests on one key, set `parallel = 1`
-on its entry — which means a [config file](#file).
+A provider that cannot handle parallel requests on one key is capped by
+`parallel` on its entry. For the pool that is the curated lineup's call, not
+yours — the file is llmbroker's, see [below](#file); on a model of your own you
+set it, as a field of the `LLMConfig` you declare.
 
 ### Your own paid models {#direct}
 
@@ -51,18 +53,24 @@ directory — `~/.cache/llmbroker` on Linux, `~/Library/Caches/llmbroker` on mac
 what a container without a writable cache needs.
 
 That file is written by llmbroker, not by you: a refresh regenerates it in full.
-Add your own models with [`add-model`](direct.md), not by editing it.
-
-You can point a broker at a lineup file of your own instead:
+Add your own models with [`add-model`](direct.md), not by editing it. There is no
+way to point a broker at a lineup file of your own — a lineup arrives as a
+curated preset name and nothing else. What you can name is a database:
 
 ```python
-llms = llmbroker.Broker("llms.toml")
+llms = llmbroker.Broker("postgresql://…")   # registry, keys and journal, all three
 ```
 
-That is for a deploy that wants the lineup in its repository, reviewable as a
-diff — generate it with `llmbroker preset freetier --sync llms.toml` and commit
-the result. Such a broker reads the `.env` sitting next to the file, and keeps
-the file current the same way — see [below](#sync).
+See [Servers & clusters](server.md). If you must supply the pool yourself rather
+than follow our curation, pass an object implementing the registry protocol —
+together with `sync=None`:
+
+```python
+llms = llmbroker.Broker(registry=MyRegistry(), sync=None)
+```
+
+Without that second half llmbroker keeps following the preset and writes the
+merged lineup into whatever registry it was given, yours included.
 
 ### Which model is tried first {#weight}
 
@@ -95,16 +103,8 @@ instead of at the bottom where it could never earn its way up.
 ### Keeping the pool fresh {#sync}
 
 Providers come and go, and the curated preset follows them. You do not have to do
-anything about it — with no config file there is nothing of yours to refresh, and
-with one, refreshing it is a single command:
-
-```bash
-llmbroker preset freetier --sync llms.toml
-```
-
-It regenerates the file from the preset — the pool models, their key hints, and
-your own models carried over — and prints a report of what it did. From code the
-same operation is `llms.sync("freetier")`, and it returns that report:
+anything about it. When you want to force a refresh, it is one call, and it
+returns a report of what it did:
 
 ```python
 report = llms.sync("freetier")           # a preset name — the only call that goes online
@@ -121,23 +121,23 @@ It is best-effort: if the catalog is unreachable, the broker logs a warning and
 carries on with the config it already has. The explicit `llms.sync(...)` call
 raises instead — you asked for it, so you get to handle it.
 
-**A check that changes nothing touches nothing.** Your `llms.toml` is rewritten
-only when the curated lineup genuinely moved, so a file under version control
-stays byte-identical — and untouched mtime — on every check that found no news.
+**A check that changes nothing touches nothing.** The lineup is rewritten only
+when the curated one genuinely moved, so a check that found no news leaves it
+byte-identical, mtime included.
 
-To follow your own lineup instead of ours, name it; to follow nothing, say so:
+To follow nothing — because you fill the registry yourself — say so, and the
+check interval is yours to set:
 
 ```python
-llmbroker.Broker("llms.toml", sync="my-lineup.toml")   # yours, kept current
-llmbroker.Broker("llms.toml", sync=None)               # nothing is refreshed
-llmbroker.Broker("llms.toml", sync_interval=3600)      # check hourly instead
+llmbroker.Broker(sync=None)              # nothing is refreshed
+llmbroker.Broker(sync_interval=3600)     # check hourly instead
 ```
 
 ### Where llmbroker keeps its own state
 
 llmbroker keeps a little of its own: the fetched preset, the paid catalog, when it
-last checked for an update — and, when you gave it no config file, the model list
-it runs and its call journal too. That lives in one machine directory —
+last checked for an update — and, when you named no database, the model list it
+runs and its call journal too. That lives in one machine directory —
 `~/Library/Caches/llmbroker` on macOS, `$XDG_CACHE_HOME/llmbroker` on Linux,
 `%LOCALAPPDATA%\llmbroker` on Windows. Point it elsewhere with `$LLMBROKER_HOME`,
 or per broker with `home=`, which is how two projects on one machine keep entirely
@@ -148,13 +148,12 @@ read-only container — and the broker still works. It re-fetches, and in the
 read-only case simply remembers nothing between runs. Even with no network at all,
 a first run starts on the copy of the preset shipped inside the package.
 
-Sharing one journal per machine is deliberate in the no-config case: your keys
+Sharing one journal per machine is deliberate in the zero-config case: your keys
 come from the environment, so the rate limits it remembers really are one pool,
 and scattering the journal per working directory would make every run rediscover
 the same 429. Pass `home=` if you want a project to keep its own.
 
-A `.toml` config is synced from a curated preset only. To roll a vendored config
-out to a database registry instead, see
+To keep a database registry current from your own deploy job, see
 [Servers & clusters](server.md).
 
 Four things in the report are worth understanding:
@@ -239,7 +238,7 @@ never an alarm — two providers may be all you want.
 ## Calling the broker {#calling}
 
 ```python
-llms = llmbroker.Broker("llms.toml")
+llms = llmbroker.Broker()
 
 reply = llms.ask("Translate to French: Hello world")
 print(reply.text)

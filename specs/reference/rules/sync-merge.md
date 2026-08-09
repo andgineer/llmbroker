@@ -9,10 +9,21 @@ cross-cutting rules this file elaborates are in
 `sync(source)` is the only registry write path and returns a `SyncReport`
 describing what it did.
 
-**One verb, two sources.** A *preset name* fetches the curated lineup from the
-catalog — the only networked operation in the library. A *path* or a *registry*
-is offline. Both then run the identical merge, so every rule below holds
-whatever named the lineup.
+**One verb, one source.** A lineup arrives as a curated preset name and in no
+other shape: no host names a file, and no host hands over a lineup of its own to
+merge. Fetching that preset is the only networked operation in the library. A
+host that must not follow our curation supplies the whole pool instead, in a
+registry it fills itself
+([`decisions.md`](../decisions.md#the-lineup-file-is-not-a-path-a-host-names)).
+
+**The merge writes into the registry the broker was built with, whatever brought
+that registry there** — a lineup file llmbroker owns, a connection string, or an
+object the host constructed. Being host-supplied does not make a registry
+read-only, and the removal rule below decides what happens to the entries the
+host put in it. A host that wants its own pool left alone stops following the
+curation as well ([`lineup-refresh.md`](lineup-refresh.md)); that is one choice
+made twice, and the cost of the alternative — inferring intent from how the
+registry was constructed — is a rule no reader could predict from the call.
 
 Concurrent nodes are safe because the merge is a pure function of (arriving
 lineup, current lineup, resolved keys), and one registry means one secrets
@@ -21,31 +32,25 @@ the identity gate turns every other node's check into a no-op. A node must never
 coerce the shared registry to a *local copy* of its own — diverging copies would
 flip-flop it.
 
-## Three tiers, one merge site each
+## One merge site
 
-|  | tier 0 (the default) | tier 1 (a declarative config) | tier 2 |
-|---|---|---|---|
-| registry / secrets | the home-directory lineup on env plus the CWD `.env` | a config file on its default env/`.env` secrets | DB / Vault / AWS, possibly per-user (`scope`) |
-| who merges | the broker itself | the CLI, into the file | `broker.sync(...)` |
-| key visibility | the process environment + the CWD `.env` | the process environment + the file's sibling `.env` | the broker's own secrets backend |
+Every merge runs inside the broker, over the ports that broker was built with,
+so it always sees the keys the application will — that is what makes a key-aware
+merge safe. Nothing else merges: the CLI has no merge site of its own, and there
+is no offline entry point that could decide a removal blind to keys only the
+running process can resolve.
 
-Tier 0 is what a bare `Broker()` builds; tier 1 is for a lineup a team wants
-under version control and reviewable in a diff; tier 2 is the deploy path into a
-database registry.
+Two installation shapes remain, and they differ only in where the merged lineup
+lands and which keys the merge can see:
 
-Each tier has exactly one merge site, and that site sees the same keys the
-application will. **A file registry paired with a Vault/AWS/DB secrets backend
-is tier 2, not tier 1**: only the broker can see those keys, so that
-installation refreshes from code even though its lineup lives in a file. Tier 2
-never merges from the CLI at all. That is what makes a key-aware merge safe — no
-merge ever runs blind to the keys the program consuming its output will have.
+|  | the default | a database installation |
+|---|---|---|
+| registry / secrets | the lineup in llmbroker's own directory, keys from the environment plus the working directory's `.env` | DB / Vault / AWS, possibly per-user (`scope`) |
+| key visibility | the process environment + that `.env` | the broker's own secrets backend |
 
-A file target is written from a curated preset only. A file or registry source
-syncs into a database registry — the vendored-lockfile deploy path. The
-restriction is not technical: the target half is rendered from the merge whatever
-the source was. It stands because no path wants the other combination — a lineup
-a team maintains by hand is rolled out to a database registry, where the deploy
-job that owns it already is — so widening it would add a shape with no caller.
+A bare `Broker()` builds the first. The second is the deploy path: the host's own
+entrypoint constructs its broker and calls `sync`, so the connection config and
+its secrets stay in one place.
 
 ## The removal rule: the provider is the unit
 
@@ -68,10 +73,10 @@ The rule depends only on the state of the world — which providers the lineup
 carries, which keys exist, what the journal recorded — which is what makes
 repeated syncs converge instead of oscillating. It yields invariant 11.
 
-A path source is therefore not a blind mirror: an operator who deletes an entry
-from the vendored file gets it removed only under the rule above, and the report
-says why it was kept. The escape hatch for a forced lineup is mirroring the
-configs into the registry directly.
+A sync is therefore not a blind mirror: an entry the curated lineup drops is
+removed only under the rule above, and the report says why it was kept. A host
+that needs an exact lineup with nothing carried over writes it into its registry
+itself, which is a different act from following a curation.
 
 **Death is proven, never assumed.** An entry is dead when this installation's
 journal window holds at least one permanent client failure (401/403/404) and no
@@ -138,8 +143,8 @@ the value. Existing secrets are never overwritten — admin-edited values win. I
 also seeds the store's disabled map with any missing model names, never touching
 existing verdict values.
 
-A file registry is a legitimate target for a curated preset: the merged lineup is
-written back, which is what lets a file-configured broker keep itself current.
+Where the lineup lives in llmbroker's own directory, the merged result is written
+back over it, which is what lets a zero-config broker keep itself current.
 Provisioning against an empty registry still fails fast, naming the sync call
 that would fill it. The write is atomic and preserves the target's permissions.
 
@@ -168,14 +173,12 @@ a key still missing.
 
 ## The report
 
-- **`SyncReport`** is returned by every sync and printed by the CLI on every run
-  *including no-ops*, so kept entries and missing keys nag in each deploy log
-  until resolved. `last_sync_report` lets a host forward it to its own admin
-  channel, and is set on every outcome. The report carries no severity enum —
-  the host derives criticality.
-- **A committed config file is the durable state**: kept entries and the keys
-  they still need sit in the file, so a bot refresh is reviewable in the pull
-  request diff itself. The sync stores nothing of its own.
+- **`SyncReport`** is returned by every sync, *including no-ops*, so kept entries
+  and missing keys stay visible until resolved. `last_sync_report` lets a host
+  forward it to its own admin channel, and is set on every outcome. The report
+  carries no severity enum — the host derives criticality.
+- **The lineup itself is the durable state**: kept entries and the keys they
+  still need sit in it. The sync stores nothing of its own.
 - **A sync that changes nothing is indistinguishable from no sync at all.** The
   merged result is compared with what is already stored, and when they are equal
   nothing is written, nothing is applied to the live pool, and the outcome is

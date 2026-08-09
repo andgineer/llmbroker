@@ -1,5 +1,5 @@
-"""The ``sync=`` constructor argument: which lineup this broker follows, and the
-guarantee that following it never breaks a start.
+"""The ``sync=`` constructor argument: which curated preset this broker follows, and
+the guarantee that following it never breaks a start.
 
 An empty registry is filled before provisioning, blocking, because provisioning an
 empty registry raises. A registry that already has a lineup is provisioned from
@@ -32,12 +32,6 @@ def preset(monkeypatch):
     monkeypatch.setattr(presets, "fetch_preset_text", lambda _name: _PRESET)
 
 
-def _lineup(tmp_path):
-    src = tmp_path / "lineup.toml"
-    src.write_text(_PRESET)
-    return str(src)
-
-
 def _broker(tmp_path, **kwargs):
     kwargs.setdefault("secrets", DictSecrets({"GEMINI": "sk"}))
     return AsyncBroker(
@@ -53,27 +47,22 @@ async def _settle(broker) -> None:
         await broker._refresher._task
 
 
-async def test_the_knob_populates_a_fresh_registry_before_provisioning(tmp_path):
+async def test_the_knob_populates_a_fresh_registry_before_provisioning(tmp_path, preset):
     """Without it the same broker cannot even open: provisioning an empty registry
     raises, and `async with` provisions on entry."""
-    async with _broker(tmp_path, sync=_lineup(tmp_path)) as broker:
-        assert await broker.count() == 1
-
-    without = tmp_path / "without"
-    without.mkdir()
-    with pytest.raises(EmptyRegistryError):
-        async with _broker(without):
-            pass
-
-
-async def test_a_preset_name_works_the_same_way(tmp_path, preset):
     async with _broker(tmp_path, sync="freetier") as broker:
         assert await broker.count() == 1
         assert broker.last_sync_report.added == ("gemini",)
 
+    without = tmp_path / "without"
+    without.mkdir()
+    with pytest.raises(EmptyRegistryError):
+        async with _broker(without, sync=None):
+            pass
 
-async def test_the_knob_runs_for_a_caller_that_never_enters_the_context_manager(tmp_path):
-    broker = _broker(tmp_path, sync=_lineup(tmp_path))
+
+async def test_the_knob_runs_for_a_caller_that_never_enters_the_context_manager(tmp_path, preset):
+    broker = _broker(tmp_path, sync="freetier")
     try:
         assert await broker.count() == 1  # ensure_pool via a plain public call
     finally:
@@ -196,12 +185,12 @@ async def test_an_explicit_sync_still_raises(tmp_path, monkeypatch):
     await broker.aclose()
 
 
-def test_the_sync_wrapper_takes_the_same_knob(tmp_path):
+def test_the_sync_wrapper_takes_the_same_knob(tmp_path, preset):
     broker = Broker(
         registry=SqliteRegistry(str(tmp_path / "b.db")),
         store=InMemoryStore(),
         secrets=DictSecrets({"GEMINI": "sk"}),
-        sync=_lineup(tmp_path),
+        sync="freetier",
     )
     with broker:
         assert broker.count() == 1

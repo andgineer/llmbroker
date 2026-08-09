@@ -1,6 +1,5 @@
-"""File-backed registry: ``.toml`` / ``.json`` of ``[[llms]]`` rows, no secrets."""
+"""File-backed registry: a ``.toml`` file of ``[[llms]]`` rows, no secrets."""
 
-import json
 import tomllib
 from pathlib import Path
 
@@ -118,18 +117,11 @@ def parse_lineup(data: dict) -> Lineup:
 
 
 def _read_data(path: Path) -> dict:
-    """Parse the file into a dict; ``{}`` if missing, ``ValueError`` if unsupported."""
+    """Parse the file into a dict; ``{}`` if missing."""
     if not path.exists():
         return {}
-    suffix = path.suffix.lower()
-    if suffix == ".toml":
-        with path.open("rb") as fh:
-            return tomllib.load(fh)
-    if suffix == ".json":
-        return json.loads(path.read_text(encoding="utf-8"))
-    raise ValueError(
-        f"Registry: unsupported config extension {suffix!r} for {path} — expected .toml or .json",
-    )
+    with path.open("rb") as fh:
+        return tomllib.load(fh)
 
 
 def read_lineup(path: Path) -> Lineup:
@@ -138,7 +130,7 @@ def read_lineup(path: Path) -> Lineup:
 
 
 class Registry:
-    """File-backed read-only registry — ``.toml`` / ``.json`` by extension.
+    """File-backed read-only registry over a TOML lineup.
 
     The file is written by llmbroker's own commands and rewritten in full by a sync;
     see ``specs/reference/rules/sync-merge.md``.

@@ -47,8 +47,8 @@ Prefer your model list in a file you review? That still works — see
 
 ## Features
 
-- **No configuration** — `Broker()` takes no file and no arguments; a config file
-  is there for teams who want the lineup in a diff.
+- **No configuration** — `Broker()` takes no arguments at all; the curated pool
+  arrives and keeps itself current on its own.
 - **Automatic failover** — an error only when no one is left at all
   (`NoLLMAvailableError`).
 - **Chat, tools & agents** — `ask`, multi-turn `chat`, [tool calling](tools.md).
