@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_e1c86ac91afabe74_exceptions_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-08-09 15:02 +0000
+            created at 2026-08-09 15:11 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -93,8 +93,8 @@
     <p class="run run2"><span class="n"><a id="t11" href="#t11">11</a></span><span class="t">    <span class="nam">build_chat_request</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t12" href="#t12">12</a></span><span class="t">    <span class="nam">completion_from_response</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t13" href="#t13">13</a></span><span class="t">    <span class="nam">make_client</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t14" href="#t14">14</a></span><span class="t">    <span class="nam">retry_after_seconds</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t">    <span class="nam">stream_delta</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t14" href="#t14">14</a></span><span class="t">    <span class="nam">parse_stream_chunk</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t">    <span class="nam">retry_after_seconds</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t"><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t"><span class="key">from</span> <span class="nam">llmbroker</span><span class="op">.</span><span class="nam">exceptions</span> <span class="key">import</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t">    <span class="nam">AuthError</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -230,7 +230,7 @@
     <p class="run"><span class="n"><a id="t148" href="#t148">148</a></span><span class="t">                    <span class="nam">detail</span> <span class="op">=</span> <span class="op">(</span><span class="key">await</span> <span class="nam">resp</span><span class="op">.</span><span class="nam">aread</span><span class="op">(</span><span class="op">)</span><span class="op">)</span><span class="op">.</span><span class="nam">decode</span><span class="op">(</span><span class="nam">errors</span><span class="op">=</span><span class="str">&quot;replace&quot;</span><span class="op">)</span><span class="op">[</span><span class="op">:</span><span class="nam">DETAIL_SNIPPET</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t149" href="#t149">149</a></span><span class="t">                    <span class="key">raise</span> <span class="nam">_provider_error</span><span class="op">(</span><span class="nam">resp</span><span class="op">.</span><span class="nam">status_code</span><span class="op">,</span> <span class="nam">detail</span><span class="op">,</span> <span class="nam">resp</span><span class="op">.</span><span class="nam">headers</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t150" href="#t150">150</a></span><span class="t">                <span class="key">async</span> <span class="key">for</span> <span class="nam">chunk</span> <span class="key">in</span> <span class="nam">aiter_chat_chunks</span><span class="op">(</span><span class="nam">resp</span><span class="op">,</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_model</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t151" href="#t151">151</a></span><span class="t">                    <span class="nam">delta</span> <span class="op">=</span> <span class="nam">stream_delta</span><span class="op">(</span><span class="nam">chunk</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t151" href="#t151">151</a></span><span class="t">                    <span class="nam">delta</span><span class="op">,</span> <span class="nam">_</span> <span class="op">=</span> <span class="nam">parse_stream_chunk</span><span class="op">(</span><span class="nam">chunk</span><span class="op">,</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_model</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t152" href="#t152">152</a></span><span class="t">                    <span class="key">if</span> <span class="nam">delta</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t153" href="#t153">153</a></span><span class="t">                        <span class="key">yield</span> <span class="nam">delta</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t154" href="#t154">154</a></span><span class="t">        <span class="key">except</span> <span class="nam">httpx</span><span class="op">.</span><span class="nam">TimeoutException</span> <span class="key">as</span> <span class="nam">exc</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -324,7 +324,7 @@
             <a class="nav" href="z_e1c86ac91afabe74_exceptions_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-08-09 15:02 +0000
+            created at 2026-08-09 15:11 +0000
         </p>
     </div>
 </footer>
