@@ -79,6 +79,32 @@ llms = llmbroker.Broker(registry=MyRegistry(), sync="freetier")  # ваши пл
 это просто реестр, где лежит и то и другое. Единственное исключение — запись,
 следующая за платным алиасом: именно об этом алиас и просит.
 
+#### Своя запись — в пуле {#own-entry}
+
+Свою запись кладут через протокол реестра, а не записью строк: раскладка таблиц
+принадлежит llmbroker и может меняться от релиза к релизу. Прочитайте, что там
+есть, добавьте своё и запишите всё обратно — `mirror` зеркалит целиком, так что
+всё не переданное удаляется:
+
+```python
+from llmbroker.models import LLMConfig
+from llmbroker.postgres import Registry
+
+registry = Registry(pool)
+mine = LLMConfig(
+    name="my-gateway",
+    base_url="https://gw.internal/v1",
+    model="m",
+    api_key_ref="MY_GATEWAY_KEY",
+)
+await registry.mirror([*await registry.load(), mine])
+```
+
+Ничто не помечает её как нашу, поэтому никакая синхронизация её не удалит и не
+перепишет. Это участник пула, и роутер делает на неё failover; endpoint, который
+вы хотите вызывать по имени, — это [объявленная модель](direct.md), и у неё есть
+`alias`, а в пуле её нет.
+
 ### Какая модель пробуется первой {#weight}
 
 Это решает не порядок строк, а `weight`:

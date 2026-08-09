@@ -380,21 +380,38 @@ async def test_mutable_registry_alias_round_trip(mutable_registry):
     assert result["anthropic-claude-opus-4-8"].alias == "opus"
 
 
+def _aliased(name: str) -> LLMConfig:
+    return LLMConfig(
+        name=name,
+        base_url="https://x/v1",
+        model=name,
+        api_key_ref="K",
+        custom=True,
+        alias="opus",
+    )
+
+
+async def test_mutable_registry_refuses_duplicate_aliases_on_write(mutable_registry):
+    with pytest.raises(ValueError, match="duplicate alias"):
+        await mutable_registry.mirror([_aliased("a-1"), _aliased("a-2")])
+
+
 async def test_mutable_registry_refuses_duplicate_aliases_on_load(mutable_registry):
     """The store keys on the name, so two names may carry one alias — and a lookup
-    by alias would silently resolve to whichever came back first."""
-
-    def _aliased(name: str) -> LLMConfig:
-        return LLMConfig(
-            name=name,
-            base_url="https://x/v1",
-            model=name,
-            api_key_ref="K",
-            custom=True,
-            alias="opus",
+    by alias would silently resolve to whichever came back first. Written past
+    ``mirror`` because that is where such a row comes from: another writer."""
+    for cfg in (_aliased("a-1"), _aliased("a-2")):
+        await mutable_registry._driver.upsert(
+            "registry",
+            (cfg.name,),
+            {
+                "name": cfg.name,
+                "base_url": cfg.base_url,
+                "model": cfg.model,
+                "api_key_ref": cfg.api_key_ref,
+                "metadata": cfg.to_metadata(),
+            },
         )
-
-    await mutable_registry.mirror([_aliased("a-1"), _aliased("a-2")])
     with pytest.raises(ValueError, match="duplicate alias"):
         await mutable_registry.load()
 

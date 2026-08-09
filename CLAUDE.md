@@ -178,7 +178,7 @@ Any request to implement a plan — "выполни очередной план"
 - **The surrounding file is not the standard.** A long docstring next to the one you are writing is
   debt, not precedent, and "match the local comment density" does not apply here. Touching a
   function whose docstring is over the cap means shrinking it in the same edit — that is how the
-  148 over-long docstrings this rule was written against came to exist.
+  over-long docstrings this rule was written against came to exist.
 
 ### Imports
 - **No local (in-function) imports.** All imports at module top level, always. Narrow exception: a

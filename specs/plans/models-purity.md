@@ -23,9 +23,8 @@ things in it are none of those. Make the docstring true.
    `print` in the CLI, `logger.info` in the broker.
 
 3. **It holds the validators.** `check_limit`, `check_score`, `check_weight`,
-   `check_unique_aliases`, `to_utc`, `with_utc_timestamps`. These are policy,
-   not data, and several are imported by backends that want nothing else from
-   this module.
+   `check_aliases`, `to_utc`, `with_utc_timestamps`. These are policy, not data,
+   and several are imported by backends that want nothing else from this module.
 
 4. **It holds `key_hash`.** A sha256 digest — the quota-scope identity used by
    shared cooldowns and dead-key drops. Belongs with the journal.
@@ -61,6 +60,12 @@ weight parsing, and may have closed or moved that split already.
 whatever survives of finding 2 is text that has *already been corrected*. When
 relocating it, move it verbatim: re-typing a report line from what is written
 here would reintroduce the word that plan removed.
+
+`named-models-are-declared` removes `LLMConfig.custom` and its serialization, and
+strips `check_aliases` down to the uniqueness rule. `paid-catalog-retirement`
+adds two fields that are deliberately *not* serialized. Between them the
+metadata round trip and the validator list in finding 3 both change shape — take
+the inventory from the file, not from here.
 
 ## Open questions for the real plan
 

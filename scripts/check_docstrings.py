@@ -77,7 +77,12 @@ def main(paths: list[str]) -> int:
     for name in paths:
         path = Path(name)
         source = path.read_text(encoding="utf-8")
-        offences += docstring_offences(path, ast.parse(source))
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as exc:
+            offences.append(f"{path}:{exc.lineno}: cannot be parsed — {exc.msg}")
+            continue
+        offences += docstring_offences(path, tree)
         offences += comment_offences(path)
     for line in offences:
         print(line)

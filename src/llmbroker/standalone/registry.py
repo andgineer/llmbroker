@@ -3,7 +3,7 @@
 import tomllib
 from pathlib import Path
 
-from llmbroker.models import KeyInfo, Lineup, LLMConfig, check_unique_aliases, check_weight
+from llmbroker.models import KeyInfo, Lineup, LLMConfig, check_aliases, check_weight
 
 
 def _int_or_none(value: object) -> int | None:
@@ -114,7 +114,7 @@ def parse_lineup(data: dict) -> Lineup:
             if cfg is not None:
                 configs.append(cfg)
     _check_unique_names(configs)
-    check_unique_aliases(configs)
+    check_aliases(configs)
     return Lineup(configs=configs, keys=_key_infos(data))
 
 

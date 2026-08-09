@@ -264,12 +264,9 @@ the testcontainer tests.
 
 ### Upgrade note for the deployed installation
 
-A **database** registry filled by an earlier release has no `synced` marker on
-its rows, so after this change every stored entry reads as host-stated. The next
-sync then refuses with a name clash — the pool keeps serving, but stops
-following the curation. Fix: clear the `llmbroker_registry` rows once and let a
-sync refill them. A **file** installation is unaffected: the section split
-already carries the fact.
+None is written, and none is owed: stored data needs no compatibility before the
+next release, so rows a previous release left behind are out of scope for this
+plan and for every plan.
 
 ### Specs and docs
 
@@ -303,3 +300,69 @@ being ignored. Three things landed together, outside plan 9's scope:
    count.
 3. All 135 offences in `src/` were rewritten — reasoning moved to `specs/` or
    `docs/` where it belonged, or cut. No behavior changed; the gate is green.
+
+## Review round 1
+
+### Fixed: a pool member could follow an alias
+
+The file parser refuses an `alias` outside `[[custom]]`; the DB path and a
+registry the host implements itself — the ones this plan makes a supported place
+for a host's own entries — refused nothing. Such an entry was re-pointed by the
+sync at whatever the paid catalog recommends, name, model, base URL and key ref
+included, and then routed as part of the free pool, with the report saying
+nothing. `check_unique_aliases` became `check_aliases` and enforces both facts.
+
+It runs on every write llmbroker performs and on every pool build. The second
+site is the one that matters for the port: a host may implement the registry
+protocol itself, so the only thing llmbroker can validate there is the lineup,
+at the moment pool membership is decided. The rule is in `rules/direct-aliases.md`.
+
+### Reverted: reading a missing ownership record as a sync's own
+
+A first attempt made the record always serialized so that its *absence* could
+mean "stored by a release before the record existed". That is compatibility work
+for data written by an earlier version, which this project does not do — and the
+cost was the plan's own goal: with absence meaning "ours", an entry written into
+the registry by any route other than `LLMConfig` serialization was removed by the
+first sync. `decisions.md#a-sync-touches-only-what-a-sync-wrote` promises the
+opposite in as many words.
+
+The record is serialized only when true again, and absence means what the default
+means: not written by a sync, therefore untouchable. Rows a previous release left
+behind are out of scope.
+
+### The matrix that found it
+
+`tests/test_registry_ownership_conformance.py` runs both ownership properties
+over two axes — which backend stores the entry, and how the entry got there
+(seven routes, including rows written past the protocol) — plus the alias rule
+over its four routes. Every ownership defect in this plan's reviews has been a
+cell of the provenance axis; the backend axis has never once disagreed with
+itself. It is the objective check on any further change here: 50 cells, and the
+question "is this closed" has one answer instead of a prose argument.
+
+### Also from the review
+
+- `scripts/check_docstrings.py` had no tests; it has them now, and an
+  unparseable file is reported as an offence instead of a traceback.
+- `SyncReport`'s key-evidence fields lost their only explanation in the
+  docstring sweep — it is in `rules/sync-merge.md` under *The report*.
+- Invariant 2 said "only `sync` writes the registry" while the new entry blesses
+  a host's own `mirror` call; it now scopes itself to llmbroker's own code.
+- The docs claimed a host could put rows in a registry but never said how, and
+  `direct.md` linked to the section that opens "that file is written by
+  llmbroker, not by you". `usage.md` (en + ru) gains the `mirror` gesture under
+  its own anchor, which `direct.md` now points at.
+- A test pins the lineup file's ownership round trip: the file has no field for
+  it, so the renderer and the parser must keep agreeing about its sections.
+
+### Left alone, deliberately
+
+- `config_from_entry` refuses an `alias` outside `[[llms]]` with its own message,
+  and `check_aliases` then refuses the same thing with another. The file-specific
+  message is worth its duplication at the point a human is editing a file; noted
+  so the next reader does not report it as a finding.
+
+### Gate after the fixes
+
+`invoke pre` clean, `python -m pytest` — 1286 passed, zero failures, zero skips.

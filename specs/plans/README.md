@@ -16,9 +16,17 @@ is a boundary rather than a loss; that claim no longer holds for this batch as a
 **Plans 1-8 are implemented and waiting on the maintainer — 1, 6, 7 and 8 are reviewed, and 6 was
 reviewed twice: its second round reversed the two-file split it introduced, for the reasons in its
 own `Review round 2` section. Plan 9 is implemented and awaiting review; **the next one to take is
-plan 10**. A row stays here, with its status,
-until the maintainer asks for it to go after merge; "take the first row" means the first row still
-marked `queued`.
+plan 11, then 17**. A row stays here, with its status,
+until the maintainer asks for it to go after merge.
+
+**The `#` column is identity, not order — read the Take-order line below it.** 16, 17 and 18 were
+written after 15 and are taken before it; taking the numerically first `queued` row would start
+with a plan whose inventory the later ones delete.
+
+**Take order: 11 → 17 → 19 → 18 → 16 → 10 → 12 → 13 → 14 → 15.** 11 goes first because it is the only
+queued plan that fixes runtime behavior rather than shape, and it is small and blocks nothing —
+"may be pulled forward at any time" is the status in which a plan stays undone through eight
+others.
 
 ## Order
 
@@ -33,30 +41,48 @@ marked `queued`.
 | 7 | [lineup-refresher](lineup-refresher.md) | **implemented, reviewed** | — | 6 *(implemented)* | written in full against 6's result; **ships with 6** |
 | 8 | [curated-source-only](curated-source-only.md) | **implemented** | — | 6, 7 *(implemented)* | **removes a form**, not a simplification: a lineup arrives only as a curated preset name, and no host names a config file. Taken before the skeletons — they would otherwise have tidied code this deletes |
 | 9 | [registry-ownership](registry-ownership.md) | **implemented** | — | 8 *(implemented)* | **fixes a trap 8 created**: a sync destroys entries the host put in its own registry. An entry records who wrote it, and a host-built registry object must state what it follows |
-| 10 | [model-list-vocabulary](model-list-vocabulary.md) | queued | — | 9 | text only, no runtime change: `lineup` is a coined word that reaches the reader undefined — docs and program strings say "the model list" |
-| 11 | [sse-chunk-shape](sse-chunk-shape.md) | queued | — | 2 *(implemented)* | **fixes a spec divergence**: a non-object SSE payload escapes the pool raw instead of failing over. Small, and independent of everything |
-| 12 | [models-purity](models-purity.md) | queued | — | 6 *(implemented)* | **skeleton** — `models.py` logs, formats prose, and holds the validators |
-| 13 | [direct-client-seam](direct-client-seam.md) | queued | — | 2 *(implemented)* | **skeleton** — the sync broker reaches a private method; two clients copy-pasted |
-| 14 | [declared-out-of-catalog](declared-out-of-catalog.md) | queued | — | 6 *(implemented)* | **skeleton** — the `direct=` overlay is half of `Catalog` and owns a cycle back to the broker |
+| 10 | [model-list-vocabulary](model-list-vocabulary.md) | queued | — | 17, 19, 18, 16 | text only, no runtime change: `lineup` is a coined word that reaches the reader undefined — docs and program strings say "the model list". **Re-inventory the strings** — the four plans before it delete some and write their own new ones in this plan's wording |
+| 11 | [sse-chunk-shape](sse-chunk-shape.md) | queued | — | 2 *(implemented)* | **fixes a spec divergence**: a non-object SSE payload escapes the pool raw instead of failing over. Small, independent of everything, and the only queued plan that changes behavior. **Take first** |
+| 12 | [models-purity](models-purity.md) | queued | — | 17, 16 | **skeleton** — `models.py` logs, formats prose, and holds the validators. 17 and 16 both reshape its field set and validator list |
+| 13 | [direct-client-seam](direct-client-seam.md) | queued | — | 2 *(implemented)* | **skeleton** — the sync broker reaches a private method; two clients copy-pasted. Unaffected by 16-18 |
+| 14 | [declared-out-of-catalog](declared-out-of-catalog.md) | queued | — | 17 | **skeleton** — the `direct=` overlay is half of `Catalog` and owns a cycle back to the broker. **17 closes one of its four findings and raises the rest**: the overlay becomes the only home a named model has |
 | 15 | [store-conformance-suite](store-conformance-suite.md) | queued | — | — | tests only, no runtime change: the store layer never got the driver layer's one-suite-for-all shape, so ten universal behaviors are written twice. Take last |
+| 16 | [paid-catalog-retirement](paid-catalog-retirement.md) | queued | — | 17 | **closes a gap, not a defect**: an alias whose model the provider withdraws has no representation, so a deployment learns about it from a failing request. After 17, which makes the withdrawal an in-memory fact instead of a stored one |
+| 17 | [named-models-are-declared](named-models-are-declared.md) | queued | — | 9 | **removes a form**: a model reached by name is declared in code, never stored. `custom`, `[[custom]]` and `add-model` go; the CLI gains read-only `list`, the alias refresh moves from the merge to the resolution, and `synced` is renamed for the question it answers. **Take first** |
+| 18 | [env-one-form](env-one-form.md) | queued | — | — | `env` takes a preset name and drops the form that cannot work on a database registry; plus the undocumented second refresh clock gets its paragraph in `server.md`. Small, independent |
+| 19 | [no-automatic-fetch](no-automatic-fetch.md) | queued | — | 17 | **answers a deployment requirement**: a serving process that may make no outbound connection. `sync_interval=None` switches off both clocks, `sync()` with no argument does it explicitly, and `EmptyRegistryError` stops blaming the network for a state the bundled floor makes impossible |
 
 Plans 1-5 touch disjoint files and may be taken in any order subject to the
 Blocked-by column. Plans 6 and 7 must reach a release together: 7 extracts the
 seam 6 creates. Plan 8 goes before the skeletons: it deletes modules and call
 sites they would otherwise be written against.
 
-The queued half is ordered so that the two plans changing the shared vocabulary
-of the code and of the reader land before anything is written against the old
-one. **9 fixes a defect and moves the seams** — `models.py`, `merge.py`, the
-broker constructor — which is exactly what the skeletons would otherwise be
-planned against. **10 renames what the reader sees**, and goes right after 9
-rather than last: 12 relocates the prose and log lines out of `models.py`, so a
-later rename would have to chase the same strings into their new home; and it
-goes *after* 9 rather than before, because 9 rewrites several of the doc
-sections it would otherwise rename twice. 11 is a behavior fix that blocks
-nothing and depends on nothing — it may be pulled forward at any time. 15
-changes no runtime code and blocks nothing, so it goes last: its own text argues
-it should be taken only when its purely mechanical diff reads as worth the churn.
+The queued half is ordered so that every plan that *removes* something lands
+before the plans that would otherwise be written against what it removes.
+**9 fixed a defect and moved the seams** — `models.py`, `merge.py`, the broker
+constructor — which is what the skeletons would otherwise have been planned
+against. **11 is a behavior fix that blocks nothing and depends on nothing, and
+it is taken first for exactly that reason** — nothing it touches is reshaped by
+anything below, so deferring it only risks it never being taken.
+**10 renames what the reader sees** and now goes after the removals rather than
+before them: three plans rewrite the doc sections and CLI strings it was
+inventoried from, so renaming first would rename some of them into files that
+then delete them. It still goes before 12, which relocates the prose and log
+lines out of `models.py`.
+
+**17 goes first of the whole queued half.** It removes a field, a file section
+and a CLI command, and moves the alias refresh out of the merge — every other
+queued plan is either written against code it deletes (10's string inventory,
+12's field set) or has a finding it closes (14's third). 18 follows only because
+it edits the same CLI section of `rules/presets.md`; it is otherwise independent.
+19 also comes after 17, which rewrites the method whose signature it changes.
+16 must come after 17 too, which turns the withdrawal it represents from a stored
+fact into an in-memory one. **10 comes after every plan that writes a
+user-facing string**, and each of those plans writes its new strings in 10's
+wording already — so what 10 renames is what none of them touched, and its
+inventory should come out shorter than the one in its text. 15 changes no runtime code and blocks nothing, so it stays
+last: its own text argues it should be taken only when its purely mechanical diff
+reads as worth the churn.
 
 **Skeletons (12-14) carry findings, not routes.** The evidence in them is about
 today's code and stays valid; the work order is missing because their target

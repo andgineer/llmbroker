@@ -33,6 +33,12 @@ without having written it
 ([`sync-merge.md`](sync-merge.md#the-partition-a-sync-touches-only-what-a-sync-wrote)):
 naming an alias is what asks for that.
 
+**So an alias never sits on a pool member.** The two together would hand
+free-tier traffic to whatever the paid catalog currently recommends, under a name
+and a key ref the installation never chose. Every write llmbroker performs is
+refused, and so is every pool build — the second is what covers a registry the
+host implemented itself, which llmbroker can validate only as a lineup.
+
 **So a followed entry is not the host's to hand-edit — and neither is the file it
 sits in.** Both forms are added by command and stored in a file llmbroker
 regenerates

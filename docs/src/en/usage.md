@@ -79,6 +79,32 @@ plus two endpoints of my own, routed together" is just a registry with both in
 it. The one exception is an entry that follows a paid alias — that is what the
 alias asks for.
 
+#### An entry of your own, in the pool {#own-entry}
+
+You put your own entry there through the registry protocol, not by writing rows:
+the table layout is llmbroker's own and may change between releases. Read what is
+there, add yours, write it all back — `mirror` is a total mirror, so anything you
+leave out is deleted:
+
+```python
+from llmbroker.models import LLMConfig
+from llmbroker.postgres import Registry
+
+registry = Registry(pool)
+mine = LLMConfig(
+    name="my-gateway",
+    base_url="https://gw.internal/v1",
+    model="m",
+    api_key_ref="MY_GATEWAY_KEY",
+)
+await registry.mirror([*await registry.load(), mine])
+```
+
+Nothing marks it as ours, so no sync ever removes or rewrites it. It is a pool
+member and the router fails over onto it — an endpoint you want reached by name
+instead is [a declared model](direct.md), and carries an `alias` rather than
+sitting in the pool.
+
 ### Which model is tried first {#weight}
 
 Row order does not decide it — `weight` does:

@@ -7,7 +7,14 @@ from collections.abc import Awaitable, Callable, Sequence
 
 from llmbroker.broker.pool import LLMPool
 from llmbroker.exceptions import EmptyRegistryError, PoolModelError, UnknownModelError
-from llmbroker.models import DeclaredModels, KeyInfo, LLMConfig, PendingKey, PoolHealth
+from llmbroker.models import (
+    DeclaredModels,
+    KeyInfo,
+    LLMConfig,
+    PendingKey,
+    PoolHealth,
+    check_aliases,
+)
 from llmbroker.protocols.registry import (
     KeyInfoProtocol,
     MutableRegistryProtocol,
@@ -220,6 +227,9 @@ class Catalog:
         """Reconcile the managed entries into the live pool. A custom entry stays
         in the registry (reachable via ``broker.direct``) and never joins it."""
         managed = [c for c in configs if not c.custom]
+        # Here, not in a registry: a host may implement the port itself, and a refresh
+        # would re-point a pooled alias at whatever the paid catalog recommends.
+        check_aliases(managed)
         names = {c.name for c in managed}
         for name in list(self._pool.configs):
             if name not in names:

@@ -4,6 +4,8 @@ An entry the installation put in its own registry is carried through every merge
 never removed, never overwritten — and the pool routes it if it is a pool member.
 """
 
+import tomllib
+from dataclasses import replace
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -13,9 +15,11 @@ from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.catalog import Catalog
 from llmbroker.broker.keys import KeyEvidence
+from llmbroker.broker.lineup_file import render_lineup
 from llmbroker.broker.merge import merge_upstream, retirement_candidates
 from llmbroker.models import Lineup, LLMConfig
 from llmbroker.sqlite import Registry as SqliteRegistry
+from llmbroker.standalone.registry import parse_lineup
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import InMemoryStore
 
@@ -155,6 +159,52 @@ async def test_a_sync_marks_what_it_wrote(tmp_path, preset):
     finally:
         await broker.aclose()
     assert [(c.name, c.synced) for c in await registry.load()] == [("gemini", True)]
+
+
+# ── An alias belongs to an entry reached by name, on every route ────────────
+
+
+async def test_a_pool_member_may_not_follow_an_alias(tmp_path):
+    """A refresh re-points what follows an alias, so a pooled one would hand free-tier
+    traffic to whatever the paid catalog now recommends."""
+    registry = SqliteRegistry(str(tmp_path / "b.db"))
+    followed = LLMConfig(
+        name="mine",
+        base_url="https://own/v1",
+        model="m",
+        api_key_ref="OWN",
+        alias="opus",
+    )
+    with pytest.raises(ValueError, match="pool member and carries the alias"):
+        await registry.mirror([followed])
+
+
+async def test_a_pooled_alias_written_past_mirror_is_refused_on_load(tmp_path):
+    registry = SqliteRegistry(str(tmp_path / "b.db"))
+    await registry._driver.upsert(
+        "registry",
+        ("mine",),
+        {
+            "name": "mine",
+            "base_url": "https://own/v1",
+            "model": "m",
+            "api_key_ref": "OWN",
+            "metadata": {"synced": False, "alias": "opus"},
+        },
+    )
+    with pytest.raises(ValueError, match="pool member and carries the alias"):
+        await registry.load()
+
+
+# ── The lineup file says the same thing with its sections ───────────────────
+
+
+def test_the_file_carries_ownership_through_a_render():
+    """The file has no field for it: `[[llms]]` is a sync's, `[[custom]]` is not. A
+    renderer that stopped agreeing with the parser would silently re-own every entry."""
+    lineup = Lineup(configs=[_curated("gemini"), replace(_own("mine"), custom=True)])
+    reparsed = parse_lineup(tomllib.loads(render_lineup(lineup)))
+    assert {c.name: c.synced for c in reparsed.configs} == {"gemini": True, "mine": False}
 
 
 async def test_a_repeated_sync_over_a_host_entry_applies_nothing(tmp_path, preset):

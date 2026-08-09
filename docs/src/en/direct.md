@@ -64,10 +64,11 @@ failover across interchangeable free endpoints curated as one set; a private
 gateway dropped into it would be spilled onto by a rate limit that has nothing to
 do with it, and would be handed traffic you meant for the free tier.
 
-An endpoint of your own *can* be a pool member — by putting it in [your own
-registry](usage.md#file), where a refresh never touches it. That is a decision
-you make once and record there, not a side effect of naming a model you wanted to
-call.
+An endpoint of your own *can* be a pool member — by [writing it into your
+registry](usage.md#own-entry), where a refresh never touches it. That is a
+decision you make once and record there, not a side effect of naming a model you
+wanted to call. Such an entry carries no `alias`: an alias is what a refresh
+re-points, and a registry refuses one on a pool member.
 
 ## In the lineup
 

@@ -135,9 +135,10 @@ and nothing breaks; the lineup just keeps entries a better-informed run would
 have pruned. This is the only reason the parameter exists.
 
 **When a removal orphans a key** — the ref's key *is* here and nothing in the
-merged lineup references it any more, the installation's own entries
-included — the report says the key is now unused and a human decides; the key's help section is kept while
-any entry still references it. A ref with no key behind it is nothing to revoke,
+merged lineup references it any more, the installation's own entries included —
+the report says the key is now unused and a human decides; the key's help
+section is kept while any entry still references it. A ref with no key behind it
+is nothing to revoke,
 and saying otherwise would put an invented admin act into the one channel that
 exists to surface the real ones, on the commonest removal of all.
 
@@ -199,6 +200,11 @@ a key still missing.
   and missing keys stay visible until resolved. `last_sync_report` lets a host
   forward it to its own admin channel, and is set on every outcome. The report
   carries no severity enum — the host derives criticality.
+- **The report also says whether a missing key was evidence at all** at that
+  merge site, and which of the two ways it was not — the probe resolved nothing,
+  or keys are per-user behind `scope` (`keys_visible`, `keys_scoped`). A host
+  reading `kept` needs both: where key presence proves nothing, "kept" means the
+  merge declined to decide, not that the entry was weighed and spared.
 - **The lineup itself is the durable state**: kept entries and the keys they
   still need sit in it. The sync stores nothing of its own.
 - **A sync that changes nothing is indistinguishable from no sync at all.** The

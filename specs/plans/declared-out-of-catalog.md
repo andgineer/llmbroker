@@ -24,15 +24,15 @@ second job, and break the ownership cycle it created.
    and `_refresh_paid_catalog`). So: Broker → Catalog → Broker, with the cache
    invalidated from outside the object that holds it.
 
-3. **`entries()` re-reads and re-validates the registry on every `direct()` call.**
-   Its own docstring says that read "must not pay a catalog parse" — and it does
-   not, but it does pay a registry one: a file open, a TOML parse and the
-   uniqueness checks, synchronously on the event loop, per call. The registry
-   deliberately re-reads rather than caches — a cache there would be a staleness
-   bug, and that decision is right — so the cache belongs on this side, where a
-   sync already knows when to drop it. Whatever object ends up owning the
-   declared overlay is the natural owner of a lineup read that a sync
-   invalidates.
+3. ~~**`entries()` re-reads and re-validates the registry on every `direct()`
+   call.**~~ **Closed by `named-models-are-declared`, not by this plan.** A named
+   model is only ever declared once that lands, so `direct()` resolves against
+   the declared list and never opens the registry. The cache this finding argued
+   for is not needed: the per-call file open, TOML parse and uniqueness checks go
+   away with the storage. Verify before scoping — and note the one thing that
+   must survive without a registry read: `PoolModelError`'s message, which
+   distinguishes "that name is a pool member" from "no such model", and can
+   answer from the live pool's own configs in memory.
 
 4. **The cache has a lock, a clock and a fallback policy**
    (`_resolve_overlay`, plus `AsyncBroker._resolve_declared`'s rule that the
@@ -56,12 +56,17 @@ expressed through that flag today. **Check how the rule survives step 6 before
 scoping**: it may already have a home, or it may have moved intact and still
 need one.
 
-`registry-ownership` changes what a sync may do to a stored entry, not when it
-drops a cached read, so finding 3's "a read that a sync invalidates" should
-still hold — verify it rather than assume. It also makes the broker refuse to be
-built when a registry object arrives without an explicit `sync`, which any
-example or test in the real plan that constructs a broker by hand will have to
-satisfy.
+`registry-ownership` makes the broker refuse to be built when a registry object
+arrives without an explicit `sync`, which any example or test in the real plan
+that constructs a broker by hand will have to satisfy.
+
+**`named-models-are-declared` is the one that changes this plan's subject, and it
+must merge first.** It closes finding 3 outright (above) and raises what is left:
+the declared overlay stops being a side feature of `Catalog` and becomes the only
+home a named model has, so the split proposed here is separating two halves of
+the product rather than tidying one class. It also hands this object more work —
+that plan moves the alias facts from the merge to the re-resolution, so whatever
+owns the declared models owns producing them too.
 
 ## Open questions for the real plan
 

@@ -57,11 +57,15 @@ beside the code does not.
 
 One batch; it is a text change and ends green in one gate run.
 
-1. **The strings.** `cli.py` (help, descriptions, the two `env` errors, the
-   `add-model` next-step line), `broker/report.py` (three report lines),
-   `broker/merge.py` (the clash message, the refusal), `broker/presets.py` (the
-   `[[custom]]` refusal), `broker/source.py` (the unrecognized-source error).
-   Around 15 strings.
+1. **The strings.** `cli.py` (help and descriptions), `broker/report.py` (three
+   report lines), `broker/merge.py` (the clash message, the refusal),
+   `broker/presets.py` (the curated-lineup refusal), `broker/source.py` (the
+   unrecognized-source error). **Re-inventory rather than trusting this list**,
+   and expect it to be *shorter* than it was: `named-models-are-declared`,
+   `env-one-form`, `paid-catalog-retirement` and `no-automatic-fetch` each delete
+   some of the strings it was built from, and each writes its own new ones in the
+   wording this plan establishes rather than in the coined word. What is left
+   here is the strings none of them touched.
 2. **The tests that assert on those strings** — grep for the asserted fragments
    rather than assuming; several match on wording.
 3. **`docs/src/en/`** — `usage.md` carries most of it, including the section
@@ -83,12 +87,13 @@ spec sentence quotes a program string that this plan changes.
 
 ## The queue
 
-Right after `registry-ownership`, not last. After it, because that plan rewrites
-several of the same doc sections and renaming them first would rename them
-twice. Not last, because `models-purity` relocates the prose and log lines out
-of `models.py`: renaming afterwards means chasing the same strings into their
-new home, and every plan taken before this one writes the coined word into new
-code.
+After `named-models-are-declared`, `env-one-form` and `paid-catalog-retirement`,
+and before the skeletons. After those three, because between them they rewrite
+`direct.md`, both `usage.md` pages and most of the CLI's strings — renaming first
+would rename them twice, and a third of the inventory above would be renamed into
+a file that then deletes it. Before `models-purity`, which relocates the prose
+and log lines out of `models.py`: renaming afterwards means chasing the same
+strings into their new home.
 
 ## Gate
 

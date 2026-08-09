@@ -10,8 +10,8 @@ from llmbroker.models import (
     CallStatus,
     LLMConfig,
     Usage,
+    check_aliases,
     check_limit,
-    check_unique_aliases,
     to_utc,
     with_utc_timestamps,
 )
@@ -37,13 +37,14 @@ class DriverRegistry:
         ]
         # Names come back unique from the store's own key; aliases live in the
         # metadata column, where nothing enforces them.
-        check_unique_aliases(configs)
+        check_aliases(configs)
         return configs
 
     async def mirror(self, configs: list[LLMConfig]) -> None:
         """Total mirror: add new, update existing, delete stored entries absent
         from ``configs``. What may be absent is decided before this call, in
         ``broker.merge``; here the merged lineup is simply written."""
+        check_aliases(configs)
         source_names = {c.name for c in configs}
         existing = {str(row["name"]) for row in await self._driver.fetch("registry")}
         for name in existing - source_names:

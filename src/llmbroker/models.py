@@ -312,14 +312,20 @@ def check_weight(weight: float) -> None:
         raise ValueError(f"weight must be within [0.0, 1.0], got {weight}")
 
 
-def check_unique_aliases(configs: "list[LLMConfig]") -> None:
-    """Reject a registry whose aliases do not name exactly one entry each. Enforced on
-    every read, not just a file parse: a lookup returns the first match, so a
-    duplicate silently resolves to one of two models."""
+def check_aliases(configs: "list[LLMConfig]") -> None:
+    """Reject a registry whose aliases do not each name one entry reached by name.
+    Enforced on every read, not just a file parse: a lookup returns the first match,
+    and a refresh re-points whatever follows an alias."""
     seen: set[str] = set()
     for cfg in configs:
         if cfg.alias is None:
             continue
+        if not cfg.custom:
+            raise ValueError(
+                f"Registry: entry {cfg.name!r} is a pool member and carries the alias"
+                f" {cfg.alias!r} — an alias belongs to an entry reached by name, whose"
+                " provider fields a refresh rewrites from the paid catalog",
+            )
         if cfg.alias in seen:
             raise ValueError(
                 f"Registry: duplicate alias {cfg.alias!r} — an alias names exactly one entry",
