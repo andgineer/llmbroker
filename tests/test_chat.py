@@ -9,11 +9,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from llmbroker.chat import (
+    _BODY_SNIPPET,
     _parse_completion,
     arun_tool_loop,
     build_chat_request,
     execute_tool_calls,
     message_from_response,
+    parse_stream_chunk,
     parse_tool_calls,
     parse_usage,
     retry_after_seconds,
@@ -163,6 +165,48 @@ def test_any_parse_failure_becomes_an_invalid_provider_response():
     with pytest.raises(InvalidProviderResponseError) as exc_info:
         _parse_completion(Hostile(), "m")
     assert exc_info.value.model == "m"
+
+
+_MALFORMED_CHUNKS = [
+    {"choices": [{"delta": None}]},
+    {"choices": [None]},
+    {"choices": ["x"]},
+    {"choices": {"delta": {"content": "hi"}}},
+]
+
+
+def test_parse_stream_chunk_returns_the_delta_and_the_usage():
+    chunk = {"choices": [{"delta": {"content": "Hi"}}], "usage": {"total_tokens": 3}}
+    delta, usage = parse_stream_chunk(chunk, "m")
+    assert delta == "Hi"
+    assert usage is not None and usage.total_tokens == 3
+
+
+def test_parse_stream_chunk_on_a_usage_only_chunk():
+    delta, usage = parse_stream_chunk({"choices": [], "usage": {"total_tokens": 7}}, "m")
+    assert delta == ""
+    assert usage is not None and usage.total_tokens == 7
+
+
+@pytest.mark.parametrize(
+    "chunk",
+    _MALFORMED_CHUNKS,
+    ids=["delta-null", "choice-null", "choice-not-an-object", "choices-not-a-list"],
+)
+def test_parse_stream_chunk_on_a_malformed_shape_is_an_invalid_provider_response(chunk):
+    with pytest.raises(InvalidProviderResponseError) as exc_info:
+        parse_stream_chunk(chunk, "m")
+    err = exc_info.value
+    assert err.model == "m"
+    assert err.detail == str(chunk)
+    assert err.__cause__ is not None
+
+
+def test_parse_stream_chunk_truncates_a_long_malformed_chunk():
+    chunk = {"choices": [{"delta": None}], "pad": "x" * (_BODY_SNIPPET * 2)}
+    with pytest.raises(InvalidProviderResponseError) as exc_info:
+        parse_stream_chunk(chunk, "m")
+    assert len(exc_info.value.detail or "") == _BODY_SNIPPET
 
 
 def test_parse_tool_calls_present():

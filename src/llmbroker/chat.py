@@ -137,6 +137,14 @@ def _invalid_body(model: str, snippet: str) -> InvalidProviderResponseError:
     )
 
 
+def _invalid_stream(model: str, detail: str) -> InvalidProviderResponseError:
+    return InvalidProviderResponseError(
+        f"{model}: HTTP 200 body is not an OpenAI-compatible SSE stream",
+        model=model,
+        detail=detail[:_BODY_SNIPPET],
+    )
+
+
 def _parse_completion(data: Any, model: str) -> tuple[str, list[dict] | None, Usage | None]:
     """Pull (content, tool_calls, usage) out of a decoded chat-completion body. The
     caught set is deliberately broad: an escape here reaches the caller raw and skips
@@ -227,26 +235,34 @@ async def aiter_chat_chunks(resp: httpx.Response, model: str) -> AsyncIterator[d
         completions += "choices" in chunk
         yield chunk
     if not completions:
-        raise InvalidProviderResponseError(
-            f"{model}: HTTP 200 body is not an OpenAI-compatible SSE stream",
-            model=model,
-            detail=f"content-type={resp.headers.get('content-type', '')!r},"
+        raise _invalid_stream(
+            model,
+            f"content-type={resp.headers.get('content-type', '')!r},"
             " no chat-completion chunks decoded",
         )
 
 
-def stream_delta(chunk: dict) -> str:
+def _stream_delta(chunk: dict) -> str:
     """Text delta carried by one OpenAI-compatible stream chunk (``""`` when none).
 
-    >>> stream_delta({"choices": [{"delta": {"content": "Hi"}}]})
+    >>> _stream_delta({"choices": [{"delta": {"content": "Hi"}}]})
     'Hi'
-    >>> stream_delta({"choices": [], "usage": {"total_tokens": 3}})
+    >>> _stream_delta({"choices": [], "usage": {"total_tokens": 3}})
     ''
     """
     choices = chunk.get("choices") or []
     if not choices:
         return ""
     return str(choices[0].get("delta", {}).get("content") or "")
+
+
+def parse_stream_chunk(chunk: dict, model: str) -> tuple[str, Usage | None]:
+    """Pull (delta, usage) out of one stream chunk. The caught set is deliberately
+    broad: an escape here reaches the caller raw and skips failover."""
+    try:
+        return _stream_delta(chunk), parse_usage(chunk)
+    except (ArithmeticError, AttributeError, KeyError, IndexError, TypeError, ValueError) as exc:
+        raise _invalid_stream(model, str(chunk)) from exc
 
 
 def execute_tool_calls(

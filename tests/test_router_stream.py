@@ -447,6 +447,123 @@ def test_a_non_object_payload_among_real_chunks_leaves_the_stream_working():
     assert pool.state("a").phase is LifecyclePhase.AVAILABLE
 
 
+_MALFORMED_CHUNKS = [
+    b'{"choices": [{"delta": null}]}',
+    b'{"choices": [null]}',
+    b'{"choices": ["x"]}',
+    b'{"choices": {"delta": {"content": "hi"}}}',
+]
+
+
+@pytest.mark.parametrize(
+    "chunk",
+    _MALFORMED_CHUNKS,
+    ids=["delta-null", "choice-null", "choice-not-an-object", "choices-not-a-list"],
+)
+def test_malformed_chunk_shape_is_a_garbage_200(chunk):
+    """A chunk that is an object carrying `choices` still counts as a completion, so
+    a shape the extractor cannot read must fail over rather than escape raw."""
+    store = _RecordingStore()
+    garbage = b"data: " + chunk + b"\n\ndata: [DONE]\n\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "a":
+            return httpx.Response(
+                200, content=garbage, headers={"content-type": "text/event-stream"}
+            )
+        return httpx.Response(
+            200, content=_sse("ok"), headers={"content-type": "text/event-stream"}
+        )
+
+    async def run():
+        pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
+        router = Router(pool, store, scope=None)
+        _mount(router, handler)
+        deltas = await _drain(router)
+
+        client = AsyncDirectClient(
+            base_url="https://a/v1",
+            model="a",
+            api_key="k",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5.0),
+        )
+        with pytest.raises(InvalidProviderResponseError) as exc_info:
+            _ = [d async for d in client.stream("hi")]
+        await client.aclose()
+        return deltas, pool, exc_info.value
+
+    deltas, pool, err = asyncio.run(run())
+    assert deltas == ["ok"]  # failed over instead of escaping raw
+    assert [(c.llm_name, c.status) for c in store.calls] == [
+        ("a", CallStatus.ERROR),
+        ("b", CallStatus.OK),
+    ]
+    assert pool.state("a").phase is LifecyclePhase.COOLING
+    assert err.model == "a"
+
+
+def test_a_malformed_chunk_after_the_first_delta_interrupts_the_stream():
+    """Past the first delta the answer is already partly the caller's: the model is
+    cooled and the caller is told, rather than the truncation passing for an ending."""
+    store = _RecordingStore()
+
+    async def run():
+        pool = await _pool(_cfg("a", "a"))
+        router = Router(pool, store, scope=None)
+        _mount(
+            router,
+            lambda _r: httpx.Response(
+                200,
+                content=b'data: {"choices": [{"delta": {"content": "par"}}]}\n\n'
+                b'data: {"choices": [{"delta": null}]}\n\n'
+                b"data: [DONE]\n\n",
+                headers={"content-type": "text/event-stream"},
+            ),
+        )
+        seen: list[str] = []
+        with pytest.raises(StreamInterruptedError) as exc_info:
+            async for delta in router.stream([{"role": "user", "content": "hi"}]):
+                seen.append(delta)
+        return seen, pool, exc_info.value
+
+    seen, pool, err = asyncio.run(run())
+    assert seen == ["par"]  # the delta already delivered stands
+    assert err.llm_name == "a"
+    (row,) = store.calls
+    assert (row.llm_name, row.status) == ("a", CallStatus.ERROR)
+    assert row.cooldown_until is not None
+    assert pool.state("a").phase is LifecyclePhase.COOLING
+
+
+def test_a_finish_chunk_with_no_choices_is_not_malformed():
+    """The guard must not fire on the ordinary preamble and usage shapes."""
+    store = _RecordingStore()
+
+    async def run():
+        pool = await _pool(_cfg("a", "a"))
+        router = Router(pool, store, scope=None)
+        _mount(
+            router,
+            lambda _r: httpx.Response(
+                200,
+                content=b'data: {"choices": []}\n\n'
+                b'data: {"choices": [{"delta": {"content": "ok"}}]}\n\n'
+                b'data: {"choices": [{"delta": {}, "finish_reason": "stop"}],'
+                b' "usage": {"total_tokens": 7}}\n\n'
+                b"data: [DONE]\n\n",
+                headers={"content-type": "text/event-stream"},
+            ),
+        )
+        return await _drain(router), pool
+
+    deltas, pool = asyncio.run(run())
+    assert deltas == ["ok"]
+    (row,) = store.calls
+    assert (row.llm_name, row.status) == ("a", CallStatus.OK)
+    assert row.usage.total_tokens == 7  # noqa: PLR2004
+    assert pool.state("a").phase is LifecyclePhase.AVAILABLE
+
+
 def test_stream_reraises_the_provider_error_when_every_candidate_rejects_the_request():
     """A 4xx is the request's fault on the streaming path too: nothing is cooled, and
     the provider's own error beats a generic `NoLLMAvailableError`."""

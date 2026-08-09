@@ -22,9 +22,8 @@ from llmbroker.chat import (
     aiter_chat_chunks,
     build_chat_request,
     call_provider,
-    parse_usage,
+    parse_stream_chunk,
     retry_after_seconds,
-    stream_delta,
 )
 from llmbroker.exceptions import (
     InvalidProviderResponseError,
@@ -128,8 +127,8 @@ async def _stream_deltas(
             await resp.aread()
             resp.raise_for_status()
         async for chunk in aiter_chat_chunks(resp, model):
-            progress.usage = parse_usage(chunk) or progress.usage
-            delta = stream_delta(chunk)
+            delta, usage = parse_stream_chunk(chunk, model)
+            progress.usage = usage or progress.usage
             if not delta:
                 continue
             if not progress.started:

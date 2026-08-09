@@ -11,8 +11,8 @@ from llmbroker.chat import (
     build_chat_request,
     completion_from_response,
     make_client,
+    parse_stream_chunk,
     retry_after_seconds,
-    stream_delta,
 )
 from llmbroker.exceptions import (
     AuthError,
@@ -148,7 +148,7 @@ class AsyncDirectClient:
                     detail = (await resp.aread()).decode(errors="replace")[:DETAIL_SNIPPET]
                     raise _provider_error(resp.status_code, detail, resp.headers)
                 async for chunk in aiter_chat_chunks(resp, self._model):
-                    delta = stream_delta(chunk)
+                    delta, _ = parse_stream_chunk(chunk, self._model)
                     if delta:
                         yield delta
         except httpx.TimeoutException as exc:

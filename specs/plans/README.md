@@ -15,18 +15,18 @@ deleted the hand-named config file as a configuration form, and argued from the 
 is a boundary rather than a loss; that claim no longer holds for this batch as a whole.
 **Plans 1-8 are implemented and waiting on the maintainer — 1, 6, 7 and 8 are reviewed, and 6 was
 reviewed twice: its second round reversed the two-file split it introduced, for the reasons in its
-own `Review round 2` section. Plans 9 and 11 are implemented and awaiting review; **the next one to
-take is plan 20**, which 11's review turned up. A row stays here, with its status,
-until the maintainer asks for it to go after merge.
+own `Review round 2` section. Plans 9, 11 and 20 are implemented and awaiting review; **the next one
+to take is plan 17**, which the take-order line below puts first of the queued half. A row stays
+here, with its status, until the maintainer asks for it to go after merge.
 
 **The `#` column is identity, not order — read the Take-order line below it.** 16, 17 and 18 were
 written after 15 and are taken before it; taking the numerically first `queued` row would start
 with a plan whose inventory the later ones delete.
 
-**Take order: 20 → 17 → 19 → 18 → 16 → 10 → 12 → 13 → 14 → 15.** 20 goes first on the same ground
-11 did before it: it is the only queued plan that fixes runtime behavior rather than shape, it is
-small, and it blocks nothing — "may be pulled forward at any time" is the status in which a plan
-stays undone through eight others.
+**Take order: 17 → 19 → 18 → 16 → 10 → 12 → 13 → 14 → 15.** 20 was taken ahead of all of them on
+the same ground 11 was: it was the only queued plan that fixed runtime behavior rather than shape,
+it was small, and it blocked nothing — "may be pulled forward at any time" is the status in which a
+plan stays undone through eight others.
 
 ## Order
 
@@ -51,7 +51,7 @@ stays undone through eight others.
 | 17 | [named-models-are-declared](named-models-are-declared.md) | queued | — | 9 | **removes a form**: a model reached by name is declared in code, never stored. `custom`, `[[custom]]` and `add-model` go; the CLI gains read-only `list`, the alias refresh moves from the merge to the resolution, and `synced` is renamed for the question it answers. **Take first** |
 | 18 | [env-one-form](env-one-form.md) | queued | — | — | `env` takes a preset name and drops the form that cannot work on a database registry; plus the undocumented second refresh clock gets its paragraph in `server.md`. Small, independent |
 | 19 | [no-automatic-fetch](no-automatic-fetch.md) | queued | — | 17 | **answers a deployment requirement**: a serving process that may make no outbound connection. `sync_interval=None` switches off both clocks, `sync()` with no argument does it explicitly, and `EmptyRegistryError` stops blaming the network for a state the bundled floor makes impossible |
-| 20 | [stream-chunk-fields](stream-chunk-fields.md) | queued | — | 11 *(implemented)* | **fixes what 11 left half-closed**: a stream chunk that is an object but whose `choices` are malformed still escapes the pool raw instead of failing over. Small, independent. **Take first** |
+| 20 | [stream-chunk-fields](stream-chunk-fields.md) | **implemented** | — | 11 *(implemented)* | **fixes what 11 left half-closed**: a stream chunk that is an object but whose `choices` are malformed still escapes the pool raw instead of failing over. Small, independent. **Take first** |
 
 Plans 1-5 touch disjoint files and may be taken in any order subject to the
 Blocked-by column. Plans 6 and 7 must reach a release together: 7 extracts the
@@ -64,10 +64,10 @@ before the plans that would otherwise be written against what it removes.
 constructor — which is what the skeletons would otherwise have been planned
 against. **11 was a behavior fix that blocked nothing and depended on nothing,
 and was taken first for exactly that reason** — nothing it touches is reshaped
-by anything below, so deferring it only risked it never being taken. **20 is the
-same case and goes ahead of the queued half for the same reason**: it finishes
-the guard 11 put one level too high, and 13 reshapes the seam between the two
-direct clients without touching the SSE helpers it edits.
+by anything below, so deferring it only risked it never being taken. **20 was the
+same case and was taken ahead of the queued half for the same reason**: it
+finishes the guard 11 put one level too high, and 13 reshapes the seam between
+the two direct clients without touching the SSE helpers 20 edits.
 **10 renames what the reader sees** and now goes after the removals rather than
 before them: three plans rewrite the doc sections and CLI strings it was
 inventoried from, so renaming first would rename some of them into files that

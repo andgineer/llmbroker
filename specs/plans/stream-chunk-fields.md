@@ -161,3 +161,36 @@ here as the route they are.
 
 `invoke pre` clean, `python -m pytest` green with the pre-existing count plus the
 added tests, zero skips.
+
+## Handover
+
+**Done, as written.** Every step of the work order, both test files, no spec
+change (the plan asked for none, and `rules/call-path.md` already carries the
+rule).
+
+- `chat.py`: `_invalid_stream(model, detail)` added beside `_invalid_body`;
+  `aiter_chat_chunks`'s exhaustion raise now goes through it, so the two details
+  share one message. `stream_delta` → `_stream_delta` (its doctests are still
+  collected under `--doctest-modules`). `parse_stream_chunk(chunk, model)` wraps
+  the extractor and `parse_usage` in `_parse_completion`'s catch set.
+- `broker/router.py::_stream_deltas` and `direct.py::AsyncDirectClient.stream`
+  each call it once; `parse_usage`/`stream_delta` are out of both import lists.
+- Step 6 verified, nothing changed: `parse_usage` returns `None` for a non-dict
+  `usage`, and `_parse_completion` already caught every shape in the table on the
+  non-streaming path.
+
+**Nothing done differently, nothing left out.** No decision the plan did not
+already make came up during implementation.
+
+**Repro shown, as required.** With `chat.py`, `router.py` and `direct.py`
+stashed, the five new routed cases fail on the pre-fix tree — the four
+`test_malformed_chunk_shape_is_a_garbage_200` ids with the raw
+`AttributeError`/`KeyError` the plan predicted, and
+`test_a_malformed_chunk_after_the_first_delta_interrupts_the_stream`.
+`test_a_finish_chunk_with_no_choices_is_not_malformed` passes on both trees by
+design: it pins that the guard does *not* fire on the ordinary preamble and
+finish shapes, so it is a regression guard rather than a repro.
+
+**Gate:** `invoke pre` clean (ruff, ruff-format, docstring cap, pyrefly 0
+errors); `python -m pytest` → **1304 passed**, zero skips, zero errors — 1291
+before, plus 13 (6 routed, 7 in `test_chat.py`).
