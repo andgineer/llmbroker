@@ -64,17 +64,26 @@ model with no sync involved.
 `direct()` is a request path, so it reads a resolution already made; what moves
 that resolution is the catalog underneath it being refreshed. The resolution
 reads the copy already on the machine wherever there is one, so provisioning
-does not wait on the network; where nothing is writable the read is a fetch,
-which is the price of keeping no state at all. One refresh costs one resolution
-however many calls are in flight when it lands.
+does not wait on the network; where nothing is writable there is no refresh to
+move it ([`lineup-refresh.md`](lineup-refresh.md)), and it stays on what the
+first read reached. One refresh costs one resolution however many calls are in
+flight when it lands.
+
+**Where the process fetches nothing automatically, neither does this read**
+([`lineup-refresh.md`](lineup-refresh.md)). It takes the copy on the machine, and
+failing that the wheel's copy, and the alias stays frozen there until an explicit
+sync moves it — the same floor the read already falls to when the network is
+unreachable ([`../decisions.md`](../decisions.md#no-automatic-fetch-means-none-at-start-either)).
+With neither copy present the first resolution raises and names the sync to run.
 
 **The paid catalog carries its own refresh clock.** Every sync reads it on the
 way past, and where no lineup is synced — a registry a deploy job fills, and a
 broker told to sync nothing — the same interval refreshes it on its own, because
 otherwise a declared alias would have no clock at all and would sit on the
-version the installed release shipped with. The catalog is read only when
-something actually follows an alias, so an installation with none pays no second
-network read.
+version the installed release shipped with. Where there is no clock at all, that
+is exactly what happens and is what the operator asked for. The catalog is read
+only when something actually follows an alias, so an installation with none pays
+no second network read.
 
 **A version move is reported once, where it happens.** A re-resolution that
 lands a declared alias on a different model id, or on a different

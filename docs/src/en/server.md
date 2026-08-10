@@ -50,6 +50,47 @@ a registry *object* and you must say what it follows, `sync="freetier"` or
 `sync=None`. Either way a refresh rewrites only the entries a sync itself
 wrote — rows you put in the registry yourself are left alone.
 
+### A deployment that may not fetch while it serves {#no-fetch}
+
+An egress policy, an audit rule, a network the serving hosts are not on: where the
+process may open no connection except to the providers themselves, switch the
+automatic refresh off and do the fetching in the job you already run.
+
+```python
+llmbroker.AsyncBroker("postgresql://host/db", sync_interval=None)   # in your factory
+```
+
+```python
+llms = build_broker()
+try:
+    report = await llms.sync()        # no argument: whatever this installation follows
+    if report is not None:            # the paid catalog alone merges nothing
+        print(llmbroker.format_report(report))
+finally:
+    await llms.aclose()
+```
+
+`sync_interval=None` stops every clock in the process — the curated model list and
+the paid catalog your `direct=` aliases resolve through. It also stops the fetch
+that fills an empty registry at startup: such a broker raises `EmptyRegistryError`
+naming this job, rather than going online to serve its first request. That is the
+intended failure. Set the switch and skip the job and the broker will not serve.
+
+`sync()` with no argument syncs what this installation follows: the preset named by
+`sync=`, or — where it follows none — the paid catalog alone, which refreshes your
+declared aliases, merges nothing into the registry and therefore returns no report.
+
+A `direct=` alias resolves from whatever your last sync left on the machine, or —
+on a host where none has run — from the copy shipped inside the package, and stays
+on that version until the job runs again. Nothing here goes online: the alias is
+frozen, not broken.
+
+**The freshness is now yours to keep.** Providers retire free endpoints without
+notice, so a model list nobody refreshes decays into a pool that cannot serve. Run
+the job beside your migrations on every deploy, and on a schedule of its own
+between deploys — about once a day is what the built-in clock does, and copying
+that is the safe default.
+
 ### Moving an installation between backends {#migrate}
 
 There is no migrate command; the two registries already expose everything it

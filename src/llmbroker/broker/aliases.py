@@ -81,6 +81,7 @@ async def resolve_declared(
     presets: PresetSource,
     *,
     previous: DeclaredModels | None = None,
+    fetch: bool = True,
 ) -> tuple[DeclaredModels, tuple[AliasFact, ...]]:
     """Turn what the caller declared with ``direct=`` into entries, with the catalog's
     key help — nothing stores a declared model, so this read is the only place that
@@ -94,6 +95,7 @@ async def resolve_declared(
             PAID_CATALOG,
             prefer_cache=True,
             floor=previous is None,
+            fetch=fetch,
         )
         targets = catalog_alias_targets(tomllib.loads(text))
     configs = tuple(

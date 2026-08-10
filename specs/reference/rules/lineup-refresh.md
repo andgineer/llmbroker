@@ -5,7 +5,11 @@ merge itself does is [`sync-merge.md`](sync-merge.md). The cross-cutting rules
 this file elaborates are in [`../invariants.md`](../invariants.md).
 
 **A broker following the curated preset re-checks it on an interval**, lazily on
-activity, and there is no off switch
+activity. What an installation may switch off is the *automatic* fetching, never
+the currency of the list: a process that may make no outbound connection while it
+serves stops every clock it has and does the fetching itself, in a job it runs
+deliberately ([`decisions.md`](../decisions.md#no-automatic-fetch-means-none-at-start-either)).
+Freezing the list while the process keeps serving from it is not offered
 ([`decisions.md`](../decisions.md#unconditional-lineup-refresh)). An
 installation that must not follow our curation fills a registry of its own,
 which is a different pool rather than a frozen copy of ours; one that wants both
@@ -32,6 +36,20 @@ Either way a refresh only rewrites what a sync itself wrote
   conditional GET, which would save a kilobyte and no round trip while proving
   strictly less.
 
+**Where the automatic fetching is off there is no time gate at all**: nothing is
+armed, and an empty registry is not filled before provisioning either —
+provisioning raises and the error names the deploy step that would have filled it.
+The curated preset and the paid catalog stop together, since the reason to forbid
+one forbids the other, and the catalog read a declared alias makes on its way to
+being resolved stops with them ([`direct-aliases.md`](direct-aliases.md)) — the
+process opens no connection of its own at all.
+
+**The explicit sync is never gated by any of this**, whatever the clocks are set
+to: the caller asked for it and handles what it raises. With no argument it syncs
+what this installation follows — its preset, or, where it follows none, the paid
+catalog alone, which merges nothing into the registry and therefore returns no
+report. An installation following neither has nothing to fetch and does not.
+
 **A check that just happened is remembered across process exits**, per (lineup,
 target), so a short-lived process does not pay a round trip per invocation and a
 rolling deploy does not fetch once per pod. The record only ever makes checks
@@ -51,6 +69,13 @@ source**: a successful fetch overwrites it, a failed one — offline, or throttl
 by the CDN's per-IP limit — falls back to it. Unlike the check record, the cache
 is machine-global: what the catalog says today does not depend on which project
 is asking.
+
+**A refresh with nowhere to keep what it fetched fails and says so.** Where no
+directory is writable the copy a refresh exists to leave behind cannot exist, so
+it is an error naming its two ways out — make a directory writable, or run an
+installation that fetches nothing by itself — and never a round trip whose result
+is dropped. Ordinary reads keep working there, as everywhere else with a cold
+cache.
 
 ## Failure is never the caller's problem
 

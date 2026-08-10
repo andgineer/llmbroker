@@ -80,10 +80,10 @@ class _SyncDefault:
 _SYNC_DEFAULT = _SyncDefault()
 
 
-def _check_broker_args(scope: str | None, sync_interval: float) -> None:
+def _check_broker_args(scope: str | None, sync_interval: float | None) -> None:
     if scope == "":
         raise ValueError("scope must not be empty string; use None for unscoped")
-    if sync_interval < 0:
+    if sync_interval is not None and sync_interval < 0:
         raise ValueError("sync_interval must not be negative")
 
 
@@ -117,7 +117,7 @@ class AsyncBroker:
         scope: str | None = None,
         have_keys: bool | Sequence[str] = False,
         sync: str | None | _SyncDefault = _SYNC_DEFAULT,
-        sync_interval: float = _DEFAULT_SYNC_INTERVAL,
+        sync_interval: float | None = _DEFAULT_SYNC_INTERVAL,
         home: str | Path | None = None,
         direct: Sequence[str | LLMConfig] = (),
     ) -> None:
@@ -153,6 +153,7 @@ class AsyncBroker:
         self._presets = PresetSource(self._home)
 
         self._declared = tuple(direct)
+        self._autofetch = sync_interval is not None
         self._last_declared: DeclaredModels | None = None
         pool = LLMPool(optimizer=self._optimizer)
         self._pool = pool
@@ -162,6 +163,7 @@ class AsyncBroker:
             pool,
             scope=scope,
             overlay=self._resolve_declared if self._declared else None,
+            autofill=self._autofetch,
         )
 
         self._learner: Learner | None = None
@@ -221,6 +223,7 @@ class AsyncBroker:
                 self._declared,
                 self._presets,
                 previous=previous,
+                fetch=self._autofetch,
             )
         except (UnknownModelError, ValueError, OSError) as exc:
             if previous is None:
@@ -268,10 +271,10 @@ class AsyncBroker:
         run. A host forwards it to its own admin channel."""
         return self._refresher.last_report
 
-    async def sync(self, source: str) -> SyncReport:
-        """Merge the curated preset named by ``source`` into the registry and
-        return what it did. Idempotent, and it never costs this installation a
-        model it can call — see ``rules/sync-merge.md``."""
+    async def sync(self, source: str | None = None) -> SyncReport | None:
+        """Merge the curated preset named by ``source`` into the registry and return
+        what it did; with no argument, whatever this installation follows — the paid
+        catalog alone has no report. See ``rules/sync-merge.md``."""
         return await self._refresher.sync(source)
 
     async def aclose(self) -> None:

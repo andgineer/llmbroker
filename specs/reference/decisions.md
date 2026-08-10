@@ -236,15 +236,49 @@ own — diverging copies would flip-flop it in a cluster.
 
 ### unconditional-lineup-refresh
 
-**Blocks:** an off switch; pinning the fetch to the installed version's tag.
+**Blocks:** a switch that freezes the model list while the process keeps serving
+from it; pinning the fetch to the installed version's tag.
 **Why:** a pinned free-tier lineup decays, because providers retire free
-endpoints without notice. What an off switch appears to protect against — an
+endpoints without notice. What such a switch appears to protect against — an
 unreviewed lineup change — is already bounded by the removal rule, and what it
 buys is a pool that decays to nothing. Pinning to a tag would mean a preset fix
 reaches nobody until a release of llmbroker, which is the problem the refresh
 exists to remove. The accepted cost: the catalog's default branch is live
 configuration everywhere, bounded by requiring `https://` endpoints in a fetched
-preset.
+preset. Switching the *automatic* fetching off is a different act and is offered,
+because it moves the fetching rather than ending it
+([`no-automatic-fetch-means-none-at-start-either`](#no-automatic-fetch-means-none-at-start-either)).
+
+### no-automatic-fetch-means-none-at-start-either
+
+Turning off the automatic refresh turns off the fetch that fills an empty
+registry at the first provision. An installation that has said it does its own
+fetching gets an error naming that, not a fetch it forbade.
+
+**Blocks:** keeping the start-fill alive as "just once per process"; a second
+switch to control it separately; falling back to the bundled preset to fill a
+registry the operator meant to fill itself.
+**Why:** "once per process" is not a bound an operator can hold — a serving fleet
+restarts, scales out and cycles pods, so a fetch that happens once per process is
+a fetch that happens on request traffic, which is exactly what the switch was
+thrown to prevent. The failure it produces instead is the good one: it happens at
+the first call, names the missing deploy step, and cannot be mistaken for a
+network problem. A second switch would let the two be set inconsistently, and
+there is no installation that wants a fetch at start but not later — the reason
+to forbid one forbids both.
+**Accepted cost:** an operator who sets the switch and forgets the deploy step
+gets a broker that will not serve. That is the intended outcome; the alternative
+is a broker that serves and quietly fetched to do it.
+
+**The paid catalog is the exception, and it is not the registry.** With no
+automatic fetching, a declared alias resolves from the cache, then from the
+wheel's copy, and the resolution freezes at that copy until the operator syncs
+again. An empty registry means nothing can be served at all, and the bundled
+preset would answer a question the operator said they would answer; a declared
+alias is one model the operator already named, and the wheel's copy is the floor
+that same read already falls to whenever the network is unreachable. Refusing
+here would only turn "offline because it is forbidden" into a failure that
+"offline because it is down" does not produce.
 
 ### admin-verdict-in-the-store
 

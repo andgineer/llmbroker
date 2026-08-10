@@ -154,3 +154,64 @@ lands.
 
 `invoke pre` clean and `python -m pytest` green after each batch. Docker up for
 the testcontainer tests.
+
+## Handover
+
+**Done, in the plan's three batches.** All of the work order, all nine tests, the
+spec updates and the docs in both languages.
+
+- **Batch 1** — `sync_interval` is `float | None` on both façades; `None` returns
+  from `schedule()` on its first line, arms nothing in `before_provision`, and
+  does not fill an empty registry there. `_arm` and the `_attempt` deadline reset
+  both narrow the interval locally, since the guard at the call site does not
+  reach into a separate method.
+- **Batch 2** — `sync(source=None)` on the refresher and both façades, returning
+  `SyncReport | None`. With no argument and no preset followed it refreshes the
+  paid catalog and returns `None`; with no alias declared, `_refresh_paid_catalog`
+  already returns on its first line, so that installation fetches nothing.
+- **Batch 3** — two `EmptyRegistryError` messages in `catalog.py`, picked by a
+  constructor flag the broker sets from `sync_interval is not None`. Neither
+  mentions the network.
+
+**Decisions the plan did not make.**
+
+- *The explicit catalog-only sync raises rather than swallowing a fetch failure.*
+  A preset sync warns and continues when the catalog is unreachable, because the
+  model list must still merge; a catalog-only sync has nothing else to do, and a
+  deploy job that printed nothing and exited zero would report a refresh that did
+  not happen.
+- *The catalog-only sync writes its check record*, like any other completed check.
+- *`Catalog` learns one fact about the installation* (whether anything may fill an
+  empty registry) rather than the broker composing the message: the text stays
+  where it is raised.
+
+**Deviations.**
+
+- *`decisions.md#unconditional-lineup-refresh` was amended*, which the plan does
+  not mention. It recorded "**Blocks:** an off switch", and this plan builds one —
+  leaving it would have left the file contradicting the code. What it blocks is
+  now stated as what it always argued: freezing the list while the process keeps
+  serving from it. The new entry is cross-linked from it.
+- *`mission.md` was edited, not only verified.* Its headline claim was "The lineup
+  keeps itself current, **unconditionally**", which is now false as written: a
+  reader who skips `rules/` would conclude an egress-restricted deployment is
+  impossible. The paragraph now says the list is never frozen and that a
+  deployment forbidden to fetch while serving takes the job over rather than
+  dropping it — intent, with no knob named. Requirement 2 was left alone; it
+  describes the default, which does not change.
+
+**Raised, not implemented — one hole the plan's scope leaves open.** With
+`sync_interval=None`, `direct=["opus"]` and a *cold* catalog cache, the first
+alias resolution still reads the paid catalog through the fetch chain, so a fresh
+pod goes to the network once — the plan's own test states the guarantee for a warm
+cache only. The deploy job cannot warm that cache for a serving pod: it runs in a
+different container. Closing it means an offline read mode on the preset source
+(cache, then the wheel's copy, never the network) selected when the switch is on,
+which resolves from the frozen bundled copy instead — the same floor a first
+offline run already uses. That is a new parameter through two call layers and was
+not in the work order, so it is not in this diff. **Recommendation: do it, as a
+small follow-up plan** — the deployment this plan is written for is exactly the
+one that hits it.
+
+**Gate:** `invoke pre` — all checks passed. `python -m pytest` — 1283 passed, zero
+skips, zero errors (Docker up; the testcontainer tests ran).

@@ -26,8 +26,8 @@ logger = logging.getLogger("llmbroker.broker")
 
 class LineupRefresher:
     """Merges a lineup into the registry, and decides when to go looking for one.
-    ``source`` is the preset followed, ``None`` for none; ``live`` says whether there
-    is a running pool to reconcile an applied change into."""
+    ``source`` is the preset followed, ``None`` for none; ``interval`` is ``None``
+    where nothing is fetched on its own; ``live`` says whether a pool is running."""
 
     def __init__(  # noqa: PLR0913 - it assembles a subsystem: the ports plus its clock
         self,
@@ -38,7 +38,7 @@ class LineupRefresher:
         presets: PresetSource,
         *,
         source: str | None,
-        interval: float,
+        interval: float | None,
         home: Path | None,
         declared: Sequence[str | LLMConfig] = (),
         target_label: str | None = None,
@@ -73,6 +73,10 @@ class LineupRefresher:
         if self._attempted:
             return
         self._attempted = True
+        if self._interval is None:
+            # No clock at all: the empty registry is not filled either — an
+            # installation that fetches nothing gets the error, not a fetch.
+            return
         if self._source is None:
             if self._follows_an_alias():
                 self._arm(PAID_CATALOG)
@@ -85,21 +89,25 @@ class LineupRefresher:
     def schedule(self) -> None:
         """Fire a background refresh when the interval has elapsed. Synchronous by
         design: the hot path pays one monotonic comparison and nothing else."""
+        interval = self._interval
+        if interval is None:
+            return
         if time.monotonic() < self._next_refresh:
             return
         if self._task is not None and not self._task.done():
             return
         # The deadline moves before the task exists, so a burst of concurrent calls
         # schedules one refresh rather than one per call.
-        self._next_refresh = time.monotonic() + self._interval
+        self._next_refresh = time.monotonic() + interval
         self._task = asyncio.create_task(self._attempt("refresh"))
 
     def _arm(self, source: str) -> None:
+        interval = self._interval
+        if interval is None:
+            return
         age = stamp_age(self._home, self._stamp_key(source))
         self._next_refresh = (
-            time.monotonic() + (self._interval - age)
-            if age is not None and age < self._interval
-            else 0.0
+            time.monotonic() + (interval - age) if age is not None and age < interval else 0.0
         )
 
     async def aclose(self) -> None:
@@ -139,19 +147,17 @@ class LineupRefresher:
                 reason,
             )
         finally:
-            self._next_refresh = time.monotonic() + self._interval
+            if self._interval is not None:
+                self._next_refresh = time.monotonic() + self._interval
 
     async def _refresh_paid_catalog(self, *, stamp: bool = True) -> None:
         """Keep the cached paid catalog current on the refresh clock — the only clock
         a declared alias has, and what moves a declared model onto a new version."""
         if not self._follows_an_alias():
             return
-        if self._home is not None:
-            await asyncio.to_thread(self._presets.refresh, PAID_CATALOG)
-            if stamp:
-                write_stamp(self._home, self._stamp_key(PAID_CATALOG))
-        # With nowhere to cache, the resolution below fetches for itself; warming
-        # a cache that cannot be written would only fetch the same body twice.
+        await asyncio.to_thread(self._presets.refresh, PAID_CATALOG)
+        if stamp:
+            write_stamp(self._home, self._stamp_key(PAID_CATALOG))
         self._catalog.invalidate_declared()
 
     def _follows_an_alias(self) -> bool:
@@ -179,9 +185,15 @@ class LineupRefresher:
     # The explicit sync
     # ------------------------------------------------------------------
 
-    async def sync(self, source: str) -> SyncReport:
-        """Merge a lineup into the registry and return what it did. Raises."""
-        src = await load_sync_source(source, self._presets)
+    async def sync(self, source: str | None = None) -> SyncReport | None:
+        """Merge a model list into the registry and return what it did. With no
+        argument: what this installation follows — its preset, or, where it follows
+        none, the paid catalog alone, which merges nothing and reports nothing. Raises."""
+        target = source if source is not None else self._source
+        if target is None:
+            await self._refresh_paid_catalog()
+            return None
+        src = await load_sync_source(target, self._presets)
         current = await self._registry.load()
         # The clock a declared alias rides on, and a catalog nobody can reach may
         # not fail the sync of the model list itself.
@@ -207,7 +219,7 @@ class LineupRefresher:
         else:
             logger.debug("sync %s: no change", report.source)
         self.last_report = report
-        write_stamp(self._home, self._stamp_key(source))
+        write_stamp(self._home, self._stamp_key(target))
         if changed and self._live():
             await self._catalog.resync()
         return report

@@ -148,10 +148,11 @@ async def test_a_lineup_that_cannot_be_filled_says_what_to_do(caplog, llmbroker_
         await broker.ensure_pool()
     await broker.aclose()
     assert "registry is empty" in str(e.value)
-    # A fileless broker got here *through* the default sync, so telling it to turn
-    # that same sync on names the thing that just failed.
-    assert "none could be fetched" in str(e.value)
-    assert "network access" in str(e.value)
+    assert 'broker.sync("freetier")' in str(e.value)
+    # The fill that failed said why, at WARNING; the error itself may not blame the
+    # network, which the cache and the wheel's copy sit behind.
+    assert "network" not in str(e.value)
+    assert any("not found in catalog" in r.message for r in caplog.records)
 
 
 async def test_a_cold_offline_start_says_the_lineup_is_not_the_current_one(

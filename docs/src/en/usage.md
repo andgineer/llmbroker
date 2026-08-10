@@ -163,7 +163,13 @@ check interval is yours to set:
 ```python
 llmbroker.Broker(sync=None)              # nothing is refreshed
 llmbroker.Broker(sync_interval=3600)     # check hourly instead
+llmbroker.Broker(sync_interval=None)     # never check by itself — you run the sync
 ```
+
+`sync_interval=None` is for a process that may make no outbound connection while it
+serves: it stops every automatic fetch, including the one that fills an empty
+registry at startup, and the freshness becomes yours to keep — see
+[Servers & clusters](server.md#no-fetch).
 
 ### Where llmbroker keeps its own state
 
@@ -179,6 +185,10 @@ None of it is authoritative: delete it, or run where nothing is writable — a
 read-only container — and the broker still works. It re-fetches, and in the
 read-only case simply remembers nothing between runs. Even with no network at all,
 a first run starts on the copy of the preset shipped inside the package.
+
+The one thing that does need a real directory is a refresh, which exists to leave
+a copy behind: with nowhere writable it fails and says so — make one writable, or
+run with `sync_interval=None` and fetch nothing by yourself.
 
 Sharing one journal per machine is deliberate in the zero-config case: your keys
 come from the environment, so the rate limits it remembers really are one pool,

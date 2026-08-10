@@ -209,3 +209,16 @@ def test_nowhere_writable_still_reads_and_writes_nothing(monkeypatch, tmp_path):
     monkeypatch.setattr(presets, "fetch_preset_text", lambda _name: "fetched")
     assert PresetSource().text("freetier") == "fetched"
     assert list(tmp_path.iterdir()) == []
+
+
+def test_a_refresh_with_nowhere_to_keep_it_says_so_and_does_not_fetch(monkeypatch):
+    """Refreshing into no cache at all is not a no-op to be swallowed: the copy it
+    would keep is the only thing that outlives the call."""
+
+    def _boom(_name: str) -> str:
+        raise AssertionError("a round trip nothing can keep")
+
+    monkeypatch.setattr(presets, "fetch_preset_text", _boom)
+    with pytest.raises(ValueError, match=r"LLMBROKER_HOME") as exc:
+        PresetSource().refresh("paid-catalog")
+    assert "sync_interval=None" in str(exc.value)

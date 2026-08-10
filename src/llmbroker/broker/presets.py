@@ -96,14 +96,23 @@ class PresetSource:
 
     cache_dir: Path | None = None
 
-    def text(self, name: str, *, prefer_cache: bool = False, floor: bool = True) -> str:
-        """A curated text, by the precedence the caller's decision needs: fetch with
-        the local copies behind it, ``prefer_cache`` for a read on the request path,
-        ``floor=False`` to drop the wheel's copy. See ``rules/lineup-refresh.md``."""
-        if prefer_cache:
+    def text(
+        self,
+        name: str,
+        *,
+        prefer_cache: bool = False,
+        floor: bool = True,
+        fetch: bool = True,
+    ) -> str:
+        """A curated text, by the precedence the caller's decision needs:
+        ``prefer_cache`` for a read on the request path, ``floor=False`` to drop the
+        wheel's copy, ``fetch=False`` to stay off the network. See ``rules/presets.md``."""
+        if prefer_cache or not fetch:
             cached = self._cached(name)
             if cached is not None:
                 return cached
+        if not fetch:
+            return self._local_only(name, floor=floor)
         try:
             text = fetch_preset_text(name)
         except ValueError as exc:
@@ -126,9 +135,33 @@ class PresetSource:
         self._write_cache(name, text)
         return text
 
+    def _local_only(self, name: str, *, floor: bool) -> str:
+        """What is on this machine already, for a caller that may not go to the
+        network at all."""
+        bundled = bundled_preset_text(name) if floor else None
+        if bundled is None:
+            raise ValueError(
+                f"preset '{name}' is not on this machine and this installation fetches"
+                " nothing on its own — run `await broker.sync()` where it is deployed",
+            )
+        logger.warning(
+            "preset %s: nothing cached and nothing is fetched automatically — falling"
+            " back to the bundled copy, frozen at this llmbroker release",
+            name,
+        )
+        return bundled
+
     def refresh(self, name: str) -> None:
-        """Pull a fresh copy into the cache. Raises when the fetch fails — the caller
-        decides whether the copy already here is good enough."""
+        """Pull a fresh copy into the cache. Raises when the fetch fails, and before
+        it when there is no cache to pull into — the caller decides whether the copy
+        already here is good enough."""
+        if self.cache_dir is None:
+            raise ValueError(
+                f"no writable home directory, so a fresh '{name}' has nowhere to be"
+                " kept — point $LLMBROKER_HOME (or home=) at a writable directory, or,"
+                " where this was the automatic refresh, stop it with sync_interval=None"
+                " and keep to the copy already in use",
+            )
         self._write_cache(name, fetch_preset_text(name))
 
     def _path(self, name: str) -> Path | None:

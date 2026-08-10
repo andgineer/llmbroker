@@ -134,10 +134,23 @@ def find_declared(
     raise UnknownModelError(f"no model named {name!r} was declared with direct=")
 
 
+_EMPTY_NO_AUTOFILL = (
+    "registry is empty and this installation fetches nothing on its own"
+    " (sync_interval=None) — fill it from the deploy job that runs your migrations,"
+    " with `await broker.sync()`"
+)
+_EMPTY_NOT_FILLED = (
+    "registry is empty — no model list is stored and nothing put one there. Fill it"
+    ' with `await broker.sync("freetier")`, or from a deploy job; a broker that follows'
+    " nothing (sync=None) fills nothing by itself, and a fill that ran and failed said"
+    " why in the log at WARNING"
+)
+
+
 class Catalog:
     """Reconciles the persistent registry into the live pool, and mirrors presets into it."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - the three ports plus what this pool is allowed to do
         self,
         registry: RegistryProtocol,
         secrets: SecretsProtocol,
@@ -145,12 +158,14 @@ class Catalog:
         *,
         scope: str | None,
         overlay: "Callable[[], Awaitable[DeclaredModels]] | None" = None,
+        autofill: bool = True,
     ) -> None:
         self._registry = registry
         self._secrets = secrets
         self._pool = pool
         self._scope = scope
         self._overlay = overlay
+        self._autofill = autofill
         self._declared: DeclaredModels | None = None
         self._declared_lock = asyncio.Lock()
         self._health = PoolHealth()
@@ -213,11 +228,7 @@ class Catalog:
         one-time init; it is not re-entrant. Raises when there is nothing at all."""
         stored, declared = await self.entries()
         if not stored and not declared:
-            raise EmptyRegistryError(
-                "registry is empty — no lineup is stored and none could be fetched."
-                ' Fill it with `await broker.sync("freetier")`, or from a deploy job,'
-                " or check network access to the preset catalog",
-            )
+            raise EmptyRegistryError(_EMPTY_NOT_FILLED if self._autofill else _EMPTY_NO_AUTOFILL)
         await self._reconcile(stored, declared)
 
     async def resync(self) -> None:

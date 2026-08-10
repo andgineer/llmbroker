@@ -129,10 +129,12 @@ either as a version the host pins and owns, or as a permanent alias llmbroker
 keeps pointing at the current version. Application code survives a version bump,
 at the price of learning about the bump from a log line rather than choosing it.
 
-**The lineup keeps itself current, unconditionally.** Free endpoints are retired
-without notice, so a pinned lineup decays into nothing. The refresh rides on
-activity rather than on a timer of its own, and it may never cost the
-installation a provider it could reach: it removes only what a refresh added, and
+**The lineup is never frozen.** Free endpoints are retired without notice, so a
+pinned lineup decays into nothing. Keeping it current is llmbroker's own job
+wherever it is allowed to be: a deployment forbidden to reach anything but its
+providers while it serves may take that job over, and none may decline it. The
+refresh rides on activity rather than on a timer of its own, and it may never cost
+the installation a provider it could reach: it removes only what a refresh added, and
 never rewrites what the installation stated itself. A curated preset is the only
 shape a lineup arrives in, so an installation that must not follow ours states
 the whole pool itself. What no installation gets is a second configuration form

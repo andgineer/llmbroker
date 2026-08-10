@@ -15,16 +15,16 @@ deleted the hand-named config file as a configuration form, and argued from the 
 is a boundary rather than a loss; that claim no longer holds for this batch as a whole.
 **Plans 1-8 are implemented and waiting on the maintainer — 1, 6, 7 and 8 are reviewed, and 6 was
 reviewed twice: its second round reversed the two-file split it introduced, for the reasons in its
-own `Review round 2` section. Plans 9, 11, 17 and 20 are implemented and awaiting review; **the next
-one to take is plan 19**, which the take-order line below puts next. A row stays
+own `Review round 2` section. Plans 9, 11, 17, 19 and 20 are implemented and awaiting review; **the
+next one to take is plan 18**, which the take-order line below puts next. A row stays
 here, with its status, until the maintainer asks for it to go after merge.
 
 **The `#` column is identity, not order — read the Take-order line below it.** 16, 17 and 18 were
 written after 15 and are taken before it; taking the numerically first `queued` row would start
 with a plan whose inventory the later ones delete.
 
-**Take order: 19 → 18 → 16 → 10 → 12 → 13 → 14 → 15**, with 17 already taken ahead
-of them. 20 was taken ahead of all of them on the same ground 11 was: it was the only queued plan that fixed runtime behavior rather than shape,
+**Take order: 18 → 16 → 10 → 12 → 13 → 14 → 15**, with 17, 19 and 21 already taken
+ahead of them; 21 was written during 19's implementation and ships with it. 20 was taken ahead of all of them on the same ground 11 was: it was the only queued plan that fixed runtime behavior rather than shape,
 it was small, and it blocked nothing — "may be pulled forward at any time" is the status in which a
 plan stays undone through eight others.
 
@@ -41,7 +41,7 @@ plan stays undone through eight others.
 | 7 | [lineup-refresher](lineup-refresher.md) | **implemented, reviewed** | — | 6 *(implemented)* | written in full against 6's result; **ships with 6** |
 | 8 | [curated-source-only](curated-source-only.md) | **implemented** | — | 6, 7 *(implemented)* | **removes a form**, not a simplification: a lineup arrives only as a curated preset name, and no host names a config file. Taken before the skeletons — they would otherwise have tidied code this deletes |
 | 9 | [registry-ownership](registry-ownership.md) | **implemented** | — | 8 *(implemented)* | **fixes a trap 8 created**: a sync destroys entries the host put in its own registry. An entry records who wrote it, and a host-built registry object must state what it follows |
-| 10 | [model-list-vocabulary](model-list-vocabulary.md) | queued | — | 19, 18, 16 *(17 implemented)* | text only, no runtime change: `lineup` is a coined word that reaches the reader undefined — docs and program strings say "the model list". **Re-inventory the strings** — the four plans before it delete some and write their own new ones in this plan's wording |
+| 10 | [model-list-vocabulary](model-list-vocabulary.md) | queued | — | 18, 16 *(17, 19 implemented)* | text only, no runtime change: `lineup` is a coined word that reaches the reader undefined — docs and program strings say "the model list". **Re-inventory the strings** — the four plans before it delete some and write their own new ones in this plan's wording |
 | 11 | [sse-chunk-shape](sse-chunk-shape.md) | **implemented** | — | 2 *(implemented)* | **fixes a spec divergence**: a non-object SSE payload escaped the pool raw instead of failing over |
 | 12 | [models-purity](models-purity.md) | queued | — | 16 *(17 implemented)* | **skeleton** — `models.py` logs, formats prose, and holds the validators. 17 and 16 both reshape its field set and validator list |
 | 13 | [direct-client-seam](direct-client-seam.md) | queued | — | 2 *(implemented)* | **skeleton** — the sync broker reaches a private method; two clients copy-pasted. Unaffected by 16-18 |
@@ -50,8 +50,9 @@ plan stays undone through eight others.
 | 16 | [paid-catalog-retirement](paid-catalog-retirement.md) | queued | — | 17 *(implemented)* | **closes a gap, not a defect**: an alias whose model the provider withdraws has no representation, so a deployment learns about it from a failing request. After 17, which makes the withdrawal an in-memory fact instead of a stored one |
 | 17 | [named-models-are-declared](named-models-are-declared.md) | **implemented** | — | 9 *(implemented)* | **removes a form**: a model reached by name is declared in code, never stored. `custom`, `[[custom]]` and `add-model` go; the CLI gains read-only `list`, the alias refresh moves from the merge to the resolution, and `synced` is renamed for the question it answers. Taken first of the queued half |
 | 18 | [env-one-form](env-one-form.md) | queued | — | — | `env` takes a preset name and drops the form that cannot work on a database registry; plus the undocumented second refresh clock gets its paragraph in `server.md`. Small, independent |
-| 19 | [no-automatic-fetch](no-automatic-fetch.md) | queued | — | 17 *(implemented)* | **answers a deployment requirement**: a serving process that may make no outbound connection. `sync_interval=None` switches off both clocks, `sync()` with no argument does it explicitly, and `EmptyRegistryError` stops blaming the network for a state the bundled floor makes impossible |
+| 19 | [no-automatic-fetch](no-automatic-fetch.md) | **implemented** | — | 17 *(implemented)* | **answers a deployment requirement**: a serving process that may make no outbound connection. `sync_interval=None` switches off both clocks, `sync()` with no argument does it explicitly, and `EmptyRegistryError` stops blaming the network for a state the bundled floor makes impossible |
 | 20 | [stream-chunk-fields](stream-chunk-fields.md) | **implemented** | — | 11 *(implemented)* | **fixes what 11 left half-closed**: a stream chunk that is an object but whose `choices` are malformed still escapes the pool raw instead of failing over. Small, independent. **Take first** |
+| 21 | [offline-alias-resolution](offline-alias-resolution.md) | **implemented, reviewed** | — | 19 *(implemented)* | **finishes what 19 left open**: with the automatic fetching off, the first resolution of a declared alias still read the paid catalog through the network. It now reads the cache, then the wheel's copy, and never fetches. Small; **ships with 19** |
 
 Plans 1-5 touch disjoint files and may be taken in any order subject to the
 Blocked-by column. Plans 6 and 7 must reach a release together: 7 extracts the
