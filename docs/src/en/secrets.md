@@ -1,11 +1,11 @@
 # API keys
 
-Every model in the lineup refers to its key by name; where the value comes from
-is up to the configured secrets backend. The default is environment variables
-and `.env`:
+Every model in the model list refers to its key by name; where the value comes
+from is up to the configured secrets backend. The default is environment
+variables and `.env`:
 
 ```bash
-llmbroker env > .env
+llmbroker env freetier > .env
 ```
 
 The command prints a skeleton with a hint above each key, where to get it. The

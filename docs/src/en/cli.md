@@ -12,22 +12,20 @@ stderr.
 ## env — generate a .env with the keys
 
 ```bash
-llmbroker env > .env              # the keys this installation's own lineup needs
-llmbroker env freetier > .env     # or straight from a preset name, before there is one
+llmbroker env freetier > .env
 ```
 
-Prints a `.env` skeleton: above each key, a hint where to get it:
+Prints a `.env` skeleton for the named curated model list: above each key, a hint
+where to get it:
 
 ```
 # OPENROUTER_API_KEY — Create a free API key at [openrouter](https://openrouter.ai/keys).
 OPENROUTER_API_KEY=
 ```
 
-With no argument it reads the lineup in llmbroker's own directory — the pool your
-broker already follows. That is the everyday form.
-
-Name a preset instead when there is no local lineup yet, or when your broker
-keeps its registry in a database and there is no local lineup at all:
+The preset name is the whole argument, so the command works the same before you
+have anything local and on a broker whose registry lives in a database. The
+presets you can name:
 
 - `freetier` — free endpoints from Groq, OpenRouter and Gemini
 

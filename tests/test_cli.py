@@ -22,85 +22,34 @@ def _mock_urlopen(content: bytes):
     return resp
 
 
-# --- env: this installation's own lineup, or a curated preset by name ---
+# --- env: a curated preset by name ---
 
 
-def test_env_prints_the_refs_of_this_installations_lineup(llmbroker_home, capsys):
-    _lineup(
-        llmbroker_home,
-        '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n'
-        '[[llms]]\nname="b"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_B"\n',
+def test_env_prints_the_refs_the_named_preset_needs(llmbroker_home, capsys):
+    body = (
+        b'[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n'
+        b'[[llms]]\nname="b"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_B"\n'
     )
-    rc = main(["env"])
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(body)):
+        rc = main(["env", "freetier"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "KEY_A=" in out
     assert "KEY_B=" in out
 
 
-def test_env_deduplicates_refs(llmbroker_home, capsys):
-    _lineup(
-        llmbroker_home,
-        '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
-        '[[llms]]\nname="b"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n',
-    )
-    rc = main(["env"])
-    out = capsys.readouterr().out
-    assert rc == 0
-    assert out.count("K=") == 1
-
-
-def test_env_prints_key_help_as_named_comment(llmbroker_home, capsys):
-    _lineup(
-        llmbroker_home,
-        '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n'
-        '[keys]\nKEY_A="Get it at https://example.com/keys"\n',
-    )
-    rc = main(["env"])
-    out = capsys.readouterr().out
-    assert rc == 0
-    assert "# KEY_A — Get it at https://example.com/keys" in out
-    assert "KEY_A=" in out
-
-
-def test_env_without_key_help_has_no_comments(llmbroker_home, capsys):
-    _lineup(
-        llmbroker_home,
-        '[[llms]]\nname="a"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="KEY_A"\n',
-    )
-    rc = main(["env"])
-    out = capsys.readouterr().out
-    assert rc == 0
-    assert "#" not in out
-    assert "KEY_A=" in out
-
-
 def test_env_reports_a_leftover_declared_section(llmbroker_home, capsys):
-    """A file a previous release wrote is refused, not half-read, and the message
+    """A list a previous release wrote is refused, not half-read, and the message
     says where those models go now."""
-    _lineup(
-        llmbroker_home,
-        '[[llms]]\nname="pool"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="POOL_KEY"\n'
-        '[[custom]]\nname="frontier"\nbase_url="https://y/v1"\nmodel="big"'
-        '\napi_key_ref="PAID_KEY"\n',
+    body = (
+        b'[[llms]]\nname="pool"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="POOL_KEY"\n'
+        b'[[custom]]\nname="frontier"\nbase_url="https://y/v1"\nmodel="big"'
+        b'\napi_key_ref="PAID_KEY"\n'
     )
-    rc = main(["env"])
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(body)):
+        rc = main(["env", "freetier"])
     assert rc == 1
     assert "direct=[...]" in capsys.readouterr().err
-
-
-def test_env_before_any_broker_has_run_says_so_instead_of_printing_nothing(
-    llmbroker_home,
-    capsys,
-):
-    """Onboarding runs this before the lineup exists. An empty skeleton with a zero
-    exit code reads as "no keys needed", which is the opposite of the truth."""
-    rc = main(["env"])
-    captured = capsys.readouterr()
-    assert rc == 1
-    assert captured.out == ""
-    assert "no lineup yet" in captured.err
-    assert "llmbroker env freetier" in captured.err
 
 
 # --- list: the curated model lists, read-only ---

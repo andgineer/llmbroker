@@ -109,13 +109,14 @@ Two commands, and they are the two the mission asks for: the one irreducible
 admin act, and the one thing llmbroker cannot decide for a host.
 
 - **`env`** emits a `.env` skeleton of `api_key_ref` names, in declaration order,
-  each with its help text. With no argument it reads this installation's own
-  lineup — the everyday form once there is one. Named a curated preset instead,
-  it fetches that preset the same way a sync would, which is how a first-time
-  user onboards before anything local exists, and how an installation whose
-  registry is a database reads the curated keys at all. Onboarding is folded into
-  this command rather than a separate setup/status command, to keep the CLI
-  surface small.
+  each with its help text. It takes a curated preset name and nothing else, and
+  fetches that preset the same way a sync would — one form that works on every
+  backend, including an installation whose registry is a database and has no
+  local list to read. Its output is a function of its argument alone: it never
+  reads the environment of the process that runs it, since the file being
+  generated is normally the one that will supply those variables. Onboarding is
+  folded into this command rather than a separate setup/status command, to keep
+  the CLI surface small.
 - **`list`** shows what the two curated lists carry and writes nothing: the
   routed pool's models, and the paid ones a host may reach by name. A paid line
   carries what a caller needs to reach that model — the alias to declare, and the

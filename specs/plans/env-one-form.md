@@ -86,3 +86,37 @@ of `rules/presets.md` twice.
 ## Gate
 
 `invoke pre` clean and `python -m pytest` green.
+
+## Handover
+
+**Done, in one batch: every section of the plan.**
+
+*Work order.* `cli.py`: `preset` is a required positional; `_env_own_lineup` is gone
+with both of its error messages, and with it the `lineup_path` and `HOME_ENV_VAR`
+imports (`home_dir` stays — the preset fetch needs it). The `# REF already set`
+branch and the `os` import are gone. Help and description say "curated model list",
+not "lineup".
+
+*Done differently from the plan.* `_read_env_data` was folded into `_env_preset`
+rather than kept as its own function: with only one caller left it was an
+indirection, and its docstring — "a malformed lineup is the user's own file" —
+described a form this plan removes. The reporting behavior it carried is unchanged.
+
+*Tests.* `tests/test_cli_env.py` was rewritten around the fetched preset: the five
+cases the plan names, plus the ones that survive from the old file (order, help
+lines, distinct refs, `extra` passthrough, malformed preset, malformed `[keys]`).
+The byte-identical check runs the same preset twice, once with the ref unset and
+once set, and compares the two outputs. `tests/test_cli.py` lost the four env cases
+that duplicated `test_cli_env.py` and the one that tested "no lineup yet"; its
+leftover-`[[custom]]` case stayed and now arrives through a fetched preset.
+
+*Docs.* `cli.md` and `secrets.md` (en+ru) show the one form. `server.md` (en+ru)
+gained the second-clock paragraph beside the daily check.
+
+*A decision the plan did not make.* The `{#no-fetch}` section said
+`sync_interval=None` "stops every clock in the process", which the new paragraph
+would have contradicted — the registry re-read keeps running there, since it opens
+no connection. Both languages now say it stops every clock **that goes online**, and
+the new paragraph says the re-read survives the switch.
+
+*Gate.* `invoke pre` clean; `python -m pytest` → 1287 passed, zero skips.

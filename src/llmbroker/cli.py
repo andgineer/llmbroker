@@ -3,15 +3,13 @@ is filled by a sync, and a model reached by name is declared in the host's own c
 
 import argparse
 import asyncio
-import os
 import sys
 import tempfile
 import tomllib
 from pathlib import Path
 
 from llmbroker.broker.presets import PAID_CATALOG, POOL_PRESET, PRESET_NAME_RE, PresetSource
-from llmbroker.broker.source import lineup_path
-from llmbroker.home import HOME_ENV_VAR, home_dir
+from llmbroker.home import home_dir
 from llmbroker.models import KeyInfo, LLMConfig
 from llmbroker.standalone.registry import Registry, key_info_from_entry
 
@@ -20,44 +18,10 @@ async def _env_data(reg: Registry) -> tuple[list[LLMConfig], dict[str, KeyInfo]]
     return await reg.load(), await reg.key_info()
 
 
-def _read_env_data(reg: Registry) -> tuple[list[LLMConfig], dict[str, KeyInfo]] | None:
-    """A malformed lineup is the user's own file, so it is reported like every other
-    bad argument — the one command onboarding starts with may not end in a traceback."""
-    try:
-        return asyncio.run(_env_data(reg))
-    except (ValueError, OSError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return None
-
-
-def _env_own_lineup() -> tuple[list[LLMConfig], dict[str, KeyInfo]] | None:
-    """The keys the model list this installation already follows needs."""
-    home = home_dir()
-    if home is None:
-        print(
-            "error: llmbroker found no writable directory of its own, so this"
-            " installation has no lineup to read. Name a curated preset instead"
-            f" (e.g. `llmbroker env freetier`), or set {HOME_ENV_VAR}",
-            file=sys.stderr,
-        )
-        return None
-    path = lineup_path(home)
-    # Onboarding runs this before any broker has ever run, so the file is normally
-    # absent on the first go: an empty skeleton would read as "no keys needed".
-    if not path.exists():
-        print(
-            f"error: this installation has no lineup yet ({path} does not exist) — a"
-            " broker writes it on its first run. Name a curated preset to get the keys"
-            " now: `llmbroker env freetier`",
-            file=sys.stderr,
-        )
-        return None
-    return _read_env_data(Registry(path))
-
-
 def _env_preset(name: str) -> tuple[list[LLMConfig], dict[str, KeyInfo]] | None:
     """The keys a curated preset needs, fetched from the catalog — so onboarding
-    needs no local lineup at all."""
+    needs nothing local at all. A malformed preset is reported like every other bad
+    argument: the one command onboarding starts with may not end in a traceback."""
     if not PRESET_NAME_RE.match(name):
         print(f"error: {name!r} is not a valid preset name", file=sys.stderr)
         return None
@@ -69,12 +33,16 @@ def _env_preset(name: str) -> tuple[list[LLMConfig], dict[str, KeyInfo]] | None:
     with tempfile.TemporaryDirectory() as tmp:
         staged = Path(tmp) / f"{name}.toml"
         staged.write_text(text, encoding="utf-8")
-        return _read_env_data(Registry(staged))
+        try:
+            return asyncio.run(_env_data(Registry(staged)))
+        except (ValueError, OSError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return None
 
 
 def _cmd_env(args: argparse.Namespace) -> int:
-    # llms in file order; infos maps ref -> KeyInfo only for refs with a [keys] entry.
-    data = _env_own_lineup() if args.preset is None else _env_preset(args.preset)
+    # llms in declaration order; infos maps ref -> KeyInfo only for refs with a [keys] entry.
+    data = _env_preset(args.preset)
     if data is None:
         return 1
     configs, infos = data
@@ -90,10 +58,7 @@ def _cmd_env(args: argparse.Namespace) -> int:
         if info.help.strip():
             for i, line in enumerate(info.help.splitlines()):
                 lines.append(f"# {ref} — {line}" if i == 0 else f"# {line}")
-        if ref in os.environ:
-            lines.append(f"# {ref} already set")
-        else:
-            lines.append(f"{ref}=")
+        lines.append(f"{ref}=")
     print("\n".join(lines))
     return 0
 
@@ -148,20 +113,14 @@ def main(argv: list[str] | None = None) -> int:
 
     env_p = sub.add_parser(
         "env",
-        help="emit a .env skeleton of api_key_ref names",
+        help="emit a .env skeleton of the api_key_ref names a curated preset needs",
         description=(
-            "Emit a .env skeleton of the api_key_ref names a lineup needs, in file order,"
-            " each with its help text. With no argument it reads this installation's own"
-            " lineup; name a curated preset instead — `llmbroker env freetier > .env` —"
-            " to onboard before anything local exists, or to read the curated keys on an"
-            " installation whose registry is a database."
+            "Emit a .env skeleton of the api_key_ref names a curated model list needs, in"
+            " declaration order, each with the help text saying where that key comes from"
+            " — `llmbroker env freetier > .env`."
         ),
     )
-    env_p.add_argument(
-        "preset",
-        nargs="?",
-        help="curated preset name (e.g. freetier); omit to read this installation's lineup",
-    )
+    env_p.add_argument("preset", help="curated preset name (e.g. freetier)")
     env_p.set_defaults(func=_cmd_env)
 
     list_p = sub.add_parser(

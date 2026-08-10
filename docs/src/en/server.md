@@ -44,6 +44,17 @@ merge from the same upstream and the same keys, so the first write settles it an
 every other node's check finds nothing to do. What the design avoids is a node
 reconciling the registry against a *local copy* of its own.
 
+**A second, faster clock carries edits between nodes**, and it is why there is no
+restart procedure here. A serving process re-reads the shared registry itself —
+roughly once a minute of activity, on a call it was making anyway, and at once
+when a provider rate-limits — so a row you edit by hand, a key you revoke, and a
+cooldown another node has just recorded all take effect on the next call, with no
+restart and no deploy. It opens no outbound connection of its own: it reads the
+registry and journal your processes already share, so it keeps running with the
+automatic refresh switched off. Calls in flight are never interrupted — a model
+removed while a request is using it finishes that request and is simply not a
+candidate for the next one.
+
 `sync` takes a curated preset name and nothing else — no file path, no second
 registry. A connection string keeps following the curated preset; hand the broker
 a registry *object* and you must say what it follows, `sync="freetier"` or
@@ -70,11 +81,12 @@ finally:
     await llms.aclose()
 ```
 
-`sync_interval=None` stops every clock in the process — the curated model list and
-the paid catalog your `direct=` aliases resolve through. It also stops the fetch
-that fills an empty registry at startup: such a broker raises `EmptyRegistryError`
-naming this job, rather than going online to serve its first request. That is the
-intended failure. Set the switch and skip the job and the broker will not serve.
+`sync_interval=None` stops every clock in the process that goes online — the
+curated model list and the paid catalog your `direct=` aliases resolve through. It
+also stops the fetch that fills an empty registry at startup: such a broker raises
+`EmptyRegistryError` naming this job, rather than going online to serve its first
+request. That is the intended failure. Set the switch and skip the job and the
+broker will not serve.
 
 `sync()` with no argument syncs what this installation follows: the preset named by
 `sync=`, or — where it follows none — the paid catalog alone, which refreshes your
