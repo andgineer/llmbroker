@@ -11,17 +11,17 @@
 | src/llmbroker/backends/inmemory.py    |       36 |        1 |     97% |        19 |
 | src/llmbroker/backends/ports.py       |       94 |        0 |    100% |           |
 | src/llmbroker/backends/spec.py        |        7 |        0 |    100% |           |
-| src/llmbroker/broker/aliases.py       |       68 |        3 |     96% |62, 65, 89 |
-| src/llmbroker/broker/broker.py        |      231 |        9 |     96% |77, 85, 210-212, 360-362, 522 |
-| src/llmbroker/broker/catalog.py       |      199 |        5 |     97% |75, 85, 134, 250, 276 |
+| src/llmbroker/broker/aliases.py       |       68 |        3 |     96% |62, 65, 90 |
+| src/llmbroker/broker/broker.py        |      232 |        9 |     96% |77, 85, 212-214, 363-365, 525 |
+| src/llmbroker/broker/catalog.py       |      202 |        5 |     98% |75, 85, 134, 261, 287 |
 | src/llmbroker/broker/keys.py          |       35 |        0 |    100% |           |
 | src/llmbroker/broker/learning.py      |      125 |        1 |     99% |       146 |
 | src/llmbroker/broker/lineup\_file.py  |       60 |        1 |     98% |        39 |
 | src/llmbroker/broker/merge.py         |      113 |        0 |    100% |           |
 | src/llmbroker/broker/pool.py          |      186 |        0 |    100% |           |
 | src/llmbroker/broker/pool\_view.py    |       22 |        0 |    100% |           |
-| src/llmbroker/broker/presets.py       |       95 |        2 |     98% |   153-154 |
-| src/llmbroker/broker/refresher.py     |      129 |        2 |     98% |   190-191 |
+| src/llmbroker/broker/presets.py       |      105 |        2 |     98% |   186-187 |
+| src/llmbroker/broker/refresher.py     |      141 |        3 |     98% |107, 202-203 |
 | src/llmbroker/broker/report.py        |       40 |        0 |    100% |           |
 | src/llmbroker/broker/result.py        |       49 |        0 |    100% |           |
 | src/llmbroker/broker/router.py        |      234 |       10 |     96% |520, 524-525, 562-566, 605-606 |
@@ -59,7 +59,7 @@
 | src/llmbroker/sync.py                 |      103 |        1 |     99% |        95 |
 | src/llmbroker/util/atomic.py          |       17 |        3 |     82% |     29-31 |
 | src/llmbroker/vault/secrets.py        |       19 |        0 |    100% |           |
-| **TOTAL**                             | **3542** |   **97** | **97%** |           |
+| **TOTAL**                             | **3568** |   **98** | **97%** |           |
 
 
 ## Setup coverage badge
