@@ -60,6 +60,13 @@ need one.
 arrives without an explicit `sync`, which any example or test in the real plan
 that constructs a broker by hand will have to satisfy.
 
+`one-broker-many-callers` takes the resolved key out of the pool slot and gives
+it to the caller, so `Catalog`'s key-facing members in finding 1 —
+`_direct_missing_keys`, `_direct_without_keys`, `key_help`'s two readers — ask a
+key ring instead of the pool. Re-take that member list from the file: the split
+proposed here is unaffected in principle, but which members are on which side of
+it is not.
+
 **`named-models-are-declared` is the one that changes this plan's subject, and it
 must merge first.** It closes finding 3 outright (above) and raises what is left:
 the declared overlay stops being a side feature of `Catalog` and becomes the only

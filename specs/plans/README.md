@@ -24,7 +24,7 @@ here, with its status, until the maintainer asks for it to go after merge.
 written after 15 and are taken before it; taking the numerically first `queued` row would start
 with a plan whose inventory the later ones delete.
 
-**Take order: 23 → 16 → 10 → 12 → 13 → 14 → 15**, with 17, 18, 19, 21 and 22 already taken
+**Take order: 23 → 24 → 25 → 16 → 10 → 12 → 13 → 14 → 15**, with 17, 18, 19, 21 and 22 already taken
 ahead of them; 21 was written during 19's implementation and ships with it, as 22 does with 18.
 23 goes first on the ground 11 and 20 went first: it fixes runtime behavior rather than shape, it
 blocks nothing, and 22 — whose investigation it answers — has already landed. 20 was taken ahead of all of them on the same ground 11 was: it was the only queued plan that fixed runtime behavior rather than shape,
@@ -57,7 +57,11 @@ plan stays undone through eight others.
 | 20 | [stream-chunk-fields](stream-chunk-fields.md) | **implemented** | — | 11 *(implemented)* | **fixes what 11 left half-closed**: a stream chunk that is an object but whose `choices` are malformed still escapes the pool raw instead of failing over. Small, independent. **Take first** |
 | 21 | [offline-alias-resolution](offline-alias-resolution.md) | **implemented, reviewed** | — | 19 *(implemented)* | **finishes what 19 left open**: with the automatic fetching off, the first resolution of a declared alias still read the paid catalog through the network. It now reads the cache, then the wheel's copy, and never fetches. Small; **ships with 19** |
 | 22 | [ports-are-the-only-writer](ports-are-the-only-writer.md) | **implemented** | — | — | **removes a form**: a host states its own pool members through the registry port, never with SQL against a table invariant 13 refuses to promise the shape of. Text only. Deletes the second-clock paragraph 18 added — that mechanism does not work as described — and carries the investigation the propagation fix is written against. **Ships with 18** |
-| 23 | [edits-reach-a-live-pool](edits-reach-a-live-pool.md) | queued | — | 22 *(implemented)* | **fixes runtime behavior**: a process whose calls all succeed re-reads nothing, so a peer's registry edit or `disable_llm` never reaches it — reproduced over 500 successful calls. The observer's successful branch joins the debounced rebuild, the rebuild loses both its mode flags, and a resolved key stops being re-bought on every rebuild. Answers 22's investigation and writes back the `server.md` paragraph 22 deleted. **Take first** |
+| 23 | [edits-reach-a-live-pool](edits-reach-a-live-pool.md) | queued | — | 22 *(implemented)* | **fixes runtime behavior**: a process whose calls all succeed re-reads nothing, so a peer's registry edit or `disable_llm` never reaches it — reproduced over 500 successful calls. The observer's successful branch joins the debounced rebuild and the rebuild loses both its mode flags; everything about what a rebuild pays for a key moved out to 24 and the cache plan behind it. Answers 22's investigation and writes back the `server.md` paragraph 22 deleted. **Take first** |
+
+| 24 | [one-broker-many-callers](one-broker-many-callers.md) | queued | — | — | **removes a form**: no broker per request and no `scope=` on the constructor. The broker is the installation — ports, pool, learning, HTTP client, provisioned once — and a request holds a caller from `llms` or `for_scope(...)`, which costs no I/O. Fixes the `parallel` cap that a broker per user multiplied, and the sync key probe that a scoped broker blinded. The secrets cache is written against its result |
+
+| 25 | [a-key-is-asked-for-once](a-key-is-asked-for-once.md) | queued | — | 24 | **fixes runtime behavior**: whether a ref exists is answered from one listing of its prefix per window, and a resolved value is read once and held a day, so a caller built per request stops paying a metered round trip in front of every call — and a key an admin or a user has just stored is used by the first call that finds it. **Ships with 24** |
 
 Plans 1-5 touch disjoint files and may be taken in any order subject to the
 Blocked-by column. Plans 6 and 7 must reach a release together: 7 extracts the
@@ -74,6 +78,15 @@ by anything below, so deferring it only risked it never being taken. **20 was th
 same case and was taken ahead of the queued half for the same reason**: it
 finishes the guard 11 put one level too high, and 13 reshapes the seam between
 the two direct clients without touching the SSE helpers 20 edits.
+**24 and 25 are one release and are taken directly after 23**, which is the order
+the rest of the queued half now hangs on. 24 makes the broker the installation and
+a request hold a caller; 25 decides what that caller's key ring asks the secrets
+port. Three queued plans are written against methods 24 moves — 16's refusal path,
+13's private reach into the direct client, 14's key-facing half of `Catalog` — and
+each says so in its own text, so taking 24 later would mean scoping all three
+twice. 23 goes first of the three because it changes only when a rebuild runs, and
+keeping that diff free of the object model is what makes it reviewable.
+
 **10 renames what the reader sees** and now goes after the removals rather than
 before them: three plans rewrite the doc sections and CLI strings it was
 inventoried from, so renaming first would rename some of them into files that

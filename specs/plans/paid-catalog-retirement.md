@@ -218,6 +218,13 @@ declared rather than stored and moves the alias facts to the resolution this pla
 extends. Taken before it, this plan would build the withdrawal into a metadata
 blob that plan then deletes.
 
+**After `one-broker-many-callers`**, which moves `direct()` off the broker onto
+the caller and gives the sync side its own mirror of it. Nothing this plan
+decides changes — the refusal, the two entries and the catalog fields are the
+same — but the batch that makes the call refuse is written against a method that
+plan has already moved, so scope it against the caller rather than against
+`AsyncBroker`.
+
 Independent of 10 and 11. It must land **before 12 and 14**: 12 moves the
 validators out of `models.py` and 14 rewrites the `direct=` overlay, and both
 would otherwise be written against the pre-withdrawal shape of the field set this

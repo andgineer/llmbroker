@@ -70,7 +70,10 @@ One batch; it is a text change and ends green in one gate run.
    rather than assuming; several match on wording.
 3. **`docs/src/en/`** — `usage.md` carries most of it, including the section
    heading *Where the lineup lives*; then `cli.md`, `server.md`, `direct.md`,
-   `secrets.md`, `index.md`.
+   `secrets.md`, `index.md`. `server.md` is the page to re-read from scratch
+   rather than to diff: `ports-are-the-only-writer` deleted two paragraphs from
+   it, `edits-reach-a-live-pool` writes a new one, and `one-broker-many-callers`
+   rewrites its whole multi-user section around four examples.
 4. **`docs/src/ru/`** — the prose already reads correctly; the only edits are the
    example outputs that quote the program's own English strings, which must match
    what the program now prints.
@@ -87,8 +90,9 @@ spec sentence quotes a program string that this plan changes.
 
 ## The queue
 
-After `named-models-are-declared`, `env-one-form` and `paid-catalog-retirement`,
-and before the skeletons. After those three, because between them they rewrite
+After `named-models-are-declared`, `env-one-form`, `paid-catalog-retirement`,
+`edits-reach-a-live-pool` and `one-broker-many-callers`, and before the
+skeletons. After those three, because between them they rewrite
 `direct.md`, both `usage.md` pages and most of the CLI's strings — renaming first
 would rename them twice, and a third of the inventory above would be renamed into
 a file that then deletes it. Before `models-purity`, which relocates the prose

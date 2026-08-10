@@ -42,6 +42,14 @@ a sentinel default — so the `sync.py:203` line number above will have moved.
 The finding itself is untouched: the private call and the separately
 constructed blocking client are both still there.
 
+**`one-broker-many-callers` reshapes finding 1's subject and must merge first.**
+`direct()` moves off the broker onto the caller, and the sync side gains a
+mirror of it, so the private reach this plan is about is re-written there rather
+than here — check whether it survived the move before scoping, and if the mirror
+re-created it, that is this plan's finding restated, not a new one. What that
+plan does not touch is finding 2: the two clients still duplicate everything that
+is not their transport.
+
 ## Open questions for the real plan
 
 - Shape of the seam: `AsyncBroker.resolve_direct(alias, name=) -> DirectTarget`
