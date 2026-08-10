@@ -67,8 +67,8 @@ self-purges records older than its retention horizon — and there is no public
 purge operation.
 
 The admin disabled-verdict map is the one **excluding** verdict, orthogonal to
-quality demotion: values are written only by the disable verb or by hand, and
-llmbroker only seeds missing names. It survives a sync by construction, since a
+quality demotion: values are written only by the disable verb, and llmbroker
+only seeds missing names. It survives a sync by construction, since a
 sync only touches the registry, and it works identically for file and DB
 sources. Lifting a verdict simply lifts it; rehabilitation happens through new
 ratings displacing old ones in the window.

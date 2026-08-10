@@ -323,18 +323,22 @@ that record: entries a sync wrote are the ones the removal rule may retire and
 the arriving lineup may replace; an entry the installation stated itself is
 carried through untouched, whatever the arriving lineup says. The default for a
 new entry is *not written by a sync*, so anything reaching a registry by any
-other route — a host's own mirror call, a hand-written row, a backend filled
-before llmbroker ever ran — is protected without doing anything.
+other route — a driver the host implements, a registry object it hands over, a
+host's own mirror call — is protected without doing anything.
 
 **Blocks:** deciding what a merge may remove from where the registry came from,
 or from whether the broker was constructed with an object; inferring ownership
-from the entry's shape; a per-registry "read-only" flag.
+from the entry's shape; a per-registry "read-only" flag; a host write path into
+the shipped backends' tables.
 **Why:** ownership is a property of the entry, not of the backend class or the
 constructor call. A host may implement a driver of its own that holds our
-curated pool, and may equally pass a connection string to a database it filled
-by hand — the construction path predicts nothing. It also makes the mixed pool
-statable: the routed pool is whatever the registry states as pool members,
-whether it came from the curation, from the host, or from both.
+curated pool, and may equally hand over a registry object holding entries it
+states itself — the construction path predicts nothing. It also makes the mixed
+pool statable: the routed pool is whatever the registry states as pool members,
+whether it came from the curation, from the host, or from both. The host's side
+of that is always the port, never our table: invariant 13 promises nothing about
+a column name, so a hand-written row is a deploy script that breaks on an
+upgrade with no error to read.
 **Accepted cost:** one more fact stored per entry. It rides in the metadata
 column that already carries the optional fields, so no schema changes; in the
 lineup file the fact is structural already — the file is llmbroker's own output,

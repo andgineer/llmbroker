@@ -35,8 +35,8 @@ entry enters only by displacing another.
 
 2. **Nothing inside llmbroker writes the registry but `sync`.** There is no
    add/update/remove path; learning, the optimizer and the admin verbs never
-   touch it. What the installation puts there by its own hand is its own, and
-   invariant 22 is what keeps it. → `sync-merge.md`
+   touch it. What the installation states through the registry port is its own,
+   and invariant 22 is what keeps it. → `sync-merge.md`
 
 3. **The registry stores no ordering.** Every backend returns rows in its own
    order, so an entry's standing must be data on the entry. Nothing may read

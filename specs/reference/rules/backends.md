@@ -77,7 +77,10 @@ stay override-only.
 string says only where llmbroker keeps its own installation, so it keeps
 following the curated preset by default. A registry object is content the host
 owns, and there what the installation follows must be stated
-([`lineup-refresh.md`](lineup-refresh.md)).
+([`lineup-refresh.md`](lineup-refresh.md)). Neither form invites a write into the
+tables: a connection string says where llmbroker keeps its own state, not that
+the state is the host's to edit, and content the host owns arrives through the
+port ([`sync-merge.md`](sync-merge.md#the-partition-a-sync-touches-only-what-a-sync-wrote)).
 
 **The home directory.** Everything llmbroker caches or remembers on its own —
 the fetched preset text, the paid catalog, the refresh-check records — lives in

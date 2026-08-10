@@ -56,9 +56,19 @@ the merge partitions on that record. Entries a sync wrote are the ones
 everything below applies to. An entry the installation stated itself is carried
 through untouched, whatever the arriving lineup says — never removed, never
 replaced, never counted in the report's added/updated/removed. The default for a
-new entry is *not written by a sync*, so a host's own mirror call, a hand-written
-row or a backend filled before llmbroker ever ran are all protected without doing
+new entry is *not written by a sync*, so an entry that reached the registry
+through the port — a driver the installation implements over storage of its own,
+a registry object it hands over, its own mirror call — is protected without doing
 anything. It yields invariant 22.
+
+The port is the whole of the installation's write surface. It does not write our
+tables by hand: invariant 13 promises nothing about a column name, so a row put
+there by a deploy script breaks on an upgrade with nothing to read. An
+installation stating pool members of its own implements the registry port, or
+composes one around a shipped registry whose stored rows it returns alongside its
+own. That composition states a union, not a concatenation — a merge persists the
+entries it was handed, so a `load()` that adds an entry the store already holds
+carries the same name twice and is refused.
 
 That makes the mixed pool statable: the routed pool is whatever the registry
 holds, whether it came from the curation, from the installation, or from both.

@@ -193,3 +193,56 @@ inventory instead.
 ## Gate
 
 `invoke pre` clean and `python -m pytest` green.
+
+## Handover
+
+**Done, both batches, text only — no runtime code changed.**
+
+*Batch 1, the rule.* `decisions.md#a-sync-touches-only-what-a-sync-wrote` carries
+the amended block verbatim as the plan wrote it, `Accepted cost:` untouched.
+`invariants.md` #2 now reads "What the installation states through the registry
+port is its own" — one clause, no new entry. `rules/sync-merge.md`'s partition
+paragraph names the three port routes instead of the hand-written row and the
+pre-filled backend, and gained the sentence about the write surface being the
+port. `rules/backends.md` gained one sentence beside "A string moves the storage;
+an object moves the ownership": neither form invites a write into the tables.
+
+*Batch 2, the texts.* The second-clock paragraph is deleted from
+`docs/src/en/server.md` and `docs/src/ru/server.md`; nothing replaces it. The
+`sync` paragraph below it now says entries the installation states through its
+own registry, in both languages. The grep over both language trees turned up
+nothing else: the remaining "вручную" hits are about `disable_llm`, and the one
+`sqlite3` command line is a `PRAGMA`, not a registry write.
+
+**The verification the plan demanded, and its one condition.** The composing
+route works end to end, and was run rather than reasoned about: a wrapper whose
+`load()` returns a shipped sqlite registry's rows plus one entry of its own, over
+a real `broker.sync("freetier")` — the host entry survives the merge, is routed
+and failed over to, lands in the shipped store marked as not a sync's
+(`from_preset` false), and a second sync applies nothing. So the narrowing costs
+the mixed pool nothing.
+
+The condition the plan's text did not anticipate: because `Catalog.apply`
+persists what the merge held, the host's entry is in the shipped store from the
+first sync onward, and a wrapper that unconditionally concatenates its own
+entries onto `load()` then presents the same name twice — the second sync raises
+the name-clash refusal. Verified both ways. A clause in the sync-merge partition
+paragraph therefore says the composition states a union, not a concatenation.
+That is one sentence beyond the plan's work order; it is where a host would
+otherwise meet a loud error on its second deploy, not its first.
+
+**One line beyond the named scope.** `rules/journal.md`, on the admin disabled
+map, said its values "are written only by the disable verb or by hand" — the same
+sanction for a hand-written `llmbroker_*` row that this plan's `Blocks:` line now
+refuses, one subsystem over. It now names the verb only. Nothing else about that
+paragraph changed.
+
+**Nothing else was touched.** The investigation section is carried as written;
+its claims were not re-derived, per its own preamble, and no propagation
+mechanism was chosen or implemented here. No tests added, as the plan says.
+
+**Queue.** README row 22 marked implemented, take-order line now starts at 16,
+and the status paragraph records that 22 ships with 18.
+
+**Gate:** `invoke pre` clean (ruff, ruff-format, docstring cap, pyrefly — 0
+errors); `python -m pytest` → **1287 passed**, zero failures, zero skips.
