@@ -1,6 +1,6 @@
-# Keeping the lineup current
+# Keeping the model list current
 
-What makes a stored lineup follow the curated one without an admin act. What the
+What makes a stored model list follow the curated one without an admin act. What the
 merge itself does is [`sync-merge.md`](sync-merge.md). The cross-cutting rules
 this file elaborates are in [`../invariants.md`](../invariants.md).
 
@@ -10,7 +10,7 @@ the currency of the list: a process that may make no outbound connection while i
 serves stops every clock it has and does the fetching itself, in a job it runs
 deliberately ([`decisions.md`](../decisions.md#no-automatic-fetch-means-none-at-start-either)).
 Freezing the list while the process keeps serving from it is not offered
-([`decisions.md`](../decisions.md#unconditional-lineup-refresh)). An
+([`decisions.md`](../decisions.md#unconditional-list-refresh)). An
 installation that must not follow our curation fills a registry of its own,
 which is a different pool rather than a frozen copy of ours; one that wants both
 keeps following it, since a refresh leaves its own entries alone.
@@ -30,7 +30,7 @@ Either way a refresh only rewrites what a sync itself wrote
   public operation already passes through, so an idle process performs no I/O
   and schedules no wakeups — the library needs no running service of its own. A
   background timer would have to be owned, cancelled and tested against every
-  embedding, for a process that has no lineup to keep fresh.
+  embedding, for a process that has no list to keep fresh.
 - The **identity gate** decides whether what arrived changes anything (see "The
   report" in [`sync-merge.md`](sync-merge.md)). It also removes the need for a
   conditional GET, which would save a kilobyte and no round trip while proving
@@ -50,7 +50,7 @@ what this installation follows — its preset, or, where it follows none, the pa
 catalog alone, which merges nothing into the registry and therefore returns no
 report. An installation following neither has nothing to fetch and does not.
 
-**A check that just happened is remembered across process exits**, per (lineup,
+**A check that just happened is remembered across process exits**, per (list,
 target), so a short-lived process does not pay a round trip per invocation and a
 rolling deploy does not fetch once per pod. The record only ever makes checks
 less frequent: it is not authoritative, a timestamp in the future counts as
@@ -60,11 +60,11 @@ fleet's own LLM traffic, and the identity gate already makes concurrent
 application a no-op.
 
 **The same interval carries the paid catalog.** A declared alias rides on that
-one clock and no other, whether or not this installation syncs a lineup at all
+one clock and no other, whether or not this installation syncs a list at all
 ([`direct-aliases.md`](direct-aliases.md)). A catalog nobody can reach may not
 fail the sync of the model list itself.
 
-**A fetched lineup is cached, and the cache is a fallback rather than a
+**A fetched list is cached, and the cache is a fallback rather than a
 source**: a successful fetch overwrites it, a failed one — offline, or throttled
 by the CDN's per-IP limit — falls back to it. Unlike the check record, the cache
 is machine-global: what the catalog says today does not depend on which project
@@ -81,14 +81,14 @@ cache.
 
 **The refresh is off the critical path, with one exception.** An empty registry
 is filled before provisioning, blocking, because provisioning an empty registry
-raises and there is no alternative; a registry that already holds a lineup is
+raises and there is no alternative; a registry that already holds a list is
 provisioned from it and refreshed afterwards, so the first call of a fresh
 process does not wait on the network.
 
 It is **best-effort and never raises**: a fetch failure or a refusal logs a
 warning naming which check it was, stashes the report where there is one, and
 continues on the existing configuration. Neither a start nor a request ever
-fails over a lineup refresh. The explicit `sync()` call raises instead — that
+fails over a list refresh. The explicit `sync()` call raises instead — that
 caller chose to sync and has a plan. The start attempt is guarded by its own
 flag, so a provision that failed for another reason and is retried does not
 re-fetch.
@@ -110,6 +110,6 @@ code path happened to be written with.
 ## The accepted exposure
 
 The catalog's default branch is live configuration for every installation
-([`decisions.md`](../decisions.md#unconditional-lineup-refresh)). A `base_url`
+([`decisions.md`](../decisions.md#unconditional-list-refresh)). A `base_url`
 decides where an installation's API keys are sent, so a config built from a
 *fetched preset* must carry `https://` ones.

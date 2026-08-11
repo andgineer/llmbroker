@@ -10,19 +10,27 @@ lives in that subsystem's file instead, where the task itself will lead a reader
 to it. The list is capped at ~25: it is loaded on every task, so past the cap an
 entry enters only by displacing another.
 
+**Before proposing a mechanism, check it against the scale in
+[`mission.md`](mission.md#the-size-of-the-problem).** Coarse is the default
+wherever coarse is harmless, and a mechanism justified by a scale this pool
+cannot reach is a defect rather than headroom
+([`decisions.md`](decisions.md#size-is-part-of-the-mission)). That rule sits
+here, outside the numbered list, because it governs how a mechanism is sized
+rather than what the running system must never do.
+
 ## Where everything lives
 
 | file | what it answers |
 |---|---|
 | [`rules/call-path.md`](rules/call-path.md) | one routed call — failure classification, `wait`, streaming, the error contract |
 | [`rules/selection.md`](rules/selection.md) | which model is picked — cooldown, quality demotion, priority, curated weights |
-| [`rules/sync-merge.md`](rules/sync-merge.md) | a lineup becomes the registry — the removal rule, the tiers, the report |
-| [`rules/lineup-refresh.md`](rules/lineup-refresh.md) | what keeps a lineup current — the two gates, the check record, the cache |
+| [`rules/sync-merge.md`](rules/sync-merge.md) | a curated list becomes the registry — the mirror, the partition, the report |
+| [`rules/list-refresh.md`](rules/list-refresh.md) | what keeps the model list current — the two gates, the check record, the cache |
 | [`rules/pool-health.md`](rules/pool-health.md) | can the pool still fail over — provider counts, `degraded`, the alarm |
 | [`rules/presets.md`](rules/presets.md) | the free pool's definitions — preset distribution, key help, the CLI |
 | [`rules/direct-aliases.md`](rules/direct-aliases.md) | reaching a host's own model — the paid catalog, `direct`, alias contract |
 | [`rules/backends.md`](rules/backends.md) | the three ports, source dispatch, lifecycle, DB schema policy, secret naming |
-| [`rules/journal.md`](rules/journal.md) | the journal — read path, the one tail read, retention, scoping |
+| [`rules/journal.md`](rules/journal.md) | the journal — read path, the quality read, retention, scoping |
 | [`decisions.md`](decisions.md) | why a contested decision went that way. Open one entry by its anchor — do not read it whole |
 | [`mission.md`](mission.md) | what the library is for, and the design that follows from it |
 | [`freetier-providers.md`](freetier-providers.md) | curated knowledge about the free endpoints the pool routes over |
@@ -58,16 +66,15 @@ entry enters only by displacing another.
    per-model timeout knob and will not be one — it could not compose with
    failover. → `call-path.md`
 
-8. **The journal is the only durable source of everything derived.** There is no
-   second state subsystem holding a truth of its own: what a restart must not
-   lose is on a row, never only in memory. Live state is reached two ways and
-   only two — folded forward from the row just journaled, which is not optional
-   because a store with no read path has nothing else to learn from, and
-   re-derived from the tail, each kind either replaced wholesale or merged so
-   that other evidence can only raise it. And a row survives its store whole: a
-   backend that persists part of what it was handed is a defect, not a storage
-   choice — the loss surfaces as degraded selection, never as an error.
-   → `journal.md`
+8. **The journal is the only durable state, and quality is the only thing
+   derived from it.** There is no second state subsystem holding a truth of its
+   own: what a restart must not lose is on a row, never only in memory. Live
+   quality is reached two ways and only two — folded forward from the row just
+   journaled, which is not optional because a store with no read path has
+   nothing else to learn from, and re-derived from the tail, replaced wholesale.
+   And a row survives its store whole: a backend that persists part of what it
+   was handed is a defect, not a storage choice — the loss surfaces as degraded
+   selection, never as an error. → `journal.md`
 
 9. **Every instant crossing the store boundary is UTC, in both directions.** A
    naive value is refused on write and on read rather than guessed at; admitted
@@ -78,9 +85,12 @@ entry enters only by displacing another.
     streak.** Any 4xx other than 429/401/403 is the request's fault; the model
     is excluded for the rest of that call only. → `call-path.md`
 
-11. **A sync never takes away a model this installation can call** — except by
-    replacing it with the same provider's model, or when the journal proves the
-    model does not work. → `sync-merge.md`
+11. **What a process learns about availability stays in that process.** A
+    cooldown, a dead key, a within-call exclusion: held in memory, written to no
+    store, and never read back from a peer. Sharing it would rebuild the second
+    state subsystem invariant 8 forbids and put a read on the call path, to save
+    one wasted call that failover already absorbs.
+    → `selection.md`, `decisions.md#availability-is-not-shared`
 
 12. **Model identity is immutable.** The same entry name carrying a different
     `model` is an error; a bump must be a new entry name. This protects the
@@ -99,9 +109,9 @@ entry enters only by displacing another.
     mechanism; an orphaned ref is reported and a human decides.
     → `sync-merge.md`
 
-16. **The registry and everything learned are always global.** `scope` reaches
+16. **The registry and everything learned are user-agnostic.** `scope` reaches
     secret refs and journal attribution only; no protocol and no backend has a
-    user concept. → `journal.md`
+    user concept, and nothing is partitioned per user. → `journal.md`
 
 17. **An empty answer is an answer.** A well-shaped completion carrying no text
     and no tool calls returns an empty string; it is never a provider failure

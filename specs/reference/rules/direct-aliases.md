@@ -65,19 +65,19 @@ model with no sync involved.
 that resolution is the catalog underneath it being refreshed. The resolution
 reads the copy already on the machine wherever there is one, so provisioning
 does not wait on the network; where nothing is writable there is no refresh to
-move it ([`lineup-refresh.md`](lineup-refresh.md)), and it stays on what the
+move it ([`list-refresh.md`](list-refresh.md)), and it stays on what the
 first read reached. One refresh costs one resolution however many calls are in
 flight when it lands.
 
 **Where the process fetches nothing automatically, neither does this read**
-([`lineup-refresh.md`](lineup-refresh.md)). It takes the copy on the machine, and
+([`list-refresh.md`](list-refresh.md)). It takes the copy on the machine, and
 failing that the wheel's copy, and the alias stays frozen there until an explicit
 sync moves it — the same floor the read already falls to when the network is
 unreachable ([`../decisions.md`](../decisions.md#no-automatic-fetch-means-none-at-start-either)).
 With neither copy present the first resolution raises and names the sync to run.
 
 **The paid catalog carries its own refresh clock.** Every sync reads it on the
-way past, and where no lineup is synced — a registry a deploy job fills, and a
+way past, and where no model list is synced — a registry a deploy job fills, and a
 broker told to sync nothing — the same interval refreshes it on its own, because
 otherwise a declared alias would have no clock at all and would sit on the
 version the installed release shipped with. Where there is no clock at all, that
@@ -109,7 +109,7 @@ entry: it exists, and `direct()` on it reports the missing key.
 
 **A declared model's key is bootstrapped like a stored one.** A key the
 environment holds is copied into a writable secrets backend when the declaration
-resolves, the same way a sync does it for the lineup it writes. Without that,
+resolves, the same way a sync does it for the list it writes. Without that,
 declaring in code would be dead wherever secrets live in a backend rather than
 the environment, while the identical stored entry worked — and nothing else
 would ever carry that key across, since a declared model is never synced.
@@ -134,9 +134,9 @@ never disappears and never renames — a generation change re-points it at the
 successor model. A duplicate makes the catalog invalid and is refused.
 
 **A name identifies exactly one entry.** Every store keys on it — a DB
-registry's primary key, the live pool's slot map — so a lineup carrying a name
+registry's primary key, the live pool's slot map — so a list carrying a name
 twice does not raise an ambiguity to resolve later, it loses an entry at the next
-sync; that is decided in the one place a lineup is parsed, so a stored lineup and
+sync; that is decided in the one place a list is parsed, so a stored list and
 an arriving curated one are held to one judgement. Among declared models the same
 holds, and so does uniqueness of aliases: both are checked where the declaration
 is overlaid, against each other and against the registry, since a declared model

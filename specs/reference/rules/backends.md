@@ -11,7 +11,7 @@ Every host plugs in up to three backends; only the registry is required.
 
 | Port | Contract | Default (zero-dependency) | What it is |
 |---|---|---|---|
-| **config** | `RegistryProtocol` | the TOML lineup in llmbroker's own directory | where LLM configurations are stored — the merged lineup |
+| **config** | `RegistryProtocol` | the TOML model list in llmbroker's own directory | where LLM configurations are stored — the merged list |
 | **secrets** | `SecretsProtocol` | env vars, with an optional `.env` fallback | how `api_key_ref` names resolve to real keys |
 | **store** | `StoreProtocol` | a `store/` directory | the append-only call journal plus the admin disabled-verdict map |
 
@@ -45,26 +45,27 @@ object is unaffected.
 ## Choosing a source
 
 **No source is a source — the default installation.** A bare `Broker()` runs the
-curated free pool: the merged lineup in the home directory (seeded on first use
+curated free pool: the merged list in the home directory (seeded on first use
 from the fetched, cached or bundled preset), keys from the environment with the
 working directory's `.env` behind them, the journal in the home directory too.
-That lineup is what a sync rewrites, and llmbroker is its only author. Where
-nothing is writable, the lineup and the journal live in process
+That list is what a sync rewrites, and llmbroker is its only author. Where
+nothing is writable, the list and the journal live in process
 memory for that run — the broker still routes, it just remembers nothing between
 runs.
 
 The journal is machine-global here because keys in this mode come from the
 environment, so the quota it tracks really is one pool; a journal scattered per
 working directory would make every run rediscover the same 429. Two projects on
-genuinely different keys are already separated, since 429 and dead-key evidence
-scope by key hash, and a project wanting full isolation passes its own home.
+genuinely different keys are already separated, since a 429 withdraws the key's
+capacity rather than the endpoint's, and a project wanting full isolation passes
+its own home.
 
 **Source-parameter dispatch.** The broker's first positional argument is the
 data source; passing a plain string or path dispatches on its form, and every
 form is a database: a sqlite path or URL gives sqlite backing all three ports
 from one file; a postgres or mongodb URL gives that driver backing all three
-ports. A file path is not among them — a lineup is not a path a host names
-([`decisions.md`](../decisions.md#the-lineup-file-is-not-a-path-a-host-names)) —
+ports. A file path is not among them — a model list is not a path a host names
+([`decisions.md`](../decisions.md#the-model-list-is-not-a-path-a-host-names)) —
 so an unrecognized form raises a clear error naming the DSN forms, the bare
 broker, and passing a registry object; a missing extra raises an actionable
 install message. Each backend package is imported lazily so a bare `import llmbroker`
@@ -77,7 +78,7 @@ stay override-only.
 string says only where llmbroker keeps its own installation, so it keeps
 following the curated preset by default. A registry object is content the host
 owns, and there what the installation follows must be stated
-([`lineup-refresh.md`](lineup-refresh.md)). Neither form invites a write into the
+([`list-refresh.md`](list-refresh.md)). Neither form invites a write into the
 tables: a connection string says where llmbroker keeps its own state, not that
 the state is the host's to edit, and content the host owns arrives through the
 port ([`sync-merge.md`](sync-merge.md#the-partition-a-sync-touches-only-what-a-sync-wrote)).
@@ -135,7 +136,7 @@ Four tables or collections exist and no more:
 - **calls** — the journal. Failed rows also carry the cooldown instant and key
   digest the shared-cooldown rebuild reads (see
   [`selection.md`](selection.md)).
-- **registry** — the merged lineup. Global, no scope dimension, no learned data,
+- **registry** — the merged list. Global, no scope dimension, no learned data,
   and nothing but `sync` writes it. It stores no ordering (invariant 3), so a
   backend author must not assume the load order means anything.
 - **disabled** — the admin verdict map, a flat name-to-boolean mapping. Written
@@ -145,8 +146,8 @@ Four tables or collections exist and no more:
   the broker folds the scope into the ref string as a prefix, and the value is a
   single opaque scalar, so JSON buys nothing.
 
-There is no state or summaries table — shared cooldowns and learned quality
-derive entirely from the calls journal.
+There is no state or summaries table: learned quality derives entirely from the
+calls journal, and availability is never stored at all (invariant 11).
 
 **Host migration coexistence.** The package ships a predicate for Alembic's
 object-inclusion hook that excludes every `llmbroker_*` object from a host's

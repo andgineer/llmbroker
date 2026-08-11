@@ -38,21 +38,24 @@ The library returns per-status counts and leaves failure policy to the host: the
 aggregate carries only statuses actually observed, so "how many were not OK" is
 a subtraction rather than an assumption about the status enum's shape.
 
-## One tail read derives everything
+## One tail read, and quality is what it derives
 
-A debounced read of the most recent records re-derives everything llmbroker
-knows beyond the static config: quality-window verdicts, shared cooldowns,
-latency bounds, snapshot metrics, pool membership (re-reading the registry), and
-the admin disabled-verdict map — so edits from another process or node reach a
-running broker without a restart. The read is forced out of turn by the
-instance's own failure that cooled a model or dropped it; a failure that changed
-no shared state waits for the debounce like everything else.
+A read of the most recent records re-derives what the host has taught this
+installation: quality-window verdicts, the latency bound an expired budget left,
+and the snapshot metrics. It runs when the pool is rebuilt and at no other time
+([`list-refresh.md`](list-refresh.md)), which is also when the registry and the
+admin disabled-verdict map are re-read, so another process's edits reach a
+running broker without a restart.
 
-A call record therefore carries the evidence, not a summary of it: a failure
-that cooled the model carries the cooldown it earned and the hash of the key it
-spent, and one that ran out the caller's budget carries the budget it missed
-(see [`selection.md`](selection.md)). Nothing derived is recovered by reading
-back a message the library formatted.
+**Availability is not among them** (invariant 11). A cooldown and a dead key
+belong to the process that found them, are written to no row and read back from
+none, so nothing about them is on the tail and no failure forces a read of its
+own.
+
+A call record carries evidence rather than a summary of it: one that ran out the
+caller's budget carries the budget it missed (see
+[`selection.md`](selection.md)). Nothing derived is recovered by reading back a
+message the library formatted.
 
 The tail is shared across all models and operations, so a chatty model can crowd
 a quiet model's ratings out of it. This is an accepted consequence, and the tail
@@ -80,7 +83,7 @@ registry and store. `scope` is the one knob — an opaque string, with the empty
 string rejected in favour of the unscoped `None`
 ([`decisions.md`](../decisions.md#scope-is-an-opaque-string)).
 
-- **The registry and everything learned are always global** (invariant 16).
+- **The registry and everything learned are user-agnostic** (invariant 16).
   There is no per-tenant registry partition, and storage and the protocols have
   no user concept at all: `scope` is interpreted by the broker, never passed to
   a backend or protocol method.
@@ -90,14 +93,8 @@ string rejected in favour of the unscoped `None`
   the broker; secrets backends stay plain exact-lookup key-value stores and
   never see the scope string itself, only the already-prefixed ref.
 - **The journal carries the scope as a plain attribution field**, filterable on
-  read, but it does not partition learning — the rebuild's tail read is unscoped
-  by design. 429 cooldowns and dead-key drops follow the key hash, so a dead
-  *own* key drops the model only for its scope without any registry-level
-  partition; 5xx cooldowns are global, since a provider-side outage has nothing
-  to do with which key was used.
-- **A broker instance is one scope's view.** The broker never multiplexes scopes
-  internally — resolved keys and the per-LLM slot table are per-instance.
-  Unscoped is exactly the single-tenant behavior.
-- **A sync here probes almost nothing, by design.** With per-user keys there is
-  no shared value to resolve, so the key probe finds nothing — which is exactly
-  why absence authorizes nothing (see [`sync-merge.md`](sync-merge.md)).
+  read, but it does not partition learning — the tail read is unscoped by design.
+- **A dead key is dropped for whoever spent it**, since the key that paid is the
+  caller's own, and a cooldown a provider imposes withdraws the model for the
+  process that met it. Neither leaves the process (invariant 11), so neither
+  needs a partition anywhere.

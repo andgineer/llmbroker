@@ -27,23 +27,22 @@ does not advance its backoff exponent either.
 
 An HTTP 401/403 is a dead key: the model drops from the pool immediately and
 unconditionally — no amount of retrying fixes an invalid key — logged at error
-level naming the `api_key_ref`. The drop holds as long as journal rows carrying
-that key digest remain inside the rebuild tail; replacing the secret resolves to
-a different digest, the old rows stop matching, and the model revives on a
-following rebuild.
+level naming the `api_key_ref`. The drop lasts until the pool is rebuilt, which
+re-reads the key and takes the model back if a working value has appeared.
 
-**Sharing across instances.** Every failed call journals, on its row, the
-cooldown instant the failing instance computed and a short digest of the key it
-used. The debounced tail read applies the newest cooldown per model to every
-instance's pool, and is forced out of turn by the instance's own failures. A 5xx
-cooldown applies unconditionally — it is provider-side and shared by everyone. A
-429 or 401/403 cooldown applies only where the digest matches this instance's
-own resolved key for that model: quota belongs to the key, so a shared key
-shares its cooldown and a personal key cools only its owner.
+**A cooldown belongs to the process that met it** (invariant 11). It is held in
+memory, written to no row, and no process reads another's
+([`decisions.md`](../decisions.md#availability-is-not-shared)). Two entries
+resolving to the same key value share a quota and therefore a 429: what a rate
+limit withdraws is the key's capacity, not one endpoint's, so the cooldown
+applies to every entry this process is paying for with that value. A 5xx is
+provider-side and withdraws the entry it came from.
 
-Coordination is advisory. Correctness comes from failover; the cost of
-staleness is one wasted roundtrip with a transparent spillover, and a stateless
-process starts informed from its first journal read.
+The price is that each process pays its own first failing call against a model
+another has already found to be cooling — one wasted call, spilled over
+transparently, never seen by the caller. Nothing about availability survives a
+restart either, and nothing needs to: a cooldown carries the instant it expires,
+so a fresh process is at worst optimistic for one call.
 
 ## Quality demotion
 
@@ -86,7 +85,7 @@ Slot acquisition sorts on one key, in this precedence:
 **Priority is the entry's curated weight, displaced by observed host ratings as
 they accumulate.** The weight is a prior on the rating the entry is expected to
 earn, on the same `0..1` scale as a rating, defaulting to `0.0` — so an entry
-the curated lineup does not carry starts below every curated one without needing
+the curated list does not carry starts below every curated one without needing
 a rule of its own.
 
 **The weight decides where a model starts, never where it stays.** Evidence
@@ -133,18 +132,16 @@ Four properties keep this from becoming a penalty in disguise:
   the last candidate standing — exactly when a caller would rather have a slow
   answer than none.
 - **It applies the moment the miss is observed, from the call itself**, not at
-  the next rebuild and not only where learning is switched on. The rebuild is
-  debounced and a spent budget is not the kind of failure that forces one, so
-  every caller inside that debounce would otherwise walk into the same hang —
-  the one thing this signal exists to prevent. Like a cooldown, it belongs to the
-  routing path rather than to what the host has rated, and the rebuild's role is
-  only to carry a peer's miss here.
-- **It is shared with everyone reading the same journal**, unlike the path it
-  measures: latency belongs to a node's egress, region and resolver, so a peer's
-  miss is weaker evidence here than this node's own. It is admitted anyway
-  because the signal only ever reorders — a bound that does not hold here costs
-  one reordering — and partitioning it would put a node identity in the journal
-  that nothing else needs.
+  the next rebuild and not only where learning is switched on. Rebuilds are rare,
+  so every caller until the next one would otherwise walk into the same hang —
+  the one thing this signal exists to prevent.
+- **It is the one routing signal that does survive on the journal**, unlike a
+  cooldown, because it is evidence about answers rather than about availability:
+  it only ever reorders, never withdraws, so a bound that does not hold on this
+  node costs one reordering. Latency belongs to a node's egress, region and
+  resolver, which makes another node's miss weaker evidence than this node's own;
+  it is admitted anyway, because partitioning it would put a node identity in the
+  journal that nothing else needs.
 - **It is one signal for both routing paths, deliberately approximate.** A
   stream contributes the budget it missed reaching the first delta, a completion
   the budget it missed answering in full, and neither is scaled. Ordering is all

@@ -16,11 +16,41 @@ the tokens to skip it.
 
 ---
 
+## Scale
+
+### size-is-part-of-the-mission
+
+The scale llmbroker is for — a handful of endpoints, a few processes, dozens of
+end users — is a design input, and coarseness is the default wherever it is
+cheap and harmless. Exactness is spent only where an error is destructive.
+
+**Blocks:** a mechanism whose justification is a scale this pool cannot reach;
+propagating a change exactly where re-reading everything on a slow clock would
+do; reconciling a cache incrementally where dropping it would do; a coordinated
+view of the moment across processes; an optimisation whose measured benefit is
+one saved call a day.
+**Why:** the pool's own arithmetic decides this. Failover already absorbs a
+stale fact — the price is one wasted call, paid once by one process, invisible to
+the caller — so a mechanism built to save that call buys a fraction of a second a
+day and charges a subsystem to be designed, reviewed, kept correct and debugged
+forever. Every part of this library that grew past its purpose grew for the same
+reason: a worst case the pool cannot produce. The cost is not only volume, it is
+a new state to be wrong in, and wrong *silently*, because a mechanism that exists
+to make something invisible faster is invisible when it breaks.
+**Accepted cost:** another process's edit, another process's cooldown, and a key
+an admin has just stored are picked up on a slow clock rather than at once, and
+one wasted call may be paid in the meantime. Where the wait would be visible to a
+human — an exhausted pool waiting for a key — what shortens it is the exhaustion
+itself as a trigger, never a faster clock.
+
+---
+
 ## Learning and quality
 
 ### learning-from-the-journal
 
-Everything llmbroker learns is re-derived from the append-only call journal.
+Quality is re-derived from the append-only call journal, and it is the only thing
+that is.
 
 **Blocks:** a summaries table with decayed aggregates and per-backend atomic
 folds.
@@ -94,7 +124,7 @@ exponential cooldown; the only thing auto-removed is a dead key.
 
 An expired caller budget is journaled as the budget the model failed to answer
 within, and a latency lower bound is derived from the journal alongside the
-cooldowns and quality windows, reordering the pool for equally tight budgets.
+quality windows, reordering the pool for equally tight budgets.
 
 **Blocks:** discarding the expiry as pure loss; counting it as a failure or a
 cooldown; holding the bound as pool-local state no journal read produces;
@@ -149,15 +179,32 @@ failover once a call spans several models.
 
 ## Storage
 
-### cooldown-from-the-journal
+### availability-is-not-shared
 
-Other instances' cooldowns are read from failing journal rows.
+A cooldown, a dead key and a within-call exclusion are one process's findings
+about the moment. They live in that process's memory, are written nowhere, and no
+process reads another's.
 
 **Blocks:** a state store — protocol, port, dedicated table, reconcile,
-short-TTL cache — and the Redis backend whose only role was to host it.
-**Why:** a failing row is already written and already carries what a cooldown
-needs. Coordination is advisory anyway: correctness comes from failover, and the
-cost of staleness is one wasted roundtrip.
+short-TTL cache — and the Redis backend whose only role was to host it; reading
+other instances' cooldowns out of failing journal rows; the key hash on a call
+row that existed to attribute one; a debounced tail read on the call path to pick
+any of it up.
+**Why:** this reverses an earlier decision, so the recorded reason is answered
+rather than dropped. That reason was that a failing row is already written and
+already carries what a cooldown needs, so sharing came for free. It did not: the
+row was free, but reading it back was not, and the read had to happen often enough
+to be worth anything — which turned the journal from a log into the transport for
+live state, put a tail read on the funnel every call passes through, and made
+"what does this pool think right now" a question with as many answers as there are
+processes plus one in storage. What the sharing bought is bounded by the same
+argument that was used to justify it: coordination here is advisory, correctness
+comes from failover, and staleness costs one wasted roundtrip
+([`size-is-part-of-the-mission`](#size-is-part-of-the-mission)). A mechanism whose
+own defence is that its subject does not matter much should not be a subsystem.
+**Accepted cost:** each process pays its own first failing call against a model
+another process has already found to be cooling or dead-keyed — one wasted call
+per process per cooldown, absorbed by failover and never seen by the caller.
 
 ### aggregates-derived-not-accumulated
 
@@ -224,24 +271,26 @@ for mixed configurations.
 
 ---
 
-## The lineup
+## The model list
 
 ### sync-is-the-only-registry-writer
 
 **Blocks:** a CRUD path (add/update/remove); registry cloning.
-**Why:** the registry is a projection of the arriving lineup merged with what is
+**Why:** the registry is a projection of the arriving model list merged with what is
 already there. Admin runtime verbs are disable/enable and keys; learning writes
 nowhere. A node must never coerce the shared registry to a local copy of its
 own — diverging copies would flip-flop it in a cluster.
 
-### unconditional-lineup-refresh
+### unconditional-list-refresh
 
 **Blocks:** a switch that freezes the model list while the process keeps serving
 from it; pinning the fetch to the installed version's tag.
-**Why:** a pinned free-tier lineup decays, because providers retire free
+**Why:** a pinned free-tier model list decays, because providers retire free
 endpoints without notice. What such a switch appears to protect against — an
-unreviewed lineup change — is already bounded by the removal rule, and what it
-buys is a pool that decays to nothing. Pinning to a tag would mean a preset fix
+unreviewed change to the list — is bounded on the curation side, where an entry is
+removed only once its endpoint is gone
+([`a-sync-mirrors-what-a-sync-wrote`](#a-sync-mirrors-what-a-sync-wrote)), and what
+it buys is a pool that decays to nothing. Pinning to a tag would mean a preset fix
 reaches nobody until a release of llmbroker, which is the problem the refresh
 exists to remove. The accepted cost: the catalog's default branch is live
 configuration everywhere, bounded by requiring `https://` endpoints in a fetched
@@ -295,10 +344,10 @@ A bare broker runs the curated pool out of the home directory.
 **Blocks:** a mandatory config file for everyone; selecting curated pool models
 by name.
 **Why:** the file used to be required of everyone while carrying a decision for
-almost nobody, and now that the lineup refreshes itself there is nothing in a
+almost nobody, and now that the model list refreshes itself there is nothing in a
 copy to maintain — asking a user to keep one is asking them to hold our state,
-and no host names a lineup file at all any more
-([`the-lineup-file-is-not-a-path-a-host-names`](#the-lineup-file-is-not-a-path-a-host-names)).
+and no host names a model-list file at all any more
+([`the-model-list-is-not-a-path-a-host-names`](#the-model-list-is-not-a-path-a-host-names)).
 Selection by name was rejected with it: free-tier entry names carry the model version and are
 rewritten on every bump, so it would need a permanent per-entry handle the
 preset does not have and the curator would have to guarantee forever — and the
@@ -319,12 +368,12 @@ deliberately and recorded there
 ### a-sync-touches-only-what-a-sync-wrote
 
 Every registry entry records whether a sync put it there. A merge partitions on
-that record: entries a sync wrote are the ones the removal rule may retire and
-the arriving lineup may replace; an entry the installation stated itself is
-carried through untouched, whatever the arriving lineup says. The default for a
-new entry is *not written by a sync*, so anything reaching a registry by any
-other route — a driver the host implements, a registry object it hands over, a
-host's own mirror call — is protected without doing anything.
+that record: entries a sync wrote are the ones the arriving model list replaces,
+adds to and removes from; an entry the installation stated itself is carried
+through untouched, whatever the arriving list says. The default for a new entry
+is *not written by a sync*, so anything reaching a registry by any other
+route — a driver the host implements, a registry object it hands over, a host's
+own mirror call — is protected without doing anything.
 
 **Blocks:** deciding what a merge may remove from where the registry came from,
 or from whether the broker was constructed with an object; inferring ownership
@@ -341,9 +390,40 @@ a column name, so a hand-written row is a deploy script that breaks on an
 upgrade with no error to read.
 **Accepted cost:** one more fact stored per entry. It rides in the metadata
 column that already carries the optional fields, so no schema changes; in the
-lineup file the fact is structural already — the file is llmbroker's own output,
-so everything in it came from a preset — and the file format does not change
-either.
+stored model list the fact is structural already — the file is llmbroker's own
+output, so everything in it came from a preset — and the file format does not
+change either.
+
+### a-sync-mirrors-what-a-sync-wrote
+
+A sync brings the entries it wrote into line with the arriving curated list,
+wholesale: an entry still present is updated, an absent one is removed, a new one
+is added. Nothing weighs whether an absent entry might still work.
+
+**Blocks:** a removal rule deciding per entry (is a key present, does the arriving
+list still carry that provider, does the journal prove the model dead); reading
+the journal during a merge; a parameter declaring refs the merge cannot probe;
+report fields stating whether key absence was evidence at all.
+**Why:** the court those pieces formed could not do what it was built for. An
+installation whose only key belonged to a removed provider ends with a dead pool
+either way — if the endpoint is genuinely gone, keeping its entry yields a pool
+that fails every call rather than one that reports itself empty. So the only case
+the court really protected against was *our own curation mistake*, and that is
+cheaper to prevent where curation happens: an entry leaves the curated list only
+when its endpoint is gone or its free tier ended, never for being weak or
+redundant, and a model not worth routing to gets the lowest weight instead
+([`freetier-providers.md`](freetier-providers.md)). What stays in the library is
+the protection that is not a judgement: a sync never touches an entry it did not
+write (invariant 22), and a result with no entries over a registry that has some
+is refused.
+**Accepted cost:** a curation mistake takes a working provider away from every
+installation that follows the list, until the next publication corrects it.
+Recovery is free and needs no admin act — the key stays in the secrets store,
+quality derives from the journal, and a returning entry resurfaces with everything
+already learned about it. Meanwhile the removal is not silent: dropping a provider
+an installation could reach is exactly what moves the usable-provider count, and
+the alarm fires on the transition into one usable provider and into none
+([`pool-health.md`](rules/pool-health.md)).
 
 ### who-builds-the-registry-states-what-it-follows
 
@@ -383,7 +463,7 @@ host to state every paid model in full for itself.
 **Why:** weighed against the volume it costs and kept. An alias is the only
 thing that survives a model version bump, so without a curated catalog every
 host pins a version and silently runs a retired model until it breaks. The
-curation rides the same configuration path as the free lineup — unreachable
+curation rides the same configuration path as the free model list — unreachable
 changes nothing, wrong cannot destroy a working config — so it adds no runtime
 dependency, only code.
 
@@ -394,8 +474,8 @@ configured: `direct=` takes a curated alias as a string, or a fully stated model
 as a config object. The registry holds pool members only. The CLI shows what the
 curated catalogs carry and writes nothing.
 
-**Blocks:** a stored entry reachable by name; a lineup-file section for one; a
-command that adds a model to a lineup; a pinned entry written by tooling.
+**Blocks:** a stored entry reachable by name; a section for one in the stored model list; a
+command that adds a model to the stored list; a pinned entry written by tooling.
 **Why:** the stored form buys one thing — reaching a model by name without
 touching application code — and pays for it with an entry class that is
 routed-or-named, curated-or-stated, followed-or-pinned in every combination the
@@ -431,9 +511,9 @@ one the merge already partitions on.
 does — the pool takes what the registry holds, `direct()` searches what was
 declared, and the merge partitions on the one recorded bit.
 
-### the-lineup-file-is-generated-not-authored
+### the-model-list-file-is-generated-not-authored
 
-There is one lineup file and it is llmbroker's output. A sync renders it in full
+There is one model-list file and it is llmbroker's output. A sync renders it in full
 and nothing else writes it; nothing invites a human to write in it.
 
 **Blocks:** splitting it into an llmbroker half and a host-owned half; editing it
@@ -455,10 +535,10 @@ unconditional, and llmbroker's own curated presets carry comments. The accepted
 cost is that a comment or an unknown key does not survive a sync; the note a
 command may one day attach to an entry belongs on the entry as data.
 
-### the-lineup-file-is-not-a-path-a-host-names
+### the-model-list-is-not-a-path-a-host-names
 
-A lineup reaches an installation as a curated preset name and in no other shape.
-The lineup file exists, but only as llmbroker's own storage inside its own
+A model list reaches an installation as a curated preset name and in no other shape.
+That file exists, but only as llmbroker's own storage inside its own
 directory: no host passes its path to the broker, and no host hands it to `sync`.
 A host that will not follow our curation supplies the whole pool through a
 registry object it implements, or fills a database registry itself — and stops
@@ -471,25 +551,24 @@ a registry object as a sync source; keeping the file registry on the public API
 so a path stays reachable through it; a read-only file registry; a
 freeze/pin knob that stops the refresh.
 **Why:** the mission names obtaining a provider key as the *one* irreducible
-admin act, and a lineup file a human maintains is a second one. The cost of
+admin act, and a model-list file a human maintains is a second one. The cost of
 keeping the form was never lines of code: while one file is both llmbroker's
 output and the host's input, every change to it has to answer *whose file is
 this*, and answering that produced a two-file split — a reserved filename, two
 refusals inside the second file, uniqueness across the pair — that was then
-reversed whole ([`the-lineup-file-is-generated-not-authored`](#the-lineup-file-is-generated-not-authored)).
+reversed whole ([`the-model-list-file-is-generated-not-authored`](#the-model-list-file-is-generated-not-authored)).
 Removing the form makes the question unaskable. The variants all fail on the
 same point: a read-only file registry still has to be written by hand, which is
 the administration the mission excludes, and a frozen snapshot decays into
 nothing because free endpoints are retired without notice. Keeping the file
 registry public would drop the shorthand and keep the shape — the half-measure
 this decision exists to stop; it stays importable from its own module as the
-port the home lineup runs on. Accepting an object source while refusing a path
+port the home model list runs on. Accepting an object source while refusing a path
 would preserve one workflow at the cost of the whole point: one source, one
-sentence, no second answer to "where can a lineup come from".
-**Accepted cost:** an organisation that wanted to approve a lineup in review and
+sentence, no second answer to "where can a model list come from".
+**Accepted cost:** an organisation that wanted to approve a model list in review and
 roll it out from a deploy job loses that workflow — generating a file, reading
-its diff in a pull request, and merging it into a database registry under the
-removal rule. That persona wanted *control over what reaches production*, which
+its diff in a pull request, and merging it into a database registry. That persona wanted *control over what reaches production*, which
 is a different product from a free pool nobody administers; if it returns it
 returns as its own decision with a use case behind it, not as a leftover branch.
 Moving an installation between backends is unaffected: it is the public
@@ -556,10 +635,10 @@ Mechanisms weighed and dropped that do not attach to a decision above.
   the shared registry to a copy of its own; the refresh follows the one shared
   upstream, and an explicit sync is what mirrors a vendored file into a database
   registry.
-- **A deprecation-tier field** — an entry a lineup drops is either removed
-  (losing nothing: keys live in the secrets store, statistics derive from the
-  journal) or kept exactly as it was. There is no third, demoted state to
-  represent.
+- **A deprecation-tier field** — an entry the curated list drops is removed,
+  losing nothing: keys live in the secrets store, quality derives from the
+  journal. A model still worth keeping but not worth routing to needs no third
+  state either: the curated weight already places it last.
 - **A registry-stored learning profile written by llmbroker** — manual blocking
   is an admin verdict in the store; learning writes nowhere.
 - **An explicit quality-reset operation** — rehabilitation happens through new
@@ -571,18 +650,16 @@ Mechanisms weighed and dropped that do not attach to a decision above.
   orphaned ref and a human decides.
 - **An exact/mirror flag on sync** — indistinguishable from mirroring configs
   into the registry directly, which already exists as the escape hatch for a
-  forced lineup.
+  forced list.
 - **"Two callable providers" as a pruning threshold** — a policy constant that
   would discard working free quota. The same number survives only as the
   *degradation* criterion, where it describes the failover feature rather than
   deleting anything.
-- **Probing the provider for death evidence** — deferred; the journal is the
-  evidence. Revisit only if it proves too thin.
-- **A model-name filter on the journal's tail query** — the bounded tail is
-  enough for a handful of candidates, and a filter would touch every backend.
+- **Proving a model dead before removing it**, whether by probing the provider or
+  by reading the journal — nothing in a merge weighs an entry's fitness
+  ([`a-sync-mirrors-what-a-sync-wrote`](#a-sync-mirrors-what-a-sync-wrote)).
 - **A pool marker on a key** (or any field declaring "this key is not for the
   pool") — the state it describes is derivable, and the case it was invented for
-  — a key kept for paid direct calls — is served by the unused-key report line
-  plus death evidence.
+  — a key kept for paid direct calls — is served by the unused-key report line.
 - **A queue-plus-timer scheduling model** — a slot table with a condition
   variable, and no loop-bound timer state.

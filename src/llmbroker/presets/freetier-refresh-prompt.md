@@ -11,7 +11,7 @@ Background reading before you start (do not skip):
   curated providers, and the sources list. This is the document you refresh.
 - [`../../../specs/reference/rules/presets.md`](../../../specs/reference/rules/presets.md)
   and [`../../../specs/reference/rules/sync-merge.md`](../../../specs/reference/rules/sync-merge.md) —
-  the two-halves catalog and the sync removal rule, which govern how a refreshed
+  the two-halves catalog and the mirroring rule, which govern how a refreshed
   preset lands on a running deployment. You do not implement this behavior;
   you must not violate its invariants (see Guardrails below, and
   [`../../../specs/reference/invariants.md`](../../../specs/reference/invariants.md)).
@@ -99,17 +99,21 @@ For each candidate provider/model, using the taxonomies fixed in
 - **When a strictly better sibling replaces an old model, remove the old
   entry.** They usually share one provider quota; leaving both in the preset
   means a still-endorsed old model keeps burning shared quota on worse
-  answers. Downstream this costs nothing: the arrival carries the same
-  `api_key_ref`, so the sync pairs the two and drops the old entry without
-  consulting any key.
-- **Dropping the last entry of a provider only prunes downstream when the same
-  update gives installations a replacement they can call.** A sync removes an
-  entry the preset dropped only if an arrival pays for it — with the same key,
-  or with one the installation has. So an update that removes a provider
-  without adding one prunes nothing downstream: those installations keep a
-  working model, and their sync report names it on every run until an admin
-  sets the key that would unlock the cleanup. That is intended. Do not "fix"
-  it by removing more.
+  answers. Nobody is stranded by it: the arrival carries the same
+  `api_key_ref`, so whoever could call the old entry can call the new one.
+- **Removing an entry removes it from every installation that follows this
+  preset**, including installations holding a working key for it. A sync mirrors
+  the preset and weighs nothing, so a removal is not a recommendation — it is a
+  deletion downstream, and for an installation whose only key is that provider's
+  it means no pool at all.
+- **So remove an entry only when it can no longer be called**: the endpoint is
+  withdrawn, or its free tier ended. Never because the model is weak, dated or
+  redundant.
+- **A model still callable but not worth routing to gets the lowest weight
+  instead of a removal.** Weight orders the pool, so installations with better
+  providers never reach it, and the one that has nothing else keeps working.
+  Reaching for a removal where a low weight would do is the failure mode this
+  rule exists against.
 - Keep sibling models from one provider in the preset simultaneously only as
   a deliberate decision (genuinely different quota pools, or an aggregator's
   genuinely different upstreams), never as leftovers from a half-finished

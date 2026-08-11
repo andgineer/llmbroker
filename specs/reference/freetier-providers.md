@@ -142,7 +142,7 @@ Per-provider notes:
   speed. Limits apply at the organization level; cached tokens do not count
   toward them.
 - **OpenRouter** — aggregator access to many free models under one key, but the
-  free lineup churns hard: endpoints are delisted with no notice (`openai/gpt-oss-120b:free`
+  free roster churns hard: endpoints are delisted with no notice (`openai/gpt-oss-120b:free`
   disappeared entirely, leaving only the paid variant), so this entry needs
   re-checking against the live models API every refresh. `nvidia/nemotron-3-ultra-550b-a55b:free`
   is the strongest survivor — 550B/55B-active hybrid Mamba-Transformer MoE, 1M
@@ -180,22 +180,27 @@ to Nvidia) add nothing on either axis.
 
 ## Curation rules for adding and removing entries
 
-What a curated update may do is bounded by what a downstream sync will do with
-it (see [`rules/sync-merge.md`](rules/sync-merge.md)).
+**A removal here reaches every installation that follows the list.** A sync
+mirrors what it wrote, weighing nothing
+([`decisions.md`](decisions.md#a-sync-mirrors-what-a-sync-wrote)), so an entry
+taken out of the curated list is taken out of installations that hold a working
+key for it too — including one whose *only* key is that provider's, which is left
+with no pool at all. Curation carries that risk, and the rules below are how it
+is carried.
 
+- **An entry leaves the list only when it can no longer be called**: the endpoint
+  is withdrawn, or its free tier ended. Never for being weak, never for being
+  redundant, never on taste.
+- **A model still callable but not worth routing to gets the lowest weight
+  instead.** Weight orders the pool, so an installation with better providers
+  never reaches it, while an installation holding only that provider's key keeps
+  a working pool. This is what makes the rule above affordable: the list does not
+  have to choose between recommending a weak model and stranding whoever depends
+  on it.
 - **A same-provider replacement removes the old entry.** The two usually share
   one provider quota, and a still-endorsed old model would keep spending it on
-  worse answers. Downstream this is free: the lineup still carries that
-  `api_key_ref`, so the sync removes the old entry with no key involved.
-- **Dropping the last entry of a provider prunes downstream for every
-  installation that has no key for it**, and for every installation whose own
-  journal proves the model dead. Elsewhere the entry stays and keeps routing
-  until one of those becomes true. A provider therefore leaves the preset when it
-  is no longer worth a slot: installations that can still call it lose nothing,
-  and those that never could stop carrying a dead name.
-- **Dropping a provider is not a way to force anyone off it.** An installation
-  holding a working key keeps the model for as long as it works; curation says
-  what is worth recommending, not what a host may call.
+  worse answers. Nobody is stranded: the arriving list carries the same
+  `api_key_ref`, so whoever could call the old entry can call the new one.
 - **A model bump is a new entry name**, never an in-place `model` change — a
   sync refuses that, since learned quality is bound to the entry name.
 
@@ -221,7 +226,7 @@ Authoritative provider docs (best for exact numbers):
 - Groq rate limits — <https://console.groq.com/docs/rate-limits>; production vs
   preview tier — <https://console.groq.com/docs/models>
 - OpenRouter limits — <https://openrouter.ai/docs/api/reference/limits>; the live
-  free lineup — <https://openrouter.ai/api/v1/models>, filtered on ids ending
+  free roster — <https://openrouter.ai/api/v1/models>, filtered on ids ending
   `:free`. That endpoint is the only reliable check that a `:free` model still
   exists, and needs no key.
 - Gemini free-tier availability — <https://ai.google.dev/gemini-api/docs/pricing>;

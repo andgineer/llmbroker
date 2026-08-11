@@ -1,32 +1,60 @@
 # llmbroker: mission and requirements
 
 Zero-administration routing over a pool of free-tier LLMs from several
-independent providers:
+independent providers.
+
+## The requirements
 
 1. **Routing with failover**: a rate-limited or failing provider is backed off
    and the next one tried within the same request; the caller sees an error only
    once the whole pool is exhausted.
-2. **Zero administration**: the curated lineup keeps itself current inside a
+2. **Zero administration**: the curated model list keeps itself current inside a
    running installation, and obtaining a provider key is the one irreducible
    admin act — a free tier is issued to a person, not to a library.
 3. **Learning per task kind**: what counts as a good enough model depends on
    what is being asked of it, so quality is tracked per (model, operation) and
    no global verdict exists.
-4. **Keys optionally per-user**, with fallback to a shared key, over one shared
-   model list and one shared body of learning. Quota follows the key. Where the
-   keys are not llmbroker's to see, their absence proves nothing and the
-   installation says what it holds.
-5. **Visibility from the host UI**: every per-model fact, the call journal, and
+4. **A paid model reached by name**, out of the same curated knowledge: the
+   application names a permanent alias and llmbroker is what keeps it pointed at
+   the current version, so no application and no human tracks a version bump,
+   and no second package is installed to make a paid call.
+5. **Keys optionally per-user**, with fallback to a shared key, over one shared
+   model list. Quota follows the key. Where the keys are not llmbroker's to see,
+   their absence proves nothing and the installation says what it holds.
+6. **Visibility from the host UI**: every per-model fact, the call journal, and
    the pool itself as a first-class object — how many providers can serve a
    request, which keys are missing, whether failover is still possible.
-6. **One-liner and cluster**: a script gets a synchronous wrapper and env keys
-   and nothing else; a cluster of stateless processes shares what it learns
-   without a coordinator.
-7. **Batteries**: sqlite, postgres, mongodb (registry + store + secrets),
+7. **A one-liner from a script**: env keys, a synchronous wrapper, no database,
+   and nothing to administer.
+8. **Several processes over one installation**: they share its configuration,
+   they do not coordinate, and none of them may leave another's state wrong.
+9. **Batteries**: sqlite, postgres, mongodb (registry + store + secrets),
    aws/vault (secrets). A new backend is one driver file.
-8. **Cheap at low usage**: a bare broker needs no database at all, and parallel
-   calls to one model are allowed by default and capped only where a provider
-   demands it.
+10. **Cheap at low usage**: a bare broker needs no database at all, and parallel
+    calls to one model are allowed by default and capped only where a provider
+    demands it.
+
+## The size of the problem
+
+A pool is **a handful of endpoints** — a few independent providers, a model or
+two each — served by **a few processes**, for at most **dozens of end users**.
+That is not an observation about today's installations, it is the shape of the
+problem: a free tier is quota that runs out, which is not the substrate anything
+large is built on.
+
+Three rules follow, and they outrank a local argument for precision:
+
+- **Coarse wherever coarse is cheap and harmless.** Re-read everything on a slow
+  clock rather than propagate a change exactly. Drop a cache rather than
+  reconcile it. Replace state wholesale rather than merge it incrementally.
+- **Exact only where an error is destructive**: losing what the installation
+  stated itself, spending or leaking the wrong key, destroying a working
+  configuration, telling a host the wrong reason a call failed, leaking a
+  concurrency slot.
+- **A mechanism justified by a scale this pool cannot reach is a defect, not
+  headroom** ([`decisions.md`](decisions.md#size-is-part-of-the-mission)).
+  Failover is what makes coarseness safe: the price of a stale fact is one
+  wasted call, paid once by one process, and the caller never sees it.
 
 ## What it is not
 
@@ -34,6 +62,10 @@ The boundaries are as load-bearing as the requirements: each is a decision, not
 a gap waiting to be filled, and a proposal that crosses one is arguing with the
 mission rather than extending it.
 
+- **Not a cluster runtime.** No coordinator, no leader, no lock, and no attempt
+  to give several processes one exact view of the moment. What they share is the
+  installation's configuration and its journal, and correctness never depends on
+  how fresh one process's picture of another is.
 - **Only OpenAI-compatible endpoints are pooled.** Breadth of provider adapters
   is the neighbouring product's offer, not ours; ours is that the endpoints in
   one pool are interchangeable enough to fail over between mid-request, which a
@@ -51,49 +83,36 @@ mission rather than extending it.
 ## Positioning: what keeps llmbroker unique
 
 Multi-provider failover routing by itself is a commodity — LiteLLM's router,
-LangChain's `with_fallbacks`, or a hand-rolled retry loop all offer some form
-of it. llmbroker's identity is the *combination* below; no existing solution
-covers it, and a change that erodes any one of these erodes the mission:
+LangChain's `with_fallbacks`, or a hand-rolled retry loop all offer some form of
+it. llmbroker's identity is the *combination* below; no existing solution covers
+it, and a change that erodes any one of these erodes the mission:
 
-1. **A library over the caller's own keys — never a hosted middleman.**
-   Hosted gateways (OpenRouter, Portkey, Cloudflare AI Gateway, Helicone)
-   proxy traffic through their servers under their account: a single point
-   of failure, their billing/markup, their data path, and one shared
-   rate-limit bucket. llmbroker pools the providers' *own* free tiers via
-   direct keys, so a pool holding keys for several providers draws on that
-   many independent quotas where a gateway account draws on one — and no
-   third party ever sees the traffic. (Keys for one provider are not a pool:
-   spilling from one provider onto another is the entire mechanism.)
-   llmbroker must never require a dedicated running service of its own.
-
-   It does centralize curation — which endpoints are worth pooling, and which
-   paid models are worth naming — but on the configuration path rather than the
-   data path, and that difference is what the design defends. What it publishes
-   is text on GitHub. Unreachable, and nothing happens: an installation keeps
-   running on what it already holds. Wrong, and it still cannot destroy a working configuration: an
-   arriving lineup is merged under rules that never cost an installation a
-   provider it could reach. There is no service to be denied by and no runtime
-   dependency to fail.
+1. **A library over the caller's own keys — never a hosted middleman.** Hosted
+   gateways (OpenRouter, Portkey, Cloudflare AI Gateway, Helicone) proxy traffic
+   through their servers under their account: their billing, their data path,
+   one shared rate-limit bucket, and a single point of failure. llmbroker pools
+   the providers' *own* free tiers via direct keys, so a pool holding keys for
+   several providers draws on that many independent quotas where a gateway
+   account draws on one, and no third party sees the traffic. Keys for one
+   provider are not a pool — spilling from one provider onto another is the whole
+   mechanism. What llmbroker centralizes is curation, on the configuration path
+   and never on the data path: it publishes text on GitHub, and an installation
+   that cannot reach it keeps running on what it already holds. It must never
+   require a running service of its own.
 2. **Nothing large comes with it.** The closest library, LiteLLM, is a large,
-   fast-churning dependency surface whose cluster features push toward
-   running its proxy server. llmbroker's core is a handful of small
-   pure-Python packages — no provider SDK, no database driver, no framework —
-   so embedding it does not measurably grow the application that does.
-   Every backend is an optional extra, and cluster-shared state derives from a
-   journal in a database the host already runs.
+   fast-churning dependency surface whose cluster features push toward running
+   its proxy server. llmbroker's core is a handful of small pure-Python packages
+   — no provider SDK, no database driver, no framework — so embedding it does not
+   measurably grow the application that does. Every backend is an optional extra.
 3. **Learned quality per (model, operation).** Existing routers balance on
    health, latency, or cost. llmbroker is the only one that accepts a quality
    signal from the host and turns it into the pool's order, per task kind — a
    pool that regulates itself on the host's own definition of a good answer,
    rather than a static priority list.
 4. **Zero administration as a feature, not a tutorial.** A curated free-tier
-   preset that keeps itself current, dead keys that disable themselves,
-   cooldowns that honor `Retry-After` — competitors leave all of this as
-   configuration for the operator.
-5. **Per-user keys over one shared, learned pool.** Multi-user hosts get
-   per-scope keys with shared-key fallback, while the model list and
-   learning stay shared — a mode hosted gateways price as an enterprise
-   feature and libraries do not model at all.
+   preset that keeps itself current, dead keys that disable themselves, cooldowns
+   that honor `Retry-After` — competitors leave all of this as configuration for
+   the operator.
 
 ## The design this produced
 
@@ -112,33 +131,32 @@ key reference becomes a key, and where calls are recorded. Zero-dependency
 defaults ship for all three, so the library works with no backend at all, and
 naming one source is enough to derive all three.
 
-**Nothing learned is written down.** Everything llmbroker knows beyond the
-stored lineup — cooldowns shared across nodes, quality windows, metrics — is
-re-derived from an append-only record of calls. Learning writes to no
-configuration, and the lineup changes only when a sync merges one. There is no
-second state subsystem to reconcile, which is what lets a stateless cluster
-share what it learned without a running service of its own.
+**Every process learns for itself.** What processes share is the installation's
+configuration and its journal; what a process finds out about availability —
+cooldowns, dead keys — lives in its own memory and is sent nowhere. Correctness
+does not depend on how fresh that picture is: a stale fact costs one wasted call,
+and failover absorbs it.
+
+**Learning never writes configuration.** What the host rates and what the pool
+observes change how models are ordered and nothing else; the stored model list
+changes only when a sync merges one.
 
 **The routed pool is whatever the registry holds.** Naming a model to call it is
 a different act from putting an endpoint in the pool: a model reached by name is
 never routed onto, never failed over from, and never learned about as a pool
-member. Where the pool members came from — our curation, the installation's own
-registry, or both — is the installation's business. A model reached by name is
-not one of them: it is stated where the application that calls it is configured,
-either as a version the host pins and owns, or as a permanent alias llmbroker
-keeps pointing at the current version. Application code survives a version bump,
-at the price of learning about the bump from a log line rather than choosing it.
+member. It is stated where the application that calls it is configured — a
+version the host pins and owns, or a permanent alias llmbroker keeps pointing at
+the current version, so application code survives a version bump and learns
+about it from a log line.
 
-**The lineup is never frozen.** Free endpoints are retired without notice, so a
-pinned lineup decays into nothing. Keeping it current is llmbroker's own job
-wherever it is allowed to be: a deployment forbidden to reach anything but its
-providers while it serves may take that job over, and none may decline it. The
-refresh rides on activity rather than on a timer of its own, and it may never cost
-the installation a provider it could reach: it removes only what a refresh added, and
-never rewrites what the installation stated itself. A curated preset is the only
-shape a lineup arrives in, so an installation that must not follow ours states
-the whole pool itself. What no installation gets is a second configuration form
-for us to keep in step.
+**The model list is never frozen.** Free endpoints are retired without notice,
+so a pinned list decays into nothing. Keeping it current is llmbroker's own job
+wherever it is allowed to be: a deployment forbidden to open any connection but
+to its providers takes that job over, and none may decline it. The refresh rides
+on activity rather than on a timer of its own, and it never rewrites what the
+installation stated itself. A curated preset is the only shape a list arrives in;
+an installation that must not follow ours states its whole pool itself, and gets
+no second configuration form for us to keep in step.
 
 **Availability and quality are separate axes.** Cooldown is provider-driven,
 self-healing, and withdraws a model; quality demotion is host-driven, sticky,

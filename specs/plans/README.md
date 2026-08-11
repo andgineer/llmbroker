@@ -1,117 +1,41 @@
 # Implementation plans
 
-Order for the plans queued now. A plan that is fully implemented and merged is deleted (anything
-spec-worthy moves into `specs/` first) and its row here goes with it.
+One plan is queued. **Take [`one-broker-four-triggers`](one-broker-four-triggers.md).**
 
-**How these are executed** — the rules an agent follows when told to implement one — live in
-`CLAUDE.md` under "Executing a plan": take the first queued row unless a plan is named, code wins
-over a stale plan, gate on `invoke pre` + `pytest` after every batch, never bump the version,
-never commit unasked, and leave the plan file in place for review. Nothing needs to be restated in
-the request. The plan and its row here are removed only after review and merge, on request.
-
-Statuses as of 2026-08-09: a simplification pass over the implementation, plus one plan that
-narrows what the library accepts. Plan 8 was the exception to "no functionality is removed" — it
-deleted the hand-named config file as a configuration form, and argued from the mission why that
-is a boundary rather than a loss; that claim no longer holds for this batch as a whole.
-**Plans 1-8 are implemented and waiting on the maintainer — 1, 6, 7 and 8 are reviewed, and 6 was
-reviewed twice: its second round reversed the two-file split it introduced, for the reasons in its
-own `Review round 2` section. Plans 9, 11, 17, 18, 19, 20 and 22 are implemented and awaiting review
-— 22 ships with 18, whose docs paragraph it withdrew;
-**the next one to take is plan 23**, which the take-order line below puts next. A row stays
-here, with its status, until the maintainer asks for it to go after merge.
-
-**The `#` column is identity, not order — read the Take-order line below it.** 16, 17 and 18 were
-written after 15 and are taken before it; taking the numerically first `queued` row would start
-with a plan whose inventory the later ones delete.
-
-**Take order: 23 → 24 → 25 → 16 → 10 → 12 → 13 → 14 → 15**, with 17, 18, 19, 21 and 22 already taken
-ahead of them; 21 was written during 19's implementation and ships with it, as 22 does with 18.
-23 goes first on the ground 11 and 20 went first: it fixes runtime behavior rather than shape, it
-blocks nothing, and 22 — whose investigation it answers — has already landed. 20 was taken ahead of all of them on the same ground 11 was: it was the only queued plan that fixed runtime behavior rather than shape,
-it was small, and it blocked nothing — "may be pulled forward at any time" is the status in which a
-plan stays undone through eight others.
+**How a plan is executed** — the rules an agent follows when told to implement one — live in
+`CLAUDE.md` under "Executing a plan": code wins over a stale plan, gate on `invoke pre` + `pytest`
+after every batch, never bump the version, never commit unasked, and leave the plan file in place
+for review. Nothing needs restating in the request.
 
 ## Order
 
-| # | Plan | Status | Issue | Blocked by | Notes |
-|---|---|---|---|---|---|
-| 1 | [http-status-vocabulary](http-status-vocabulary.md) | **implemented, reviewed** | — | — | one module decides what a provider status means; five copies today |
-| 2 | [router-failover-and-sse](router-failover-and-sse.md) | **implemented** | — | 1 *(implemented)* | `chat` and `stream` are one algorithm written twice; SSE reader written twice |
-| 3 | [learning-as-observer](learning-as-observer.md) | **implemented** | — | — | the store wrapper makes `isinstance` lie; the unmet-budget bound moves to the journal. Schema bump 5 → 6 |
-| 4 | [store-retention-dedup](store-retention-dedup.md) | **implemented** | — | — | retention declared in five files, quality record built in two |
-| 5 | [lineup-parser](lineup-parser.md) | **implemented** | — | — | **fixes a divergence**: two parsers, different validation |
-| 6 | [lineup-file-ownership](lineup-file-ownership.md) | **implemented, reviewed ×2** | — | 5 *(implemented)* | stop assembling the config file as text; then split `upstream.py`. Largest plan. Round 2 reversed the file split: the lineup file has one author |
-| 7 | [lineup-refresher](lineup-refresher.md) | **implemented, reviewed** | — | 6 *(implemented)* | written in full against 6's result; **ships with 6** |
-| 8 | [curated-source-only](curated-source-only.md) | **implemented** | — | 6, 7 *(implemented)* | **removes a form**, not a simplification: a lineup arrives only as a curated preset name, and no host names a config file. Taken before the skeletons — they would otherwise have tidied code this deletes |
-| 9 | [registry-ownership](registry-ownership.md) | **implemented** | — | 8 *(implemented)* | **fixes a trap 8 created**: a sync destroys entries the host put in its own registry. An entry records who wrote it, and a host-built registry object must state what it follows. Its `decisions.md` entry is quoted here pre-amendment — 22 rewrote its illustrations |
-| 10 | [model-list-vocabulary](model-list-vocabulary.md) | queued | — | 16 *(17, 18, 19 implemented)* | text only, no runtime change: `lineup` is a coined word that reaches the reader undefined — docs and program strings say "the model list". **Re-inventory the strings** — the four plans before it delete some and write their own new ones in this plan's wording |
-| 11 | [sse-chunk-shape](sse-chunk-shape.md) | **implemented** | — | 2 *(implemented)* | **fixes a spec divergence**: a non-object SSE payload escaped the pool raw instead of failing over |
-| 12 | [models-purity](models-purity.md) | queued | — | 16 *(17 implemented)* | **skeleton** — `models.py` logs, formats prose, and holds the validators. 17 and 16 both reshape its field set and validator list |
-| 13 | [direct-client-seam](direct-client-seam.md) | queued | — | 2 *(implemented)* | **skeleton** — the sync broker reaches a private method; two clients copy-pasted. Unaffected by 16-18 |
-| 14 | [declared-out-of-catalog](declared-out-of-catalog.md) | queued | — | 17 *(implemented)* | **skeleton** — the `direct=` overlay is half of `Catalog` and owns a cycle back to the broker. **17 closes one of its four findings and raises the rest**: the overlay becomes the only home a named model has |
-| 15 | [store-conformance-suite](store-conformance-suite.md) | queued | — | — | tests only, no runtime change: the store layer never got the driver layer's one-suite-for-all shape, so ten universal behaviors are written twice. Take last |
-| 16 | [paid-catalog-retirement](paid-catalog-retirement.md) | queued | — | 17 *(implemented)* | **closes a gap, not a defect**: an alias whose model the provider withdraws has no representation, so a deployment learns about it from a failing request. After 17, which makes the withdrawal an in-memory fact instead of a stored one |
-| 17 | [named-models-are-declared](named-models-are-declared.md) | **implemented** | — | 9 *(implemented)* | **removes a form**: a model reached by name is declared in code, never stored. `custom`, `[[custom]]` and `add-model` go; the CLI gains read-only `list`, the alias refresh moves from the merge to the resolution, and `synced` is renamed for the question it answers. Taken first of the queued half |
-| 18 | [env-one-form](env-one-form.md) | **implemented** | — | — | `env` takes a preset name and drops the form that cannot work on a database registry; plus a paragraph in `server.md` on the second refresh clock — **withdrawn again by 22**, which ships with it, because the mechanism does not work as that paragraph described. Small, independent |
-| 19 | [no-automatic-fetch](no-automatic-fetch.md) | **implemented** | — | 17 *(implemented)* | **answers a deployment requirement**: a serving process that may make no outbound connection. `sync_interval=None` switches off both clocks, `sync()` with no argument does it explicitly, and `EmptyRegistryError` stops blaming the network for a state the bundled floor makes impossible |
-| 20 | [stream-chunk-fields](stream-chunk-fields.md) | **implemented** | — | 11 *(implemented)* | **fixes what 11 left half-closed**: a stream chunk that is an object but whose `choices` are malformed still escapes the pool raw instead of failing over. Small, independent. **Take first** |
-| 21 | [offline-alias-resolution](offline-alias-resolution.md) | **implemented, reviewed** | — | 19 *(implemented)* | **finishes what 19 left open**: with the automatic fetching off, the first resolution of a declared alias still read the paid catalog through the network. It now reads the cache, then the wheel's copy, and never fetches. Small; **ships with 19** |
-| 22 | [ports-are-the-only-writer](ports-are-the-only-writer.md) | **implemented** | — | — | **removes a form**: a host states its own pool members through the registry port, never with SQL against a table invariant 13 refuses to promise the shape of. Text only. Deletes the second-clock paragraph 18 added — that mechanism does not work as described — and carries the investigation the propagation fix is written against. **Ships with 18** |
-| 23 | [edits-reach-a-live-pool](edits-reach-a-live-pool.md) | queued | — | 22 *(implemented)* | **fixes runtime behavior**: a process whose calls all succeed re-reads nothing, so a peer's registry edit or `disable_llm` never reaches it — reproduced over 500 successful calls. The observer's successful branch joins the debounced rebuild and the rebuild loses both its mode flags; everything about what a rebuild pays for a key moved out to 24 and the cache plan behind it. Answers 22's investigation and writes back the `server.md` paragraph 22 deleted. **Take first** |
+| Plan | Status | Blocked by | Notes |
+|---|---|---|---|
+| [one-broker-four-triggers](one-broker-four-triggers.md) | queued | — | the deletion pass: the merge becomes a mirror, availability stops being shared, one broker per process with callers per request, the pool rebuilt on four triggers with keys riding them, ten rule files become five, then an audit against `git diff 1.3.0..HEAD` |
 
-| 24 | [one-broker-many-callers](one-broker-many-callers.md) | queued | — | — | **removes a form**: no broker per request and no `scope=` on the constructor. The broker is the installation — ports, pool, learning, HTTP client, provisioned once — and a request holds a caller from `llms` or `for_scope(...)`, which costs no I/O. Fixes the `parallel` cap that a broker per user multiplied, and the sync key probe that a scoped broker blinded. The secrets cache is written against its result |
+## What happened to the previous queue
 
-| 25 | [a-key-is-asked-for-once](a-key-is-asked-for-once.md) | queued | — | 24 | **fixes runtime behavior**: whether a ref exists is answered from one listing of its prefix per window, and a resolved value is read once and held a day, so a caller built per request stops paying a metered round trip in front of every call — and a key an admin or a user has just stored is used by the first call that finds it. **Ships with 24** |
+Ten plans were queued here and all ten were deleted, along with the queue that ordered them. They
+were written against a task understood as *a routing library that must also be correct as a
+distributed system*, and they sized their mechanisms accordingly: exact propagation of one process's
+findings to another, per-scope cache windows over a metered secrets backend, a merge that held a
+hearing before removing an entry. The task is smaller than that, and
+[`mission.md`](../reference/mission.md#the-size-of-the-problem) now says how much smaller, so those
+plans could not be re-ordered into correctness — a plan whose premise is the wrong scale does not
+improve by being taken later.
 
-Plans 1-5 touch disjoint files and may be taken in any order subject to the
-Blocked-by column. Plans 6 and 7 must reach a release together: 7 extracts the
-seam 6 creates. Plan 8 goes before the skeletons: it deletes modules and call
-sites they would otherwise be written against.
+What survived did so as content, not as files: the object model of `one-broker-many-callers` is
+batch 3 of the plan above, and the secrets enumeration of `a-key-is-asked-for-once` is part of batch
+4, stripped of the two-window doctrine it was wrapped in.
 
-The queued half is ordered so that every plan that *removes* something lands
-before the plans that would otherwise be written against what it removes.
-**9 fixed a defect and moved the seams** — `models.py`, `merge.py`, the broker
-constructor — which is what the skeletons would otherwise have been planned
-against. **11 was a behavior fix that blocked nothing and depended on nothing,
-and was taken first for exactly that reason** — nothing it touches is reshaped
-by anything below, so deferring it only risked it never being taken. **20 was the
-same case and was taken ahead of the queued half for the same reason**: it
-finishes the guard 11 put one level too high, and 13 reshapes the seam between
-the two direct clients without touching the SSE helpers 20 edits.
-**24 and 25 are one release and are taken directly after 23**, which is the order
-the rest of the queued half now hangs on. 24 makes the broker the installation and
-a request hold a caller; 25 decides what that caller's key ring asks the secrets
-port. Three queued plans are written against methods 24 moves — 16's refusal path,
-13's private reach into the direct client, 14's key-facing half of `Catalog` — and
-each says so in its own text, so taking 24 later would mean scoping all three
-twice. 23 goes first of the three because it changes only when a rebuild runs, and
-keeping that diff free of the object model is what makes it reviewable.
+Nothing here is a record of that reasoning — the decisions are in
+[`decisions.md`](../reference/decisions.md#size-is-part-of-the-mission), which is where a future
+proposal will look before re-proposing one of them.
 
-**10 renames what the reader sees** and now goes after the removals rather than
-before them: three plans rewrite the doc sections and CLI strings it was
-inventoried from, so renaming first would rename some of them into files that
-then delete them. It still goes before 12, which relocates the prose and log
-lines out of `models.py`.
-
-**17 went first of the whole queued half.** It removed a field, a file section
-and a CLI command, and moved the alias refresh out of the merge — every other
-queued plan is either written against code it deletes (10's string inventory,
-12's field set) or has a finding it closes (14's third). 18 follows only because
-it edits the same CLI section of `rules/presets.md`; it is otherwise independent.
-19 also comes after 17, which rewrites the method whose signature it changes.
-16 must come after 17 too, which turns the withdrawal it represents from a stored
-fact into an in-memory one. **10 comes after every plan that writes a
-user-facing string**, and each of those plans writes its new strings in 10's
-wording already — so what 10 renames is what none of them touched, and its
-inventory should come out shorter than the one in its text. 15 changes no runtime code and blocks nothing, so it stays
-last: its own text argues it should be taken only when its purely mechanical diff
-reads as worth the churn.
-
-**Skeletons (12-14) carry findings, not routes.** The evidence in them is about
-today's code and stays valid; the work order is missing because their target
-modules do not exist until the plan that blocks them merges. Each names what its
-blocking plan will already have closed — read that section first when writing
-the real plan, so work already done is not repeated.
+The plans of released work are gone too, on the maintainer's word: a plan is a route, and once
+travelled the code and its tests are the artifact. Everything durable those plans carried had
+already moved into [`../reference/`](../reference/) in the batch that wrote it — verified before they
+were deleted, entry by entry, against `decisions.md`.
 
 ## Standing rules for whatever is queued next
 
@@ -119,5 +43,9 @@ The rules binding on every plan live in [`../reference/invariants.md`](../refere
 which is loaded for every task. Nothing is restated here — a rule written twice is a rule that will
 drift.
 
-One consequence worth naming for plan authors: a new persisted field on a registry entry joins the
-sync identity comparison automatically, so a plan that adds one owes it a test, not a mechanism.
+Two consequences worth naming for plan authors:
+
+- A new persisted field on a registry entry joins the sync identity comparison automatically, so a
+  plan that adds one owes it a test, not a mechanism.
+- Before proposing a mechanism, check it against the scale the mission states. A plan whose
+  justification is a load this pool cannot reach is the failure the previous queue is named after.

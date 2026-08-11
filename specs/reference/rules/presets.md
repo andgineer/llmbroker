@@ -2,7 +2,7 @@
 
 Where the routed pool's model definitions come from, how a curated list reaches
 an installation, and the commands that materialize one. Reaching a host's own
-paid model is [`direct-aliases.md`](direct-aliases.md); how a lineup becomes the
+paid model is [`direct-aliases.md`](direct-aliases.md); how a list becomes the
 registry is [`sync-merge.md`](sync-merge.md). The cross-cutting rules this file
 elaborates are in [`../invariants.md`](../invariants.md).
 
@@ -25,7 +25,7 @@ wheel's copy is in the chain at all. Both are decided at the one call site whose
 decision they belong to, so no branch of the fallback chain is threaded through
 the callers as a flag.
 
-**The floor holds a lineup up; it never moves one.** The bundled copy is older
+**The floor holds a list up; it never moves one.** The bundled copy is older
 than the repository by construction — frozen at the release the user installed —
 so it is dropped from the chain wherever a read decides where an *existing*
 entry should point: a stored entry a sync re-points, and a declared model
@@ -59,7 +59,7 @@ provider, the old entry is removed rather than left alongside the new one: the
 two usually share one provider quota. How the free-tier preset is kept current
 is in [`../freetier-providers.md`](../freetier-providers.md).
 
-## The pool is exactly the curated lineup
+## The pool is exactly the curated list
 
 The pool is the curated preset and whatever a sync kept from an earlier one. A
 model the host declared in code is reached by name through `direct` and is never
@@ -128,9 +128,9 @@ admin act, and the one thing llmbroker cannot decide for a host.
 **No command writes a model list.** A list is filled by a sync, and a model
 reached by name is declared where the application that calls it is configured, so
 there is nothing left for a command to append
-([`sync-merge.md`](sync-merge.md#the-lineup-file-is-written-never-authored)).
+([`sync-merge.md`](sync-merge.md#the-model-list-file-is-written-never-authored)).
 
-**The CLI has no merge site.** Refreshing a lineup is the application's own
+**The CLI has no merge site.** Refreshing a list is the application's own
 entrypoint calling `broker.sync(...)`, built by the same factory the application
 uses — the library owns the operation, the host owns the connection. A CLI that
 merged would either duplicate connection config the application already owns
