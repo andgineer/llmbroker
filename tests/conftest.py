@@ -60,7 +60,7 @@ _BUNDLED_PRESET_TEXT = presets.bundled_preset_text
 def offline_catalog(monkeypatch):
     """No test reaches the real catalog, and none falls back to the preset bundled
     in the wheel. Following the curated preset is the default, so either would make
-    a real lineup arrive in a test that never wrote one. The fetch is patched at the
+    a real model list arrive in a test that never wrote one. The fetch is patched at the
     socket seam so a test is free to patch either level above it; a test about the
     fallback floor itself opts back in with ``bundled_presets``."""
 

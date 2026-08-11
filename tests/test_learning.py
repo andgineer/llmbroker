@@ -1,8 +1,6 @@
-"""Tests for ``Learner``: dead-key drops, rl_fail_count bookkeeping, observed
-ratings, and the debounced journal rebuild (scores, peer cooldowns, budget
-bounds, metrics, disabled-map resync)."""
+"""Tests for ``Learner``: dead-key reporting, rl_fail_count bookkeeping, observed
+ratings, and the one tail read a rebuild asks for (scores, budget bounds, metrics)."""
 
-import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -12,7 +10,7 @@ from llmbroker.broker.learning import (
     metrics_from_calls,
 )
 from llmbroker.broker.pool import LLMPool
-from llmbroker.models import Call, CallStatus, LLMConfig, key_hash
+from llmbroker.models import Call, CallStatus, LLMConfig
 from llmbroker.optimizer import Optimizer
 from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.standalone.store import InMemoryStore
@@ -43,42 +41,43 @@ async def _noop_resync() -> None:
 
 
 def _make_learner(opt: Optimizer, store, pool: LLMPool) -> Learner:
-    return Learner(opt, store, pool, _noop_resync)
+    return Learner(opt, store, pool)
 
 
 # ---------------------------------------------------------------------------
-# Dead-key handling (401/403 drop)
+# Dead-key handling: the observer reports it, the ring withdraws it
 # ---------------------------------------------------------------------------
 
 
-async def test_auth_failure_401_drops_llm_and_logs(caplog):
+async def test_auth_failure_401_names_the_ref_at_error(caplog):
+    """The model stays in the shared pool — the key belonged to one caller, and the
+    ring that paid is what stops offering it."""
     pool = LLMPool()
-    await pool.add(_cfg(), "key")
+    await pool.add(_cfg())
     learner = _make_learner(Optimizer(), InMemoryStore(), pool)
 
     with caplog.at_level("ERROR"):
         await learner.observe(_call("x", CallStatus.ERROR, http_status=401))
 
-    assert "x" not in pool
+    assert "x" in pool
     assert any("API key" in r.message and "401" in r.message for r in caplog.records)
 
 
-async def test_auth_failure_403_drops_llm_and_logs(caplog):
+async def test_auth_failure_403_names_the_ref_at_error(caplog):
     pool = LLMPool()
-    await pool.add(_cfg(), "key")
+    await pool.add(_cfg())
     opt = Optimizer()
     learner = _make_learner(opt, InMemoryStore(), pool)
 
     with caplog.at_level("ERROR"):
         await learner.observe(_call("x", CallStatus.ERROR, http_status=403))
 
-    assert "x" not in pool
     assert any("403" in r.message for r in caplog.records)
 
 
 async def test_generic_error_does_not_drop_llm():
     pool = LLMPool()
-    await pool.add(_cfg(), "key")
+    await pool.add(_cfg())
     opt = Optimizer()
     learner = _make_learner(opt, InMemoryStore(), pool)
 
@@ -93,7 +92,7 @@ async def test_error_row_without_cooldown_does_not_advance_the_streak():
     """A failure that did not cool the model — a client-side 4xx, a spent wait
     budget — is not the model's fault and must not raise its backoff exponent."""
     pool = LLMPool()
-    await pool.add(_cfg(), "key")
+    await pool.add(_cfg())
     opt = Optimizer()
     learner = _make_learner(opt, InMemoryStore(), pool)
 
@@ -104,31 +103,9 @@ async def test_error_row_without_cooldown_does_not_advance_the_streak():
     assert opt.rl_fail_count("x") == 0
 
 
-async def test_error_row_without_cooldown_does_not_force_a_rebuild():
-    """Nothing was cooled or dropped, so there is no shared state to propagate —
-    a spent wait budget must not buy a journal re-read on every call."""
-    pool = LLMPool()
-    await pool.add(_cfg(), "key")
-    resyncs = 0
-
-    async def counting_resync() -> None:
-        nonlocal resyncs
-        resyncs += 1
-
-    learner = Learner(Optimizer(), InMemoryStore(), pool, counting_resync)
-
-    await learner.observe(_call("x", CallStatus.ERROR, error_detail="wait budget exhausted"))
-    assert resyncs == 1  # the first call is never debounced
-    await learner.observe(_call("x", CallStatus.ERROR, error_detail="wait budget exhausted"))
-    assert resyncs == 1
-
-    await learner.observe(_call("x", CallStatus.ERROR, cooldown_until=_soon()))
-    assert resyncs == 2
-
-
 async def test_ok_calls_reset_rl_fail_count():
     pool = LLMPool()
-    await pool.add(_cfg(), "key")
+    await pool.add(_cfg())
     opt = Optimizer()
     learner = _make_learner(opt, InMemoryStore(), pool)
 
@@ -145,7 +122,7 @@ async def test_ok_calls_reset_rl_fail_count():
 
 async def test_an_observed_rating_updates_the_window_instantly():
     pool = LLMPool()
-    await pool.add(_cfg(), "key")
+    await pool.add(_cfg())
     opt = Optimizer()
     learner = _make_learner(opt, InMemoryStore(), pool)
 
@@ -155,21 +132,21 @@ async def test_an_observed_rating_updates_the_window_instantly():
 
 
 # ---------------------------------------------------------------------------
-# maybe_rebuild: quality windows + metrics from the cached tail
+# relearn: quality windows + metrics from one tail read
 # ---------------------------------------------------------------------------
 
 
 async def test_rebuild_loads_quality_windows_from_journal(tmp_path):
     store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
-    await pool.add(_cfg("bad"), "key")
+    await pool.add(_cfg("bad"))
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
     learner = _make_learner(opt, store, pool)
 
     for _ in range(10):
         await store.record_quality("bad", "summarize", 0.0)
 
-    await learner.maybe_rebuild(force=True)
+    await learner.relearn()
 
     assert opt.is_demoted("bad", "summarize") is True
 
@@ -177,223 +154,17 @@ async def test_rebuild_loads_quality_windows_from_journal(tmp_path):
 async def test_rebuild_computes_metrics(tmp_path):
     store = SqliteStore(tmp_path / "t.db")
     pool = LLMPool()
-    await pool.add(_cfg("x"), "key")
+    await pool.add(_cfg("x"))
     opt = Optimizer()
     learner = _make_learner(opt, store, pool)
 
     await store.record(_call("x", CallStatus.OK))
     await store.record(_call("x", CallStatus.OK))
 
-    await learner.maybe_rebuild(force=True)
+    await learner.relearn()
 
     assert learner.metrics["x"].call_count == 2
     assert learner.metrics["x"].last_status is CallStatus.OK
-
-
-async def test_rebuild_is_debounced_without_force(tmp_path):
-    store = SqliteStore(tmp_path / "t.db")
-    pool = LLMPool()
-    opt = Optimizer()
-    learner = _make_learner(opt, store, pool)
-
-    await learner.maybe_rebuild(force=True)
-    await store.record(_call("x", CallStatus.OK))
-    await learner.maybe_rebuild()  # within TTL — no-op
-
-    assert learner.metrics == {}
-
-
-# ---------------------------------------------------------------------------
-# Peer cooldowns: 429/401/403 gated by key hash, other failures unconditional
-# ---------------------------------------------------------------------------
-
-
-async def test_rebuild_applies_5xx_cooldown_unconditionally(tmp_path):
-    store = SqliteStore(tmp_path / "t.db")
-    pool = LLMPool()
-    await pool.add(_cfg("x"), "key")  # a *different* key than the failing row below
-    opt = Optimizer()
-    learner = _make_learner(opt, store, pool)
-
-    until = datetime.now(UTC) + timedelta(seconds=60)
-    await store.record(
-        _call(
-            "x",
-            CallStatus.ERROR,
-            http_status=500,
-            cooldown_until=until,
-            key_hash=key_hash("someone-elses-key"),
-        ),
-    )
-
-    await learner.maybe_rebuild(force=True)
-
-    assert pool._slots["x"].cooldown_until == until
-
-
-async def test_rebuild_applies_429_cooldown_only_when_key_hash_matches(tmp_path):
-    store = SqliteStore(tmp_path / "t.db")
-    pool = LLMPool()
-    await pool.add(_cfg("x"), "shared-key")
-    opt = Optimizer()
-    learner = _make_learner(opt, store, pool)
-
-    until = datetime.now(UTC) + timedelta(seconds=60)
-    await store.record(
-        _call(
-            "x",
-            CallStatus.RATE_LIMITED,
-            http_status=429,
-            cooldown_until=until,
-            key_hash=key_hash("shared-key"),
-        ),
-    )
-
-    await learner.maybe_rebuild(force=True)
-
-    assert pool._slots["x"].cooldown_until == until
-
-
-async def test_rebuild_ignores_429_cooldown_when_key_hash_differs(tmp_path):
-    store = SqliteStore(tmp_path / "t.db")
-    pool = LLMPool()
-    await pool.add(_cfg("x"), "my-own-key")
-    opt = Optimizer()
-    learner = _make_learner(opt, store, pool)
-
-    until = datetime.now(UTC) + timedelta(seconds=60)
-    await store.record(
-        _call(
-            "x",
-            CallStatus.RATE_LIMITED,
-            http_status=429,
-            cooldown_until=until,
-            key_hash=key_hash("someone-elses-key"),
-        ),
-    )
-
-    await learner.maybe_rebuild(force=True)
-
-    assert pool._slots["x"].cooldown_until is None
-
-
-async def test_rebuild_drops_dead_key_when_hash_matches(tmp_path):
-    store = SqliteStore(tmp_path / "t.db")
-    pool = LLMPool()
-    await pool.add(_cfg("x"), "my-own-key")
-    opt = Optimizer()
-    learner = _make_learner(opt, store, pool)
-
-    await store.record(
-        _call(
-            "x",
-            CallStatus.ERROR,
-            http_status=401,
-            cooldown_until=datetime.now(UTC) + timedelta(seconds=60),
-            key_hash=key_hash("my-own-key"),
-        ),
-    )
-
-    await learner.maybe_rebuild(force=True)
-
-    assert "x" not in pool
-
-
-# ---------------------------------------------------------------------------
-# Disabled-map resync
-# ---------------------------------------------------------------------------
-
-
-async def test_rebuild_seeds_and_applies_disabled_map(tmp_path):
-    store = SqliteStore(tmp_path / "t.db")
-    pool = LLMPool()
-    await pool.add(_cfg("x"), "key")
-    learner = _make_learner(Optimizer(), store, pool)
-
-    await store.set_disabled("x", True)
-    await learner.maybe_rebuild(force=True)
-
-    assert pool.is_disabled("x")
-    assert await store.get_disabled("x") is True
-
-
-async def test_rebuild_seeds_missing_names_as_not_disabled(tmp_path):
-    store = SqliteStore(tmp_path / "t.db")
-    pool = LLMPool()
-    await pool.add(_cfg("fresh"), "key")
-    learner = _make_learner(Optimizer(), store, pool)
-
-    await learner.maybe_rebuild(force=True)
-
-    assert await store.get_disabled("fresh") is False
-    assert not pool.is_disabled("fresh")
-
-
-async def test_rebuild_re_enable_via_disabled_map_clears_pool_flag(tmp_path):
-    store = SqliteStore(tmp_path / "t.db")
-    pool = LLMPool()
-    await pool.add(_cfg("x"), "key")
-    pool.set_disabled("x")
-    learner = _make_learner(Optimizer(), store, pool)
-
-    await store.set_disabled("x", False)
-    await learner.maybe_rebuild(force=True)
-
-    assert not pool.is_disabled("x")
-
-
-# ---------------------------------------------------------------------------
-# resync_registry callback
-# ---------------------------------------------------------------------------
-
-
-async def test_maybe_rebuild_calls_resync_registry(tmp_path):
-    store = SqliteStore(tmp_path / "t.db")
-    pool = LLMPool()
-    calls = []
-
-    async def resync() -> None:
-        calls.append(1)
-
-    learner = Learner(Optimizer(), store, pool, resync)
-    await learner.maybe_rebuild(force=True)
-
-    assert calls == [1]
-
-
-async def test_a_registry_resync_that_raises_does_not_fail_the_call(tmp_path, caplog):
-    """The rebuild runs off record(), and its commonest trigger is a 429 — the very
-    thing the pool exists to absorb. A registry nobody can read must leave the pool
-    as it is and log, never surface out of the caller's own ask()."""
-    store = SqliteStore(tmp_path / "t.db")
-    pool = LLMPool()
-    await pool.add(_cfg("x"), "k")
-
-    async def exploding_resync() -> None:
-        raise ValueError("registry is unreadable")
-
-    learner = Learner(Optimizer(), store, pool, exploding_resync)
-    with caplog.at_level(logging.ERROR, logger="llmbroker.broker"):
-        await learner.observe(_call("x", CallStatus.RATE_LIMITED, cooldown_until=_soon()))
-
-    assert "x" in pool.configs  # the pool survived the unreadable registry
-    assert any("registry resync failed" in r.message for r in caplog.records)
-
-
-async def test_maybe_rebuild_skips_resync_registry_when_disabled(tmp_path):
-    """The provision-time warm start passes resync_registry=False since Catalog.provision()
-    just resynced it — this must not double the registry re-read."""
-    store = SqliteStore(tmp_path / "t.db")
-    pool = LLMPool()
-    calls = []
-
-    async def resync() -> None:
-        calls.append(1)
-
-    learner = Learner(Optimizer(), store, pool, resync)
-    await learner.maybe_rebuild(force=True, resync_registry=False)
-
-    assert calls == []
 
 
 # ── metrics_from_calls, now a projection of stats_from_calls ─────────────────

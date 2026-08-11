@@ -2,7 +2,7 @@
 the guarantee that following it never breaks a start.
 
 An empty registry is filled before provisioning, blocking, because provisioning an
-empty registry raises. A registry that already has a lineup is provisioned from
+empty registry raises. A registry that already has a model list is provisioned from
 what it holds and refreshed afterwards, off the request path — so a test that reads
 what the refresh did waits for it with ``_settle``.
 """
@@ -14,7 +14,7 @@ import pytest
 
 from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
-from llmbroker.broker.refresher import LineupRefresher
+from llmbroker.broker.refresher import ModelListRefresher
 from llmbroker.exceptions import EmptyRegistryError, SyncRefusedError
 from llmbroker.models import LLMConfig, SyncReport
 from llmbroker.sqlite import Registry as SqliteRegistry
@@ -91,7 +91,7 @@ async def test_a_failed_provision_does_not_re_fetch(tmp_path, monkeypatch):
 
     def counted(name):
         calls.append(name)
-        return ""  # an empty lineup leaves the fresh registry empty
+        return ""  # an empty model list leaves the fresh registry empty
 
     monkeypatch.setattr(presets, "fetch_preset_text", counted)
     broker = _broker(tmp_path, sync="freetier")
@@ -151,12 +151,12 @@ async def test_a_truncated_response_does_not_stop_the_broker_from_starting(
 
 
 async def test_a_refusal_stashes_the_report_and_continues(tmp_path, monkeypatch, caplog):
-    refused = SyncReport(source="freetier", applied=False, kept=("old",))
+    refused = SyncReport(source="freetier", applied=False, removed=("old",))
 
     async def refuse(_self, _source):
         raise SyncRefusedError("refused", report=refused)
 
-    monkeypatch.setattr(LineupRefresher, "sync", refuse)
+    monkeypatch.setattr(ModelListRefresher, "sync", refuse)
     db = str(tmp_path / "b.db")
     await SqliteRegistry(db).mirror(
         [LLMConfig(name="old", base_url="https://x/v1", model="m", api_key_ref="GEMINI")],

@@ -30,7 +30,7 @@ _UNSORTED = (
 
 # ── The file target ──────────────────────────────────────────────────────────
 #
-# The byte-level gate on the rendered file is in test_lineup_file.py; here it is
+# The byte-level gate on the rendered file is in test_model_list_file.py; here it is
 # the broker's own outcome that matters.
 
 
@@ -95,13 +95,13 @@ async def test_an_unchanged_registry_sync_writes_nothing(tmp_path, caplog, serve
 
 
 async def test_the_gate_ignores_the_order_a_registry_returns_rows_in(tmp_path, served):
-    """The lineup arrives in curated order and comes back name-sorted; comparing
+    """The model list arrives in curated order and comes back name-sorted; comparing
     the two as lists would report every no-op sync as a change."""
     broker = _broker(tmp_path)
     try:
         await broker.sync("freetier")
         stored = await broker._registry.load()
-        assert [c.name for c in stored] == ["alpha", "zeta"]  # not the lineup's order
+        assert [c.name for c in stored] == ["alpha", "zeta"]  # not the model list's order
         with patch.object(Catalog, "apply", new=AsyncMock()) as apply:
             await broker.sync("freetier")
         assert apply.await_count == 0
@@ -126,7 +126,7 @@ async def test_a_real_change_still_applies_and_logs_at_info(tmp_path, caplog, se
     assert any(r.levelno == logging.INFO and "sync" in r.message for r in caplog.records)
 
 
-async def test_a_reweighted_lineup_is_a_change_to_the_registry_target(tmp_path, served):
+async def test_a_reweighted_model_list_is_a_change_to_the_registry_target(tmp_path, served):
     """The registry branch compares entries by name, so a new persisted field joins
     that comparison by itself — a weight-only edit must not read as a no-op."""
     broker = _broker(tmp_path)
@@ -143,7 +143,7 @@ async def test_a_reweighted_lineup_is_a_change_to_the_registry_target(tmp_path, 
 
 
 async def test_an_unchanged_sync_still_bootstraps_a_key_that_arrived(tmp_path, monkeypatch, served):
-    """The gate covers the lineup, not the keys: a key exported after the first
+    """The gate covers the model_list, not the keys: a key exported after the first
     sync is what the next explicit sync is called for."""
     db = str(tmp_path / "b.db")
     monkeypatch.delenv("Z_KEY", raising=False)

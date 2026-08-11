@@ -55,7 +55,7 @@ class _Journal:
 
     def __init__(self, opt: Optimizer, store, pool: LLMPool) -> None:
         self._store = store
-        self._learner = Learner(opt, store, pool, _noop_resync)
+        self._learner = Learner(opt, store, pool)
 
     async def record(self, call: Call) -> None:
         await self._store.record(call)
@@ -72,29 +72,25 @@ class _Journal:
 
 
 @pytest.mark.parametrize("http_status", [401, 403])
-async def test_auth_failure_drops_llm_cleanly(any_store, http_status, caplog):
-    """HTTP 401/403 drops the LLM from pool immediately and logs an API-key error.
-
-    Verifies a re-added LLM starts fresh — no stale bookkeeping survives the drop.
-    """
+async def test_auth_failure_is_reported_and_leaves_the_pool_intact(any_store, http_status, caplog):
+    """HTTP 401/403 logs an API-key error naming the ref. The model stays in the
+    shared pool — the key was one caller's, and its ring is what withdraws it."""
     pool = LLMPool()
-    await pool.add(_cfg("llm1"), "key")
+    await pool.add(_cfg("llm1"))
     opt = Optimizer()
     journal = _Journal(opt, any_store, pool)
 
     with caplog.at_level("ERROR", logger="llmbroker.broker"):
         await journal.record(_call("llm1", CallStatus.ERROR, http_status=http_status))
 
-    assert "llm1" not in pool
     assert any("API key" in r.message and str(http_status) in r.message for r in caplog.records)
-    await pool.add(_cfg("llm1"), "key")
     assert pool.state("llm1").phase is LifecyclePhase.AVAILABLE
 
 
 async def test_repeated_ok_calls_keep_llm_available_and_reset_backoff(any_store):
     """Sustained OK calls keep the LLM AVAILABLE and reset the rate-limit backoff counter."""
     pool = LLMPool()
-    await pool.add(_cfg("llm1"), "key")
+    await pool.add(_cfg("llm1"))
     opt = Optimizer()
     journal = _Journal(opt, any_store, pool)
 
@@ -111,7 +107,7 @@ async def test_repeated_ok_calls_keep_llm_available_and_reset_backoff(any_store)
 async def test_rl_fail_count_accumulates_across_backend(any_store):
     """Consecutive RATE_LIMITED/UNAVAILABLE calls accumulate the backoff exponent."""
     pool = LLMPool()
-    await pool.add(_cfg("llm1"), "key")
+    await pool.add(_cfg("llm1"))
     opt = Optimizer()
     journal = _Journal(opt, any_store, pool)
 
@@ -131,8 +127,8 @@ async def test_quality_demotion_end_to_end_prefers_the_better_model(any_store):
     """Rating -> demotion -> demoted-last selection, driven through a real store backend."""
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
     pool = LLMPool(optimizer=opt)
-    await pool.add(_cfg("flaky"), "key", order=0)
-    await pool.add(_cfg("stable"), "key", order=1)
+    await pool.add(_cfg("flaky"), order=0)
+    await pool.add(_cfg("stable"), order=1)
     journal = _Journal(opt, any_store, pool)
 
     for _ in range(10):
@@ -142,7 +138,7 @@ async def test_quality_demotion_end_to_end_prefers_the_better_model(any_store):
     assert opt.is_demoted("flaky", "summarize") is True
     assert opt.is_demoted("stable", "summarize") is False
 
-    picked = await pool.acquire(0, operation="summarize")
+    picked = await pool.acquire(0, payable=frozenset({"k"}), operation="summarize")
     assert picked.name == "stable"
 
 
@@ -150,21 +146,21 @@ async def test_quality_demoted_model_still_serves_alone(any_store):
     """A quality-demoted model with no alternative is still picked — demotion is soft."""
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
     pool = LLMPool(optimizer=opt)
-    await pool.add(_cfg("only"), "key")
+    await pool.add(_cfg("only"))
     journal = _Journal(opt, any_store, pool)
 
     for _ in range(10):
         await journal.record_quality("only", "summarize", 0.0)
 
     assert opt.is_demoted("only", "summarize") is True
-    picked = await pool.acquire(0, operation="summarize")
+    picked = await pool.acquire(0, payable=frozenset({"k"}), operation="summarize")
     assert picked.name == "only"
 
 
 async def test_quality_stats_are_isolated_per_operation(any_store):
     """A bad verdict on one operation does not demote another operation for the same model."""
     pool = LLMPool()
-    await pool.add(_cfg("llm1"), "key")
+    await pool.add(_cfg("llm1"))
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
     journal = _Journal(opt, any_store, pool)
 

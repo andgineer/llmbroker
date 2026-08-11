@@ -3,8 +3,9 @@ the only registry write path; what it writes is decided in ``broker.merge``."""
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 
+from llmbroker.broker.keyring import KeyRing, resolve_ref
 from llmbroker.broker.pool import LLMPool
 from llmbroker.exceptions import EmptyRegistryError, PoolModelError, UnknownModelError
 from llmbroker.models import (
@@ -20,6 +21,7 @@ from llmbroker.protocols.registry import (
     RegistryProtocol,
 )
 from llmbroker.protocols.secrets import MutableSecretsProtocol, SecretsProtocol
+from llmbroker.protocols.store import DisabledMapProtocol, StoreProtocol
 from llmbroker.standalone.secrets import Secrets
 
 logger = logging.getLogger("llmbroker.broker")
@@ -28,29 +30,6 @@ logger = logging.getLogger("llmbroker.broker")
 # negative, so a non-negative remembered state is exactly "was degraded".
 _HEALTHY = -1
 _NO_POOL = -2
-
-
-async def _resolve_non_empty(secrets: SecretsProtocol, ref: str) -> str | None:
-    """One backend lookup, with a blank value read as no value at all — any
-    backend can hand one back, and key presence authorizes preset removals."""
-    try:
-        value = await secrets.resolve(ref)
-    except KeyError:
-        return None
-    return value if value.strip() else None
-
-
-async def resolve_key(
-    secrets: SecretsProtocol,
-    api_key_ref: str,
-    scope: str | None,
-) -> str | None:
-    """Resolve ``api_key_ref`` to a key: scope-prefixed (own) ref first, then shared."""
-    if scope is not None:
-        own = await _resolve_non_empty(secrets, f"{scope}/{api_key_ref}")
-        if own is not None:
-            return own
-    return await _resolve_non_empty(secrets, api_key_ref)
 
 
 def check_overlay(stored: list[LLMConfig], declared: list[LLMConfig]) -> None:
@@ -155,22 +134,28 @@ class Catalog:
         registry: RegistryProtocol,
         secrets: SecretsProtocol,
         pool: LLMPool,
+        ring: KeyRing,
+        store: StoreProtocol,
         *,
-        scope: str | None,
         overlay: "Callable[[], Awaitable[DeclaredModels]] | None" = None,
         autofill: bool = True,
+        relearn: "Callable[[], Awaitable[None]] | None" = None,
     ) -> None:
         self._registry = registry
         self._secrets = secrets
         self._pool = pool
-        self._scope = scope
+        self._ring = ring
+        self._store = store
         self._overlay = overlay
         self._autofill = autofill
+        self._relearn = relearn
         self._declared: DeclaredModels | None = None
         self._declared_lock = asyncio.Lock()
         self._health = PoolHealth()
         self._direct_missing_keys: tuple[PendingKey, ...] = ()
         self._key_info: dict[str, KeyInfo] = {}
+        self._payable: frozenset[str] = frozenset()
+        self._empty = False
         self._reported_state: int | None = None
         self._reported_missing: set[str] = set()
 
@@ -179,6 +164,12 @@ class Catalog:
         """The pool-wide counts from the last reconcile — the same numbers the
         degradation alarm uses, so log and admin UI cannot diverge."""
         return self._health
+
+    @property
+    def payable(self) -> frozenset[str]:
+        """The refs the installation's shared ring can pay for, as of the last
+        reconcile — what an admin read reports and the alarm counts."""
+        return self._payable
 
     @property
     def direct_missing_keys(self) -> tuple[PendingKey, ...]:
@@ -217,27 +208,38 @@ class Catalog:
         async with self._declared_lock:
             if self._declared is None and self._overlay is not None:
                 declared = await self._overlay()
-                # The same bootstrap `sync` gives the stored lineup, without which a
+                # The same bootstrap `sync` gives the stored model_list, without which a
                 # declared model is dead wherever secrets are not the environment.
                 await self.seed_secrets(declared.configs)
                 self._declared = declared
             return self._declared if self._declared is not None else DeclaredModels()
 
-    async def provision(self) -> None:
-        """Reconcile the pool with the registry. The caller serializes this
-        one-time init; it is not re-entrant. Raises when there is nothing at all."""
+    async def rebuild(self) -> None:
+        """Re-read the registry and re-derive everything learned: pool membership, the
+        admin disabled map, and quality from the journal tail. The only way the live
+        pool ever changes; the keys are refreshed by the broker just before this."""
         stored, declared = await self.entries()
-        if not stored and not declared:
-            raise EmptyRegistryError(_EMPTY_NOT_FILLED if self._autofill else _EMPTY_NO_AUTOFILL)
+        self._empty = not stored and not declared
         await self._reconcile(stored, declared)
+        await self._resync_disabled()
+        if self._relearn is not None:
+            await self._relearn()
 
-    async def resync(self) -> None:
-        """Re-read the registry and reconcile pool membership — no emptiness check.
+    def check_not_empty(self) -> None:
+        """Raise when the last rebuild found nothing at all. Only provisioning asks:
+        a running pool that empties keeps serving nothing rather than failing a call."""
+        if self._empty:
+            raise EmptyRegistryError(_EMPTY_NOT_FILLED if self._autofill else _EMPTY_NO_AUTOFILL)
 
-        Called by the debounced journal rebuild so registry edits and key changes
-        from other processes/nodes take effect on a running broker.
-        """
-        await self._reconcile(*(await self.entries()))
+    async def _resync_disabled(self) -> None:
+        if not isinstance(self._store, DisabledMapProtocol):
+            return
+        await self._store.seed_disabled(list(self._pool.configs))
+        for name, flag in (await self._store.disabled_map()).items():
+            if flag:
+                self._pool.set_disabled(name)
+            else:
+                await self._pool.clear_disabled(name)
 
     async def _reconcile(self, stored: list[LLMConfig], declared: list[LLMConfig]) -> None:
         """Reconcile the pool with what the registry holds. A declared model is reached
@@ -247,12 +249,13 @@ class Catalog:
             if name not in names:
                 await self._pool.drop(name)
         for order, cfg in enumerate(stored):
-            await self._pool.add(cfg, await self._resolve_key(cfg), order=order)
+            await self._pool.add(cfg, order=order)
         await self._measure(stored, declared)
         self._report_health()
         self._report_missing_keys()
 
     async def _measure(self, managed: list[LLMConfig], direct: list[LLMConfig]) -> None:
+        self._payable = await self._ring.payable(c.api_key_ref for c in managed)
         usable: set[str] = set()
         missing: dict[str, list[str]] = {}
         total: set[str] = set()
@@ -260,7 +263,7 @@ class Catalog:
             if not cfg.api_key_ref:
                 continue
             total.add(cfg.api_key_ref)
-            if self._pool.has_key(cfg.name):
+            if cfg.api_key_ref in self._payable:
                 usable.add(cfg.api_key_ref)
             else:
                 missing.setdefault(cfg.api_key_ref, []).append(cfg.name)
@@ -285,7 +288,7 @@ class Catalog:
         for cfg in direct:
             if not cfg.api_key_ref:
                 continue
-            if await resolve_key(self._secrets, cfg.api_key_ref, self._scope) is None:
+            if await self._ring.resolve(cfg.api_key_ref) is None:
                 missing.setdefault(cfg.api_key_ref, []).append(cfg.alias or cfg.name)
         return missing
 
@@ -331,9 +334,9 @@ class Catalog:
             )
 
     async def apply(self, configs: list[LLMConfig]) -> None:
-        """Mirror an already-merged lineup into the registry and seed its keys.
+        """Mirror an already-merged model list into the registry and seed its keys.
 
-        The merge decision — what the lineup should be — belongs to
+        The merge decision — what the model list should be — belongs to
         ``broker.merge``; this half only writes it.
         """
         registry = self._require_mutable_registry()
@@ -371,8 +374,10 @@ class Catalog:
                 )
         self._reported_missing &= {k.api_key_ref for k in pending}
 
-    async def _resolve_key(self, cfg: LLMConfig) -> str | None:
-        return await resolve_key(self._secrets, cfg.api_key_ref, self._scope)
+    async def present_refs(self, refs: Iterable[str]) -> frozenset[str]:
+        """Which of ``refs`` a key resolves for here — what a sync report describes,
+        never what it decides on."""
+        return await self._ring.payable(refs)
 
     async def seed_secrets(self, configs: Sequence[LLMConfig]) -> None:
         """Copy any env-resolvable keys into a mutable secrets backend, preserving existing."""
@@ -380,9 +385,9 @@ class Catalog:
             return
         bootstrap = Secrets()
         for cfg in configs:
-            if await _resolve_non_empty(self._secrets, cfg.api_key_ref) is not None:
+            if await resolve_ref(self._secrets, cfg.api_key_ref) is not None:
                 continue  # already resolvable — preserve
-            value = await _resolve_non_empty(bootstrap, cfg.api_key_ref)
+            value = await resolve_ref(bootstrap, cfg.api_key_ref)
             if value is not None:
                 await self._secrets.set(cfg.api_key_ref, value)
 

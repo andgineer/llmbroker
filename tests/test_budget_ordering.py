@@ -26,6 +26,8 @@ from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import Call, CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
 
+from support import make_ring
+
 _PATCH = "llmbroker.broker.router.call_provider"
 _HANG_SEC = 30
 
@@ -58,15 +60,15 @@ async def _router(*names: str) -> tuple[Router, LLMPool, _RecordingStore]:
     """Pool in curated order: the first name given is the preferred model."""
     pool = LLMPool()
     for order, name in enumerate(names):
-        await pool.add(_cfg(name), "secret", order)
+        await pool.add(_cfg(name), order)
     store = _RecordingStore()
-    learner = Learner(Optimizer(), store, pool, _noop_resync)
-    router = Router(pool, store, scope=None, learner=learner)
+    learner = Learner(Optimizer(), store, pool)
+    router = Router(pool, store, learner=learner)
     # The router builds its httpx client on the first attempt, inside the caller's
     # budget: an SSL context on a cold runner costs more than the 0.2s waits below,
     # which would expire the budget before any provider is reached — a different path
     # (and no bound recorded) than what these tests are about.
-    router._http = chat.make_client()
+    router._http_client = chat.make_client()
     return router, pool, store
 
 
@@ -82,7 +84,7 @@ def _provider(hangs: set[str]):
 
 
 async def _ask(router: Router, **kwargs):
-    return await router.chat([{"role": "user", "content": "hi"}], **kwargs)
+    return await router.chat(make_ring(), [{"role": "user", "content": "hi"}], **kwargs)
 
 
 _LONG_AGO = datetime(2000, 1, 1, tzinfo=UTC)
@@ -201,15 +203,17 @@ def test_a_rebuild_applies_the_bound_a_peer_recorded():
 
     async def run():
         pool = LLMPool()
-        await pool.add(_cfg("a"), "secret", 0)
-        await pool.add(_cfg("b"), "secret", 1)
+        await pool.add(_cfg("a"), 0)
+        await pool.add(_cfg("b"), 1)
         store = _RecordingStore()
         await store.record(_row("a", CallStatus.ERROR, budget_ms=5000))
-        learner = Learner(Optimizer(), store, pool, _noop_resync)
+        learner = Learner(Optimizer(), store, pool)
 
-        await learner.maybe_rebuild(force=True)
+        await learner.relearn()
 
-        picked = await pool.acquire(0, answer_deadline=time.monotonic() + 1.0)
+        picked = await pool.acquire(
+            0, payable=frozenset({"K"}), answer_deadline=time.monotonic() + 1.0
+        )
         assert picked.name == "b"
 
     asyncio.run(run())
@@ -220,11 +224,11 @@ def test_a_rebuild_retires_a_bound_the_tail_no_longer_carries():
 
     async def run():
         pool = LLMPool()
-        await pool.add(_cfg("a"), "secret", 0)
+        await pool.add(_cfg("a"), 0)
         pool.raise_budget_bound("a", 5.0, datetime.now(UTC))
-        learner = Learner(Optimizer(), _RecordingStore(), pool, _noop_resync)
+        learner = Learner(Optimizer(), _RecordingStore(), pool)
 
-        await learner.maybe_rebuild(force=True)
+        await learner.relearn()
 
         assert pool._budget_bounds == {}
 
@@ -361,7 +365,7 @@ def test_the_bound_survives_a_config_refresh():
             await _ask(router, wait=0.2)
         bound = pool._budget_bounds["a"]
 
-        await pool.add(_cfg("a"), None, 0)
+        await pool.add(_cfg("a"), 0)
         assert pool._budget_bounds["a"] == bound
 
     asyncio.run(run())
@@ -373,14 +377,16 @@ def test_a_dropped_slot_does_not_carry_its_bound_into_a_re_add():
 
     async def run():
         pool = LLMPool()
-        await pool.add(_cfg("a"), "secret", 0)
-        await pool.add(_cfg("b"), "secret", 1)
+        await pool.add(_cfg("a"), 0)
+        await pool.add(_cfg("b"), 1)
         pool.raise_budget_bound("a", 30.0, datetime.now(UTC))
 
         await pool.drop("a")
-        await pool.add(_cfg("a"), "fresh", 0)
+        await pool.add(_cfg("a"), 0)
 
-        picked = await pool.acquire(0, answer_deadline=time.monotonic() + 5.0)
+        picked = await pool.acquire(
+            0, payable=frozenset({"K"}), answer_deadline=time.monotonic() + 5.0
+        )
         assert picked.name == "a"
 
     asyncio.run(run())
@@ -462,7 +468,7 @@ def test_a_model_never_picked_again_still_loses_its_bound_on_the_clock():
 
             await asyncio.sleep(0.06)
             # A rebuild must not re-arm what the window retired, either.
-            await _learner_of(router).maybe_rebuild(force=True)
+            await _learner_of(router).relearn()
             recovered = await _ask(router, wait=0.2)
 
         assert recovered.llm_name == "a"
@@ -483,17 +489,17 @@ def test_the_bound_applies_with_no_optimizer_and_no_learner():
     async def run():
         pool = LLMPool()
         for order, name in enumerate(("a", "b")):
-            await pool.add(_cfg(name), "secret", order)
+            await pool.add(_cfg(name), order)
         store = _RecordingStore()
-        router = Router(pool, store, scope=None)  # no optimizer, no learner
-        router._http = chat.make_client()
+        router = Router(pool, store)  # no optimizer, no learner
+        router._http_client = chat.make_client()
 
         hangs = {"a"}
         with patch(_PATCH, new=_provider(hangs)):
             with pytest.raises(NoLLMAvailableError):
-                await router.chat([{"role": "user", "content": "hi"}], wait=0.2)
+                await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=0.2)
             hangs.clear()
-            result = await router.chat([{"role": "user", "content": "hi"}], wait=0.2)
+            result = await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=0.2)
 
         assert result.llm_name == "b"
         await router.aclose()
@@ -508,7 +514,7 @@ def test_the_bound_applies_without_waiting_for_a_rebuild():
     async def run():
         router, pool, _ = await _router("a", "b")
         learner = _learner_of(router)
-        await learner.maybe_rebuild(force=True)  # arm the debounce
+        await learner.relearn()  # arm the debounce
         with patch(_PATCH, new=_provider({"a"})), pytest.raises(NoLLMAvailableError):
             await _ask(router, wait=0.2)
 

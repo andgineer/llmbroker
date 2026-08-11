@@ -61,7 +61,7 @@ async def test_sqlite_ensure_schema_creates_fresh_and_stamps_version(tmp_path):
         calls_cols = {
             c[1] for c in await (await db.execute("PRAGMA table_info(llmbroker_calls)")).fetchall()
         }
-        assert {"kind", "call_id", "scope", "cooldown_until", "key_hash"} <= calls_cols
+        assert {"kind", "call_id", "scope", "cooldown_until", "budget_ms"} <= calls_cols
 
         disabled_cols = {
             c[1]
@@ -184,7 +184,7 @@ async def test_postgres_ensure_schema_creates_fresh_and_stamps_version(pg_pool):
             " WHERE table_name = 'llmbroker_calls'",
         )
         col_names = {r["column_name"] for r in cols}
-        assert {"kind", "call_id", "scope", "cooldown_until", "key_hash"} <= col_names
+        assert {"kind", "call_id", "scope", "cooldown_until", "budget_ms"} <= col_names
 
 
 async def test_postgres_ensure_schema_raises_on_version_mismatch(pg_pool):

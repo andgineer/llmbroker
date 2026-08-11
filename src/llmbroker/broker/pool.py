@@ -1,4 +1,6 @@
-"""LLMPool: live per-LLM slot state (config, key, cooldown, quality) backing routing."""
+"""LLMPool: live per-LLM slot state (config, cooldown, quality) backing routing.
+
+The pool holds no key: which refs a caller can pay for arrives per acquisition."""
 
 import asyncio
 import logging
@@ -34,7 +36,6 @@ class _Slot:
     """Live per-LLM state: static config plus everything routing needs to know now."""
 
     config: LLMConfig
-    key: str | None = None
     in_flight: int = 0  # count of concurrently running calls; capped by config.parallel
     cooldown_until: datetime | None = None  # aware UTC
     fail_count: int = 0
@@ -69,36 +70,23 @@ class LLMPool:
     def config(self, name: str) -> LLMConfig:
         return self._slots[name].config
 
-    def has_key(self, name: str) -> bool:
-        slot = self._slots.get(name)
-        return slot is not None and slot.key is not None
-
-    def resolved_key(self, name: str) -> str:
-        slot = self._slots[name]
-        if slot.key is None:
-            raise KeyError(name)
-        return slot.key
-
     # ------------------------------------------------------------------
     # Membership mutation
     # ------------------------------------------------------------------
 
-    async def add(self, cfg: LLMConfig, key: str | None, order: int | None = None) -> None:
-        """Register/refresh a config and the key it currently resolves to. Upserts in
-        place, so a slot's live state survives; ``order`` defaults to insertion
-        order where the caller asserts no curated position."""
+    async def add(self, cfg: LLMConfig, order: int | None = None) -> None:
+        """Register or refresh a config. Upserts in place, so a slot's live state
+        survives; ``order`` defaults to insertion order where the caller asserts no
+        curated position."""
         async with self._cond:
             resolved_order = order if order is not None else self._next_order
             self._next_order = max(self._next_order, resolved_order + 1)
             slot = self._slots.get(cfg.name)
             if slot is None:
-                self._slots[cfg.name] = _Slot(config=cfg, key=key, order=resolved_order)
+                self._slots[cfg.name] = _Slot(config=cfg, order=resolved_order)
             else:
                 slot.config = cfg
                 slot.order = resolved_order
-                # A key that no longer resolves withdraws the slot at once: the old
-                # value would route real requests at a revoked key.
-                slot.key = key
             self._cond.notify_all()
 
     async def drop(self, name: str) -> None:
@@ -200,17 +188,17 @@ class LLMPool:
             wakeups.append(queue_deadline - time.monotonic())
         return min(wakeups) if wakeups else None
 
-    def _exhaustion_reason(self, exclude: frozenset[str]) -> str:
+    def _exhaustion_reason(self, exclude: frozenset[str], payable: frozenset[str]) -> str:
         if exclude & self._slots.keys():
             return "excluded"
         if not self._slots:
             return "empty_pool"
-        if not any(slot.key is not None for slot in self._slots.values()):
+        if not any(slot.config.api_key_ref in payable for slot in self._slots.values()):
             return "no_keys"
         return "all_disabled"
 
-    def _raise_exhausted(self, exclude: frozenset[str]) -> None:
-        reason = self._exhaustion_reason(exclude)
+    def _raise_exhausted(self, exclude: frozenset[str], payable: frozenset[str]) -> None:
+        reason = self._exhaustion_reason(exclude, payable)
         message = {
             "excluded": "every candidate model was excluded for this request",
             "empty_pool": "the LLM pool has no slots",
@@ -226,10 +214,13 @@ class LLMPool:
         self,
         queue_deadline: float | None,
         *,
+        payable: frozenset[str],
         operation: str | None = None,
         exclude: frozenset[str] = frozenset(),
         answer_deadline: float | None = None,
     ) -> LLMConfig:
+        """Take a slot for one attempt. ``payable`` names the refs the calling caller
+        holds a key for — a model it cannot pay for is not a candidate."""
         async with self._cond:
             while True:
                 now = datetime.now(UTC)
@@ -239,7 +230,9 @@ class LLMPool:
                 candidates = [
                     s
                     for s in self._slots.values()
-                    if s.key is not None and not s.disabled and s.config.name not in exclude
+                    if s.config.api_key_ref in payable
+                    and not s.disabled
+                    and s.config.name not in exclude
                 ]
                 avail = [
                     s
@@ -260,7 +253,7 @@ class LLMPool:
                     slot.in_flight += 1
                     return slot.config
                 if not candidates:
-                    self._raise_exhausted(exclude)
+                    self._raise_exhausted(exclude, payable)
                 if queue_deadline is not None and time.monotonic() >= queue_deadline:
                     cooling = [s.cooldown_until for s in candidates if s.cooldown_until is not None]
                     retry_at = min(cooling) if cooling else None
@@ -321,28 +314,3 @@ class LLMPool:
             cooldown_until=None,
             fail_count=slot.fail_count,
         )
-
-    async def apply_peer_cooldowns(
-        self,
-        cooldowns: dict[str, datetime],
-        fail_counts: dict[str, int] | None = None,
-    ) -> None:
-        """Raise each named slot's ``cooldown_until`` to at least the given value.
-        Never lowers a later local one, never touches ``in_flight``; the peer
-        fail-streak folds in as ``max(local, peer)``."""
-        fail_counts = fail_counts or {}
-        async with self._cond:
-            changed = False
-            for name, until in cooldowns.items():
-                slot = self._slots.get(name)
-                if slot is None:
-                    continue
-                if slot.cooldown_until is None or until > slot.cooldown_until:
-                    slot.cooldown_until = until
-                    changed = True
-            for name, count in fail_counts.items():
-                slot = self._slots.get(name)
-                if slot is not None and count > slot.fail_count:
-                    slot.fail_count = count
-            if changed:
-                self._cond.notify_all()

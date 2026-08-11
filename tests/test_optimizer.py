@@ -169,7 +169,7 @@ def test_broker_demoted_model_still_serves_as_last_resort(tmp_path):
             optimize=opt,
             sync=None,
         ) as broker:
-            picked = await broker._pool.acquire(0, operation=None)
+            picked = await broker._pool.acquire(0, payable=frozenset({"K"}), operation=None)
             assert picked.name == "p1"
 
     asyncio.run(run())
@@ -227,7 +227,7 @@ def test_underprov_alert_fires_despite_keyless_config_present(tmp_path, caplog):
             optimize=True,
             sync=None,
         ) as broker:
-            assert not broker._pool.has_key("p2")
+            assert broker._pool.config("p2").api_key_ref not in broker._catalog.payable
             _make_unavailable(broker, "p1")
             with caplog.at_level("WARNING", logger="llmbroker.broker"):
                 broker._maybe_alert_underprov(_timeout_exc())
@@ -307,7 +307,7 @@ def test_underprov_alert_via_ask_wiring(tmp_path, caplog):
         ) as broker:
             # Occupy the only slot so the next acquire raises TimeoutError → NoLLMAvailableError.
             # _make_unavailable marks p1 non-AVAILABLE so _maybe_alert_underprov fires.
-            await broker._pool.acquire(0)
+            await broker._pool.acquire(0, payable=frozenset({"K"}))
             _make_unavailable(broker, "p1")
 
             with (

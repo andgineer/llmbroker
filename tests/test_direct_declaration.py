@@ -49,7 +49,7 @@ async def _settle(broker: AsyncBroker) -> None:
 
 async def _resolved(broker: AsyncBroker, alias: str) -> LLMConfig:
     """What `direct()` would call — the resolved entry, without opening a client."""
-    cfg, _key = await broker._resolve_direct(alias)
+    cfg, _key = await broker.llms.resolve_direct(alias)
     return cfg
 
 
@@ -69,7 +69,7 @@ async def test_a_declared_alias_is_reachable_and_absent_from_the_pool(tmp_path, 
         assert cfg.model == "claude-opus-4-8"
         assert cfg.name == "anthropic-claude-opus-4-8"
         assert cfg.base_url == "https://api.anthropic.com/v1"
-        # Rule 1: only the curated lineup is routed.
+        # Rule 1: only the curated model list is routed.
         assert await broker.count() == 1
         assert set(await broker.snapshot()) == {"gemini"}
 
@@ -123,7 +123,7 @@ async def test_a_declared_config_is_used_verbatim_and_no_refresh_touches_it(tmp_
     )
     secrets = DictSecrets({**_SECRETS, "GATEWAY_KEY": "sk-gw"})
     async with _broker(tmp_path, direct=[mine], secrets=secrets) as broker:
-        cfg, _key = await broker._resolve_direct(name="my-gateway")
+        cfg, _key = await broker.llms.resolve_direct(name="my-gateway")
         assert (cfg.model, cfg.base_url) == ("pinned-1", "https://gateway.internal/v1")
         assert set(await broker.snapshot()) == {"gemini"}
 
@@ -175,7 +175,7 @@ async def test_a_declared_model_with_no_key_exists_and_says_so(tmp_path, served)
 
 
 async def test_a_declared_model_alone_is_a_configured_installation(tmp_path, served):
-    """A broker that follows no lineup and declares one paid model has no pool —
+    """A broker that follows no model list and declares one paid model has no pool —
     that is the shape `direct=` makes ordinary, not an empty registry."""
     async with _broker(tmp_path, direct=["opus"], sync=None) as broker:
         assert await broker.count() == 0
@@ -227,7 +227,7 @@ async def test_an_alias_the_catalog_dropped_keeps_serving_and_does_not_stop_the_
 ):
     """A catalog that moved out from under a running process is not the caller's
     error. Raising there killed the refresh task — silently, since a detached task
-    swallows it — so a lineup change stopped reaching the live pool for the life of
+    swallows it — so a model list change stopped reaching the live pool for the life of
     the process, and calls the previous resolution served fine started failing."""
     async with _broker(tmp_path, direct=["opus"], sync_interval=0.0) as broker:
         await broker.ensure_pool()
@@ -247,7 +247,7 @@ async def test_an_alias_the_catalog_dropped_keeps_serving_and_does_not_stop_the_
             await broker.count()
             await _settle(broker)
 
-        # The lineup change reached the live pool: the refresh ran to the end.
+        # The model list change reached the live pool: the refresh ran to the end.
         assert set(await broker.snapshot()) == {"gemini", "groq"}
         # And the declared model still answers, on the last resolution that worked.
         assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
@@ -255,10 +255,10 @@ async def test_an_alias_the_catalog_dropped_keeps_serving_and_does_not_stop_the_
     assert any("stay on the resolution already in use" in r.message for r in caplog.records)
 
 
-async def test_the_catalog_is_refreshed_where_no_lineup_is_synced(tmp_path, served):
+async def test_the_catalog_is_refreshed_where_no_model_list_is_synced(tmp_path, served):
     """``sync=None`` is a real shape — a registry a deploy job fills. The catalog a
     declared alias resolves through still has to move, so it carries its own clock
-    rather than riding on the lineup's."""
+    rather than riding on the model list's."""
     async with _broker(tmp_path, direct=["opus"], sync=None, sync_interval=0.0) as broker:
         await _settle(broker)
         assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
@@ -317,7 +317,7 @@ async def test_a_declared_models_key_reaches_a_writable_secrets_backend(
     served,
     monkeypatch,
 ):
-    """The bootstrap a stored lineup gets from `sync`, applied to a model that is
+    """The bootstrap a stored model list gets from `sync`, applied to a model that is
     never stored. Without it `direct=` is dead wherever secrets live in a backend
     rather than the environment."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-env")
@@ -333,7 +333,7 @@ async def test_a_declared_models_key_reaches_a_writable_secrets_backend(
         sync=None,
     )
     try:
-        _cfg, key = await broker._resolve_direct("opus")
+        _cfg, key = await broker.llms.resolve_direct("opus")
         assert key == "sk-ant-from-env"
         assert await secrets.resolve("ANTHROPIC_API_KEY") == "sk-ant-from-env"
     finally:
@@ -372,7 +372,7 @@ async def test_a_missing_key_is_logged_once_with_its_help(tmp_path, served, capl
             secrets=DictSecrets({"GEMINI": "sk"}),
         ) as broker:
             await broker.count()
-            await broker._catalog.resync()
+            await broker.rebuild()
 
     lines = [r.message for r in caplog.records if "ANTHROPIC_API_KEY" in r.message]
     assert len(lines) == 1
@@ -391,8 +391,8 @@ async def test_a_registry_written_help_wins_over_the_catalogs(tmp_path, served):
 
 async def test_a_collision_appearing_later_does_not_fail_a_call(tmp_path, served, caplog):
     """The collision check runs wherever the overlay is read, and one of those places
-    is the journal rebuild a 429 triggers. An edit landing under a running broker is
-    a supported event; it must not turn a rate limit into an exception."""
+    is the rebuild an exhausted pool triggers. An edit landing under a running broker
+    is a supported event; it must not turn an exhausted pool into an exception."""
     target = tmp_path / "llms.toml"
     target.write_text(_PRESET)
     async with _broker(tmp_path, direct=["opus"], sync=None) as broker:
@@ -403,10 +403,10 @@ async def test_a_collision_appearing_later_does_not_fail_a_call(tmp_path, served
             'api_key_ref="ANTHROPIC_API_KEY"\n',
         )
         with caplog.at_level(logging.ERROR, logger="llmbroker.broker"):
-            await broker._learner.maybe_rebuild(force=True)
+            await broker._rebuild_safely("pool exhaustion")
         assert await broker.count() == 1
 
-    assert any("registry resync failed" in r.message for r in caplog.records)
+    assert any("pool rebuild on pool exhaustion failed" in r.message for r in caplog.records)
 
 
 async def test_resolution_reads_the_cached_catalog_rather_than_the_network(tmp_path, served):

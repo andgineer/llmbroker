@@ -1,14 +1,12 @@
-"""One parser decides whether a lineup file is valid, whoever reads it."""
+"""One parser decides whether a model list file is valid, whoever reads it."""
 
 import tomllib
 
 import pytest
 
-from llmbroker.broker.keys import KeyProbe
-from llmbroker.broker.lineup_file import sync_lineup_file
+from llmbroker.broker.model_list_file import sync_model_list_file
 from llmbroker.broker.merge import SyncSource
-from llmbroker.standalone.registry import Registry, parse_lineup
-from llmbroker.standalone.secrets import DictSecrets
+from llmbroker.standalone.registry import Registry, parse_model_list
 
 _NEW = (
     '[[llms]]\nname = "gemini"\nbase_url = "https://g/v1"\nmodel = "m"\n'
@@ -26,12 +24,12 @@ _DECLARED_SECTION = (
 )
 
 
-async def _sync(text: str, target) -> None:
+def _sync(text: str, target) -> None:
     """The sync path's own read of the same files the registry reads."""
-    await sync_lineup_file(
+    sync_model_list_file(
         target,
-        SyncSource(label="freetier", lineup=parse_lineup(tomllib.loads(text))),
-        probe=KeyProbe(DictSecrets({})),
+        SyncSource(label="freetier", model_list=parse_model_list(tomllib.loads(text))),
+        present=frozenset(),
     )
 
 
@@ -41,7 +39,7 @@ async def test_registry_and_sync_path_refuse_the_same_duplicate_name(tmp_path):
     with pytest.raises(ValueError, match="duplicate name 'a'"):
         await Registry(target).load()
     with pytest.raises(ValueError, match="duplicate name 'a'"):
-        await _sync(_NEW, target)
+        _sync(_NEW, target)
     assert target.read_text() == _DUPLICATE_NAME
 
 
@@ -52,35 +50,35 @@ async def test_registry_and_sync_path_refuse_the_same_declared_section(tmp_path)
     with pytest.raises(ValueError, match=r"direct=\[\.\.\.\]"):
         await Registry(target).load()
     with pytest.raises(ValueError, match=r"\[\[custom\]\] entries"):
-        await _sync(_NEW, target)
+        _sync(_NEW, target)
     assert target.read_text() == _DECLARED_SECTION
 
 
-async def test_an_incoming_lineup_is_validated_too(tmp_path):
+async def test_an_incoming_model_list_is_validated_too(tmp_path):
     target = tmp_path / "llms.toml"
     target.write_text(_NEW)
     with pytest.raises(ValueError, match="duplicate name 'a'"):
-        await _sync(_DUPLICATE_NAME, target)
+        _sync(_DUPLICATE_NAME, target)
     assert target.read_text() == _NEW
 
 
-def test_parse_lineup_reads_configs_and_keys_in_file_order():
+def test_parse_model_list_reads_configs_and_keys_in_file_order():
     data = tomllib.loads(
         '[[llms]]\nname="a"\nbase_url="u"\nmodel="m"\napi_key_ref="A"\n'
         '[[llms]]\nname="c"\nbase_url="u"\nmodel="m"\napi_key_ref="C"\n'
         '[keys.A]\nhelp="a help"\n',
     )
-    lineup = parse_lineup(data)
-    configs, keys = lineup.configs, lineup.keys
+    model_list = parse_model_list(data)
+    configs, keys = model_list.configs, model_list.keys
     assert [(c.name, c.from_preset) for c in configs] == [("a", True), ("c", True)]
     assert keys["A"].help == "a help"
 
 
-def test_parse_lineup_refuses_a_non_table_entry():
+def test_parse_model_list_refuses_a_non_table_entry():
     """Loud, like a bad weight: a curator wrote this by hand, and a silently dropped
     entry is a model missing from the pool with nothing to say so."""
     with pytest.raises(ValueError, match=r"\[\[llms\]\] entry 2 is str, not a table"):
-        parse_lineup({"llms": [{"name": "a", "base_url": "u"}, "oops"]})
+        parse_model_list({"llms": [{"name": "a", "base_url": "u"}, "oops"]})
 
 
 async def test_a_malformed_keys_table_is_refused_not_a_crash(tmp_path):
@@ -94,7 +92,7 @@ async def test_a_malformed_keys_table_is_refused_not_a_crash(tmp_path):
     with pytest.raises(ValueError, match=r"\[keys\] is str, not a table"):
         await Registry(target).load()
     with pytest.raises(ValueError, match=r"\[keys\] is str, not a table"):
-        await _sync(_NEW, target)
+        _sync(_NEW, target)
 
 
 def test_an_alias_on_a_stored_entry_is_not_read_back():
@@ -103,5 +101,5 @@ def test_an_alias_on_a_stored_entry_is_not_read_back():
     data = tomllib.loads(
         '[[llms]]\nname="a"\nalias="opus"\nbase_url="u"\nmodel="m"\napi_key_ref="A"\n'
     )
-    (cfg,) = parse_lineup(data).configs
+    (cfg,) = parse_model_list(data).configs
     assert cfg.alias is None

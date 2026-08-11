@@ -1,7 +1,7 @@
 # Direct access and stable aliases
 
 Reaching a host's own model by name, and the paid catalog whose aliases keep
-that name current. The free pool is [`presets.md`](presets.md). The
+that name current. The free pool is [`model-list.md`](model-list.md). The
 cross-cutting rules this file elaborates are in
 [`../invariants.md`](../invariants.md).
 
@@ -31,7 +31,7 @@ The registry holds pool members only, so the class is not a fact about a stored
 row; in the declared form both halves are the type of the argument. Only the
 second word is ever recorded, and only on a stored entry, where both values can
 occur — that is the one bit the merge partitions on
-([`sync-merge.md`](sync-merge.md#the-partition-a-sync-touches-only-what-a-sync-wrote),
+([`model-list.md`](model-list.md#the-partition-a-sync-touches-only-what-a-sync-wrote),
 [`../decisions.md`](../decisions.md#the-kind-of-an-entry-is-not-a-stored-field)).
 
 **Only declared models are reachable directly.** Pointing `direct` at a stored
@@ -65,12 +65,12 @@ model with no sync involved.
 that resolution is the catalog underneath it being refreshed. The resolution
 reads the copy already on the machine wherever there is one, so provisioning
 does not wait on the network; where nothing is writable there is no refresh to
-move it ([`list-refresh.md`](list-refresh.md)), and it stays on what the
+move it ([`model-list.md`](model-list.md)), and it stays on what the
 first read reached. One refresh costs one resolution however many calls are in
 flight when it lands.
 
 **Where the process fetches nothing automatically, neither does this read**
-([`list-refresh.md`](list-refresh.md)). It takes the copy on the machine, and
+([`model-list.md`](model-list.md)). It takes the copy on the machine, and
 failing that the wheel's copy, and the alias stays frozen there until an explicit
 sync moves it — the same floor the read already falls to when the network is
 unreachable ([`../decisions.md`](../decisions.md#no-automatic-fetch-means-none-at-start-either)).

@@ -23,7 +23,7 @@ _PRESET = (
 
 @pytest.fixture
 def fetches(monkeypatch):
-    """Counting preset stub — the only way a lineup reaches a fileless broker."""
+    """Counting preset stub — the only way a model list reaches a fileless broker."""
 
     class _Stub:
         def __init__(self) -> None:
@@ -43,20 +43,20 @@ async def _settle(broker: AsyncBroker) -> None:
         await broker._refresher._task
 
 
-async def test_a_cold_start_provisions_and_writes_its_lineup(fetches, llmbroker_home):
+async def test_a_cold_start_provisions_and_writes_its_model_list(fetches, llmbroker_home):
     async with AsyncBroker() as broker:
         assert await broker.count() == 2
     assert fetches.names == ["freetier"]
-    lineup = llmbroker_home / "lineup.toml"
-    assert lineup.is_file()
-    assert {c.name for c in await FileRegistry(lineup).load()} == {"gemini", "groq"}
+    model_list = llmbroker_home / "model-list.toml"
+    assert model_list.is_file()
+    assert {c.name for c in await FileRegistry(model_list).load()} == {"gemini", "groq"}
 
 
 async def test_a_second_run_reads_what_the_first_wrote_and_does_not_fetch(
     fetches,
     llmbroker_home,
 ):
-    """The stamp gates the check and the lineup file carries the pool, so a
+    """The stamp gates the check and the model list file carries the pool, so a
     short-lived script pays one round trip per interval, not per invocation."""
     async with AsyncBroker() as first:
         await first.count()
@@ -81,7 +81,7 @@ async def test_nowhere_writable_still_routes_and_simply_forgets(
     monkeypatch,
     tmp_path,
 ):
-    """A read-only container is a supported deployment: the lineup and the journal
+    """A read-only container is a supported deployment: the model list and the journal
     live in memory for that run."""
     monkeypatch.setattr("llmbroker.broker.broker.home_dir", lambda _override: None)
     async with AsyncBroker() as broker:
@@ -100,13 +100,13 @@ async def test_the_journal_is_one_per_home_not_one_per_working_directory(
     assert (llmbroker_home / "store").is_dir()
 
 
-async def test_two_homes_share_no_lineup_and_no_journal(fetches, tmp_path):
+async def test_two_homes_share_no_model_list_and_no_journal(fetches, tmp_path):
     one, two = tmp_path / "one", tmp_path / "two"
     async with AsyncBroker(home=one) as first, AsyncBroker(home=two) as second:
         assert await first.count() == 2
         assert await second.count() == 2
-    assert (one / "lineup.toml").is_file()
-    assert (two / "lineup.toml").is_file()
+    assert (one / "model-list.toml").is_file()
+    assert (two / "model-list.toml").is_file()
     assert (one / "store").is_dir()
     assert (two / "store").is_dir()
     # Each home carries its own check record, so neither gates the other.
@@ -123,19 +123,23 @@ async def test_keys_come_from_the_environment_and_the_working_directory_env(
     (tmp_path / ".env").write_text("GEMINI=from-file\nGROQ=from-file\n")
     monkeypatch.setenv("GROQ", "from-env")
     async with AsyncBroker(home=tmp_path / "home") as broker:
-        assert broker._pool.has_key("gemini")
-        assert broker._pool.resolved_key("groq") == "from-env"
+        assert broker._pool.config("gemini").api_key_ref in broker._catalog.payable
+        assert (
+            await broker._shared_ring.resolve(broker._pool.config("groq").api_key_ref) == "from-env"
+        )
 
 
 async def test_a_home_override_beats_the_environment_variable(fetches, monkeypatch, tmp_path):
     monkeypatch.setenv(HOME_ENV_VAR, str(tmp_path / "env-home"))
     async with AsyncBroker(home=tmp_path / "explicit") as broker:
         await broker.count()
-    assert (tmp_path / "explicit" / "lineup.toml").is_file()
+    assert (tmp_path / "explicit" / "model-list.toml").is_file()
     assert not (tmp_path / "env-home").exists()
 
 
-async def test_a_lineup_that_cannot_be_filled_says_what_to_do(caplog, llmbroker_home, monkeypatch):
+async def test_a_model_list_that_cannot_be_filled_says_what_to_do(
+    caplog, llmbroker_home, monkeypatch
+):
     """Offline, no cache, nothing bundled: the empty-registry error is the one a
     host is expected to catch, and it names the sync that would fill it."""
 
@@ -155,14 +159,14 @@ async def test_a_lineup_that_cannot_be_filled_says_what_to_do(caplog, llmbroker_
     assert any("not found in catalog" in r.message for r in caplog.records)
 
 
-async def test_a_cold_offline_start_says_the_lineup_is_not_the_current_one(
+async def test_a_cold_offline_start_says_the_model_list_is_not_the_current_one(
     caplog,
     llmbroker_home,
     bundled_presets,
     monkeypatch,
 ):
     """The wheel's copy is frozen at the installed release. Serving it silently is
-    what makes `preset > llms.toml` hand someone a stale lineup they then keep."""
+    what makes `preset > llms.toml` hand someone a stale model list they then keep."""
 
     def _fail(name: str) -> str:
         raise ValueError(f"preset {name!r} not found in catalog")

@@ -98,7 +98,7 @@ async def test_a_healthy_pool_logs_nothing_about_health(tmp_path, caplog):
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         async with _broker(tmp_path, ("a", "A"), ("b", "B"), present=("A", "B")) as broker:
             await broker.count()
-            await broker._catalog.resync()
+            await broker.rebuild()
     assert _health_lines(caplog) == []
 
 
@@ -125,8 +125,8 @@ async def test_the_error_is_logged_once_per_transition_not_per_reconcile(tmp_pat
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         async with _broker(tmp_path, ("a", "A"), ("b", "B"), present=("A",)) as broker:
             await broker.count()
-            await broker._catalog.resync()
-            await broker._catalog.resync()
+            await broker.rebuild()
+            await broker.rebuild()
     assert len(_health_lines(caplog)) == 1
 
 
@@ -142,15 +142,15 @@ async def test_recovery_logs_exactly_one_info(tmp_path, caplog):
         async with broker:
             await broker.count()
             secrets._mapping["B"] = "sk"
-            await broker._catalog.resync()
-            await broker._catalog.resync()
+            await broker.rebuild()
+            await broker.rebuild()
     levels = [level for level, _ in _health_lines(caplog)]
     assert levels == [logging.ERROR, logging.INFO]
     assert _health_lines(caplog)[1][1] == "pool recovered: 2 of 2 providers usable"
 
 
 async def test_a_healthy_pool_that_loses_a_provider_alarms(tmp_path, caplog):
-    """The transition the ERROR exists for: a lineup change leaves one quota."""
+    """The transition the ERROR exists for: a model list change leaves one quota."""
     registry = _registry(tmp_path, ("a", "A"), ("b", "B"))
     broker = AsyncBroker(
         registry=registry,
@@ -163,7 +163,7 @@ async def test_a_healthy_pool_that_loses_a_provider_alarms(tmp_path, caplog):
             await broker.count()
             assert _health_lines(caplog) == []
             registry.path.write_text(_ENTRY.format(name="a", ref="A"))
-            await broker._catalog.resync()
+            await broker.rebuild()
     ((level, message),) = _health_lines(caplog)
     assert level == logging.ERROR
     assert "1 of 1 providers usable" in message
@@ -184,7 +184,7 @@ async def test_the_last_provider_going_is_its_own_alarm(tmp_path, caplog):
             await broker.count()
             assert "no failover left" in _health_lines(caplog)[0][1]
             registry.path.write_text(_ENTRY.format(name="b", ref="B"))
-            await broker._catalog.resync()
+            await broker.rebuild()
             assert (await broker.snapshot()).providers_usable == 0
     assert [level for level, _ in _health_lines(caplog)] == [logging.ERROR, logging.ERROR]
     assert "cannot serve any request" in _health_lines(caplog)[1][1]
@@ -204,7 +204,7 @@ async def test_gaining_a_further_provider_is_not_worth_a_line(tmp_path, caplog):
                 )
             )
             secrets._mapping["C"] = "sk"
-            await broker._catalog.resync()
+            await broker.rebuild()
     assert _health_lines(caplog) == []
 
 
@@ -244,7 +244,7 @@ async def test_a_pool_that_empties_out_does_not_report_a_recovery(tmp_path, capl
             await broker.count()
             assert "no failover left" in _health_lines(caplog)[0][1]
             registry.path.write_text("")
-            await broker._catalog.resync()
+            await broker.rebuild()
     assert len(_health_lines(caplog)) == 1
 
 
@@ -262,11 +262,11 @@ async def test_a_revoked_key_deactivates_its_provider(tmp_path, caplog):
         async with broker:
             await broker.count()
             del secrets._mapping["B"]
-            await broker._catalog.resync()
+            await broker.rebuild()
             snap = await broker.snapshot()
     assert (snap.providers_usable, snap.providers_total) == (1, 2)
     assert snap["b"].has_key is False
-    assert broker._pool.has_key("b") is False
+    assert broker._pool.config("b").api_key_ref not in broker._catalog.payable
     assert [k.api_key_ref for k in snap.missing_keys] == ["B"]
     assert "no failover left" in _health_lines(caplog)[0][1]
 
@@ -291,10 +291,10 @@ async def test_a_fully_keyed_pool_never_reads_the_key_table(tmp_path):
         sync=None,
     ) as broker:
         await broker.count()
-        await broker._catalog.resync()
+        await broker.rebuild()
         assert reads == 0
         registry.path.write_text(
             _ENTRY.format(name="a", ref="A") + _ENTRY.format(name="c", ref="C")
         )
-        await broker._catalog.resync()
+        await broker.rebuild()
     assert reads == 1

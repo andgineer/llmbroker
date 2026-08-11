@@ -9,10 +9,9 @@ Background reading before you start (do not skip):
 - [`../../../specs/reference/freetier-providers.md`](../../../specs/reference/freetier-providers.md) —
   the rate-limit dimensions, the `effort`/`value` taxonomies, the currently
   curated providers, and the sources list. This is the document you refresh.
-- [`../../../specs/reference/rules/presets.md`](../../../specs/reference/rules/presets.md)
-  and [`../../../specs/reference/rules/sync-merge.md`](../../../specs/reference/rules/sync-merge.md) —
-  the two-halves catalog and the mirroring rule, which govern how a refreshed
-  preset lands on a running deployment. You do not implement this behavior;
+- [`../../../specs/reference/rules/model-list.md`](../../../specs/reference/rules/model-list.md) —
+  where a curated list comes from and the mirroring rule, which govern how a
+  refreshed preset lands on a running deployment. You do not implement this behavior;
   you must not violate its invariants (see Guardrails below, and
   [`../../../specs/reference/invariants.md`](../../../specs/reference/invariants.md)).
 The `effort`/`value` buckets are defined in `freetier-providers.md` alone —

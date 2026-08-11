@@ -21,6 +21,8 @@ from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import FileStore
 
+from support import make_ring
+
 
 class _RecordingStore:
     def __init__(self) -> None:
@@ -40,7 +42,7 @@ def _cfg(name: str, host: str) -> LLMConfig:
 async def _pool(*cfgs: LLMConfig) -> LLMPool:
     pool = LLMPool()
     for cfg in cfgs:
-        await pool.add(cfg, "secret")
+        await pool.add(cfg)
     return pool
 
 
@@ -52,11 +54,13 @@ def _sse(*deltas: str) -> bytes:
 
 
 def _mount(router: Router, handler) -> None:
-    router._http = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5.0)  # noqa: SLF001
+    router._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5.0)  # noqa: SLF001
 
 
 async def _drain(router: Router, **kwargs) -> list[str]:
-    return [d async for d in router.stream([{"role": "user", "content": "hi"}], **kwargs)]
+    return [
+        d async for d in router.stream(make_ring(), [{"role": "user", "content": "hi"}], **kwargs)
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -69,7 +73,7 @@ def test_stream_yields_deltas_and_journals_one_ok_row():
 
     async def run():
         pool = await _pool(_cfg("a", "a"))
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(
             router,
             lambda _r: httpx.Response(
@@ -99,7 +103,7 @@ def test_stream_arrives_incrementally():
 
     async def run():
         pool = await _pool(_cfg("a", "a"))
-        router = Router(pool, _RecordingStore(), scope=None)
+        router = Router(pool, _RecordingStore())
         _mount(
             router,
             lambda _r: httpx.Response(
@@ -107,7 +111,7 @@ def test_stream_arrives_incrementally():
             ),
         )
         seen: list[str] = []
-        async for delta in router.stream([{"role": "user", "content": "hi"}]):
+        async for delta in router.stream(make_ring(), [{"role": "user", "content": "hi"}]):
             seen.append(delta)
             released.set()  # only reached if "one" arrived without "two" being ready
         return seen
@@ -132,7 +136,7 @@ def test_stream_fails_over_on_429_before_first_delta():
 
     async def run():
         pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(router, handler)
         deltas = await _drain(router)
         return deltas, pool
@@ -156,7 +160,7 @@ def test_stream_fails_over_on_transport_error_before_first_delta():
 
     async def run():
         pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(router, handler)
         return await _drain(router)
 
@@ -167,7 +171,7 @@ def test_stream_fails_over_on_transport_error_before_first_delta():
 def test_stream_raises_when_every_candidate_fails():
     async def run():
         pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
-        router = Router(pool, _RecordingStore(), scope=None)
+        router = Router(pool, _RecordingStore())
         _mount(router, lambda _r: httpx.Response(503, text="down"))
         with pytest.raises(NoLLMAvailableError):
             await _drain(router, wait=0.5)
@@ -186,7 +190,7 @@ def test_wait_bounds_time_to_first_delta_without_blaming_the_model():
 
     async def run():
         pool = await _pool(_cfg("a", "a"))
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(
             router,
             lambda _r: httpx.Response(
@@ -210,7 +214,7 @@ def test_wait_does_not_bound_a_slow_consumer():
 
     async def run():
         pool = await _pool(_cfg("a", "a"))
-        router = Router(pool, _RecordingStore(), scope=None)
+        router = Router(pool, _RecordingStore())
         _mount(
             router,
             lambda _r: httpx.Response(
@@ -220,7 +224,9 @@ def test_wait_does_not_bound_a_slow_consumer():
             ),
         )
         seen: list[str] = []
-        async for delta in router.stream([{"role": "user", "content": "hi"}], wait=0.3):
+        async for delta in router.stream(
+            make_ring(), [{"role": "user", "content": "hi"}], wait=0.3
+        ):
             seen.append(delta)
             await asyncio.sleep(0.25)  # well past the budget, between deltas
         return seen
@@ -242,7 +248,7 @@ def test_stream_error_after_first_delta_propagates_and_journals_error():
 
     async def run():
         pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(
             router,
             lambda _r: httpx.Response(
@@ -251,7 +257,7 @@ def test_stream_error_after_first_delta_propagates_and_journals_error():
         )
         seen: list[str] = []
         with pytest.raises(StreamInterruptedError) as excinfo:
-            async for delta in router.stream([{"role": "user", "content": "hi"}]):
+            async for delta in router.stream(make_ring(), [{"role": "user", "content": "hi"}]):
                 seen.append(delta)
         return seen, excinfo.value
 
@@ -279,7 +285,7 @@ def test_non_sse_200_cools_down_and_fails_over():
 
     async def run():
         pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(router, handler)
         return await _drain(router), pool
 
@@ -312,7 +318,7 @@ def test_sse_framed_error_payload_cools_down_and_fails_over():
 
     async def run():
         pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(router, handler)
         return await _drain(router), pool
 
@@ -351,7 +357,7 @@ def test_garbage_200_reads_the_same_from_the_router_and_the_direct_client(monkey
 
     async def run():
         pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(router, handler)
         await _drain(router)
 
@@ -396,7 +402,7 @@ def test_non_object_sse_payload_is_a_garbage_200(payload):
 
     async def run():
         pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(router, handler)
         deltas = await _drain(router)
 
@@ -428,7 +434,7 @@ def test_a_non_object_payload_among_real_chunks_leaves_the_stream_working():
 
     async def run():
         pool = await _pool(_cfg("a", "a"))
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(
             router,
             lambda _r: httpx.Response(
@@ -477,7 +483,7 @@ def test_malformed_chunk_shape_is_a_garbage_200(chunk):
 
     async def run():
         pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(router, handler)
         deltas = await _drain(router)
 
@@ -509,7 +515,7 @@ def test_a_malformed_chunk_after_the_first_delta_interrupts_the_stream():
 
     async def run():
         pool = await _pool(_cfg("a", "a"))
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(
             router,
             lambda _r: httpx.Response(
@@ -522,7 +528,7 @@ def test_a_malformed_chunk_after_the_first_delta_interrupts_the_stream():
         )
         seen: list[str] = []
         with pytest.raises(StreamInterruptedError) as exc_info:
-            async for delta in router.stream([{"role": "user", "content": "hi"}]):
+            async for delta in router.stream(make_ring(), [{"role": "user", "content": "hi"}]):
                 seen.append(delta)
         return seen, pool, exc_info.value
 
@@ -541,7 +547,7 @@ def test_a_finish_chunk_with_no_choices_is_not_malformed():
 
     async def run():
         pool = await _pool(_cfg("a", "a"))
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(
             router,
             lambda _r: httpx.Response(
@@ -571,7 +577,7 @@ def test_stream_reraises_the_provider_error_when_every_candidate_rejects_the_req
 
     async def run():
         pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(router, lambda _r: httpx.Response(400, text="messages[0].role is invalid"))
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
             await _drain(router)
@@ -595,7 +601,7 @@ def test_empty_completion_is_a_success_not_a_garbage_200():
 
     async def run():
         pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(
             router,
             lambda _r: httpx.Response(
@@ -620,7 +626,7 @@ def test_abandoned_stream_releases_the_slot():
     async def run():
         cfg = LLMConfig(name="a", base_url="https://a/v1", model="m", api_key_ref="K", parallel=1)
         pool = await _pool(cfg)
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(
             router,
             lambda _r: httpx.Response(
@@ -629,7 +635,7 @@ def test_abandoned_stream_releases_the_slot():
                 headers={"content-type": "text/event-stream"},
             ),
         )
-        async for delta in router.stream([{"role": "user", "content": "hi"}]):
+        async for delta in router.stream(make_ring(), [{"role": "user", "content": "hi"}]):
             assert delta == "one"
             break
         # a second stream can only start if the first released its only slot
@@ -647,7 +653,7 @@ def test_held_iterator_releases_the_slot_when_closed():
     async def run():
         cfg = LLMConfig(name="a", base_url="https://a/v1", model="m", api_key_ref="K", parallel=1)
         pool = await _pool(cfg)
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         _mount(
             router,
             lambda _r: httpx.Response(
@@ -656,7 +662,9 @@ def test_held_iterator_releases_the_slot_when_closed():
                 headers={"content-type": "text/event-stream"},
             ),
         )
-        async with aclosing(router.stream([{"role": "user", "content": "hi"}])) as deltas:
+        async with aclosing(
+            router.stream(make_ring(), [{"role": "user", "content": "hi"}])
+        ) as deltas:
             async for delta in deltas:
                 assert delta == "one"
                 break
@@ -684,7 +692,7 @@ def test_broker_stream_end_to_end(tmp_path):
         )
         async with broker:
             await broker.ensure_pool()
-            broker._router._http = httpx.AsyncClient(  # noqa: SLF001
+            broker._router._http_client = httpx.AsyncClient(  # noqa: SLF001
                 transport=httpx.MockTransport(
                     lambda _r: httpx.Response(
                         200,

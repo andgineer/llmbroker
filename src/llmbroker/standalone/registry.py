@@ -3,7 +3,7 @@
 import tomllib
 from pathlib import Path
 
-from llmbroker.models import KeyInfo, Lineup, LLMConfig, check_weight
+from llmbroker.models import KeyInfo, LLMConfig, ModelList, check_weight
 
 
 def _int_or_none(value: object) -> int | None:
@@ -71,7 +71,7 @@ def key_info_from_entry(ref: str, raw: object) -> KeyInfo:
 def _key_infos(data: dict) -> dict[str, KeyInfo]:
     raw = data.get("keys", {})
     if not isinstance(raw, dict):
-        # ValueError, not TypeError: see the entry check in parse_lineup.
+        # ValueError, not TypeError: see the entry check in parse_model_list.
         raise ValueError(  # noqa: TRY004
             f"Registry: [keys] is {type(raw).__name__}, not a table of api_key_ref"
             " sections — this is where a human is told how to obtain each key",
@@ -90,14 +90,14 @@ def _check_no_declared_entries(data: dict) -> None:
         )
 
 
-def parse_lineup(data: dict) -> Lineup:
-    """The one reader of a model list: the ``[[llms]]`` entries in file order plus the
+def parse_model_list(data: dict) -> ModelList:
+    """The one reader of a model_list: the ``[[llms]]`` entries in file order plus the
     ``[keys]`` metadata. Whether a list is valid is decided only here."""
     _check_no_declared_entries(data)
     configs: list[LLMConfig] = []
     for position, entry in enumerate(data.get("llms", []), start=1):
         if not isinstance(entry, dict):
-            # ValueError, not TypeError: a malformed lineup must stay inside the
+            # ValueError, not TypeError: a malformed model list must stay inside the
             # error type a background refresh catches rather than kill the process.
             raise ValueError(  # noqa: TRY004
                 f"Registry: [[llms]] entry {position} is {type(entry).__name__}, not a table",
@@ -106,7 +106,7 @@ def parse_lineup(data: dict) -> Lineup:
         if cfg is not None:
             configs.append(cfg)
     _check_unique_names(configs)
-    return Lineup(configs=configs, keys=_key_infos(data))
+    return ModelList(configs=configs, keys=_key_infos(data))
 
 
 def _read_data(path: Path) -> dict:
@@ -117,16 +117,16 @@ def _read_data(path: Path) -> dict:
         return tomllib.load(fh)
 
 
-def read_lineup(path: Path) -> Lineup:
-    """The lineup this installation follows: its entries and its ``[keys]`` help."""
-    return parse_lineup(_read_data(path))
+def read_model_list(path: Path) -> ModelList:
+    """The model list this installation follows: its entries and its ``[keys]`` help."""
+    return parse_model_list(_read_data(path))
 
 
 class Registry:
-    """File-backed read-only registry over a TOML lineup.
+    """File-backed read-only registry over a TOML model_list.
 
     The file is llmbroker's own output, rewritten in full by a sync; see
-    ``specs/reference/rules/sync-merge.md``.
+    ``specs/reference/rules/model-list.md``.
     """
 
     def __init__(self, path: str | Path) -> None:
@@ -138,8 +138,8 @@ class Registry:
 
     async def load(self) -> list[LLMConfig]:
         """The ``[[llms]]`` entries of the file, validated."""
-        return read_lineup(self._path).configs
+        return read_model_list(self._path).configs
 
     async def key_info(self) -> dict[str, KeyInfo]:
         """Per-provider onboarding metadata from the ``[keys]`` table, keyed by ``api_key_ref``."""
-        return read_lineup(self._path).keys
+        return read_model_list(self._path).keys

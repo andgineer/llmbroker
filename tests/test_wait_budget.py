@@ -15,6 +15,8 @@ from llmbroker.broker.router import Router
 from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 
+from support import make_ring
+
 _PATCH = "llmbroker.broker.router.call_provider"
 
 
@@ -36,7 +38,7 @@ def _cfg(name="p1"):
 async def _pool(*cfgs) -> LLMPool:
     pool = LLMPool()
     for order, cfg in enumerate(cfgs):
-        await pool.add(cfg, "secret", order)
+        await pool.add(cfg, order)
     return pool
 
 
@@ -65,10 +67,10 @@ def _fake_provider(captured: list, *, raises=None, results=None):
 
 def test_attempt_timeout_is_the_remaining_budget_when_it_is_the_smaller_bound():
     async def run():
-        router = Router(await _pool(_cfg()), _RecordingStore(), scope=None)
+        router = Router(await _pool(_cfg()), _RecordingStore())
         captured: list = []
         with patch(_PATCH, new=_fake_provider(captured)):
-            await router.chat([{"role": "user", "content": "hi"}], wait=10.0)
+            await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=10.0)
         assert 9.0 < captured[0] <= 10.0
 
     asyncio.run(run())
@@ -76,13 +78,13 @@ def test_attempt_timeout_is_the_remaining_budget_when_it_is_the_smaller_bound():
 
 def test_attempt_timeout_is_the_global_ceiling_when_it_is_the_smaller_bound():
     async def run():
-        router = Router(await _pool(_cfg()), _RecordingStore(), scope=None)
+        router = Router(await _pool(_cfg()), _RecordingStore())
         captured: list = []
         with (
             patch.object(chat, "HTTP_TIMEOUT", 2.0),
             patch(_PATCH, new=_fake_provider(captured)),
         ):
-            await router.chat([{"role": "user", "content": "hi"}], wait=30.0)
+            await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=30.0)
         assert captured == [2.0]
 
     asyncio.run(run())
@@ -90,10 +92,10 @@ def test_attempt_timeout_is_the_global_ceiling_when_it_is_the_smaller_bound():
 
 def test_wait_none_attempt_runs_on_the_global_ceiling():
     async def run():
-        router = Router(await _pool(_cfg()), _RecordingStore(), scope=None)
+        router = Router(await _pool(_cfg()), _RecordingStore())
         captured: list = []
         with patch(_PATCH, new=_fake_provider(captured)):
-            await router.chat([{"role": "user", "content": "hi"}])
+            await router.chat(make_ring(), [{"role": "user", "content": "hi"}])
         assert captured == [chat.HTTP_TIMEOUT]
 
     asyncio.run(run())
@@ -104,10 +106,10 @@ def test_wait_zero_means_do_not_queue_not_answer_instantly():
     or no free model could ever answer a non-blocking call."""
 
     async def run():
-        router = Router(await _pool(_cfg()), _RecordingStore(), scope=None)
+        router = Router(await _pool(_cfg()), _RecordingStore())
         captured: list = []
         with patch(_PATCH, new=_fake_provider(captured)):
-            result = await router.chat([{"role": "user", "content": "hi"}], wait=0)
+            result = await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=0)
         assert result.text == "ok"
         assert captured == [chat.HTTP_TIMEOUT]
 
@@ -123,10 +125,10 @@ def test_budget_expiry_does_not_cool_the_model():
     async def run():
         pool = await _pool(_cfg())
         store = _RecordingStore()
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         with patch(_PATCH, new=_fake_provider([], raises=httpx.ReadTimeout("hung"))):
             with pytest.raises(NoLLMAvailableError) as exc_info:
-                await router.chat([{"role": "user", "content": "hi"}], wait=5.0)
+                await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=5.0)
 
         assert exc_info.value.reason == "timeout"
         assert exc_info.value.retry_at is None  # nothing is cooling: no better moment
@@ -144,11 +146,11 @@ def test_budget_expiry_does_not_try_the_next_model_either():
 
     async def run():
         pool = await _pool(_cfg("a"), _cfg("b"))
-        router = Router(pool, _RecordingStore(), scope=None)
+        router = Router(pool, _RecordingStore())
         captured: list = []
         with patch(_PATCH, new=_fake_provider(captured, raises=httpx.ReadTimeout("hung"))):
             with pytest.raises(NoLLMAvailableError):
-                await router.chat([{"role": "user", "content": "hi"}], wait=5.0)
+                await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=5.0)
         assert len(captured) == 1
         assert pool.state("b").phase is LifecyclePhase.AVAILABLE
 
@@ -162,7 +164,7 @@ def test_a_client_error_already_seen_outranks_the_expired_budget():
 
     async def run():
         pool = await _pool(_cfg("a"), _cfg("b"))
-        router = Router(pool, _RecordingStore(), scope=None)
+        router = Router(pool, _RecordingStore())
         client_error = httpx.HTTPStatusError(
             "bad request",
             request=httpx.Request("POST", "https://x/v1/chat/completions"),
@@ -171,7 +173,7 @@ def test_a_client_error_already_seen_outranks_the_expired_budget():
         provider = _fake_provider([], results=[client_error, httpx.ReadTimeout("hung")])
         with patch(_PATCH, new=provider):
             with pytest.raises(httpx.HTTPStatusError) as exc_info:
-                await router.chat([{"role": "user", "content": "hi"}], wait=5.0)
+                await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=5.0)
         assert exc_info.value.response.status_code == 400
 
     asyncio.run(run())
@@ -181,14 +183,14 @@ def test_ceiling_bound_timeout_cools_the_model_and_fails_over():
     async def run():
         pool = await _pool(_cfg("a"), _cfg("b"))
         store = _RecordingStore()
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         captured: list = []
         provider = _fake_provider(
             captured,
             results=[httpx.ReadTimeout("too slow"), ("ok", None, None)],
         )
         with patch.object(chat, "HTTP_TIMEOUT", 0.5), patch(_PATCH, new=provider):
-            result = await router.chat([{"role": "user", "content": "hi"}])
+            result = await router.chat(make_ring(), [{"role": "user", "content": "hi"}])
 
         assert result.text == "ok"
         assert captured == [0.5, 0.5]
@@ -205,7 +207,7 @@ def test_a_hung_provider_cannot_outlive_the_budget():
 
     async def run():
         pool = await _pool(_cfg())
-        router = Router(pool, _RecordingStore(), scope=None)
+        router = Router(pool, _RecordingStore())
 
         async def hang(*args, **kwargs):
             await asyncio.sleep(30)
@@ -213,7 +215,7 @@ def test_a_hung_provider_cannot_outlive_the_budget():
         started = time.monotonic()
         with patch(_PATCH, new=hang):
             with pytest.raises(NoLLMAvailableError) as exc_info:
-                await router.chat([{"role": "user", "content": "hi"}], wait=0.2)
+                await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=0.2)
         assert exc_info.value.reason == "timeout"
         assert time.monotonic() - started < 5.0
         assert pool._slots["p1"].in_flight == 0
@@ -227,7 +229,7 @@ def test_a_hung_provider_cools_down_at_the_global_ceiling():
 
     async def run():
         pool = await _pool(_cfg("a"), _cfg("b"))
-        router = Router(pool, _RecordingStore(), scope=None)
+        router = Router(pool, _RecordingStore())
         calls = 0
 
         async def hang_once(*args, **kwargs):
@@ -238,7 +240,7 @@ def test_a_hung_provider_cools_down_at_the_global_ceiling():
             return "ok", None, None
 
         with patch.object(chat, "HTTP_TIMEOUT", 0.2), patch(_PATCH, new=hang_once):
-            result = await router.chat([{"role": "user", "content": "hi"}])
+            result = await router.chat(make_ring(), [{"role": "user", "content": "hi"}])
 
         assert result.llm_name == "b"
         assert pool.state("a").phase is LifecyclePhase.COOLING
@@ -259,11 +261,11 @@ def test_exhausted_budget_short_circuits_the_next_attempt():
     async def run():
         pool = await _pool(_cfg())
         store = _RecordingStore()
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         captured: list = []
         with patch(_PATCH, new=_fake_provider(captured)):
             with pytest.raises(NoLLMAvailableError) as exc_info:
-                await router.chat([{"role": "user", "content": "hi"}], wait=-1.0)
+                await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=-1.0)
         assert exc_info.value.reason == "timeout"
         assert captured == []
         assert pool._slots["p1"].in_flight == 0

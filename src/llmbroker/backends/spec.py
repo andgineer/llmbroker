@@ -68,7 +68,6 @@ TABLES: dict[str, TableSpec] = {
             "called_at": "timestamp",
             "scope": "text",
             "cooldown_until": "timestamp",
-            "key_hash": "text",
             "budget_ms": "int",
         },
         indexes=(("llm_name",), ("called_at",)),
@@ -76,4 +75,4 @@ TABLES: dict[str, TableSpec] = {
 }
 
 # Gates the current TABLES shape; ensure_schema creates it fresh or raises on mismatch.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7

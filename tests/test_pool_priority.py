@@ -30,12 +30,12 @@ async def _pool(*entries: tuple[str, float], optimizer: Optimizer | None = None)
     """Entries in the order given, so ``order`` follows the argument list."""
     pool = LLMPool(optimizer=optimizer if optimizer is not None else Optimizer())
     for order, (name, weight) in enumerate(entries):
-        await pool.add(_cfg(name, weight), "key", order=order)
+        await pool.add(_cfg(name, weight), order=order)
     return pool
 
 
 async def _acquired(pool: LLMPool, **kwargs) -> str:
-    cfg = await pool.acquire(None, **kwargs)
+    cfg = await pool.acquire(None, payable=frozenset({"K"}), **kwargs)
     await pool.release(cfg)
     return cfg.name
 
@@ -154,7 +154,7 @@ async def test_failed_calls_leave_the_quality_window_and_the_priority_untouched(
     optimizer = Optimizer()
     pool = await _pool(("m", 0.6), optimizer=optimizer)
     store = SqliteStore(str(tmp_path / "journal.db"))
-    learner = Learner(optimizer, store, pool, _noop_resync)
+    learner = Learner(optimizer, store, pool)
     try:
         for status in (CallStatus.RATE_LIMITED, CallStatus.UNAVAILABLE, CallStatus.ERROR) * 5:
             call = Call(
@@ -167,7 +167,7 @@ async def test_failed_calls_leave_the_quality_window_and_the_priority_untouched(
             )
             await store.record(call)
             await learner.observe(call)
-        await learner.maybe_rebuild(force=True, resync_registry=False)
+        await learner.relearn()
     finally:
         await store.aclose()
     assert pool._priority(pool._slots["m"], None) == 0.6
@@ -179,7 +179,7 @@ async def test_failed_calls_leave_the_quality_window_and_the_priority_untouched(
 
 async def test_without_an_optimizer_priority_is_the_raw_weight():
     pool = LLMPool(optimizer=None)
-    await pool.add(_cfg("plain", 0.0), "key", order=0)
-    await pool.add(_cfg("weighted", 0.4), "key", order=1)
+    await pool.add(_cfg("plain", 0.0), order=0)
+    await pool.add(_cfg("weighted", 0.4), order=1)
     assert pool._priority(pool._slots["weighted"], None) == 0.4
     assert await _acquired(pool) == "weighted"

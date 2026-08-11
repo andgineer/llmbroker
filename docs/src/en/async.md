@@ -26,7 +26,7 @@ The async tool loop is `await llmbroker.arun_tool_loop(...)`, see
 ## One process, one file, no init step
 
 For a single-process service, sqlite holds the models, the keys and the journal
-in one file, and the curated lineup fills it on the first call:
+in one file, and the curated model list fills it on the first call:
 
 ```python
 async with llmbroker.AsyncBroker("broker.db") as llms:

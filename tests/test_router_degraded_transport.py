@@ -19,6 +19,8 @@ from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
 
+from support import make_ring
+
 _PATCH = "llmbroker.broker.router.call_provider"
 
 
@@ -40,7 +42,7 @@ def _cfg(name="p1", model="m"):
 async def _pool(*cfgs) -> LLMPool:
     pool = LLMPool()
     for order, cfg in enumerate(cfgs):
-        await pool.add(cfg, "secret", order)
+        await pool.add(cfg, order)
     return pool
 
 
@@ -74,9 +76,9 @@ def test_transport_error_cools_and_fails_over(exc):
     async def run():
         pool = await _pool(_cfg("a"), _cfg("b"))
         store = _RecordingStore()
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         with patch(_PATCH, new=AsyncMock(side_effect=[exc, ("ok", None, None)])):
-            result = await router.chat([{"role": "user", "content": "hi"}])
+            result = await router.chat(make_ring(), [{"role": "user", "content": "hi"}])
 
         assert result.text == "ok"
         assert pool.state("a").phase is LifecyclePhase.COOLING
@@ -91,10 +93,10 @@ def test_transport_error_cools_and_fails_over(exc):
 def test_single_model_transport_failure_raises_no_llm_available_not_httpx():
     async def run():
         pool = await _pool(_cfg())
-        router = Router(pool, _RecordingStore(), scope=None)
+        router = Router(pool, _RecordingStore())
         with patch(_PATCH, new=AsyncMock(side_effect=httpx.ReadError("peer went away"))):
             with pytest.raises(NoLLMAvailableError) as exc_info:
-                await router.chat([{"role": "user", "content": "hi"}], wait=0)
+                await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=0)
         assert exc_info.value.reason == "timeout"
         assert pool._slots["p1"].in_flight == 0
 
@@ -135,11 +137,11 @@ def test_unusable_token_counts_do_not_escape_as_a_raw_error():
     async def run():
         pool = await _pool(_cfg())
         store = _RecordingStore()
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         body = (
             b'{"choices":[{"message":{"content":"hi"}}],"usage":{"prompt_tokens":3,"cost":1e400}}'
         )
-        router._http = _mock_client(
+        router._http_client = _mock_client(
             lambda request: httpx.Response(
                 200,
                 headers={"content-type": "application/json"},
@@ -147,7 +149,7 @@ def test_unusable_token_counts_do_not_escape_as_a_raw_error():
             ),
         )
         try:
-            result = await router.chat([{"role": "user", "content": "hi"}])
+            result = await router.chat(make_ring(), [{"role": "user", "content": "hi"}])
         finally:
             await router.aclose()
 
@@ -182,7 +184,9 @@ def test_oversized_token_count_still_reaches_a_real_journal(tmp_path):
             sync=None,
         )
         async with broker:
-            broker._router._http = _mock_client(lambda request: httpx.Response(200, json=body))
+            broker._router._http_client = _mock_client(
+                lambda request: httpx.Response(200, json=body)
+            )
             result = await broker.ask("hi")
             assert result.text == "hi"
             assert result.usage is not None
@@ -200,16 +204,16 @@ def test_malformed_200_cools_and_fails_over_over_real_transport():
     async def run():
         pool = await _pool(_cfg("a", model="a-model"), _cfg("b", model="b-model"))
         store = _RecordingStore()
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
 
         def handler(request: httpx.Request) -> httpx.Response:
             if json.loads(request.content)["model"] == "a-model":
                 return httpx.Response(200, json={"error": "no choices here"})
             return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
-        router._http = _mock_client(handler)
+        router._http_client = _mock_client(handler)
         try:
-            result = await router.chat([{"role": "user", "content": "hi"}])
+            result = await router.chat(make_ring(), [{"role": "user", "content": "hi"}])
         finally:
             await router.aclose()
 
@@ -227,11 +231,11 @@ def test_malformed_200_cools_and_fails_over_over_real_transport():
 def test_invalid_json_over_real_transport_leaves_no_slot_leaked():
     async def run():
         pool = await _pool(_cfg())
-        router = Router(pool, _RecordingStore(), scope=None)
-        router._http = _mock_client(lambda request: httpx.Response(200, text="not json"))
+        router = Router(pool, _RecordingStore())
+        router._http_client = _mock_client(lambda request: httpx.Response(200, text="not json"))
         try:
             with pytest.raises(NoLLMAvailableError):
-                await router.chat([{"role": "user", "content": "hi"}], wait=0)
+                await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=0)
         finally:
             await router.aclose()
         assert pool._slots["p1"].in_flight == 0
@@ -251,14 +255,16 @@ def test_cancelled_call_releases_the_slot():
     async def run():
         cfg = LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K", parallel=1)
         pool = LLMPool()
-        await pool.add(cfg, "secret", 0)
-        router = Router(pool, _RecordingStore(), scope=None)
+        await pool.add(cfg, 0)
+        router = Router(pool, _RecordingStore())
 
         async def hang(*args, **kwargs):
             await asyncio.sleep(60)
 
         with patch(_PATCH, new=hang):
-            task = asyncio.create_task(router.chat([{"role": "user", "content": "hi"}]))
+            task = asyncio.create_task(
+                router.chat(make_ring(), [{"role": "user", "content": "hi"}])
+            )
             await asyncio.sleep(0.05)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -266,7 +272,7 @@ def test_cancelled_call_releases_the_slot():
 
         assert pool._slots["p1"].in_flight == 0
         # the cap is intact: the next caller still gets the only slot
-        assert await asyncio.wait_for(pool.acquire(None), 0.5) is cfg
+        assert await asyncio.wait_for(pool.acquire(None, payable=frozenset({"K"})), 0.5) is cfg
 
     asyncio.run(run())
 
@@ -278,8 +284,8 @@ def test_host_timeout_around_the_call_releases_the_slot():
     async def run():
         cfg = LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K", parallel=1)
         pool = LLMPool()
-        await pool.add(cfg, "secret", 0)
-        router = Router(pool, _RecordingStore(), scope=None)
+        await pool.add(cfg, 0)
+        router = Router(pool, _RecordingStore())
 
         async def hang(*args, **kwargs):
             await asyncio.sleep(60)
@@ -287,10 +293,10 @@ def test_host_timeout_around_the_call_releases_the_slot():
         with patch(_PATCH, new=hang):
             with pytest.raises(TimeoutError):
                 async with asyncio.timeout(0.05):
-                    await router.chat([{"role": "user", "content": "hi"}])
+                    await router.chat(make_ring(), [{"role": "user", "content": "hi"}])
 
         assert pool._slots["p1"].in_flight == 0
-        assert await asyncio.wait_for(pool.acquire(None), 0.5) is cfg
+        assert await asyncio.wait_for(pool.acquire(None, payable=frozenset({"K"})), 0.5) is cfg
 
     asyncio.run(run())
 
@@ -299,10 +305,10 @@ def test_unexpected_exception_propagates_and_releases_the_slot():
     async def run():
         pool = await _pool(_cfg())
         store = _RecordingStore()
-        router = Router(pool, store, scope=None)
+        router = Router(pool, store)
         with patch(_PATCH, new=AsyncMock(side_effect=RuntimeError("planted bug"))):
             with pytest.raises(RuntimeError, match="planted bug"):
-                await router.chat([{"role": "user", "content": "hi"}])
+                await router.chat(make_ring(), [{"role": "user", "content": "hi"}])
         assert pool._slots["p1"].in_flight == 0
         assert store.calls[0].error_detail == "RuntimeError"
         assert store.calls[0].cooldown_until is None

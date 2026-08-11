@@ -128,7 +128,7 @@ def _broker(registry) -> AsyncBroker:
 
 
 async def test_a_sync_removes_only_what_a_sync_wrote(ownership_registry, provenance, preset):
-    """The entry shares the arriving lineup's key ref, which is the removal rule's
+    """The entry shares the arriving model list's key ref, which is the removal rule's
     first row — the strongest removal path there is, and it must stop at the border."""
     registry = ownership_registry
     await _place(registry, provenance, name="mine", ref="GEMINI", url="https://own/v1")
@@ -147,7 +147,7 @@ async def test_a_sync_removes_only_what_a_sync_wrote(ownership_registry, provena
 async def test_a_sync_never_silently_rewrites_what_it_did_not_write(
     ownership_registry, provenance, preset
 ):
-    """A name the arriving lineup also carries. Refusing is a correct outcome; quietly
+    """A name the arriving model list also carries. Refusing is a correct outcome; quietly
     replacing the installation's provider fields is not."""
     registry = ownership_registry
     await _place(registry, provenance, name="gemini", ref="GEMINI", url="https://own/v1")

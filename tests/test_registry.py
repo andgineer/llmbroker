@@ -321,11 +321,11 @@ async def test_mutable_registry_weight_round_trip(mutable_registry):
     entry's standing in the pool has to be data on the entry. Mirrored in one order,
     handed back in the backend's own — every weight must still be there."""
     weights = {"zeta": 0.9, "alpha": 0.1, "mid": 0.5}
-    lineup = [
+    model_list = [
         LLMConfig(name=name, base_url="https://x/v1", model="m", api_key_ref="K", weight=weight)
         for name, weight in weights.items()
     ]
-    await mutable_registry.mirror(list(reversed(lineup)))
+    await mutable_registry.mirror(list(reversed(model_list)))
     loaded = await mutable_registry.load()
     assert {c.name: c.weight for c in loaded} == weights
 

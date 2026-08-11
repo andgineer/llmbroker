@@ -262,7 +262,7 @@ def test_broker_disable_llm_persists_to_store_disabled_map(tmp_path):
 
 @pytest.fixture
 def served(monkeypatch):
-    """Serve a one-entry curated lineup to ``sync("freetier")``."""
+    """Serve a one-entry curated model list to ``sync("freetier")``."""
     monkeypatch.setattr(
         presets,
         "fetch_preset_text",
@@ -326,16 +326,16 @@ def test_broker_sync_refuses_a_path_source(tmp_path):
     assert [e["name"] for e in tomllib.loads(registry.path.read_text())["llms"]] == ["p1"]
 
 
-def test_broker_scope_forwarded_to_async_broker(tmp_path):
-    """Broker(scope=...) forwards scope to the underlying AsyncBroker."""
+def test_a_scoped_caller_reaches_the_async_side(tmp_path):
+    """Broker.for_scope mirrors the async caller, scope and all."""
     db = str(tmp_path / "b.db")
     broker = Broker(
         registry=SqliteRegistry(db),
-        scope="alice",
         store=InMemoryStore(),
         sync=None,
     )
     try:
-        assert broker._async._scope == "alice"
+        assert broker.llms.scope is None
+        assert broker.for_scope("alice").scope == "alice"
     finally:
         broker.close()

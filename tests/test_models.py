@@ -3,7 +3,7 @@
 import llmbroker
 import pytest
 
-from llmbroker.models import KeyInfo, PendingKey, SyncReport, key_hash
+from llmbroker.models import KeyInfo, PendingKey, SyncReport
 
 
 def test_key_info_full():
@@ -22,24 +22,12 @@ def test_key_info_no_extra():
     assert info.extra == {}
 
 
-# --- key_hash -----------------------------------------------------------
-
-
-def test_key_hash_is_deterministic_and_short():
-    assert key_hash("sk-abc") == key_hash("sk-abc")
-    assert len(key_hash("sk-abc")) == 12
-
-
-def test_key_hash_differs_for_different_keys():
-    assert key_hash("sk-abc") != key_hash("sk-xyz")
-
-
 # --- SyncReport ---------------------------------------------------------
 
 
 def test_sync_report_defaults_to_a_no_op():
     report = SyncReport(source="freetier", applied=True)
-    assert report.added == report.updated == report.removed == report.kept == ()
+    assert report.added == report.updated == report.removed == ()
     assert report.pending_keys == ()
 
 

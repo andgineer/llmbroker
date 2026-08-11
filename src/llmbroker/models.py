@@ -4,7 +4,6 @@ Pure data and the one cross-cutting capability protocol. No I/O, no driver
 imports — safe to import from anywhere in the package.
 """
 
-import hashlib
 import logging
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace
@@ -135,7 +134,7 @@ class LLMConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class Lineup:
+class ModelList:
     """A set of entries and the key help that goes with them — read from a source,
     or produced by a merge. ``keys`` is keyed by ``api_key_ref``."""
 
@@ -145,7 +144,7 @@ class Lineup:
 
 @dataclass(frozen=True, slots=True)
 class PendingKey:
-    """One ``api_key_ref`` a synced lineup wants and the secrets store does not have,
+    """One ``api_key_ref`` a synced model list wants and the secrets store does not have,
     with the entries it holds back inactive until it resolves."""
 
     api_key_ref: str
@@ -168,36 +167,18 @@ class DeclaredModels:
 
 
 @dataclass(frozen=True, slots=True)
-class Retirement:
-    """One entry a sync deleted on the strength of this installation's own journal,
-    carrying the evidence: the permanent failure that condemned it and how far back
-    that failure runs in the window that was read."""
-
-    name: str
-    http_status: int | None = None
-    since: datetime | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class SyncReport:
-    """What one sync did, as raw facts — no severity verdict, the host derives that.
-    ``kept`` names entries the arriving lineup dropped and this installation can still
-    call; they are recomputed on every sync, never stored."""
+    """What one sync did, as raw facts — no severity verdict, the host derives that."""
 
     source: str
     applied: bool
     added: tuple[str, ...] = ()
     updated: tuple[str, ...] = ()
     removed: tuple[str, ...] = ()
-    kept: tuple[str, ...] = ()
-    kept_refs: tuple[str, ...] = ()
-    retired: tuple[Retirement, ...] = ()
     orphan_refs: tuple[str, ...] = ()
     pending_keys: tuple[PendingKey, ...] = ()
     active_before: int = 0
     active_after: int = 0
-    keys_visible: bool = True
-    keys_scoped: bool = False
 
 
 class CallStatus(Enum):
@@ -238,22 +219,9 @@ class Call:
     call_id: str | None = None
     scope: str | None = None
     cooldown_until: datetime | None = None
-    key_hash: str | None = None
     # Set only where the caller's own budget ran out mid-attempt: the bound the
     # model failed to answer within, which is the only latency evidence it left.
     budget_ms: int | None = None
-
-
-def key_hash(secret: str) -> str:
-    """Short digest of a resolved key value — the quota-scope identity for shared
-    cooldowns and dead-key drops (never the key itself).
-
-    >>> key_hash("sk-abc") == key_hash("sk-abc")
-    True
-    >>> len(key_hash("sk-abc"))
-    12
-    """
-    return hashlib.sha256(secret.encode()).hexdigest()[:12]
 
 
 def to_utc(value: datetime, field: str) -> datetime:

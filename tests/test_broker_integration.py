@@ -107,18 +107,25 @@ async def test_provision_loads_registry_and_resolves_keys(stack, monkeypatch):
     await _seed_stack(stack, [_cfg("llm1"), _cfg("llm2")], {"KEY": "test-key"}, monkeypatch)
     async with stack.make_broker() as broker:
         assert await broker.count() == 2
-        assert broker._pool.resolved_key("llm1") == "test-key"
-        assert broker._pool.resolved_key("llm2") == "test-key"
+        assert (
+            await broker._shared_ring.resolve(broker._pool.config("llm1").api_key_ref) == "test-key"
+        )
+        assert (
+            await broker._shared_ring.resolve(broker._pool.config("llm2").api_key_ref) == "test-key"
+        )
 
 
 # ---------------------------------------------------------------------------
-# E3 — cooldown state persists across restart
+# E3 — the journal survives a restart, availability does not
 # ---------------------------------------------------------------------------
 
 
-async def test_state_persists_across_restart(persistent_stack, monkeypatch):
-    """Cooldown written by broker 1 is restored by broker 2 via the shared journal
-    (the provision-time rebuild warm start applies the peer's cooldown row)."""
+async def test_the_journal_survives_a_restart_and_availability_does_not(
+    persistent_stack,
+    monkeypatch,
+):
+    """The 429 row is durable — quality and the admin read derive from it. The
+    cooldown it caused is not: it belonged to the process that met it (invariant 11)."""
     await _seed_stack(persistent_stack, [_cfg("llm1")], {"KEY": "test-key"}, monkeypatch)
     async with persistent_stack.make_broker() as broker1:
         with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(429)):
@@ -126,7 +133,10 @@ async def test_state_persists_across_restart(persistent_stack, monkeypatch):
                 await broker1.chat([{"role": "user", "content": "hi"}], wait=0)
     async with persistent_stack.make_broker() as broker2:
         state = await (await broker2.get("llm1")).state()
-        assert state.phase is LifecyclePhase.COOLING
+        assert state.phase is LifecyclePhase.AVAILABLE
+        if persistent_stack.queryable:
+            rows = await broker2.calls(limit=10)
+            assert [r.status for r in rows] == [CallStatus.RATE_LIMITED]
 
 
 # ---------------------------------------------------------------------------

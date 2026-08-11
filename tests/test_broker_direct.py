@@ -67,7 +67,7 @@ def test_the_registry_holds_pool_members_only(tmp_path):
     assert [c.name for c in configs] == ["managed-a"]
 
 
-def test_the_pool_is_the_curated_lineup_and_takes_no_declared_model(tmp_path):
+def test_the_pool_is_the_curated_model_list_and_takes_no_declared_model(tmp_path):
     """Rule 1: nothing a host declares in code ever joins the routed pool — the pool
     is exactly what the registry holds."""
 
@@ -93,7 +93,7 @@ def test_direct_streams_paid_model_by_alias(tmp_path):
     mock = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=1.0)
 
     async def run():
-        with patch("llmbroker.broker.broker.make_client", return_value=mock):
+        with patch("llmbroker.chat.make_client", return_value=mock):
             async with _broker(tmp_path) as broker:
                 client = await broker.direct("opus")
                 return [d async for d in client.stream("hi")]
@@ -111,7 +111,7 @@ def test_direct_by_name_pins_the_version(tmp_path):
     mock = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=1.0)
 
     async def run():
-        with patch("llmbroker.broker.broker.make_client", return_value=mock):
+        with patch("llmbroker.chat.make_client", return_value=mock):
             async with _broker(tmp_path) as broker:
                 client = await broker.direct(name="extra")
                 return await client.ask("hi")

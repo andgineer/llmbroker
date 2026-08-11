@@ -12,7 +12,7 @@ from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.standalone.secrets import DictSecrets
 
 
-def _lineup(name: str) -> str:
+def _model_list(name: str) -> str:
     return f'[[llms]]\nname="{name}"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n'
 
 
@@ -103,14 +103,14 @@ async def test_disable_enable_llm_without_optimizer_still_persists(tmp_path):
         assert await SqliteStore(db).get_disabled("p1") is False
 
 
-async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path, monkeypatch):
-    """Regression: removing a benched model used to leave the pool's stale benched
-    latch behind, so a fresh config re-added under the same name was silently stuck
-    non-routable — no error, just never acquirable."""
+async def test_a_verdict_survives_the_entry_leaving_and_coming_back(tmp_path, monkeypatch):
+    """The disabled map is the durable verdict and the pool flag is a view of it, so
+    an entry that leaves the curated list and returns comes back still benched —
+    only ``enable_llm`` lifts a verdict."""
     db = str(tmp_path / "b.db")
     reg = SqliteRegistry(db)
     await reg.mirror([_cfg()])
-    served = {"text": _lineup("p1")}
+    served = {"text": _model_list("p1")}
     monkeypatch.setattr(presets, "fetch_preset_text", lambda _name: served["text"])
 
     async with AsyncBroker(
@@ -124,12 +124,14 @@ async def test_remove_then_readd_same_name_is_routable_after_disable(tmp_path, m
 
         # A same-key arrival is what pays for a removal, so this is how an entry
         # actually leaves the registry — and then comes back under its old name.
-        served["text"] = _lineup("p2")
+        served["text"] = _model_list("p2")
         await broker.sync("freetier")
         assert "p1" not in broker._pool
 
-        served["text"] = _lineup("p1")
+        served["text"] = _model_list("p1")
         await broker.sync("freetier")
-        assert not broker._pool.is_disabled("p1")
-        picked = await broker._pool.acquire(0)
+        assert broker._pool.is_disabled("p1")
+
+        await broker.enable_llm("p1")
+        picked = await broker._pool.acquire(0, payable=broker._catalog.payable)
         assert picked.name == "p1"

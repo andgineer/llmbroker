@@ -1,7 +1,7 @@
 """The paid catalog and the declared models that follow one of its aliases.
 
 The alias contract — what a re-resolution may rewrite, and what it may never move —
-is in ``specs/reference/rules/direct-aliases.md``.
+is in ``specs/reference/rules/direct-by-name.md``.
 """
 
 import asyncio

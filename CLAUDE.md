@@ -56,14 +56,10 @@ invariants that bite are the ones in a subsystem you did not think you were touc
 |---|---|---|
 | `invariants.md` | cross-cutting rules + the index | always |
 | `rules/call-path.md` | one routed call: failure classification, `wait`, streaming, error contract | on demand |
-| `rules/selection.md` | which model is picked: cooldown, demotion, priority, weights | on demand |
-| `rules/sync-merge.md` | curated list → registry: the mirror, the partition, the report | on demand |
-| `rules/list-refresh.md` | what keeps the model list current: the two gates, check record, cache | on demand |
-| `rules/pool-health.md` | provider counts, `degraded`, the alarm | on demand |
-| `rules/presets.md` | the free pool's definitions: distribution, key help, the CLI | on demand |
-| `rules/direct-aliases.md` | the paid catalog, `direct`, the alias contract | on demand |
-| `rules/backends.md` | the three ports, source dispatch, lifecycle, DB schema, secret naming | on demand |
-| `rules/journal.md` | the journal: read path, the quality read, retention, scoping | on demand |
+| `rules/selection.md` | which model is picked: cooldown, demotion, priority, weights, pool health | on demand |
+| `rules/model-list.md` | where the models come from, the merge into the registry, the four rebuild triggers | on demand |
+| `rules/direct-by-name.md` | the paid catalog, `direct`, the alias contract | on demand |
+| `rules/backends.md` | the three ports, source dispatch, lifecycle, DB schema, the journal, scoping | on demand |
 | `decisions.md` | why a contested call went that way | one entry, by anchor, before proposing a mechanism |
 | `mission.md` | what the library is for | rarely — it is the human entry point |
 

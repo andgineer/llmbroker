@@ -535,15 +535,15 @@ def test_broker_record_quality_survives_journal_rebuild(tmp_path):
             opt.load_scores({})
             assert opt.is_demoted("p1", "summarize") is False
             # The forced rebuild re-derives the verdict purely from the quality rows.
-            await broker._learner.maybe_rebuild(force=True)
+            await broker.rebuild()
             assert opt.is_demoted("p1", "summarize") is True
 
     asyncio.run(run())
 
 
-def test_broker_record_quality_stamps_scope(tmp_path):
-    """A scoped broker stamps its scope on the delayed quality row, so the host-facing
-    calls(scope=...) filter surfaces it."""
+def test_a_caller_stamps_its_scope_on_a_delayed_quality_row(tmp_path):
+    """The scope reaches the journal as attribution, so a store-level
+    calls(scope=...) filter surfaces one caller's ratings."""
 
     async def run():
         db = str(tmp_path / "b.db")
@@ -554,10 +554,9 @@ def test_broker_record_quality_stamps_scope(tmp_path):
             registry=SqliteRegistry(db),
             secrets=DictSecrets({"K": "test"}),
             store=SqliteStore(db),
-            scope="alice",
             sync=None,
         ) as broker:
-            await broker.record_quality("p1", "summarize", 0.0)
+            await broker.for_scope("alice").record_quality("p1", "summarize", 0.0)
             rows = await broker._store.calls(limit=10, scope="alice")
             quality_rows = [r for r in rows if r.kind == "quality"]
             assert len(quality_rows) == 1
@@ -697,7 +696,7 @@ def test_snapshot_carries_raw_facts_no_status_enum(tmp_path):
 
 
 def _serve(monkeypatch, model="m"):
-    """Serve a one-entry curated lineup to ``sync("freetier")``."""
+    """Serve a one-entry curated model list to ``sync("freetier")``."""
     monkeypatch.setattr(
         presets,
         "fetch_preset_text",
@@ -794,8 +793,8 @@ def test_sync_refuses_model_identity_change(tmp_path, monkeypatch):
 
 
 def test_registry_is_global_regardless_of_scope(tmp_path):
-    """Two brokers with different scope over one sqlite registry see the same models —
-    the registry has no per-scope partitioning: it is always global."""
+    """Two callers over one broker see the same models — the registry has no
+    per-scope partitioning: it is always global."""
 
     async def run():
         db = str(tmp_path / "b.db")
@@ -804,15 +803,12 @@ def test_registry_is_global_regardless_of_scope(tmp_path):
             [LLMConfig(name="llm", base_url="https://a/v1", model="m", api_key_ref="K")]
         )
 
-        broker_a = AsyncBroker(
-            registry=SqliteRegistry(db), scope="alice", store=InMemoryStore(), sync=None
-        )
-        broker_b = AsyncBroker(
-            registry=SqliteRegistry(db), scope="bob", store=InMemoryStore(), sync=None
-        )
-        async with broker_a, broker_b:
-            assert (await broker_a.get("llm")).config.base_url == "https://a/v1"
-            assert (await broker_b.get("llm")).config.base_url == "https://a/v1"
+        async with AsyncBroker(
+            registry=SqliteRegistry(db), store=InMemoryStore(), sync=None
+        ) as broker:
+            alice, bob = broker.for_scope("alice"), broker.for_scope("bob")
+            assert (await alice.get("llm")).config.base_url == "https://a/v1"
+            assert (await bob.get("llm")).config.base_url == "https://a/v1"
 
     asyncio.run(run())
 
@@ -836,7 +832,7 @@ def test_scope_none_reproduces_single_tenant_behavior(tmp_path):
 
 
 def test_two_scopes_have_isolated_secrets(tmp_path):
-    """Two brokers with different scope resolve different values for the same api_key_ref,
+    """Two callers over one broker resolve different values for the same api_key_ref,
     via the scope-prefixed ref (own key), falling back to the shared ref."""
 
     async def run():
@@ -850,23 +846,16 @@ def test_two_scopes_have_isolated_secrets(tmp_path):
             [LLMConfig(name="llm", base_url="https://x/v1", model="m", api_key_ref="KEY")]
         )
 
-        broker_a = AsyncBroker(
+        async with AsyncBroker(
             registry=SqliteRegistry(db),
             secrets=secrets,
-            scope="alice",
             store=InMemoryStore(),
             sync=None,
-        )
-        broker_b = AsyncBroker(
-            registry=SqliteRegistry(db),
-            secrets=secrets,
-            scope="bob",
-            store=InMemoryStore(),
-            sync=None,
-        )
-        async with broker_a, broker_b:
-            assert broker_a._pool.resolved_key("llm") == "alice-secret"
-            assert broker_b._pool.resolved_key("llm") == "bob-secret"
+        ) as broker:
+            broker.for_scope("alice")
+            broker.for_scope("bob")
+            assert await broker._rings["alice"].resolve("KEY") == "alice-secret"
+            assert await broker._rings["bob"].resolve("KEY") == "bob-secret"
 
     asyncio.run(run())
 
@@ -887,11 +876,11 @@ def test_scope_without_own_key_falls_back_to_shared_ref(tmp_path):
         async with AsyncBroker(
             registry=SqliteRegistry(db),
             secrets=secrets,
-            scope="alice",
             store=InMemoryStore(),
             sync=None,
         ) as broker:
-            assert broker._pool.resolved_key("llm") == "shared-secret"
+            broker.for_scope("alice")
+            assert await broker._rings["alice"].resolve("KEY") == "shared-secret"
 
     asyncio.run(run())
 
@@ -902,7 +891,7 @@ def test_scope_without_own_key_falls_back_to_shared_ref(tmp_path):
 def test_default_store_is_file_store_inside_the_home_directory(tmp_path):
     """A zero-config broker with no explicit store= keeps its journal in a
     `store/` dir inside its own home."""
-    _registry(tmp_path, filename="lineup.toml")
+    _registry(tmp_path, filename="model-list.toml")
 
     async def run():
         async with AsyncBroker(home=tmp_path, sync=None) as broker:

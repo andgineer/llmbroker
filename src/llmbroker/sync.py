@@ -16,6 +16,7 @@ from llmbroker.broker.broker import (
     AsyncBroker,
     _SyncDefault,
 )
+from llmbroker.broker.llms import AsyncLLMs
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.direct import DirectClient
 from llmbroker.models import (
@@ -95,61 +96,17 @@ class LLM:
         return self._run(self._async.metrics())
 
 
-class Broker:
-    """Synchronous client over an AsyncBroker on a background loop thread."""
+class LLMs:
+    """Synchronous analogue of AsyncLLMs — one caller over the shared pool."""
 
-    def __init__(  # noqa: PLR0913
-        self,
-        registry: RegistryProtocol | str | Path | None = None,
-        *,
-        secrets: SecretsProtocol | None = None,
-        store: StoreProtocol | None = None,
-        optimize: bool | Optimizer = True,
-        scope: str | None = None,
-        have_keys: bool | Sequence[str] = False,
-        sync: str | None | _SyncDefault = _SYNC_DEFAULT,
-        sync_interval: float | None = _DEFAULT_SYNC_INTERVAL,
-        home: str | Path | None = None,
-        direct: Sequence[str | LLMConfig] = (),
-    ) -> None:
-        self._async = AsyncBroker(
-            registry,
-            secrets=secrets,
-            store=store,
-            optimize=optimize,
-            scope=scope,
-            have_keys=have_keys,
-            sync=sync,
-            sync_interval=sync_interval,
-            home=home,
-            direct=direct,
-        )
-        self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(
-            target=_run_loop,
-            args=(self._loop,),
-            daemon=True,
-            name="llmbroker-loop",
-        )
-        self._thread.start()
-        # Backstop for a Broker nobody closes. The callback holds only loop + thread,
-        # never self, so it does not pin the instance it is registered on.
-        self._finalizer = weakref.finalize(self, _shutdown, self._loop, self._thread)
+    def __init__(self, run_fn: "Callable[[Any], Any]", async_llms: AsyncLLMs) -> None:
+        self._run = run_fn
+        self._async = async_llms
 
-    def _run(self, coro: Coroutine[Any, Any, Any]) -> Any:
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
+    @property
+    def scope(self) -> str | None:
+        return self._async.scope
 
-    def _ensure_pool(self) -> None:
-        self._run(self._async.ensure_pool())
-
-    # ── Accessors ──
-    def get(self, name: str) -> LLM:
-        return LLM(self._run, self._run(self._async.get(name)))
-
-    def count(self) -> int:
-        return self._run(self._async.count())
-
-    # ── calls ──
     def ask(
         self,
         prompt: str,
@@ -188,11 +145,17 @@ class Broker:
     def direct(self, alias: str | None = None, *, name: str | None = None) -> DirectClient:
         """Return a synchronous direct client (``ask()`` only) for a declared model.
 
-        Streaming is async-only; use ``AsyncBroker.direct`` for deltas. Same
-        alias/name keyspaces and errors as the async counterpart.
+        Streaming is async-only; use the async caller for deltas. Same alias/name
+        keyspaces and errors as the async counterpart.
         """
-        cfg, key = self._run(self._async._resolve_direct(alias, name=name))  # noqa: SLF001
+        cfg, key = self._run(self._async.resolve_direct(alias, name=name))
         return DirectClient(base_url=cfg.base_url, model=cfg.model, api_key=key)
+
+    def get(self, name: str) -> LLM:
+        return LLM(self._run, self._run(self._async.get(name)))
+
+    def count(self) -> int:
+        return self._run(self._async.count())
 
     def record_quality(
         self,
@@ -203,6 +166,103 @@ class Broker:
         call_id: str | None = None,
     ) -> None:
         self._run(self._async.record_quality(llm_name, operation, score, call_id=call_id))
+
+
+class Broker:
+    """Synchronous client over an AsyncBroker on a background loop thread."""
+
+    def __init__(  # noqa: PLR0913
+        self,
+        registry: RegistryProtocol | str | Path | None = None,
+        *,
+        secrets: SecretsProtocol | None = None,
+        store: StoreProtocol | None = None,
+        optimize: bool | Optimizer = True,
+        sync: str | None | _SyncDefault = _SYNC_DEFAULT,
+        sync_interval: float | None = _DEFAULT_SYNC_INTERVAL,
+        home: str | Path | None = None,
+        direct: Sequence[str | LLMConfig] = (),
+    ) -> None:
+        self._async = AsyncBroker(
+            registry,
+            secrets=secrets,
+            store=store,
+            optimize=optimize,
+            sync=sync,
+            sync_interval=sync_interval,
+            home=home,
+            direct=direct,
+        )
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=_run_loop,
+            args=(self._loop,),
+            daemon=True,
+            name="llmbroker-loop",
+        )
+        self._thread.start()
+        # Backstop for a Broker nobody closes. The callback holds only loop + thread,
+        # never self, so it does not pin the instance it is registered on.
+        self._finalizer = weakref.finalize(self, _shutdown, self._loop, self._thread)
+        self.llms = LLMs(self._run, self._async.llms)
+
+    def _run(self, coro: Coroutine[Any, Any, Any]) -> Any:
+        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
+
+    def for_scope(self, scope: str) -> "LLMs":
+        """A caller that pays with ``scope``\'s own keys and writes ``scope`` on every
+        row it journals. Costs no I/O."""
+        return LLMs(self._run, self._async.for_scope(scope))
+
+    def _ensure_pool(self) -> None:
+        self._run(self._async.ensure_pool())
+
+    # ── The unscoped caller, delegated ──
+    def get(self, name: str) -> LLM:
+        return self.llms.get(name)
+
+    def count(self) -> int:
+        return self.llms.count()
+
+    def ask(
+        self,
+        prompt: str,
+        *,
+        operation: str | None = None,
+        trace_id: str | None = None,
+        wait: float | None = None,
+    ) -> Result:
+        return self.llms.ask(prompt, operation=operation, trace_id=trace_id, wait=wait)
+
+    def chat(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        operation: str | None = None,
+        trace_id: str | None = None,
+        wait: float | None = None,
+    ) -> Result:
+        return self.llms.chat(
+            messages,
+            tools=tools,
+            operation=operation,
+            trace_id=trace_id,
+            wait=wait,
+        )
+
+    def direct(self, alias: str | None = None, *, name: str | None = None) -> DirectClient:
+        return self.llms.direct(alias, name=name)
+
+    def record_quality(
+        self,
+        llm_name: str,
+        operation: str | None,
+        score: float,
+        *,
+        call_id: str | None = None,
+    ) -> None:
+        self.llms.record_quality(llm_name, operation, score, call_id=call_id)
 
     def snapshot(self) -> PoolSnapshot:
         return self._run(self._async.snapshot())

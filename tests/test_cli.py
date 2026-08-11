@@ -52,7 +52,7 @@ def test_env_reports_a_leftover_declared_section(llmbroker_home, capsys):
     assert "direct=[...]" in capsys.readouterr().err
 
 
-# --- list: the curated model lists, read-only ---
+# --- list: the curated model_lists, read-only ---
 
 _CATALOG = (
     b'[[provider]]\nid="anthropic"\nlabel="Anthropic"\n'
@@ -72,12 +72,12 @@ _POOL = (
 )
 
 
-def _lineup(
+def _model_list(
     home, body='[[llms]]\nname="pool"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="POOL_KEY"\n'
 ):
     """The model list lives inside llmbroker's own directory, which the autouse
     fixture points at a temp dir."""
-    f = home / "lineup.toml"
+    f = home / "model-list.toml"
     f.write_text(body)
     return f
 
@@ -137,7 +137,7 @@ def test_list_marks_a_catalog_model_with_no_alias(llmbroker_home, capsys):
 
 
 def test_list_writes_nothing(llmbroker_home, capsys):
-    f = _lineup(llmbroker_home)
+    f = _model_list(llmbroker_home)
     before = f.read_text()
     with _fetch_both():
         rc = main(["list"])

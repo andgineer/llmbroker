@@ -37,8 +37,8 @@ fresh registry is empty, so the context manager would raise `EmptyRegistryError`
 before the sync could fill it.
 
 Run it as a one-shot job (release phase, a Kubernetes Job, an init container).
-**Keeping the lineup current afterwards needs no job at all**: the serving
-processes re-check the curated lineup themselves, about once a day, on a call they
+**Keeping the model list current afterwards needs no job at all**: the serving
+processes re-check the curated model list themselves, about once a day, on a call they
 were making anyway. N nodes checking is safe because they all compute the same
 merge from the same upstream and the same keys, so the first write settles it and
 every other node's check finds nothing to do. What the design avoids is a node
@@ -113,33 +113,16 @@ re-resolves the alias on its own refresh clock, so a long-lived deployment does
 not sit on the model id it was first deployed with. See
 [Direct model calls](direct.md).
 
-`sync` never takes away a model this installation can call. A model whose
-provider the new lineup drops is removed when the same provider replaces it, when
-this installation has no key for it, or when your own call journal proves it dead
-— otherwise it is kept and keeps routing. The returned `SyncReport` says which,
-on every run including no-ops, and names any key that has become unused. A
-non-zero exit from the job and its log are the admin channel your failed
-migrations already use; hosts that forward elsewhere can read
+`sync` brings the entries it wrote into line with the curated list it follows: an
+entry still on the list is updated, an entry the list no longer carries is
+removed, a new one is added. Nothing weighs whether a dropped entry might still
+work here, and an entry your own installation put in the registry is never
+touched. Removal is bounded where the list is curated instead — an entry leaves
+it only once it can no longer be called. The returned `SyncReport` says what
+happened, on every run including no-ops, and names any key that has become
+unused. A non-zero exit from the job and its log are the admin channel your
+failed migrations already use; hosts that forward elsewhere can read
 `llms.last_sync_report`.
-
-### Per-user keys: `have_keys` {#have-keys}
-
-With `scope=`, keys belong to users, so a missing shared key proves nothing about
-what this installation can call — and a sync therefore keeps every retired
-provider's entry. The same holds anywhere the probe resolves no key at all: a
-registry in a file with its secrets in Vault, AWS or a database. If you know this
-installation has a key for some ref, say so:
-
-```python
-llms = llmbroker.AsyncBroker("postgresql://host/db", have_keys=["OPENAI_API_KEY"])
-```
-
-Declared refs count only when a sync weighs whether an entry is still callable
-here; `have_keys` never makes a model routable — the pool still needs a real key
-value. It is a promise, with an honest failure mode both ways: omit it and your
-lineup keeps entries it could have pruned; declare a ref you never actually
-provision and the pool degrades, since old entries get removed while their
-replacements stay inactive. There is nothing else to declare anywhere.
 
 ### Watching the pool from an admin screen {#pool-health}
 
@@ -315,18 +298,85 @@ whose registry was never synced. Construct the broker directly for that —
 entering it as a context manager (`with Broker(...) as llms`) initializes the
 pool up front and will raise `EmptyRegistryError` on such an installation.
 
-## A key per user {#multiuser}
+## One broker, a caller per request {#multiuser}
 
-`scope=` gives every user their own API key on top of one shared pool:
+**A broker is the installation.** It holds the model pool, the keys, everything
+it has learned and one HTTP client, and it lives as long as the process. What a
+request holds is a *caller*: the scope its journal rows are attributed to and the
+keys it may pay with, over that one shared pool. Asking for a caller costs no I/O,
+so building one per request is the intended shape.
+
+Four deployments, in order of how much they need:
+
+**A script.** Nothing to hold, nothing to share — the broker's own call verbs are
+its unscoped caller, so the second noun never appears:
 
 ```python
-async with llmbroker.AsyncBroker("broker.db", scope=user_id) as llms:
-    reply = await llms.ask(prompt)
+llms = llmbroker.Broker()
+print(llms.ask("hi").text)
 ```
 
-The key is looked up by the user's scope first, then the shared one. The model
-pool and everything it learns are shared by all; the journal carries `scope` —
-filter `calls(...)` by it.
+**A long-lived process with a database.** Build the broker where you build your
+database engine — once, at startup — and close it at shutdown:
+
+```python
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.broker = llmbroker.AsyncBroker("postgresql://host/db")
+    try:
+        yield
+    finally:
+        await app.state.broker.aclose()
+```
+
+**A cluster on shared keys.** Every handler takes the broker's own caller. One
+pool, one set of keys, one connection pool per process:
+
+```python
+def llms(request: Request) -> llmbroker.AsyncLLMs:
+    return request.app.state.broker.llms
+
+@app.post("/ask")
+async def ask(prompt: str, llms: llmbroker.AsyncLLMs = Depends(llms)):
+    return (await llms.ask(prompt)).text
+```
+
+**The same cluster with a key per user.** Only the dependency changes:
+
+```python
+def llms(request: Request) -> llmbroker.AsyncLLMs:
+    return request.app.state.broker.for_scope(request.headers["x-user-id"])
+```
+
+A scoped caller resolves its own key first — the ref prefixed with its scope —
+and falls back to the installation's shared one. The shared value is read once
+for everybody. Every row that caller journals carries its scope, so a store-level
+`calls(scope=...)` gives you one user's history; the broker's own `calls()` and
+`stats()` are the installation's view and are not scoped.
+
+The pool, the quality it has learned and the per-model `parallel` cap belong to
+the broker, not the caller — one counter per user would not be a cap at all.
+A key one caller's provider rejects stops being offered to that caller; a caller
+holding a key of its own is untouched, and callers sharing one value lose it
+together, because that is one credential.
+
+### What processes do and do not share {#coordination}
+
+**Processes do not coordinate.** Each keeps its own view of which models are
+currently available: a cooldown one process met, and a key one process found
+dead, are that process's findings and are never read by another. The cost is one
+wasted call per process, absorbed by failover and invisible to the caller.
+
+**A peer's registry edit arrives at the next rebuild.** The pool is rebuilt at
+start, on the refresh clock (about once a day), on an explicit `sync()`, and when
+the pool has just failed to answer. Nothing else re-reads the ports, so a
+successful call costs no database traffic beyond its own journal row.
+
+**A key stored while the pool is exhausted is picked up by the next call.** That
+last trigger is what makes it work: the failing call re-reads the keys, and the
+call after it routes on the new one — no restart, and no waiting out the clock.
+A rebuild that finds the same rejected value keeps the rejection, so a key that
+is simply dead costs one call per period rather than one per request.
 
 ## Alembic
 

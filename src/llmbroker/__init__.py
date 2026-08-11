@@ -1,6 +1,7 @@
 """llmbroker — a standalone, host-agnostic LLM-provider broker."""
 
 from llmbroker.broker.broker import AsyncBroker
+from llmbroker.broker.llms import AsyncLLMs
 from llmbroker.broker.report import format_report
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.chat import arun_tool_loop, run_tool_loop
@@ -26,18 +27,18 @@ from llmbroker.models import (
     LifecyclePhase,
     PendingKey,
     PoolSnapshot,
-    Retirement,
     SyncReport,
 )
 from llmbroker.optimizer import Optimizer
 from llmbroker.standalone.secrets import DictSecrets, Secrets
 from llmbroker.standalone.store import FileStore, InMemoryStore
-from llmbroker.sync import LLM, Broker, Result
+from llmbroker.sync import LLM, Broker, LLMs, Result
 
 __all__ = [
     "AsyncBroker",
     "AsyncDirectClient",
     "AsyncLLM",
+    "AsyncLLMs",
     "AsyncResult",
     "AuthError",
     "Broker",
@@ -49,6 +50,7 @@ __all__ = [
     "InMemoryStore",
     "InvalidProviderResponseError",
     "LLM",
+    "LLMs",
     "LifecyclePhase",
     "LLMBrokerError",
     "LLMRequestError",
@@ -61,7 +63,6 @@ __all__ = [
     "PoolSnapshot",
     "ProviderError",
     "RateLimitError",
-    "Retirement",
     "StreamInterruptedError",
     "SyncRefusedError",
     "SyncReport",

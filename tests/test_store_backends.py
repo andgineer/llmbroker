@@ -256,7 +256,6 @@ _FIELD_SAMPLES = {
     "call_id": "corr-9",
     "scope": "tenant-a",
     "cooldown_until": _BASE + timedelta(minutes=30),
-    "key_hash": "abc123def456",
     "budget_ms": 1500,
 }
 

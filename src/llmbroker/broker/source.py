@@ -59,7 +59,7 @@ def resolve_source(
     raise ValueError(
         f"unrecognized registry source {source!r} — expected a sqlite path/URL"
         " (.db, .sqlite, sqlite://...), or a postgresql://... / mongodb://... URL."
-        " A lineup is not a file a host names: use Broker() for the curated pool in"
+        " A model list is not a file a host names: use Broker() for the curated pool in"
         " llmbroker's own directory, or pass a registry object of your own",
     )
 
@@ -75,10 +75,10 @@ def default_store() -> StoreProtocol:
     return FileStore(Path("store"))
 
 
-def lineup_path(home: Path) -> Path:
-    """The lineup file inside llmbroker's own directory — where a zero-config broker
+def model_list_path(home: Path) -> Path:
+    """The model list file inside llmbroker's own directory — where a zero-config broker
     keeps its pool."""
-    return home / "lineup.toml"
+    return home / "model-list.toml"
 
 
 def zero_config_ports(
@@ -90,4 +90,4 @@ def zero_config_ports(
     secrets = EnvSecrets(Path(".env"))
     if home is None:
         return DriverRegistry(InMemoryDriver()), secrets, InMemoryStore()
-    return FileRegistry(lineup_path(home)), secrets, FileStore(home / "store")
+    return FileRegistry(model_list_path(home)), secrets, FileStore(home / "store")

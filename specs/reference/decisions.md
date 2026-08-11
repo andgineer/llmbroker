@@ -423,7 +423,7 @@ quality derives from the journal, and a returning entry resurfaces with everythi
 already learned about it. Meanwhile the removal is not silent: dropping a provider
 an installation could reach is exactly what moves the usable-provider count, and
 the alarm fires on the transition into one usable provider and into none
-([`pool-health.md`](rules/pool-health.md)).
+([`selection.md`](rules/selection.md)).
 
 ### who-builds-the-registry-states-what-it-follows
 
@@ -544,7 +544,7 @@ A host that will not follow our curation supplies the whole pool through a
 registry object it implements, or fills a database registry itself — and stops
 following the curation there, since a registry that follows it is one the
 refresh rewrites, host-supplied or not
-([`sync-merge.md`](rules/sync-merge.md)).
+([`model-list.md`](rules/model-list.md)).
 
 **Blocks:** accepting a `.toml` path as the broker's source; accepting a path or
 a registry object as a sync source; keeping the file registry on the public API
@@ -602,6 +602,27 @@ order in the file — the preset is already curated.
 ---
 
 ## Surface and shape
+
+### the-broker-is-the-installation-a-caller-is-a-scope
+
+A broker owns the installation: the ports, the pool, everything learned, the slow
+clock, the HTTP client. What a request holds is a caller — the scope it writes on
+its journal rows and the keys it may pay with, over that one shared pool.
+
+**Blocks:** `scope` as a constructor argument; a broker built per request or per
+user; a pool, learner or HTTP client per scope; `scope` as a per-call argument on
+the broker.
+**Why:** everything a broker owns is installation-global by invariant 16, so a
+second broker for a second user duplicates every read and every connection while
+duplicating no state that differs. It also breaks what the pool is for: slot
+counters are what hold a provider to its `parallel` cap, and one counter per user
+is not a cap. It is what makes the four triggers affordable at all — a rebuild per
+process per day is nothing, a rebuild per request is a different library. Scope
+reaches exactly two things, which key pays and what the journal row is attributed
+to, and both are properties of the caller rather than of the installation. Passing
+`scope` per call instead would put a key resolution in the middle of every call
+signature and leave the pool unable to tell whose key it is holding.
+**Accepted cost:** two objects where hosts previously had one.
 
 ### no-alerts-api
 

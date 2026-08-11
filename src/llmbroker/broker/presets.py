@@ -1,7 +1,7 @@
-"""Where a curated lineup text comes from: the network, this machine's cache, the wheel.
+"""Where a curated model list text comes from: the network, this machine's cache, the wheel.
 
 Every network read in the library goes through here. See
-``specs/reference/rules/presets.md`` for the precedence and why it is that way.
+``specs/reference/rules/model-list.md`` for the precedence and why it is that way.
 """
 
 import logging
@@ -63,7 +63,7 @@ def fetch_preset_text(name: str) -> str:
 
 
 def _check_fetched_urls(name: str, data: dict) -> None:
-    """A fetched lineup decides where this installation's keys are sent, so the whole
+    """A fetched model list decides where this installation's keys are sent, so the whole
     file is refused before any merge sees it. Not a defence against a compromised
     catalog — it removes plaintext key transmission as an accident."""
     for section in ("llms", "provider"):
@@ -78,7 +78,7 @@ def _check_fetched_urls(name: str, data: dict) -> None:
 
 def bundled_preset_text(name: str) -> str | None:
     """The copy shipped in the wheel — the floor under the chain, so a first run with
-    no network and a cold cache still has a lineup to start from."""
+    no network and a cold cache still has a model list to start from."""
     resource = resources.files("llmbroker").joinpath("presets", f"{name}.toml")
     try:
         return resource.read_text(encoding="utf-8")
@@ -106,7 +106,7 @@ class PresetSource:
     ) -> str:
         """A curated text, by the precedence the caller's decision needs:
         ``prefer_cache`` for a read on the request path, ``floor=False`` to drop the
-        wheel's copy, ``fetch=False`` to stay off the network. See ``rules/presets.md``."""
+        wheel's copy, ``fetch=False`` to stay off the network. See ``rules/model-list.md``."""
         if prefer_cache or not fetch:
             cached = self._cached(name)
             if cached is not None:
@@ -124,7 +124,7 @@ class PresetSource:
             if bundled is None:
                 raise
             # Louder than the cached fallback: the wheel's copy is frozen at the
-            # installed release, and seeds a lineup that runs until the next one.
+            # installed release, and seeds a model list that runs until the next one.
             logger.warning(
                 "preset %s: %s — falling back to the bundled copy, frozen at this"
                 " llmbroker release and possibly older than the curated one",

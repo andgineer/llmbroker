@@ -14,9 +14,9 @@ from llmbroker.standalone.store import InMemoryStore
 _PATCH = "llmbroker.broker.router.call_provider"
 
 
-def _write_lineup(home):
-    """The lineup a zero-config broker with ``home=`` reads."""
-    f = home / "lineup.toml"
+def _write_model_list(home):
+    """The model list a zero-config broker with ``home=`` reads."""
+    f = home / "model-list.toml"
     f.write_text('[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n')
     return f
 
@@ -100,14 +100,14 @@ def test_file_is_reread_when_it_changes(tmp_path):
 def test_quickstart_skeleton_leaves_the_model_inactive(tmp_path, monkeypatch):
     """The whole generated skeleton, nothing filled in: the pool must be empty of
     keys, not full of models routing with an empty credential."""
-    _write_lineup(tmp_path)
+    _write_model_list(tmp_path)
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("# K — get it at https://example\nK=\n", encoding="utf-8")
     monkeypatch.delenv("K", raising=False)
 
     async def run():
         async with AsyncBroker(home=tmp_path, sync=None, store=InMemoryStore()) as broker:
-            assert not broker._pool.has_key("p1")
+            assert broker._pool.config("p1").api_key_ref not in broker._catalog.payable
 
     asyncio.run(run())
 
@@ -119,7 +119,7 @@ def test_quickstart_skeleton_leaves_the_model_inactive(tmp_path, monkeypatch):
 
 def test_quickstart_tree_resolves_keys_without_exported_vars(tmp_path, monkeypatch):
     """`llmbroker env freetier > .env`, nothing exported: a zero-config broker routes."""
-    _write_lineup(tmp_path)
+    _write_model_list(tmp_path)
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("# GROQ hint\nK=sk-from-dot-env\n")
     monkeypatch.delenv("K", raising=False)
@@ -129,18 +129,21 @@ def test_quickstart_tree_resolves_keys_without_exported_vars(tmp_path, monkeypat
             with patch(_PATCH, new=AsyncMock(return_value=("ok", None, None))):
                 result = await broker.ask("hi")
             assert result.text == "ok"
-            assert broker._pool.resolved_key("p1") == "sk-from-dot-env"
+            assert (
+                await broker._shared_ring.resolve(broker._pool.config("p1").api_key_ref)
+                == "sk-from-dot-env"
+            )
 
     asyncio.run(run())
 
 
-def test_the_env_file_is_the_working_directorys_not_the_lineups_sibling(tmp_path, monkeypatch):
-    """A `.env` beside the lineup in llmbroker's own home is not read: keys come from
+def test_the_env_file_is_the_working_directorys_not_the_model_lists_sibling(tmp_path, monkeypatch):
+    """A `.env` beside the model list in llmbroker's own home is not read: keys come from
     the environment, with the working directory's `.env` behind them."""
     home = tmp_path / "home"
     home.mkdir()
-    _write_lineup(home)
-    (home / ".env").write_text("K=beside-the-lineup\n")
+    _write_model_list(home)
+    (home / ".env").write_text("K=beside-the-model list\n")
     cwd = tmp_path / "cwd"
     cwd.mkdir()
     monkeypatch.chdir(cwd)
@@ -148,6 +151,6 @@ def test_the_env_file_is_the_working_directorys_not_the_lineups_sibling(tmp_path
 
     async def run():
         async with AsyncBroker(home=home, sync=None, store=InMemoryStore()) as broker:
-            assert not broker._pool.has_key("p1")
+            assert broker._pool.config("p1").api_key_ref not in broker._catalog.payable
 
     asyncio.run(run())

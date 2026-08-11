@@ -1,6 +1,6 @@
-"""The lineup file: rendered wholesale from configs, written atomically.
+"""The model list file: rendered wholesale from configs, written atomically.
 
-The file is llmbroker's own — see ``specs/reference/rules/sync-merge.md``.
+The file is llmbroker's own — see ``specs/reference/rules/model-list.md``.
 """
 
 from collections.abc import Iterable
@@ -9,11 +9,9 @@ from pathlib import Path
 
 import tomli_w
 
-from llmbroker.broker.keys import KeyProbe
-from llmbroker.broker.merge import SyncSource, merge_lineup
-from llmbroker.models import KeyInfo, Lineup, LLMConfig, SyncReport
-from llmbroker.protocols.store import StoreProtocol
-from llmbroker.standalone.registry import read_lineup
+from llmbroker.broker.merge import SyncSource, merge_model_list
+from llmbroker.models import KeyInfo, LLMConfig, ModelList, SyncReport
+from llmbroker.standalone.registry import read_model_list
 from llmbroker.util.atomic import write_atomic
 
 _HEADER = (
@@ -65,27 +63,27 @@ def _keys_table(configs: Iterable[LLMConfig], keys: dict[str, KeyInfo]) -> dict:
     return table
 
 
-def render_lineup(lineup: Lineup) -> str:
+def render_model_list(model_list: ModelList) -> str:
     """The whole file: the pool entries, then ``[keys]``.
 
     Nothing is carried over from the previous text, so there is nothing to verify
     the result against.
     """
     parts = [_HEADER]
-    parts.extend(entry_block("llms", _entry_dict(c)) for c in lineup.configs)
-    table = _keys_table(lineup.configs, lineup.keys)
+    parts.extend(entry_block("llms", _entry_dict(c)) for c in model_list.configs)
+    table = _keys_table(model_list.configs, model_list.keys)
     if table:
         parts.append(tomli_w.dumps({"keys": table}).rstrip("\n"))
     return "\n\n".join(parts) + "\n"
 
 
-def write_lineup(path: Path, lineup: Lineup) -> bool:
+def write_model_list(path: Path, model_list: ModelList) -> bool:
     """Render and write, and say whether the file changed.
 
     Compared on the exact bytes that would be written, so an upstream change
     carrying only a key hint still counts: the file's git history is the record.
     """
-    rendered = render_lineup(lineup)
+    rendered = render_model_list(model_list)
     if path.exists() and path.read_text(encoding="utf-8") == rendered:
         return False
     write_atomic(path, rendered)
@@ -95,29 +93,28 @@ def write_lineup(path: Path, lineup: Lineup) -> bool:
 @dataclass(frozen=True, slots=True)
 class FileSyncOutcome:
     """The result of syncing the file: the report, whether it was rewritten, and the
-    merged lineup."""
+    merged model_list."""
 
     report: SyncReport
     changed: bool
     configs: tuple[LLMConfig, ...] = ()
 
 
-async def sync_lineup_file(
+def sync_model_list_file(
     path: Path,
     src: SyncSource,
     *,
-    probe: KeyProbe,
-    store: StoreProtocol | None = None,
+    present: frozenset[str],
 ) -> FileSyncOutcome:
-    """Merge ``src`` into the lineup file at ``path`` and rewrite it.
+    """Merge ``src`` into the model list file at ``path`` and rewrite it.
 
     Any error leaves the file untouched.
     """
     if path.suffix.lower() != ".toml":
         raise ValueError(f"sync target must be a .toml file, got {path}")
-    outcome = await merge_lineup(src, read_lineup(path), probe=probe, store=store)
+    outcome = merge_model_list(src, read_model_list(path), present=present)
     return FileSyncOutcome(
         report=outcome.report,
-        changed=write_lineup(path, outcome.lineup),
-        configs=tuple(outcome.lineup.configs),
+        changed=write_model_list(path, outcome.model_list),
+        configs=tuple(outcome.model_list.configs),
     )

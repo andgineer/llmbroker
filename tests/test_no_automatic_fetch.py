@@ -129,7 +129,7 @@ async def test_a_declared_alias_resolves_off_the_cache_without_fetching(
     await _seeded(tmp_path)
     _warm_catalog(llmbroker_home)
     async with _broker(tmp_path, sync_interval=None, direct=["opus"]) as broker:
-        cfg, _key = await broker._resolve_direct("opus")
+        cfg, _key = await broker.llms.resolve_direct("opus")
         assert cfg.model == "claude-opus-4-8"
         assert broker._refresher._task is None
 
@@ -169,7 +169,7 @@ async def test_a_cold_cache_resolves_from_the_bundled_copy_and_never_fetches(
     await _seeded(tmp_path)
     with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
         async with _broker(tmp_path, sync_interval=None, direct=["opus"]) as broker:
-            cfg, _key = await broker._resolve_direct("opus")
+            cfg, _key = await broker.llms.resolve_direct("opus")
             assert cfg.model == "claude-opus-4-8"
     assert any("frozen at this llmbroker release" in r.message for r in caplog.records)
 
@@ -183,7 +183,7 @@ async def test_a_warm_cache_still_wins_over_the_bundled_copy(
     await _seeded(tmp_path)
     _warm_catalog(llmbroker_home, _CATALOG_MOVED)
     async with _broker(tmp_path, sync_interval=None, direct=["opus"]) as broker:
-        cfg, _key = await broker._resolve_direct("opus")
+        cfg, _key = await broker.llms.resolve_direct("opus")
         assert cfg.model == "claude-opus-5"
 
 
@@ -196,10 +196,10 @@ async def test_the_explicit_sync_is_what_moves_a_frozen_alias(
     resolution, and it does so inside the running process."""
     await _seeded(tmp_path)
     async with _broker(tmp_path, sync=None, sync_interval=None, direct=["opus"]) as broker:
-        assert (await broker._resolve_direct("opus"))[0].model == "claude-opus-4-8"
+        assert (await broker.llms.resolve_direct("opus"))[0].model == "claude-opus-4-8"
         fetches.catalog = _CATALOG_MOVED
         assert await broker.sync() is None
-        assert (await broker._resolve_direct("opus"))[0].model == "claude-opus-5"
+        assert (await broker.llms.resolve_direct("opus"))[0].model == "claude-opus-5"
 
 
 async def test_a_sync_with_nowhere_to_keep_the_catalog_says_so_instead_of_doing_nothing(
@@ -215,7 +215,7 @@ async def test_a_sync_with_nowhere_to_keep_the_catalog_says_so_instead_of_doing_
     await _seeded(tmp_path)
     async with _broker(tmp_path, sync=None, sync_interval=None, direct=["opus"]) as broker:
         assert broker._home is None
-        assert (await broker._resolve_direct("opus"))[0].model == "claude-opus-4-8"
+        assert (await broker.llms.resolve_direct("opus"))[0].model == "claude-opus-4-8"
         with pytest.raises(ValueError, match=r"LLMBROKER_HOME") as exc:
             await broker.sync()
     assert "sync_interval=None" in str(exc.value)

@@ -7,7 +7,6 @@ from llmbroker.http_status import (
     ERROR_FLOOR,
     is_auth_failure,
     is_client_error,
-    is_permanent,
     is_rate_limit,
     is_unavailable,
 )
@@ -21,7 +20,6 @@ def test_each_predicate_over_the_boundaries(code):
     assert is_unavailable(code) is (code == 503)
     assert is_auth_failure(code) is (code in (401, 403))
     assert is_client_error(code) is (code in (400, 404, 418, 499))
-    assert is_permanent(code) is (code in (401, 403, 404))
 
 
 def test_every_4xx_is_exactly_one_of_the_three():
@@ -35,10 +33,6 @@ def test_every_4xx_is_exactly_one_of_the_three():
 def test_client_error_is_4xx_only():
     outside = [c for c in (*range(200, 400), *range(500, 600)) if is_client_error(c)]
     assert outside == []
-
-
-def test_permanent_is_auth_failure_plus_not_found():
-    assert {c for c in range(200, 600) if is_permanent(c)} == {401, 403, 404}
 
 
 def test_shared_limits():

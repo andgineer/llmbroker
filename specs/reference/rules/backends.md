@@ -1,9 +1,9 @@
 # Backends and wiring
 
 The three pluggable ports, how one source parameter becomes them, the broker's
-lifecycle, and the DB schema policy. What the journal holds and how it is read
-is [`journal.md`](journal.md). The cross-cutting rules this file elaborates are
-in [`../invariants.md`](../invariants.md).
+lifecycle, the DB schema policy, and the journal all of it writes to. The
+cross-cutting rules this file elaborates are in
+[`../invariants.md`](../invariants.md).
 
 ## The three ports
 
@@ -78,10 +78,10 @@ stay override-only.
 string says only where llmbroker keeps its own installation, so it keeps
 following the curated preset by default. A registry object is content the host
 owns, and there what the installation follows must be stated
-([`list-refresh.md`](list-refresh.md)). Neither form invites a write into the
+([`model-list.md`](model-list.md)). Neither form invites a write into the
 tables: a connection string says where llmbroker keeps its own state, not that
 the state is the host's to edit, and content the host owns arrives through the
-port ([`sync-merge.md`](sync-merge.md#the-partition-a-sync-touches-only-what-a-sync-wrote)).
+port ([`model-list.md`](model-list.md#the-partition-a-sync-touches-only-what-a-sync-wrote)).
 
 **The home directory.** Everything llmbroker caches or remembers on its own —
 the fetched preset text, the paid catalog, the refresh-check records — lives in
@@ -162,3 +162,126 @@ identifiable and separable from the rest of an account, and what llmbroker
 created can be enumerated and cleaned up without guessing. Neither backend has a
 user or scope parameter — the ref is the whole identity, already carrying any
 scope prefix the broker added.
+
+**A ref occupies exactly one path segment.** A scoped ref carries a separator the
+broker put there, and a store whose namespace is hierarchical would read it as a
+folder and answer a listing with directory names instead of refs. Such a backend
+flattens on write and unflattens on read, and refuses a ref that already contains
+the flattening marker rather than storing something it could not hand back.
+
+**Listing refs is optional, and worth implementing.** A backend that can answer
+"which refs do you hold under this prefix" is asked once per rebuild, and a ref it
+does not name then costs no read at all, however many callers want it; one that
+cannot is asked ref by ref, which is what an environment-backed store wants —
+the lookup is free there and there is nothing to enumerate. Nothing a listing or a
+read raises reaches a caller: it is logged and the ref is read as unset, because a
+key nobody can fetch must not turn into a failed call
+([`model-list.md`](model-list.md)).
+
+## The journal
+
+The only state llmbroker keeps beyond the static registry: how it is read, what
+is re-derived from it, and how `scope` attributes rows. Where it is stored is the
+store port above.
+
+### The read path
+
+The journal has two read forms, both newest-first and both over the same store
+port: a tail of raw records, and a per-model aggregate of call records over a
+time window. Both narrow by an inclusive lower time bound, by record kind, and
+by operation.
+
+The kind filter matters because the two record kinds interleave in one stream
+and a quality record carries no status, so a host aggregating call outcomes
+without it gets a silently wrong denominator. The operation filter matters
+because the journal is shared by everything the broker calls.
+
+The operation filter matches a named operation only: an unset filter means "do
+not filter", so calls journaled without an operation label cannot currently be
+isolated as a group. A host that labels none of its calls therefore has two
+readings — everything, or one named operation — and neither is "mine". This is
+sound while the broker journals no traffic of its own; it stops being sound the
+moment the broker writes rows under its own operation name, which is the point
+at which the filter needs a way to select the unlabelled bucket.
+
+Every instant crossing the boundary is UTC in both directions (invariant 9), and
+the row limit must be at least 1: backends disagree on what zero means — one
+reads it as "no limit" — so a caller's shrinking budget must not decay into a
+full scan. Both are enforced at the public API as well as in the shipped
+backends, so the guarantee does not depend on a host's own store implementation
+upholding it.
+
+Window aggregates are derived per request, never accumulated into stored
+counters ([`decisions.md`](../decisions.md#aggregates-derived-not-accumulated)).
+The library returns per-status counts and leaves failure policy to the host: the
+aggregate carries only statuses actually observed, so "how many were not OK" is
+a subtraction rather than an assumption about the status enum's shape.
+
+### One tail read, and quality is what it derives
+
+A read of the most recent records re-derives what the host has taught this
+installation: quality-window verdicts, the latency bound an expired budget left,
+and the snapshot metrics. It runs when the pool is rebuilt and at no other time
+([`model-list.md`](model-list.md#keeping-the-list-current)), which is also when the registry and the
+admin disabled-verdict map are re-read, so another process's edits reach a
+running broker without a restart.
+
+A call record carries evidence rather than a summary of it: one that ran out the
+caller's budget carries the budget it missed (see
+[`selection.md`](selection.md)). Nothing derived is recovered by reading back a
+message the library formatted.
+
+The tail is shared across all models and operations, so a chatty model can crowd
+a quiet model's ratings out of it. This is an accepted consequence, and the tail
+limit is the tuning knob.
+
+Persistence is the store by default; an explicit in-memory opt-out degrades to
+session-scoped learning. That degradation is what the forward fold of invariant 8
+carries: a store with no read path never contributes a tail, so a rating and a
+missed budget reach the live state only as the row is written, and nothing
+survives the process. The journal forgets via retention — every backend
+self-purges records older than its retention horizon — and there is no public
+purge operation.
+
+The admin disabled-verdict map is the one **excluding** verdict, orthogonal to
+quality demotion: values are written only by the disable verb, and llmbroker
+only seeds missing names. It survives a sync by construction, since a
+sync only touches the registry, and it works identically for file and DB
+sources. Lifting a verdict simply lifts it; rehabilitation happens through new
+ratings displacing old ones in the window.
+
+### Per-user scoping
+
+A multi-user host can give each end user its own LLM API key over one shared
+registry and store. `scope` is the one knob — an opaque string, with the empty
+string rejected in favour of the unscoped default
+([`decisions.md`](../decisions.md#scope-is-an-opaque-string)).
+
+**A scope is a caller, not a broker.** One broker is the installation and holds
+everything installation-global; a caller is what a request holds, and asking the
+broker for one costs no I/O
+([`decisions.md`](../decisions.md#the-broker-is-the-installation-a-caller-is-a-scope)).
+The broker's own call verbs are its unscoped caller, so a host with one tenant
+never meets the second noun.
+
+- **The registry and everything learned are user-agnostic** (invariant 16).
+  There is no per-tenant registry partition, and storage and the protocols have
+  no user concept at all: `scope` is interpreted by the broker, never passed to
+  a backend or protocol method.
+- **Secrets are the one thing that is actually per-scope.** A caller resolves the
+  scope-prefixed ref first and falls back to the shared one — an own key if one is
+  set, the installation's otherwise. The shared value is read once for everybody.
+  The fallback policy lives entirely in the broker; secrets backends stay plain
+  exact-lookup key-value stores and never see the scope string itself, only the
+  already-prefixed ref.
+- **The journal carries the scope as a plain attribution field**, written by the
+  caller that made the call and filterable on read at the store, but it does not
+  partition learning — the tail read is unscoped by design, and so is the broker's
+  own journal read, which is the installation's view.
+- **A rejected key is withdrawn from whoever spent it.** The withdrawal is the
+  caller's, not the pool's: a caller with a key of its own is untouched by a
+  neighbour's 401, and a caller paying with the shared value loses it alongside
+  every other caller paying with the same value, because that is one credential.
+  It lasts until the pool is rebuilt, which re-reads the ref and takes it back if
+  a working value has appeared. Nothing about it is written or read anywhere
+  (invariant 11), so nothing needs a partition.

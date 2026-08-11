@@ -36,7 +36,10 @@ async def test_sqlite_source_wires_three_ports(tmp_path):
 
     async with AsyncBroker(db_path) as broker:
         assert await broker.count() == 1
-        assert broker._pool.resolved_key("llm1") == "secret-value"
+        assert (
+            await broker._shared_ring.resolve(broker._pool.config("llm1").api_key_ref)
+            == "secret-value"
+        )
 
 
 def test_sqlite_source_dot_sqlite_suffix_and_url_form_both_dispatch(tmp_path):
@@ -47,7 +50,7 @@ def test_sqlite_source_dot_sqlite_suffix_and_url_form_both_dispatch(tmp_path):
 
 
 def test_a_config_file_path_is_refused_and_names_the_forms_that_work(tmp_path):
-    """A lineup is not a path a host names: the refusal has to point at the three
+    """A model list is not a path a host names: the refusal has to point at the three
     shapes that remain, or the host has nowhere to go."""
     f = tmp_path / "llms.toml"
     f.write_text('[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n')
@@ -64,7 +67,7 @@ def test_a_config_file_path_is_refused_and_names_the_forms_that_work(tmp_path):
 
 
 def test_the_file_registry_is_not_public_api():
-    """It stays importable from its own module — it is the port the home lineup runs
+    """It stays importable from its own module — it is the port the home model list runs
     on — but exporting it would keep alive the shape the path form was removed to close."""
     assert "Registry" not in llmbroker.__all__
     assert not hasattr(llmbroker, "Registry")
@@ -80,13 +83,13 @@ def test_no_registry_is_the_curated_pool_in_the_home_directory(llmbroker_home):
     tests/test_fileless_broker.py for what it then does."""
     broker = AsyncBroker()
     assert isinstance(broker._registry, FileRegistry)
-    assert broker._registry.path == llmbroker_home / "lineup.toml"
+    assert broker._registry.path == llmbroker_home / "model-list.toml"
 
 
 def test_sync_broker_no_registry_builds_the_same_installation(llmbroker_home):
     broker = Broker()
     try:
-        assert broker._async._registry.path == llmbroker_home / "lineup.toml"
+        assert broker._async._registry.path == llmbroker_home / "model-list.toml"
     finally:
         broker.close()
 
@@ -98,7 +101,10 @@ async def test_explicit_secrets_override_wins_over_sqlite_source(tmp_path):
     override_secrets = DictSecrets({"KEY": "from-override"})
 
     async with AsyncBroker(db_path, secrets=override_secrets) as broker:
-        assert broker._pool.resolved_key("llm1") == "from-override"
+        assert (
+            await broker._shared_ring.resolve(broker._pool.config("llm1").api_key_ref)
+            == "from-override"
+        )
 
 
 def test_postgres_source_dispatches_to_postgres_ports_lazily():

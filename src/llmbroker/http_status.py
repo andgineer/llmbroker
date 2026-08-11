@@ -8,7 +8,6 @@ _TOO_MANY_REQUESTS = 429
 _UNAVAILABLE = 503
 _UNAUTHORIZED = 401
 _FORBIDDEN = 403
-_NOT_FOUND = 404
 _SERVER_ERROR_FLOOR = 500
 
 
@@ -50,12 +49,3 @@ def is_client_error(code: int) -> bool:
     return ERROR_FLOOR <= code < _SERVER_ERROR_FLOOR and not (
         is_rate_limit(code) or is_auth_failure(code)
     )
-
-
-def is_permanent(code: int) -> bool:
-    """Retirement evidence — a failure no retry and no other caller can fix.
-
-    >>> [is_permanent(c) for c in (400, 401, 403, 404, 429, 500, 503)]
-    [False, True, True, True, False, False, False]
-    """
-    return is_auth_failure(code) or code == _NOT_FOUND

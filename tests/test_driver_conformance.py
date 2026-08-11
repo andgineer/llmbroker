@@ -41,7 +41,6 @@ def _call_row(
         "called_at": called_at,
         "scope": scope,
         "cooldown_until": None,
-        "key_hash": None,
         "budget_ms": None,
     }
 

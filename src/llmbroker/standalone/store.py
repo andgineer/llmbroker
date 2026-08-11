@@ -81,7 +81,6 @@ def _call_from_jsonable(d: dict) -> Call:
         call_id=d.get("call_id"),
         scope=d.get("scope"),
         cooldown_until=datetime.fromisoformat(cooldown_raw) if cooldown_raw else None,
-        key_hash=d.get("key_hash"),
         budget_ms=d.get("budget_ms"),
     )
 

@@ -1,0 +1,207 @@
+"""``AsyncLLMs``: one caller's view of the installation's pool — the scope its
+journal rows carry and the keys it may pay with. Built by the broker only."""
+
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import aclosing
+
+import httpx
+
+from llmbroker.broker.catalog import Catalog, find_declared
+from llmbroker.broker.keyring import KeyRing
+from llmbroker.broker.learning import Learner
+from llmbroker.broker.pool_view import PoolView
+from llmbroker.broker.result import AsyncLLM, AsyncResult
+from llmbroker.broker.router import Router
+from llmbroker.direct import AsyncDirectClient
+from llmbroker.exceptions import MissingKeyError, NoLLMAvailableError
+from llmbroker.models import LLMConfig, check_score
+from llmbroker.protocols.store import StoreProtocol
+
+
+class AsyncLLMs:
+    """Route and rate calls over the broker's one shared pool, paying with this
+    caller's keys and writing its scope on every row it journals."""
+
+    def __init__(  # noqa: PLR0913 - a caller is its ring over the installation's parts
+        self,
+        ring: KeyRing,
+        *,
+        router: Router,
+        catalog: Catalog,
+        pool_view: PoolView,
+        store: StoreProtocol,
+        learner: Learner | None,
+        ensure_pool: Callable[[], Awaitable[None]],
+        on_exhausted: Callable[[NoLLMAvailableError], Awaitable[None]],
+    ) -> None:
+        self._ring = ring
+        self._router = router
+        self._catalog = catalog
+        self._pool_view = pool_view
+        self._store = store
+        self._learner = learner
+        self._ensure_pool = ensure_pool
+        self._on_exhausted = on_exhausted
+
+    @property
+    def scope(self) -> str | None:
+        """Whose calls these are — the attribution on this caller's journal rows."""
+        return self._ring.scope
+
+    # ------------------------------------------------------------------
+    # Routing
+    # ------------------------------------------------------------------
+
+    async def ask(
+        self,
+        prompt: str,
+        *,
+        operation: str | None = None,
+        trace_id: str | None = None,
+        wait: float | None = None,
+    ) -> AsyncResult:
+        return await self.chat(
+            [{"role": "user", "content": prompt}],
+            operation=operation,
+            trace_id=trace_id,
+            wait=wait,
+        )
+
+    async def chat(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        operation: str | None = None,
+        trace_id: str | None = None,
+        wait: float | None = None,
+    ) -> AsyncResult:
+        await self._ensure_pool()
+        try:
+            return await self._router.chat(
+                self._ring,
+                messages,
+                tools=tools,
+                operation=operation,
+                trace_id=trace_id,
+                wait=wait,
+            )
+        except NoLLMAvailableError as exc:
+            await self._on_exhausted(exc)
+            raise
+
+    async def stream(
+        self,
+        prompt: str,
+        *,
+        operation: str | None = None,
+        trace_id: str | None = None,
+        wait: float | None = None,
+    ) -> AsyncIterator[str]:
+        """Route a completion over the pool and yield text deltas as they arrive.
+        Fails over like ``ask`` until the first delta, then raises
+        ``StreamInterruptedError``. Async-only."""
+        await self._ensure_pool()
+        try:
+            async with aclosing(
+                self._router.stream(
+                    self._ring,
+                    [{"role": "user", "content": prompt}],
+                    operation=operation,
+                    trace_id=trace_id,
+                    wait=wait,
+                ),
+            ) as deltas:
+                async for delta in deltas:
+                    yield delta
+        except NoLLMAvailableError as exc:
+            await self._on_exhausted(exc)
+            raise
+
+    # ------------------------------------------------------------------
+    # Direct single-model access (no pool, no failover)
+    # ------------------------------------------------------------------
+
+    async def direct(
+        self,
+        alias: str | None = None,
+        *,
+        name: str | None = None,
+    ) -> AsyncDirectClient:
+        """A client for exactly one model of your own — no pool, no failover.
+
+        Takes exactly one of ``alias`` or ``name=``; raises ``PoolModelError``,
+        ``UnknownModelError`` or ``MissingKeyError``. See ``docs/`` "Direct model calls".
+        """
+        cfg, key = await self.resolve_direct(alias, name=name)
+        return AsyncDirectClient(
+            base_url=cfg.base_url,
+            model=cfg.model,
+            api_key=key,
+            client=self._http(),
+        )
+
+    async def resolve_direct(
+        self,
+        alias: str | None = None,
+        *,
+        name: str | None = None,
+    ) -> tuple[LLMConfig, str]:
+        """Look the entry up in its keyspace and resolve it against this caller's ring
+        (shared by the synchronous façade)."""
+        if (alias is None) == (name is None):
+            raise ValueError(
+                "direct() takes exactly one of alias (positional) or name= —"
+                " they are separate keyspaces",
+            )
+        stored, declared = await self._catalog.entries()
+        cfg = find_declared(stored, declared, alias, name)
+        ref = alias if alias is not None else name
+        key = await self._ring.resolve(cfg.api_key_ref)
+        if key is None:
+            hint = self._catalog.key_help(cfg.api_key_ref)
+            raise MissingKeyError(
+                f"api_key_ref {cfg.api_key_ref!r} for model {ref!r} could not be resolved"
+                " — set the env var or configure a secrets backend" + (f". {hint}" if hint else ""),
+            )
+        return cfg, key
+
+    def _http(self) -> httpx.AsyncClient:
+        """The one client of the installation — a caller opens no connection pool of
+        its own."""
+        return self._router.http
+
+    # ------------------------------------------------------------------
+    # Inspection and rating
+    # ------------------------------------------------------------------
+
+    async def get(self, name: str) -> AsyncLLM:
+        await self._ensure_pool()
+        return self._pool_view.get(name)
+
+    async def count(self) -> int:
+        await self._ensure_pool()
+        return self._pool_view.count()
+
+    async def record_quality(
+        self,
+        llm_name: str,
+        operation: str | None,
+        score: float,
+        *,
+        call_id: str | None = None,
+    ) -> None:
+        """Record a quality score for a past call — the delayed counterpart of
+        ``result.record_quality``. The host supplies the rating identity, so the
+        rated call need not still be in the journal."""
+        check_score(score)
+        await self._ensure_pool()
+        await self._store.record_quality(
+            llm_name,
+            operation,
+            score,
+            call_id=call_id,
+            scope=self.scope,
+        )
+        if self._learner is not None:
+            self._learner.record_quality_observed(llm_name, operation, score)

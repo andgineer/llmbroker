@@ -9,7 +9,7 @@ import pytest
 
 from llmbroker.broker import presets
 from llmbroker.broker.presets import PresetSource, fetch_preset_text
-from llmbroker.standalone.registry import parse_lineup
+from llmbroker.standalone.registry import parse_model_list
 
 # ── Preset name parsing ──────────────────────────────────────────────────────
 
@@ -86,7 +86,7 @@ def test_a_body_that_is_not_toml_is_a_value_error(monkeypatch):
         fetch_preset_text("freetier")
 
 
-# ── A fetched lineup may not send keys in the clear ──────────────────────────
+# ── A fetched model list may not send keys in the clear ──────────────────────────
 
 
 def _served(text: str):
@@ -125,7 +125,7 @@ def test_a_fetched_preset_carrying_declared_entries_is_refused_whole(monkeypatch
     )
     monkeypatch.setattr(presets.urllib.request, "urlopen", _served(carrying))
     with pytest.raises(ValueError, match=r"carries \[\[custom\]\] entries"):
-        parse_lineup(tomllib.loads(fetch_preset_text("freetier")))
+        parse_model_list(tomllib.loads(fetch_preset_text("freetier")))
 
 
 def test_an_https_preset_passes(monkeypatch):

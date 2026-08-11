@@ -258,3 +258,142 @@ the version** — the maintainer does that by hand. Never commit unasked.
 Written when the pass lands, and it must carry: which batches are done, the
 per-file verdicts from batch 6, what was done differently from this plan and why,
 what was deliberately left out, and the gate results.
+
+## Handover
+
+All six batches are done. `invoke pre` clean and `python -m pytest` green after
+each; the final gate is **`invoke pre` clean, 1260 passed, zero skips**.
+
+### What each batch did
+
+**1. The merge becomes a mirror.** `broker/keys.py`, `KeyProbe`/`KeyEvidence` and
+`have_keys` are gone from every signature; the four-step removal rule, the
+death-evidence journal read and `Retirement` with it. `merge_upstream` now takes a
+plain `present: frozenset[str]` — which refs a key resolves for — and no decision
+reads it: it feeds `orphan_refs`, `pending_keys` and the active counts only.
+`SyncReport` keeps added / updated / removed / orphan refs / pending keys.
+`is_permanent` had exactly one caller (the death evidence) and went with it.
+Tests: `test_death_evidence.py` and `test_keys_probe.py` deleted, `test_merge.py`
+rewritten onto the mirror.
+
+**2. Availability stops being shared.** The cooldown and dead-key derivation from
+the tail is gone, `Call.key_hash` and `key_hash()` with it (schema version 6 → 7),
+and `pool.apply_peer_cooldowns` deleted. `observe()` applies its findings in this
+process and journals the row; the tail read survives with one caller — the
+rebuild — and derives quality, budget bounds and metrics.
+`test_cluster_cooldown.py` inverted into `test_availability_is_local.py`, which
+asserts the accepted cost directly.
+
+**3. One broker, callers per request.** New `broker/keyring.py` and
+`broker/llms.py`. `scope=` is off both constructors; `broker.llms` is the unscoped
+caller and `broker.for_scope(scope)` a scoped one, over a bounded map of rings.
+`_Slot.key`, `pool.has_key` and `pool.resolved_key` are gone — `acquire` takes
+`payable: frozenset[str]`. The router takes the caller's ring, reads the scope off
+it, and one `httpx` client on the router serves every caller and `direct()` alike.
+`test_scope_dead_key.py` is superseded by `test_callers.py`.
+
+**4. Four triggers, and keys that ride them.** `Catalog.rebuild()` is the one way
+the live pool changes — keys, registry, membership, disabled map, quality — with
+no mode flags; `check_not_empty()` is a separate call only provisioning makes.
+Its callers are exactly four: provisioning, the refresh clock, `sync()`, and pool
+exhaustion behind a 60 s debounce. `EnumerableSecretsProtocol` added, implemented
+by the DB ports (one prefix filter over the existing fetch), AWS (paginated
+ListSecrets) and Vault (LIST, with the ref flattened into one path segment).
+
+**5. Ten rule files become five.** `presets` + `sync-merge` + `list-refresh` →
+`model-list.md`; `pool-health` and journal availability → `selection.md`; the
+journal's read path, retention and scoping → `backends.md`; `direct-aliases` →
+`direct-by-name.md`. Index tables in `invariants.md` and `CLAUDE.md` rewritten,
+every inbound link re-pointed (a link checker over `specs/reference/` reports
+none dangling). The banned word is gone: `grep -rin lineup .` returns only this
+plan file. `Lineup` → `ModelList`, `lineup_file.py` → `model_list_file.py`,
+`LineupRefresher` → `ModelListRefresher`, and the zero-config file is now
+`model-list.toml`.
+
+**6. The audit.** Below.
+
+### Done differently from the plan, and why
+
+- **`orphan_refs` stays in `SyncReport`.** Batch 1's merge bullet reads as
+  dropping it, but invariant 15 and `sync-merge.md` both require an orphaned ref
+  to be reported for a human to decide on, and `report.py`'s bullet does not list
+  it among what goes. Kept, with its test.
+- **A 401 no longer cools the model.** Not in scope per "the call path… the pass
+  must not touch it", but forced by batch 3's own requirement that a dead key drop
+  *one caller's* resolution: cooling withdraws the model from every caller over one
+  caller's rejected key. The withdrawal is now the ring's alone.
+- **A rejection outlives a rebuild whose value has not changed.** The plan says a
+  value is dropped at the next rebuild; taken literally, the exhaustion trigger
+  fires on the very call that met the 401 and re-arms the dead key immediately.
+  The ring remembers *which* value was rejected and clears the rejection only when
+  the stored value differs — an admin who replaced the key is served at once, one
+  who has not is not charged a call per request.
+- **`KeyRing.get`/`set` were not written.** The plan names four methods; only
+  `resolve`, `forget` and `refresh` (plus `payable`) have callers, and an unused
+  public method is the residue this pass exists to remove.
+- **The learner keeps a `relearn()` of its own** rather than folding the tail read
+  into `catalog.rebuild()` wholesale: the catalog calls it as the rebuild's last
+  step. The optimizer stays optional, so the hook is `None` where it is off.
+- **`AsyncLLMs` does not carry `calls`/`stats`** — the plan's list stops at
+  `record_quality`. The consequence is that the broker's journal reads are now the
+  installation's view rather than one scope's; a host wanting one user's rows
+  filters at the store, which already takes `scope=`. Flagged here because it is a
+  capability a scoped host had before.
+- **A disabled verdict now survives an entry leaving and returning.** The disabled
+  map is re-read on every rebuild, so the durable verdict wins over the fresh slot.
+  This matches what the spec always said ("only `enable_llm` clears it"); the old
+  behaviour silently lifted an admin's verdict on a curated round trip.
+
+### Batch 6: the per-file verdict against `git diff 1.3.0 -- src/`
+
+*Named by a batch above and changed by this pass* — `__init__.py`,
+`aws/secrets.py`, `backends/ports.py`, `backends/spec.py`, `broker/broker.py`,
+`broker/catalog.py`, `broker/learning.py`, `broker/merge.py`,
+`broker/model_list_file.py`, `broker/pool.py`, `broker/pool_view.py`,
+`broker/refresher.py`, `broker/report.py`, `broker/router.py`, `broker/source.py`,
+`http_status.py`, `models.py`, `protocols/secrets.py`, `standalone/registry.py`,
+`standalone/store.py`, `sync.py`, `vault/secrets.py`, plus the two new files
+`broker/keyring.py` and `broker/llms.py` and the deleted `broker/keys.py`.
+
+*Keep, and why* — every remaining file is one the plan lists as kept:
+
+- **The call path**: `chat.py`, `direct.py`, `broker/result.py`, `exceptions.py`,
+  `optimizer.py`. Untouched by this pass except where a signature moved.
+- **Paid models by name**: `broker/aliases.py`, `broker/presets.py`,
+  `presets/paid-catalog*.{toml,md}` — the alias resolution and the curated paid
+  catalog with its floor copy.
+- **The refresh**: `broker/stamps.py`, `home.py`, `presets/freetier*.{toml,md}`,
+  `util/atomic.py` — the check record, the home directory, the shipped presets and
+  the atomic write.
+- **Storage**: `backends/driver.py`, `backends/inmemory.py`, `journal_policy.py`,
+  `protocols/*.py`, `sqlite/*`, `postgres/*`, `mongodb/*`, `standalone/secrets.py`,
+  `integrations/alembic.py` — the ports and the four drivers.
+- **Surface**: `cli.py`, `broker/stats.py`, `__main__.py`, `__about__.py`.
+
+No file is left unaccounted for.
+
+### The line counts, against the targets
+
+The targets are **missed, and by a lot**: `src/` is **7,782** lines against a
+target of ~5,500 (it was 7,691 before this pass, so the pass added ~90 net);
+tests are **16,038** against a target of roughly 12,400–12,900 (they were 16,372,
+so the pass removed ~330).
+
+The deletions the plan names are all done — what it assumed they weighed is what
+was wrong. Against that, batch 3 adds two modules (`keyring.py` 121,
+`llms.py` 208) and the synchronous caller façade, and batch 4 adds the secrets
+enumeration to four backends. Closing the remaining ~2,300 lines would mean
+deleting from the list the plan explicitly protects: the call path (`router.py`
+636 + `chat.py` 353 + `direct.py` 235), paid models by name (356), the refresh
+(268 + 187), the four DB drivers (~670) and the synchronous façade (318). None of
+that is this pass's to take, so the counts are reported rather than chased.
+
+### Deliberately left out
+
+- `mission.md` was not re-read against the code. Batch 5 changed which rule file
+  holds what, and the mission cites no rule file by design, but a pass over it is
+  worth a reviewer's minute.
+- A 429 currently cools the entry it came from, while `selection.md` says a rate
+  limit withdraws every entry this process pays for with that key value. That
+  predates this pass and the call path was out of scope — naming it here rather
+  than fixing it.

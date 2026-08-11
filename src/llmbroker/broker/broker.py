@@ -9,16 +9,15 @@ from contextlib import aclosing
 from datetime import datetime
 from pathlib import Path
 
-import httpx
-
 from llmbroker.broker.aliases import resolve_declared
-from llmbroker.broker.catalog import Catalog, find_declared, resolve_key
-from llmbroker.broker.keys import KeyProbe
+from llmbroker.broker.catalog import Catalog
+from llmbroker.broker.keyring import KeyRing, known_refs
 from llmbroker.broker.learning import TAIL_READ_LIMIT, Learner, metrics_from_calls
+from llmbroker.broker.llms import AsyncLLMs
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.pool_view import PoolView
 from llmbroker.broker.presets import PresetSource
-from llmbroker.broker.refresher import LineupRefresher
+from llmbroker.broker.refresher import ModelListRefresher
 from llmbroker.broker.report import alias_lines
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.broker.router import Router
@@ -29,10 +28,8 @@ from llmbroker.broker.source import (
     zero_config_ports,
 )
 from llmbroker.broker.stats import stats_from_calls
-from llmbroker.chat import make_client
 from llmbroker.direct import AsyncDirectClient
 from llmbroker.exceptions import (
-    MissingKeyError,
     NoLLMAvailableError,
     UnknownModelError,
 )
@@ -48,7 +45,6 @@ from llmbroker.models import (
     PoolSnapshot,
     SyncReport,
     check_limit,
-    check_score,
     to_utc,
 )
 from llmbroker.optimizer import Optimizer
@@ -67,6 +63,14 @@ _DEFAULT_STATS_LIMIT = 1000
 _DEFAULT_SYNC_INTERVAL = 86_400.0  # seconds
 _DEFAULT_SYNC_SOURCE = "freetier"
 
+# Callers are cheap and long-lived processes see many; the cap keeps a per-user
+# deployment from holding a ring per user seen since start. Eviction costs a re-read.
+_MAX_CALLERS = 1024
+
+# The reactive trigger's floor: a pool that stays exhausted under traffic would
+# otherwise ask the ports on every call.
+_EXHAUSTION_DEBOUNCE_SEC = 60.0
+
 
 class _SyncDefault:
     """``sync=`` left unstated — distinct from ``None``, which follows nothing."""
@@ -80,9 +84,7 @@ class _SyncDefault:
 _SYNC_DEFAULT = _SyncDefault()
 
 
-def _check_broker_args(scope: str | None, sync_interval: float | None) -> None:
-    if scope == "":
-        raise ValueError("scope must not be empty string; use None for unscoped")
+def _check_sync_interval(sync_interval: float | None) -> None:
     if sync_interval is not None and sync_interval < 0:
         raise ValueError("sync_interval must not be negative")
 
@@ -94,7 +96,7 @@ def _resolve_sync(sync: str | None | _SyncDefault, registry: object) -> str | No
     if registry is None or isinstance(registry, (str, Path)):
         return _DEFAULT_SYNC_SOURCE
     raise ValueError(
-        "a registry object holds a lineup this installation owns, so sync= must say"
+        "a registry object holds a model list this installation owns, so sync= must say"
         f" what it follows: sync={_DEFAULT_SYNC_SOURCE!r} to keep following the curated"
         " preset, or sync=None to follow nothing",
     )
@@ -114,14 +116,12 @@ class AsyncBroker:
         secrets: SecretsProtocol | None = None,
         store: StoreProtocol | None = None,
         optimize: bool | Optimizer = True,
-        scope: str | None = None,
-        have_keys: bool | Sequence[str] = False,
         sync: str | None | _SyncDefault = _SYNC_DEFAULT,
         sync_interval: float | None = _DEFAULT_SYNC_INTERVAL,
         home: str | Path | None = None,
         direct: Sequence[str | LLMConfig] = (),
     ) -> None:
-        _check_broker_args(scope, sync_interval)
+        _check_sync_interval(sync_interval)
         source = _resolve_sync(sync, registry)
         self._home = home_dir(home)
         source_secrets: SecretsProtocol | None = None
@@ -148,9 +148,9 @@ class AsyncBroker:
         self._registry = registry
         self._secrets = secrets
         self._store = store
-        self._scope = scope
-        self._probe = KeyProbe(secrets, scope=scope, have_keys=have_keys)
         self._presets = PresetSource(self._home)
+        self._shared_ring = KeyRing(secrets)
+        self._rings: dict[str, KeyRing] = {}
 
         self._declared = tuple(direct)
         self._autofetch = sync_interval is not None
@@ -161,19 +161,20 @@ class AsyncBroker:
             registry,
             secrets,
             pool,
-            scope=scope,
+            self._shared_ring,
+            store,
             overlay=self._resolve_declared if self._declared else None,
             autofill=self._autofetch,
+            relearn=self._relearn,
         )
 
         self._learner: Learner | None = None
         if self._optimizer is not None:
-            self._learner = Learner(self._optimizer, store, pool, self._catalog.resync)
+            self._learner = Learner(self._optimizer, store, pool)
 
         self._router = Router(
             pool,
             store,
-            scope=scope,
             optimizer=self._optimizer,
             learner=self._learner,
         )
@@ -182,13 +183,13 @@ class AsyncBroker:
             self._metrics_map,
             lambda: self._catalog.health,
             lambda: self._catalog.direct_missing_keys,
+            lambda: self._catalog.payable,
         )
 
-        self._refresher = LineupRefresher(
+        self._refresher = ModelListRefresher(
             registry,
             self._catalog,
             store,
-            self._probe,
             self._presets,
             source=source,
             interval=sync_interval,
@@ -196,13 +197,62 @@ class AsyncBroker:
             declared=self._declared,
             target_label=source_label,
             live=lambda: self._provisioned,
+            rebuild=self.rebuild,
         )
 
         self._provisioned = False
         self._provision_lock = asyncio.Lock()
         self._last_underprov_alert: float = float("-inf")
         self._underprov_alert_interval: float = 60.0
-        self._direct_http: httpx.AsyncClient | None = None
+        self._next_exhaustion_rebuild: float = float("-inf")
+        self.llms = self._caller(self._shared_ring)
+
+    def _caller(self, ring: KeyRing) -> AsyncLLMs:
+        return AsyncLLMs(
+            ring,
+            router=self._router,
+            catalog=self._catalog,
+            pool_view=self._pool_view,
+            store=self._store,
+            learner=self._learner,
+            ensure_pool=self.ensure_pool,
+            on_exhausted=self._on_exhausted,
+        )
+
+    def for_scope(self, scope: str) -> AsyncLLMs:
+        """A caller that pays with ``scope``\'s own keys, falling back to the shared
+        ones, and writes ``scope`` on every row it journals. Costs no I/O."""
+        if not scope:
+            raise ValueError("scope must not be empty string; use broker.llms for unscoped")
+        ring = self._rings.get(scope)
+        if ring is None:
+            if len(self._rings) >= _MAX_CALLERS:
+                self._rings.pop(next(iter(self._rings)))
+            ring = KeyRing(self._secrets, scope=scope, shared=self._shared_ring)
+            self._rings[scope] = ring
+        return self._caller(ring)
+
+    async def rebuild(self) -> None:
+        """Rebuild the pool: every caller's keys, the registry, pool membership, the
+        disabled map and quality, wholesale. Fires on exactly four triggers — start,
+        the refresh clock, an explicit ``sync()``, and pool exhaustion."""
+        known = await known_refs(self._secrets)
+        # Over a copy: a request may ask for a caller while this is awaiting.
+        for ring in (self._shared_ring, *list(self._rings.values())):
+            await ring.refresh(known)
+        await self._catalog.rebuild()
+
+    async def _relearn(self) -> None:
+        if self._learner is not None:
+            await self._learner.relearn()
+
+    async def _rebuild_safely(self, reason: str) -> None:
+        """A rebuild reached from a caller's own call must never fail it: an
+        unreadable port leaves the pool exactly as it is, and says so."""
+        try:
+            await self.rebuild()
+        except Exception:  # noqa: BLE001 - a background re-read may not break a request
+            logger.exception("pool rebuild on %s failed, continuing on the current pool", reason)
 
     async def _metrics_map(self) -> dict[str, LLMMetrics]:
         """Per-LLM metrics from whatever is available: the learner's cache, a
@@ -216,7 +266,7 @@ class AsyncBroker:
     async def _resolve_declared(self) -> DeclaredModels:
         """Re-resolve ``direct=``, keeping the resolution already in use when the
         catalog cannot be read or no longer carries an alias. Only the first
-        resolution raises — see ``rules/direct-aliases.md``."""
+        resolution raises — see ``rules/direct-by-name.md``."""
         previous = self._last_declared
         try:
             resolved, moved = await resolve_declared(
@@ -245,21 +295,16 @@ class AsyncBroker:
 
     async def ensure_pool(self) -> None:
         """Lazy idempotent initializer — provisions the pool exactly once, and
-        schedules the lineup refresh when its interval has elapsed.
+        schedules the model list refresh when its interval has elapsed.
 
-        Raises if the registry is empty and nothing filled it — sync a lineup in.
+        Raises if the registry is empty and nothing filled it — sync a model list in.
         """
         if not self._provisioned:
             async with self._provision_lock:
                 if not self._provisioned:
                     await self._refresher.before_provision()
-                    await self._catalog.provision()
-                    if self._learner is not None:
-                        # warm start — provision() above already resynced the registry
-                        await self._learner.maybe_rebuild(
-                            force=True,
-                            resync_registry=False,
-                        )
+                    await self.rebuild()
+                    self._catalog.check_not_empty()
                     self._provisioned = True
         # Outside the lock: a refresh calls sync(), and inside it the catalog is
         # mid-provision.
@@ -274,7 +319,7 @@ class AsyncBroker:
     async def sync(self, source: str | None = None) -> SyncReport | None:
         """Merge the curated preset named by ``source`` into the registry and return
         what it did; with no argument, whatever this installation follows — the paid
-        catalog alone has no report. See ``rules/sync-merge.md``."""
+        catalog alone has no report. See ``rules/model-list.md``."""
         return await self._refresher.sync(source)
 
     async def aclose(self) -> None:
@@ -282,9 +327,6 @@ class AsyncBroker:
         # registry whose driver is closing.
         await self._refresher.aclose()
         await self._router.aclose()
-        if self._direct_http is not None:
-            await self._direct_http.aclose()
-            self._direct_http = None
         for port in (self._registry, self._secrets, self._store):
             if isinstance(port, AsyncResourceProtocol):
                 await port.aclose()
@@ -297,7 +339,7 @@ class AsyncBroker:
         await self.aclose()
 
     # ------------------------------------------------------------------
-    # Routing
+    # Routing — delegated to the unscoped caller
     # ------------------------------------------------------------------
 
     async def ask(
@@ -308,12 +350,7 @@ class AsyncBroker:
         trace_id: str | None = None,
         wait: float | None = None,
     ) -> AsyncResult:
-        await self.ensure_pool()
-        try:
-            return await self._router.ask(prompt, operation=operation, trace_id=trace_id, wait=wait)
-        except NoLLMAvailableError as exc:
-            self._maybe_alert_underprov(exc)
-            raise
+        return await self.llms.ask(prompt, operation=operation, trace_id=trace_id, wait=wait)
 
     async def chat(
         self,
@@ -324,18 +361,13 @@ class AsyncBroker:
         trace_id: str | None = None,
         wait: float | None = None,
     ) -> AsyncResult:
-        await self.ensure_pool()
-        try:
-            return await self._router.chat(
-                messages,
-                tools=tools,
-                operation=operation,
-                trace_id=trace_id,
-                wait=wait,
-            )
-        except NoLLMAvailableError as exc:
-            self._maybe_alert_underprov(exc)
-            raise
+        return await self.llms.chat(
+            messages,
+            tools=tools,
+            operation=operation,
+            trace_id=trace_id,
+            wait=wait,
+        )
 
     async def stream(
         self,
@@ -348,25 +380,11 @@ class AsyncBroker:
         """Route a completion over the pool and yield text deltas as they arrive.
         Fails over like ``ask`` until the first delta, then raises
         ``StreamInterruptedError``. Async-only."""
-        await self.ensure_pool()
-        try:
-            async with aclosing(
-                self._router.stream(
-                    [{"role": "user", "content": prompt}],
-                    operation=operation,
-                    trace_id=trace_id,
-                    wait=wait,
-                ),
-            ) as deltas:
-                async for delta in deltas:
-                    yield delta
-        except NoLLMAvailableError as exc:
-            self._maybe_alert_underprov(exc)
-            raise
-
-    # ------------------------------------------------------------------
-    # Direct single-model access (no pool, no failover)
-    # ------------------------------------------------------------------
+        async with aclosing(
+            self.llms.stream(prompt, operation=operation, trace_id=trace_id, wait=wait),
+        ) as deltas:
+            async for delta in deltas:
+                yield delta
 
     async def direct(
         self,
@@ -379,39 +397,7 @@ class AsyncBroker:
         Takes exactly one of ``alias`` or ``name=``; raises ``PoolModelError``,
         ``UnknownModelError`` or ``MissingKeyError``. See ``docs/`` "Direct model calls".
         """
-        cfg, key = await self._resolve_direct(alias, name=name)
-        if self._direct_http is None:
-            self._direct_http = make_client()
-        return AsyncDirectClient(
-            base_url=cfg.base_url,
-            model=cfg.model,
-            api_key=key,
-            client=self._direct_http,
-        )
-
-    async def _resolve_direct(
-        self,
-        alias: str | None = None,
-        *,
-        name: str | None = None,
-    ) -> tuple[LLMConfig, str]:
-        """Look the entry up in its keyspace and resolve its key (shared by the sync façade)."""
-        if (alias is None) == (name is None):
-            raise ValueError(
-                "direct() takes exactly one of alias (positional) or name= —"
-                " they are separate keyspaces",
-            )
-        stored, declared = await self._catalog.entries()
-        cfg = find_declared(stored, declared, alias, name)
-        ref = alias if alias is not None else name
-        key = await resolve_key(self._secrets, cfg.api_key_ref, self._scope)
-        if key is None:
-            hint = self._catalog.key_help(cfg.api_key_ref)
-            raise MissingKeyError(
-                f"api_key_ref {cfg.api_key_ref!r} for model {ref!r} could not be resolved"
-                " — set the env var or configure a secrets backend" + (f". {hint}" if hint else ""),
-            )
-        return cfg, key
+        return await self.llms.direct(alias, name=name)
 
     async def record_quality(
         self,
@@ -424,29 +410,17 @@ class AsyncBroker:
         """Record a quality score for a past call — the delayed counterpart of
         ``result.record_quality``. The host supplies the rating identity, so the
         rated call need not still be in the journal."""
-        check_score(score)
-        await self.ensure_pool()
-        await self._store.record_quality(
-            llm_name,
-            operation,
-            score,
-            call_id=call_id,
-            scope=self._scope,
-        )
-        if self._learner is not None:
-            self._learner.record_quality_observed(llm_name, operation, score)
+        await self.llms.record_quality(llm_name, operation, score, call_id=call_id)
 
     # ------------------------------------------------------------------
     # Inspection
     # ------------------------------------------------------------------
 
     async def get(self, name: str) -> AsyncLLM:
-        await self.ensure_pool()
-        return self._pool_view.get(name)
+        return await self.llms.get(name)
 
     async def count(self) -> int:
-        await self.ensure_pool()
-        return self._pool_view.count()
+        return await self.llms.count()
 
     async def snapshot(self) -> PoolSnapshot:
         await self.ensure_pool()
@@ -492,7 +466,6 @@ class AsyncBroker:
         check_limit(limit)
         return await self._require_queryable().calls(
             limit=limit,
-            scope=self._scope,
             since=to_utc(since, "since") if since is not None else None,
             kind=kind,
             operation=operation,
@@ -511,6 +484,16 @@ class AsyncBroker:
         rows = await self.calls(limit=limit, since=since, kind="call", operation=operation)
         return stats_from_calls(rows)
 
+    async def _on_exhausted(self, exc: NoLLMAvailableError) -> None:
+        """The reactive trigger: a pool that could not answer is re-read, debounced, so
+        a key an admin has just stored works without waiting out the refresh clock."""
+        self._maybe_alert_underprov(exc)
+        now = time.monotonic()
+        if now < self._next_exhaustion_rebuild:
+            return
+        self._next_exhaustion_rebuild = now + _EXHAUSTION_DEBOUNCE_SEC
+        await self._rebuild_safely("pool exhaustion")
+
     def _maybe_alert_underprov(self, exc: NoLLMAvailableError) -> None:
         """Fire when zero *keyed* configs are routable — the genuine alarm.
 
@@ -526,7 +509,10 @@ class AsyncBroker:
         now = time.monotonic()
         if now - self._last_underprov_alert < self._underprov_alert_interval:
             return
-        keyed_names = [name for name in self._pool.configs if self._pool.has_key(name)]
+        payable = self._catalog.payable
+        keyed_names = [
+            name for name, cfg in self._pool.configs.items() if cfg.api_key_ref in payable
+        ]
         all_offline = all(
             self._pool.state(name).phase is not LifecyclePhase.AVAILABLE for name in keyed_names
         )

@@ -16,7 +16,7 @@ import pytest
 from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.catalog import Catalog
-from llmbroker.broker.refresher import LineupRefresher
+from llmbroker.broker.refresher import ModelListRefresher
 from llmbroker.exceptions import EmptyRegistryError
 from llmbroker.models import LLMConfig
 from llmbroker.sqlite import Registry as SqliteRegistry
@@ -94,7 +94,7 @@ async def _settle(broker: AsyncBroker) -> None:
 
 
 async def test_a_started_broker_refreshes_off_the_provisioning_path(tmp_path, fetches):
-    """The registry has a lineup, so the pool is provisioned from it and the refresh
+    """The registry has a model_list, so the pool is provisioned from it and the refresh
     happens behind the first call, not in front of it."""
     await _seeded(tmp_path)
     broker = _broker(tmp_path)
@@ -160,7 +160,7 @@ async def test_a_negative_interval_is_refused(tmp_path):
 # ── The identity gate, end to end ────────────────────────────────────────────
 
 
-async def test_an_unchanged_lineup_applies_nothing_and_says_nothing(tmp_path, fetches, caplog):
+async def test_an_unchanged_model_list_applies_nothing_and_says_nothing(tmp_path, fetches, caplog):
     await _seeded(tmp_path)
     broker = _broker(tmp_path)
     try:
@@ -279,7 +279,7 @@ async def test_a_throttled_fetch_falls_back_to_the_cached_copy(
         with caplog.at_level(logging.DEBUG, logger="llmbroker.broker"):
             await broker.ensure_pool()
             await _settle(broker)
-        assert await broker.count() == 2  # the cached lineup was applied
+        assert await broker.count() == 2  # the cached model list was applied
     finally:
         await broker.aclose()
     assert any("cached copy" in r.message for r in caplog.records)
@@ -343,7 +343,7 @@ async def test_aclose_cancels_a_refresh_in_flight(tmp_path):
     broker = _broker(tmp_path)
     # The refresher's own sync, not the façade's delegate: the delegate is not what
     # the background refresh calls.
-    with patch.object(LineupRefresher, "sync", new=_hang):
+    with patch.object(ModelListRefresher, "sync", new=_hang):
         await broker.ensure_pool()
         await started.wait()
         task = broker._refresher._task
@@ -379,7 +379,7 @@ async def test_a_refresh_in_flight_is_cancelled_before_the_ports_close(tmp_path)
         store=InMemoryStore(),
         sync="freetier",
     )
-    with patch.object(LineupRefresher, "sync", new=_hang):
+    with patch.object(ModelListRefresher, "sync", new=_hang):
         await broker.ensure_pool()
         await started.wait()
         await broker.aclose()
@@ -478,7 +478,7 @@ async def test_a_second_process_on_the_same_target_skips_the_check(
 
 
 async def test_a_second_target_is_not_gated_by_the_first(tmp_path, fetches, llmbroker_home):
-    """Two projects on one machine have two lineups to keep current."""
+    """Two projects on one machine have two model_lists to keep current."""
     first = await _seeded(tmp_path, "one.db")
     second = await _seeded(tmp_path, "two.db")
     _write_stamp(llmbroker_home, _key(first), time.time())

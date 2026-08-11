@@ -22,7 +22,7 @@ _TOML = f'[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="
 
 @pytest.fixture(autouse=True)
 def preset(monkeypatch):
-    """Serve the curated lineup to ``sync("freetier")`` without touching the network."""
+    """Serve the curated model list to ``sync("freetier")`` without touching the network."""
     monkeypatch.setattr(presets, "fetch_preset_text", lambda _name: _TOML)
 
 

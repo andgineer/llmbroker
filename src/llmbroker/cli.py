@@ -125,9 +125,9 @@ def main(argv: list[str] | None = None) -> int:
 
     list_p = sub.add_parser(
         "list",
-        help="show the curated model lists — the routed pool and the paid models",
+        help="show the curated model_lists — the routed pool and the paid models",
         description=(
-            "Show what the curated model lists carry, one model per line and nothing"
+            "Show what the curated model_lists carry, one model per line and nothing"
             " written. A `pool` line is a model a sync routes over anonymously. A `direct`"
             " line is a paid model you reach by name: its first field is the alias to pass"
             ' as direct=["opus"], and the rest is the provider id, model id, base_url and'

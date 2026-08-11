@@ -43,7 +43,7 @@ class DriverRegistry:
     async def mirror(self, configs: list[LLMConfig]) -> None:
         """Total mirror: add new, update existing, delete stored entries absent
         from ``configs``. What may be absent is decided before this call, in
-        ``broker.merge``; here the merged lineup is simply written."""
+        ``broker.merge``; here the merged model list is simply written."""
         check_aliases(configs)
         source_names = {c.name for c in configs}
         existing = {str(row["name"]) for row in await self._driver.fetch("registry")}
@@ -98,7 +98,6 @@ def _call_to_row(call: Call) -> Row:
         "called_at": call.ts,
         "scope": call.scope,
         "cooldown_until": call.cooldown_until,
-        "key_hash": call.key_hash,
         "budget_ms": call.budget_ms,
     }
     row.update(_usage_columns(call.usage))
@@ -133,7 +132,6 @@ def _row_to_call(row: Row) -> Call:
         call_id=row.get("call_id"),  # type: ignore[arg-type]
         scope=row.get("scope"),  # type: ignore[arg-type]
         cooldown_until=row.get("cooldown_until"),  # type: ignore[arg-type]
-        key_hash=row.get("key_hash"),  # type: ignore[arg-type]
         budget_ms=row.get("budget_ms"),  # type: ignore[arg-type]
     )
 
@@ -239,6 +237,10 @@ class DriverSecrets:
 
     async def set(self, ref: str, value: str) -> None:
         await self._driver.upsert("secrets", (ref,), {"ref": ref, "value": value})
+
+    async def refs(self, prefix: str = "") -> frozenset[str]:
+        rows = await self._driver.fetch("secrets")
+        return frozenset(str(row["ref"]) for row in rows if str(row["ref"]).startswith(prefix))
 
     async def aclose(self) -> None:
         await self._driver.aclose()

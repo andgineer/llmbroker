@@ -17,6 +17,7 @@ from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.sqlite import Secrets as SqliteSecrets
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets, Secrets, as_secrets
+from llmbroker.protocols.secrets import EnumerableSecretsProtocol
 from llmbroker.vault import Secrets as VaultSecrets
 
 
@@ -122,7 +123,7 @@ def test_sqlite_secrets_missing_raises(tmp_path):
 
 
 def _serve(monkeypatch, ref: str) -> None:
-    """Serve a one-entry curated lineup to ``sync("freetier")``, keyed by ``ref``."""
+    """Serve a one-entry curated model list to ``sync("freetier")``, keyed by ``ref``."""
     monkeypatch.setattr(
         presets,
         "fetch_preset_text",
@@ -149,7 +150,10 @@ def test_broker_resolves_key_not_on_config(tmp_path, monkeypatch):
             assert cfg.api_key_ref == "MY_API_KEY"
             assert "the-secret" not in (cfg.api_key_ref, cfg.base_url, cfg.model, cfg.name)
             # the resolved key lives only in the pool's private slot
-            assert broker._pool.resolved_key("p1") == "the-secret"
+            assert (
+                await broker._shared_ring.resolve(broker._pool.config("p1").api_key_ref)
+                == "the-secret"
+            )
 
     asyncio.run(run())
 
@@ -259,3 +263,31 @@ async def test_mutable_set_upserts(mutable_secrets):
 async def test_mutable_resolve_missing_raises_key_error(mutable_secrets):
     with pytest.raises(KeyError):
         await mutable_secrets.resolve("MISSING")
+
+
+async def test_mutable_backends_enumerate_their_own_refs(mutable_secrets):
+    """One listing per rebuild is what answers "which keys are here"; a backend that
+    cannot list is asked ref by ref instead, so this is the contract that saves it."""
+    assert isinstance(mutable_secrets, EnumerableSecretsProtocol)
+    await mutable_secrets.set("SHARED", "s")
+    await mutable_secrets.set("alice/OWN", "a")
+    await mutable_secrets.set("bob/OWN", "b")
+
+    assert await mutable_secrets.refs() >= {"SHARED", "alice/OWN", "bob/OWN"}
+
+
+async def test_the_enumeration_returns_exactly_the_refs_under_the_asked_prefix(mutable_secrets):
+    await mutable_secrets.set("SHARED", "s")
+    await mutable_secrets.set("alice/OWN", "a")
+    await mutable_secrets.set("bob/OWN", "b")
+
+    assert await mutable_secrets.refs("alice/") == frozenset({"alice/OWN"})
+
+
+async def test_a_scoped_ref_survives_the_round_trip_both_ways(mutable_secrets):
+    """The Vault backend keeps a scoped ref inside one KV path segment, so the
+    flattening has to be invisible from both directions."""
+    await mutable_secrets.set("alice/GEMINI_API_KEY", "alice-key")
+
+    assert await mutable_secrets.resolve("alice/GEMINI_API_KEY") == "alice-key"
+    assert "alice/GEMINI_API_KEY" in await mutable_secrets.refs("alice/")

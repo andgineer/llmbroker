@@ -1,15 +1,10 @@
-"""The merge: the removal rule, key evidence, the structural guard."""
-
-from datetime import UTC, datetime
+"""The merge: the mirror, the key report, the structural guard."""
 
 import pytest
 
-from llmbroker.broker.keys import KeyEvidence
 from llmbroker.broker.merge import check_not_emptying, merge_upstream
 from llmbroker.exceptions import SyncRefusedError
-from llmbroker.models import KeyInfo, Lineup, LLMConfig, Retirement
-
-_EVIDENCE_TS = datetime(2030, 7, 2, tzinfo=UTC)
+from llmbroker.models import KeyInfo, ModelList, LLMConfig
 
 
 def _cfg(name, ref="K", *, model="m", url="https://x/v1", from_preset=True):
@@ -24,111 +19,76 @@ def _cfg(name, ref="K", *, model="m", url="https://x/v1", from_preset=True):
     )
 
 
-def _merge(  # noqa: PLR0913
-    new,
-    current,
-    present=frozenset(),
-    *,
-    new_keys=None,
-    current_keys=None,
-    dead=frozenset(),
-    keys_visible=True,
-    keys_scoped=False,
-):
+def _merge(new, current, present=frozenset(), *, new_keys=None, current_keys=None):
     merged, report = merge_upstream(
-        Lineup(configs=list(new), keys=dict(new_keys or {})),
-        Lineup(configs=list(current), keys=dict(current_keys or {})),
-        KeyEvidence(
-            present=frozenset(present),
-            visible=keys_visible,
-            scoped=keys_scoped,
-        ),
+        ModelList(configs=list(new), keys=dict(new_keys or {})),
+        ModelList(configs=list(current), keys=dict(current_keys or {})),
+        frozenset(present),
         source="freetier",
-        dead={n: Retirement(name=n, http_status=401, since=_EVIDENCE_TS) for n in dead},
     )
     return merged.configs, merged.keys, report
 
 
-def _retired(report):
-    return tuple(item.name for item in report.retired)
+# ── The mirror ───────────────────────────────────────────────────────────────
 
 
-# ── The removal rule, one test per row of the table ──────────────────────────
+def test_an_entry_absent_from_the_arriving_list_is_removed_though_its_key_resolves():
+    """The one case the removal rule existed to protect, now removed like any other:
+    nothing weighs whether an absent entry might still work."""
+    merged, _keys, report = _merge(
+        [_cfg("gemini", "GEMINI")],
+        [_cfg("groq-old", "GROQ")],
+        present={"GEMINI", "GROQ"},
+    )
+    assert [c.name for c in merged] == ["gemini"]
+    assert (report.removed, report.added) == (("groq-old",), ("gemini",))
 
 
-def test_the_lineup_carrying_the_provider_replaces_the_entry_with_no_key_involved():
-    """Same ref means same quota and same failure domain: nothing is lost."""
+def test_an_entry_the_installation_wrote_survives_that_same_sync():
+    """The partition, asserted against the sync that removes its curated neighbour."""
+    merged, _keys, report = _merge(
+        [_cfg("gemini", "GEMINI")],
+        [_cfg("groq-old", "GROQ"), _cfg("mine", "GROQ", from_preset=False)],
+        present={"GEMINI", "GROQ"},
+    )
+    assert [c.name for c in merged] == ["gemini", "mine"]
+    assert (report.removed, report.updated) == (("groq-old",), ())
+
+
+def test_the_model_list_carrying_the_provider_replaces_the_entry():
     merged, _keys, report = _merge([_cfg("groq-new", "GROQ")], [_cfg("groq-old", "GROQ")])
     assert [c.name for c in merged] == ["groq-new"]
-    assert (report.removed, report.kept, report.added) == (
-        ("groq-old",),
-        (),
-        ("groq-new",),
-    )
+    assert (report.removed, report.added) == (("groq-old",), ("groq-new",))
 
 
 def test_two_old_entries_on_the_carried_ref_both_go():
-    """The unit is the provider, not the entry — there is nothing to count."""
     merged, _keys, report = _merge(
         [_cfg("new", "GROQ")],
         [_cfg("old-a", "GROQ"), _cfg("old-b", "GROQ")],
         present={"GROQ"},
     )
-    assert report.removed == ("old-a", "old-b")
-    assert (report.kept, [c.name for c in merged]) == ((), ["new"])
+    assert (report.removed, [c.name for c in merged]) == (("old-a", "old-b"), ["new"])
 
 
-def test_a_provider_the_lineup_dropped_goes_when_no_key_exists_for_it():
+def test_a_keyless_provider_the_model_list_dropped_goes_too():
     merged, _keys, report = _merge(
         [_cfg("gemini", "GEMINI")],
         [_cfg("groq-old", "GROQ")],
         present={"GEMINI"},
     )
-    assert [c.name for c in merged] == ["gemini"]
-    assert (report.removed, report.kept, _retired(report)) == (("groq-old",), (), ())
+    assert ([c.name for c in merged], report.removed) == (["gemini"], ("groq-old",))
 
 
-def test_a_provider_the_lineup_dropped_stays_while_its_key_is_here():
-    merged, _keys, report = _merge(
-        [_cfg("gemini", "GEMINI")],
-        [_cfg("groq-old", "GROQ")],
-        present={"GEMINI", "GROQ"},
-    )
-    assert [c.name for c in merged] == ["gemini", "groq-old"]
-    assert (report.kept, report.kept_refs, report.removed) == (("groq-old",), ("GROQ",), ())
+def test_the_same_merge_repeated_three_times_does_not_drift():
+    current = [_cfg("groq-old", "GROQ")]
+    new = [_cfg("gemini", "GEMINI")]
+    for _ in range(3):
+        current, _keys, report = _merge(new, current, present={"GEMINI", "GROQ"})
+        assert [c.name for c in current] == ["gemini"]
+    assert (report.added, report.removed) == ((), ())
 
 
-def test_a_kept_entry_the_journal_proved_dead_is_retired():
-    _merged, _keys, report = _merge(
-        [_cfg("gemini", "GEMINI")],
-        [_cfg("groq-old", "GROQ")],
-        present={"GEMINI", "GROQ"},
-        dead={"groq-old"},
-    )
-    assert (report.removed, _retired(report), report.kept) == (("groq-old",), ("groq-old",), ())
-
-
-def test_with_keys_invisible_the_entry_stays_whatever_present_says():
-    """A merge site that cannot see the keys must never read absence as evidence."""
-    _merged, _keys, report = _merge(
-        [_cfg("gemini", "GEMINI")],
-        [_cfg("groq-old", "GROQ")],
-        present={"GEMINI"},
-        keys_visible=False,
-    )
-    assert (report.kept, report.removed) == (("groq-old",), ())
-
-
-def test_an_own_entry_on_the_same_ref_keeps_it_out_of_the_orphan_advice():
-    """The installation's own entry on the retired provider: the key is still in use."""
-    _merged, _keys, report = _merge(
-        [_cfg("gemini", "GEMINI")],
-        [_cfg("groq-old", "GROQ"), _cfg("groq-paid", "GROQ", from_preset=False)],
-        present={"GEMINI", "GROQ"},
-        dead={"groq-old"},
-    )
-    assert report.removed == ("groq-old",)
-    assert report.orphan_refs == ()
+# ── The unused-key advice ────────────────────────────────────────────────────
 
 
 def test_a_ref_nothing_references_any_more_is_reported_as_unused():
@@ -138,9 +98,17 @@ def test_a_ref_nothing_references_any_more_is_reported_as_unused():
         [_cfg("gemini", "GEMINI")],
         [_cfg("groq-old", "GROQ")],
         present={"GEMINI", "GROQ"},
-        dead={"groq-old"},
     )
-    assert (_retired(report), report.orphan_refs) == (("groq-old",), ("GROQ",))
+    assert (report.removed, report.orphan_refs) == (("groq-old",), ("GROQ",))
+
+
+def test_an_own_entry_on_the_same_ref_keeps_it_out_of_the_orphan_advice():
+    _merged, _keys, report = _merge(
+        [_cfg("gemini", "GEMINI")],
+        [_cfg("groq-old", "GROQ"), _cfg("groq-paid", "GROQ", from_preset=False)],
+        present={"GEMINI", "GROQ"},
+    )
+    assert (report.removed, report.orphan_refs) == (("groq-old",), ())
 
 
 def test_a_ref_with_no_key_behind_it_is_nothing_to_revoke():
@@ -159,64 +127,6 @@ def test_a_replaced_providers_ref_is_not_an_orphan():
     assert (report.removed, report.orphan_refs) == (("groq-old",), ())
 
 
-# ── The invariant the rule exists for ────────────────────────────────────────
-
-
-def test_a_sync_never_takes_away_a_model_this_installation_can_call():
-    """Invariant 11: an entry with a key goes only when the same provider replaces it,
-    or when the journal says it does not work."""
-    current = [_cfg(n, n.upper()) for n in ("a", "b", "c", "d", "e")]
-    present = {"A", "B", "C", "D", "E"}
-    _merged, _keys, report = _merge(current[:3], current, present=present)
-    assert (report.kept, report.removed) == (("d", "e"), ())
-
-    _merged, _keys, report = _merge(current[:3], current, present=present, dead={"d"})
-    assert (report.removed, _retired(report), report.kept) == (("d",), ("d",), ("e",))
-
-
-@pytest.mark.parametrize(
-    ("present", "new_names"),
-    [
-        (set(), ("gemini",)),
-        ({"GROQ"}, ("gemini",)),
-        ({"GEMINI"}, ("gemini",)),
-        ({"GROQ", "GEMINI"}, ()),
-    ],
-)
-def test_the_callable_count_never_decreases(present, new_names):
-    new = [_cfg(n, "GEMINI") for n in new_names]
-    _merged, _keys, report = _merge(new, [_cfg("groq-old", "GROQ")], present=present)
-    assert report.active_after >= report.active_before
-
-
-# ── Kept entries are recomputed, never accumulated ───────────────────────────
-
-
-def test_the_same_merge_repeated_three_times_does_not_drift():
-    current = [_cfg("groq-old", "GROQ")]
-    new = [_cfg("gemini", "GEMINI")]
-    for _ in range(3):
-        current, _keys, report = _merge(new, current, present={"GEMINI", "GROQ"})
-        assert [c.name for c in current] == ["gemini", "groq-old"]
-        assert report.kept == ("groq-old",)
-    assert report.added == ()  # gemini arrived on the first pass only
-
-
-def test_the_next_sync_removes_a_kept_entry_once_the_journal_condemns_it():
-    """Convergence, fed the previous merge's own result: the rule that this replaces
-    shipped green because its test handed the second merge a fresh arrival instead."""
-    new = [_cfg("gemini", "GEMINI")]
-    merged, _keys, report = _merge(new, [_cfg("groq-old", "GROQ")], present={"GEMINI", "GROQ"})
-    assert report.kept == ("groq-old",)
-
-    merged, _keys, report = _merge(new, merged, present={"GEMINI", "GROQ"}, dead={"groq-old"})
-    assert (report.removed, _retired(report)) == (("groq-old",), ("groq-old",))
-    assert [c.name for c in merged] == ["gemini"]
-
-    merged, _keys, report = _merge(new, merged, present={"GEMINI", "GROQ"})
-    assert (report.removed, report.kept, report.added) == ((), (), ())
-
-
 # ── The installation's own entries, keys, and the refusals ──────────────────
 
 
@@ -228,7 +138,7 @@ def test_own_entries_and_their_keys_are_carried_over():
     )
     assert [c.name for c in merged] == ["groq-new", "mine"]
     assert keys["MY_KEY"].help == "my help"
-    assert "mine" not in report.removed + report.kept + report.added
+    assert "mine" not in report.removed + report.added
 
 
 def test_an_arriving_entry_never_replaces_one_the_installation_wrote_itself():
@@ -242,31 +152,18 @@ def test_an_arriving_entry_never_replaces_one_the_installation_wrote_itself():
     assert report.updated == ()
 
 
-def test_key_help_for_a_kept_entry_is_carried_over():
-    _merged, keys, report = _merge(
-        [_cfg("gemini", "GEMINI")],
-        [_cfg("groq-old", "GROQ")],
-        keys_visible=False,
-        new_keys={"GEMINI": KeyInfo(api_key_ref="GEMINI", help="gemini help", extra={})},
-        current_keys={"GROQ": KeyInfo(api_key_ref="GROQ", help="groq help", extra={})},
-    )
-    assert keys["GROQ"].help == "groq help"
-    assert {p.api_key_ref: p.help for p in report.pending_keys} == {
-        "GEMINI": "gemini help",
-        "GROQ": "groq help",
-    }
-
-
-def test_a_kept_entry_without_key_help_is_not_an_error():
+def test_key_help_travels_with_the_pending_key():
     _merged, _keys, report = _merge(
         [_cfg("gemini", "GEMINI")],
-        [_cfg("groq-old", "GROQ")],
-        keys_visible=False,
+        [],
+        new_keys={"GEMINI": KeyInfo(api_key_ref="GEMINI", help="gemini help", extra={})},
     )
-    assert [(p.api_key_ref, p.help) for p in report.pending_keys] == [
-        ("GEMINI", ""),
-        ("GROQ", ""),
-    ]
+    assert [(p.api_key_ref, p.help) for p in report.pending_keys] == [("GEMINI", "gemini help")]
+
+
+def test_a_pending_key_without_help_is_not_an_error():
+    _merged, _keys, report = _merge([_cfg("gemini", "GEMINI")], [])
+    assert [(p.api_key_ref, p.help) for p in report.pending_keys] == [("GEMINI", "")]
 
 
 def test_a_name_clash_between_a_synced_and_an_own_entry_is_refused():
@@ -283,14 +180,14 @@ def test_report_fields_on_a_no_op_run():
     current = [_cfg("a", "A"), _cfg("b", "B")]
     merged, _keys, report = _merge(current, current, present={"A", "B"})
     assert [c.name for c in merged] == ["a", "b"]
-    assert (report.added, report.updated, report.removed, report.kept) == ((), (), (), ())
+    assert (report.added, report.updated, report.removed) == ((), (), ())
     assert (report.active_before, report.active_after) == (2, 2)
 
 
 def test_a_no_op_run_still_names_the_keys_it_is_waiting_for():
     current = [_cfg("a", "A"), _cfg("b", "B")]
     _merged, _keys, report = _merge(current, current, present={"A"})
-    assert (report.added, report.removed, report.kept) == ((), (), ())
+    assert (report.added, report.removed) == ((), ())
     assert [p.api_key_ref for p in report.pending_keys] == ["B"]
 
 
@@ -307,30 +204,29 @@ def test_an_updated_entry_is_reported_as_updated_not_added():
 
 def test_an_empty_result_over_a_working_registry_is_refused():
     current = [_cfg("a", "A")]
-    _merged, _keys, report = _merge([], current, present={"A"})
+    merged, _keys, report = _merge([], current, present={"A"})
     with pytest.raises(SyncRefusedError) as excinfo:
-        check_not_emptying([], current, report)
+        check_not_emptying(merged, current, report)
     assert excinfo.value.report.applied is False
 
 
 def test_an_empty_result_over_an_empty_registry_is_onboarding():
-    _merged, _keys, report = _merge([], [])
-    check_not_emptying([], [], report)  # does not raise
+    merged, _keys, report = _merge([], [])
+    check_not_emptying(merged, [], report)  # does not raise
 
 
-def test_an_empty_lineup_over_a_keyless_registry_reaches_the_guard():
-    """The guard is on the normal path now: nothing arrives, no key exists for
-    anything already there, so every entry is removable and the result is empty."""
+def test_an_empty_arriving_list_empties_the_curated_half_and_reaches_the_guard():
+    """The guard is on the normal path: nothing arrives, so every curated entry is
+    removed however well-keyed it is, and the result is empty."""
     current = [_cfg("a", "A"), _cfg("b", "B")]
-    merged, _keys, report = _merge([], current, present={"C"})
+    merged, _keys, report = _merge([], current, present={"A", "B"})
     assert (merged, report.removed) == ([], ("a", "b"))
     with pytest.raises(SyncRefusedError):
         check_not_emptying(merged, current, report)
 
 
-def test_an_empty_lineup_over_a_keyed_registry_keeps_everything():
-    current = [_cfg("a", "A"), _cfg("b", "B")]
-    merged, _keys, report = _merge([], current, present={"A", "B"})
-    assert [c.name for c in merged] == ["a", "b"]
-    assert report.kept == ("a", "b")
+def test_an_own_entry_keeps_an_empty_arriving_list_off_the_guard():
+    current = [_cfg("a", "A"), _cfg("mine", "M", from_preset=False)]
+    merged, _keys, report = _merge([], current, present={"A", "M"})
+    assert ([c.name for c in merged], report.removed) == (["mine"], ("a",))
     check_not_emptying(merged, current, report)  # does not raise

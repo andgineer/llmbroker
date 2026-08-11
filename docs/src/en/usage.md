@@ -23,7 +23,7 @@ key simply stays inactive, it is not an error. The broker reads the `.env` in yo
 working directory; an exported variable wins over it.
 
 A provider that cannot handle parallel requests on one key is capped by
-`parallel` on its entry. For the pool that is the curated lineup's call, not
+`parallel` on its entry. For the pool that is the curated model list's call, not
 yours — the file is llmbroker's, see [below](#file); on a model of your own you
 set it, as a field of the `LLMConfig` you declare.
 
@@ -45,17 +45,17 @@ instead to declare an endpoint of your own, exactly as written. Either way
 nothing is stored: the declaration in your code is the only source of truth.
 See [Direct model calls](direct.md).
 
-### Where the lineup lives {#file}
+### Where the model list lives {#file}
 
-You do not have to put it anywhere. A broker keeps its lineup in llmbroker's own
+You do not have to put it anywhere. A broker keeps its model list in llmbroker's own
 directory — `~/.cache/llmbroker` on Linux, `~/Library/Caches/llmbroker` on macOS
 — and refreshes it there. Set `LLMBROKER_HOME` to move that directory, which is
 what a container without a writable cache needs.
 
 That file is written by llmbroker, not by you: a refresh regenerates it in full,
 and it holds the pool and nothing else — a model you reach by name is
-[declared in code](direct.md). There is no way to point a broker at a lineup file
-of your own — a lineup arrives as a curated preset name and nothing else. What
+[declared in code](direct.md). There is no way to point a broker at a model list file
+of your own — a model list arrives as a curated preset name and nothing else. What
 you can name is a database:
 
 ```python
@@ -143,9 +143,9 @@ report = llms.sync("freetier")           # a preset name — the only call that 
 print(llmbroker.format_report(report))   # or forward the report to your own admin channel
 ```
 
-You rarely need to. **The curated lineup keeps itself current on its own**, with
+You rarely need to. **The curated model list keeps itself current on its own**, with
 no argument and no job to schedule: providers retire free endpoints without
-notice, so a lineup that stops updating slowly stops working. The broker
+notice, so a model list that stops updating slowly stops working. The broker
 re-checks it about once a day, lazily — the check happens on a call you were
 making anyway, never on a timer, so an idle process does nothing at all.
 
@@ -153,7 +153,7 @@ It is best-effort: if the catalog is unreachable, the broker logs a warning and
 carries on with the config it already has. The explicit `llms.sync(...)` call
 raises instead — you asked for it, so you get to handle it.
 
-**A check that changes nothing touches nothing.** The lineup is rewritten only
+**A check that changes nothing touches nothing.** The model list is rewritten only
 when the curated one genuinely moved, so a check that found no news leaves it
 byte-identical, mtime included.
 
@@ -198,35 +198,23 @@ the same 429. Pass `home=` if you want a project to keep its own.
 To keep a database registry current from your own deploy job, see
 [Servers & clusters](server.md).
 
-Four things in the report are worth understanding:
+Three things in the report are worth understanding:
 
 - **A pending key** is a model waiting for a key you have not set. Harmless: it
   stays inactive and the pool routes over the rest. The report prints where to
   get the key.
-- **A kept entry** is a model whose provider left the curated lineup while you
-  still hold a key for it. Nothing happens to it: it keeps routing exactly as
-  before, and it disappears by itself once it stops working.
-
-  ```
-  kept: openrouter-nemotron — the lineup no longer carries OPENROUTER_API_KEY
-  and this installation has a key for it, so it stays
-  ```
-- **A retired entry** is that same model after your own call journal proved it
-  dead — at least one 401/403/404 and not one success. A bad week of 429s and
-  5xx proves nothing and changes nothing. Removing an entry from your config is
-  the one destructive thing a sync does, so the line shows the evidence:
-
-  ```
-  retired: groq-llama-3.3-70b — 401 since 2026-07-02, no successful call since;
-  the lineup dropped it too
-  ```
+- **A removed entry** is a model the curated list no longer carries. It goes,
+  whether or not you still hold a key for it — the list is what decides which
+  models this pool routes over, and a model leaves it only once it can no longer
+  be called. Nothing is lost if it comes back later: the key stays in the secrets
+  store and everything learned about the model derives from your call journal.
 - **An unused key** is a key you actually have that nothing in your config
   references any more. Whether to revoke it at the provider is your call, and a
   model of your own still using it keeps it out of that advice. A provider you
   never had a key for just disappears quietly — there is nothing to revoke.
 
-That is the whole rule: a sync never takes away a model you can call, unless the
-same provider replaces it or your journal says it does not work.
+A removal is never silent: taking a provider away is what moves the usable-provider
+count, and the pool alarm below fires on the way down to one and to none.
 
 ### Watching the pool {#pool-health}
 

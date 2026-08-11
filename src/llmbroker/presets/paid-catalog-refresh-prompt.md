@@ -13,7 +13,7 @@ Background reading before you start (do not skip):
 - `src/llmbroker/broker/aliases.py` — how a declared alias resolves against this
   file. The catalog's fields must map cleanly onto what a declared model needs:
   `base_url`, `model`, `api_key_ref`, and a key help blurb.
-- [`../../../specs/reference/rules/direct-aliases.md`](../../../specs/reference/rules/direct-aliases.md) —
+- [`../../../specs/reference/rules/direct-by-name.md`](../../../specs/reference/rules/direct-by-name.md) —
   llmbroker calls **only OpenAI-compatible** `/chat/completions` endpoints. A
   provider without an OpenAI-compatible endpoint cannot be in this catalog.
 
@@ -25,7 +25,7 @@ config depends on, so it is governed by a permanence contract:
 
 - **A published alias never disappears and never renames.** A generation change
   re-points the existing alias at the successor model; it does not mint a new one.
-  Dropping a model that still has a live alias breaks every lineup following it —
+  Dropping a model that still has a live alias breaks every model list following it —
   either keep the alias pointing at the provider's successor, or accept that
   every refresh will warn on it forever.
 - **No version substring in an alias.** `opus`, `gpt-mini`, `flash` are aliases;

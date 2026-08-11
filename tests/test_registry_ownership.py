@@ -13,12 +13,11 @@ import pytest
 from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.catalog import Catalog
-from llmbroker.broker.keys import KeyEvidence
-from llmbroker.broker.lineup_file import render_lineup
-from llmbroker.broker.merge import merge_upstream, retirement_candidates
-from llmbroker.models import Lineup, LLMConfig
+from llmbroker.broker.model_list_file import render_model_list
+from llmbroker.broker.merge import merge_upstream
+from llmbroker.models import ModelList, LLMConfig
 from llmbroker.sqlite import Registry as SqliteRegistry
-from llmbroker.standalone.registry import parse_lineup
+from llmbroker.standalone.registry import parse_model_list
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import InMemoryStore
 
@@ -45,9 +44,9 @@ def _curated(name, ref="GEMINI", *, url="https://g/v1", model="m"):
 
 def _merge(new, current, present=()):
     merged, report = merge_upstream(
-        Lineup(configs=list(new)),
-        Lineup(configs=list(current)),
-        KeyEvidence(present=frozenset(present), visible=True),
+        ModelList(configs=list(new)),
+        ModelList(configs=list(current)),
+        frozenset(present),
         source="freetier",
     )
     return merged.configs, report
@@ -71,27 +70,15 @@ def test_a_host_entry_survives_a_sync_that_adds_updates_and_removes():
     )
     assert mine in merged
     assert (report.added, report.updated, report.removed) == (("gemini",), ("groq",), ("gone",))
-    assert report.kept == ()
 
 
 def test_an_arriving_entry_never_replaces_a_host_entry_on_the_same_provider():
-    """The removal rule's first row is about the provider, and it may not reach here."""
+    """An entry on the ref the arriving list carries: the mirror still stops at the
+    border, so the host's own entry is neither replaced nor removed."""
     mine = _own("mine", "GEMINI")
     merged, report = _merge([_curated("gemini")], [mine])
     assert [c.name for c in merged] == ["gemini", "mine"]
     assert report.removed == ()
-
-
-def test_a_host_entry_is_never_a_retirement_candidate():
-    """Retirement is the one destructive act a sync has, and it stops at the border."""
-    assert (
-        retirement_candidates(
-            [_curated("gemini")],
-            [_own("mine", "OWN")],
-            KeyEvidence(present=frozenset({"OWN"}), visible=True),
-        )
-        == []
-    )
 
 
 def test_a_name_the_merge_would_carry_twice_is_refused():
@@ -160,14 +147,14 @@ async def test_a_sync_marks_what_it_wrote(tmp_path, preset):
     assert [(c.name, c.from_preset) for c in await registry.load()] == [("gemini", True)]
 
 
-# ── The lineup file has one owner ───────────────────────────────────────────
+# ── The model list file has one owner ───────────────────────────────────────────
 
 
 def test_a_render_and_parse_round_trip_states_the_file_as_a_syncs():
     """The file is llmbroker's own output, so everything in it came from a preset — a
     renderer that stopped agreeing with the parser would invent a second owner."""
-    lineup = Lineup(configs=[_curated("gemini"), _curated("groq")])
-    reparsed = parse_lineup(tomllib.loads(render_lineup(lineup)))
+    model_list = ModelList(configs=[_curated("gemini"), _curated("groq")])
+    reparsed = parse_model_list(tomllib.loads(render_model_list(model_list)))
     assert {c.name: c.from_preset for c in reparsed.configs} == {"gemini": True, "groq": True}
 
 

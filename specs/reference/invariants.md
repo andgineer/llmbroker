@@ -23,14 +23,10 @@ rather than what the running system must never do.
 | file | what it answers |
 |---|---|
 | [`rules/call-path.md`](rules/call-path.md) | one routed call — failure classification, `wait`, streaming, the error contract |
-| [`rules/selection.md`](rules/selection.md) | which model is picked — cooldown, quality demotion, priority, curated weights |
-| [`rules/sync-merge.md`](rules/sync-merge.md) | a curated list becomes the registry — the mirror, the partition, the report |
-| [`rules/list-refresh.md`](rules/list-refresh.md) | what keeps the model list current — the two gates, the check record, the cache |
-| [`rules/pool-health.md`](rules/pool-health.md) | can the pool still fail over — provider counts, `degraded`, the alarm |
-| [`rules/presets.md`](rules/presets.md) | the free pool's definitions — preset distribution, key help, the CLI |
-| [`rules/direct-aliases.md`](rules/direct-aliases.md) | reaching a host's own model — the paid catalog, `direct`, alias contract |
-| [`rules/backends.md`](rules/backends.md) | the three ports, source dispatch, lifecycle, DB schema policy, secret naming |
-| [`rules/journal.md`](rules/journal.md) | the journal — read path, the quality read, retention, scoping |
+| [`rules/selection.md`](rules/selection.md) | which model is picked — cooldown, quality demotion, priority, curated weights, and whether the pool can still fail over |
+| [`rules/model-list.md`](rules/model-list.md) | where the models come from, how a curated list becomes the registry, and the four triggers that rebuild the pool |
+| [`rules/direct-by-name.md`](rules/direct-by-name.md) | reaching a host's own model — the paid catalog, `direct`, alias contract |
+| [`rules/backends.md`](rules/backends.md) | the three ports, source dispatch, lifecycle, DB schema policy, secret naming, and the journal it all writes to |
 | [`decisions.md`](decisions.md) | why a contested decision went that way. Open one entry by its anchor — do not read it whole |
 | [`mission.md`](mission.md) | what the library is for, and the design that follows from it |
 | [`freetier-providers.md`](freetier-providers.md) | curated knowledge about the free endpoints the pool routes over |
@@ -39,19 +35,19 @@ rather than what the running system must never do.
 
 1. **The journal is append-only.** No backend ever updates a journal row. A
    quality rating is a separate self-contained record, never joined to the call
-   it rates. → `journal.md`
+   it rates. → `backends.md`
 
 2. **Nothing inside llmbroker writes the registry but `sync`.** There is no
    add/update/remove path; learning, the optimizer and the admin verbs never
    touch it. What the installation states through the registry port is its own,
-   and invariant 22 is what keeps it. → `sync-merge.md`
+   and invariant 22 is what keeps it. → `model-list.md`
 
 3. **The registry stores no ordering.** Every backend returns rows in its own
    order, so an entry's standing must be data on the entry. Nothing may read
    priority out of row position. → `backends.md`, `selection.md`
 
 4. **Nothing a host declares in code enters the routed pool.**
-   → `direct-aliases.md`
+   → `direct-by-name.md`
 
 5. **Nothing but a host rating enters the quality window.** Demotion has no
    time-based recovery, so any auto-generated score — a failure count, an
@@ -60,7 +56,7 @@ rather than what the running system must never do.
 
 6. **Journal reads never provision the pool.** Binding on every journal-read
    API, present and future: a visibility call must keep working on an install
-   whose registry is empty, stale, or gone. → `journal.md`
+   whose registry is empty, stale, or gone. → `backends.md`
 
 7. **A latency budget belongs to the call, never to the model.** There is no
    per-model timeout knob and will not be one — it could not compose with
@@ -74,12 +70,12 @@ rather than what the running system must never do.
    nothing else to learn from, and re-derived from the tail, replaced wholesale.
    And a row survives its store whole: a backend that persists part of what it
    was handed is a defect, not a storage choice — the loss surfaces as degraded
-   selection, never as an error. → `journal.md`
+   selection, never as an error. → `backends.md`
 
 9. **Every instant crossing the store boundary is UTC, in both directions.** A
    naive value is refused on write and on read rather than guessed at; admitted
    once, it resurfaces as a mis-filed record on every later read.
-   → `journal.md`
+   → `backends.md`
 
 10. **A client request error never cools a model and never advances its
     streak.** Any 4xx other than 429/401/403 is the request's fault; the model
@@ -94,7 +90,7 @@ rather than what the running system must never do.
 
 12. **Model identity is immutable.** The same entry name carrying a different
     `model` is an error; a bump must be a new entry name. This protects the
-    binding between a name and everything learned about it. → `sync-merge.md`
+    binding between a name and everything learned about it. → `model-list.md`
 
 13. **The table schema is not a public contract.** Column names and shapes may
     change between releases without notice; the supported read surface is
@@ -107,11 +103,11 @@ rather than what the running system must never do.
 15. **A sync never deletes a secret.** A key kept for paid direct calls on the
     same provider is the common case, so deletion could never be the retirement
     mechanism; an orphaned ref is reported and a human decides.
-    → `sync-merge.md`
+    → `model-list.md`
 
 16. **The registry and everything learned are user-agnostic.** `scope` reaches
     secret refs and journal attribution only; no protocol and no backend has a
-    user concept, and nothing is partitioned per user. → `journal.md`
+    user concept, and nothing is partitioned per user. → `backends.md`
 
 17. **An empty answer is an answer.** A well-shaped completion carrying no text
     and no tool calls returns an empty string; it is never a provider failure
@@ -131,10 +127,10 @@ rather than what the running system must never do.
 21. **A key exists only when it is non-empty.** A blank export, an unfilled
     `KEY=` line, a backend returning `""` — all count as unset everywhere, since
     key presence also authorizes removals during a sync.
-    → `presets.md`
+    → `model-list.md`
 
 22. **A sync never removes or overwrites an entry it did not write.** Every
     entry records whether a sync put it there, and the default is *no*, so
     anything reaching a registry by any other route is protected without doing
     anything. The one exception is the alias an entry asked us to follow.
-    → `sync-merge.md`
+    → `model-list.md`

@@ -15,6 +15,7 @@ from typing import TypeVar
 import httpx
 
 from llmbroker import chat
+from llmbroker.broker.keyring import KeyRing
 from llmbroker.broker.learning import Learner
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.result import AsyncResult
@@ -38,7 +39,7 @@ from llmbroker.http_status import (
     is_rate_limit,
     is_unavailable,
 )
-from llmbroker.models import Call, CallStatus, LLMConfig, Usage, key_hash
+from llmbroker.models import Call, CallStatus, LLMConfig, Usage
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.store import StoreProtocol
 
@@ -78,13 +79,15 @@ class _Verdict:
 
 @dataclass(frozen=True, slots=True)
 class _Attempt:
-    """Identity of one in-flight attempt — what its journal row is keyed by."""
+    """Identity of one in-flight attempt: what its journal row is keyed by, and the
+    ring whose key is paying for it."""
 
     config: LLMConfig
     call_id: str
     t0: float
     operation: str | None
     trace_id: str | None
+    ring: KeyRing
     resolved_key: str
 
 
@@ -153,13 +156,9 @@ def _classify_status(exc: httpx.HTTPStatusError) -> _Verdict:
         base = retry_after_seconds(exc.response.headers, _DEFAULT_RATE_LIMIT_SEC)
         return _Verdict(status, detail, http_status=code, cool_base=base)
     if is_auth_failure(code):
-        return _Verdict(
-            CallStatus.ERROR,
-            detail,
-            http_status=code,
-            cool_base=_DEFAULT_RATE_LIMIT_SEC,
-            outcome=_Failed(error=None),
-        )
+        # No cooldown: the key is dead, the model is not. Withdrawing the model would
+        # take it from every other caller over one caller's rejected key.
+        return _Verdict(CallStatus.ERROR, detail, http_status=code, outcome=_Failed(error=None))
     if is_client_error(code):
         return _Verdict(CallStatus.ERROR, detail, http_status=code, outcome=_Failed(error=exc))
     return _Verdict(CallStatus.ERROR, detail, http_status=code, cool_base=_DEFAULT_RATE_LIMIT_SEC)
@@ -189,19 +188,26 @@ class Router:
         pool: LLMPool,
         store: StoreProtocol,
         *,
-        scope: str | None,
         optimizer: Optimizer | None = None,
         learner: Learner | None = None,
     ) -> None:
         self._pool = pool
         self._store = store
-        self._scope = scope
         self._optimizer = optimizer
         self._learner = learner
-        self._http: httpx.AsyncClient | None = None
+        self._http_client: httpx.AsyncClient | None = None
+
+    @property
+    def http(self) -> httpx.AsyncClient:
+        """The installation's one HTTP client, opened on first use and shared by every
+        caller — routed calls and ``direct`` clients alike."""
+        if self._http_client is None:
+            self._http_client = chat.make_client()
+        return self._http_client
 
     async def ask(
         self,
+        ring: KeyRing,
         prompt: str,
         *,
         operation: str | None = None,
@@ -209,14 +215,16 @@ class Router:
         wait: float | None = None,
     ) -> AsyncResult:
         return await self.chat(
+            ring,
             [{"role": "user", "content": prompt}],
             operation=operation,
             trace_id=trace_id,
             wait=wait,
         )
 
-    async def chat(
+    async def chat(  # noqa: PLR0913 - who calls, what, and the three call knobs
         self,
+        ring: KeyRing,
         messages: list[dict],
         *,
         tools: list[dict] | None = None,
@@ -226,6 +234,7 @@ class Router:
     ) -> AsyncResult:
         routed = self._route(
             partial(self._attempt, messages=messages, tools=tools),
+            ring=ring,
             operation=operation,
             trace_id=trace_id,
             wait=wait,
@@ -234,10 +243,11 @@ class Router:
         async with aclosing(routed) as results:
             return await anext(results)
 
-    async def _route(
+    async def _route(  # noqa: PLR0913 - one call's whole context: who, what, how long
         self,
         attempt: Callable[..., AsyncIterator[_Produced]],
         *,
+        ring: KeyRing,
         operation: str | None,
         trace_id: str | None,
         wait: float | None,
@@ -256,6 +266,7 @@ class Router:
             try:
                 config = await self._pool.acquire(
                     queue_deadline,
+                    payable=await ring.payable(c.api_key_ref for c in self._pool.configs.values()),
                     operation=operation,
                     exclude=frozenset(client_failed),
                     answer_deadline=answer_deadline,
@@ -271,6 +282,7 @@ class Router:
                     config,
                     outcome,
                     answer_deadline,
+                    ring=ring,
                     operation=operation,
                     trace_id=trace_id,
                 ),
@@ -305,20 +317,28 @@ class Router:
             return chat.HTTP_TIMEOUT, False
         return max(remaining, 0.0), True
 
-    def _new_attempt(
+    async def _new_attempt(
         self,
         config: LLMConfig,
+        ring: KeyRing,
         *,
         operation: str | None,
         trace_id: str | None,
-    ) -> _Attempt:
+    ) -> "_Attempt | None":
+        """``None`` where the caller's key for this model has gone since the slot was
+        taken — a 401 in another attempt is enough, and the slot goes straight back."""
+        key = await ring.resolve(config.api_key_ref)
+        if key is None:
+            await self._pool.release(config)
+            return None
         return _Attempt(
             config=config,
             call_id=str(uuid.uuid4()),
             t0=time.monotonic(),
             operation=operation,
             trace_id=trace_id,
-            resolved_key=self._pool.resolved_key(config.name),
+            ring=ring,
+            resolved_key=key,
         )
 
     def _backoff(self, name: str) -> float:
@@ -355,9 +375,8 @@ class Router:
                 latency_ms=int((time.monotonic() - attempt.t0) * 1000),
                 error_detail=error_detail,
                 usage=usage,
-                scope=self._scope,
+                scope=attempt.ring.scope,
                 cooldown_until=cooldown_until,
-                key_hash=key_hash(attempt.resolved_key) if cooldown_delay is not None else None,
                 budget_ms=budget_ms,
             ),
         )
@@ -380,6 +399,8 @@ class Router:
         back, then journal it. The single failure surface both routing paths use."""
         delay: float | None = None
         budget_ms: int | None = None
+        if verdict.http_status is not None and is_auth_failure(verdict.http_status):
+            attempt.ring.forget(attempt.config.api_key_ref)
         if verdict.cool_base is None:
             await self._pool.release(attempt.config)
             if isinstance(verdict.outcome, _BudgetExpired):
@@ -412,6 +433,7 @@ class Router:
         outcome: _Outcome,
         answer_deadline: float | None,
         *,
+        ring: KeyRing,
         messages: list[dict],
         tools: list[dict] | None,
         operation: str | None,
@@ -419,11 +441,11 @@ class Router:
     ) -> AsyncIterator[AsyncResult]:
         """Run one LLM and yield its single result, or leave on ``outcome`` the verdict
         the driver fails over on."""
-        attempt = self._new_attempt(config, operation=operation, trace_id=trace_id)
+        attempt = await self._new_attempt(config, ring, operation=operation, trace_id=trace_id)
+        if attempt is None:
+            outcome.verdict = _Failed(error=None)
+            return
         backoff = self._backoff(config.name)
-
-        if self._http is None:
-            self._http = chat.make_client()
 
         timeout, budget_bound = self._attempt_timeout(answer_deadline)
         if budget_bound and timeout == 0.0:
@@ -439,7 +461,7 @@ class Router:
                     attempt.resolved_key,
                     messages,
                     tools,
-                    client=self._http,
+                    client=self.http,
                     timeout=timeout,
                 )
         except _FAILOVER_ERRORS as exc:
@@ -464,7 +486,7 @@ class Router:
                 llm_name=config.name,
                 operation=operation,
                 store=self._store,
-                scope=self._scope,
+                scope=ring.scope,
                 observe_quality=(
                     self._learner.record_quality_observed if self._learner is not None else None
                 ),
@@ -480,6 +502,7 @@ class Router:
 
     async def stream(
         self,
+        ring: KeyRing,
         messages: list[dict],
         *,
         operation: str | None = None,
@@ -493,6 +516,7 @@ class Router:
         """
         routed = self._route(
             partial(self._stream_attempt, messages=messages),
+            ring=ring,
             operation=operation,
             trace_id=trace_id,
             wait=wait,
@@ -508,17 +532,18 @@ class Router:
         outcome: _Outcome,
         first_delta_deadline: float | None,
         *,
+        ring: KeyRing,
         messages: list[dict],
         operation: str | None,
         trace_id: str | None,
     ) -> AsyncIterator[str]:
         """Stream one LLM, yielding its deltas. Leaves a verdict on ``outcome`` when it
         died before the first delta; the slot is settled and journaled by then."""
-        attempt = self._new_attempt(config, operation=operation, trace_id=trace_id)
+        attempt = await self._new_attempt(config, ring, operation=operation, trace_id=trace_id)
+        if attempt is None:
+            outcome.verdict = _Failed(error=None)
+            return
         backoff = self._backoff(config.name)
-        if self._http is None:
-            self._http = chat.make_client()
-
         timeout, budget_bound = self._attempt_timeout(first_delta_deadline)
         if budget_bound and timeout == 0.0:
             await self._spent_budget(attempt, outcome)
@@ -535,7 +560,7 @@ class Router:
         try:
             async with aclosing(
                 _stream_deltas(
-                    self._http,
+                    self.http,
                     request,
                     model=config.name,
                     timeout=timeout,
@@ -606,6 +631,6 @@ class Router:
                 logger.exception("llmbroker: learning from the call failed")
 
     async def aclose(self) -> None:
-        if self._http is not None:
-            await self._http.aclose()
-            self._http = None
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None

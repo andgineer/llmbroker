@@ -40,6 +40,23 @@ class Secrets:
                 raise KeyError(f"aws.Secrets: ref {ref!r} not found") from exc
             return response["SecretString"]
 
+    async def refs(self, prefix: str = "") -> frozenset[str]:
+        """Every ref stored under this instance's prefix, narrowed by ``prefix``.
+        Paginated: ListSecrets caps a page, and a truncated answer would read as
+        "that key is not here"."""
+        wanted = self._name(prefix)
+        found: set[str] = set()
+        async with self._client() as client:
+            paginator = client.get_paginator("list_secrets")
+            async for page in paginator.paginate(
+                Filters=[{"Key": "name", "Values": [wanted]}],
+            ):
+                for secret in page.get("SecretList", ()):
+                    name = secret.get("Name", "")
+                    if name.startswith(wanted):
+                        found.add(name[len(self._prefix) :])
+        return frozenset(found)
+
     async def set(self, ref: str, value: str) -> None:
         name = self._name(ref)
         async with self._client() as client:

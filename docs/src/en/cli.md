@@ -55,7 +55,7 @@ call it with `broker.direct("opus")`. See [Direct model calls](direct.md).
 ## What the CLI does not do
 
 There is no command that writes a model list, and none that refreshes one.
-A model you reach by name is declared in your own code, never stored. A broker keeps its own lineup
+A model you reach by name is declared in your own code, never stored. A broker keeps its own model list
 current by itself (see [Basic usage](usage.md#sync)), and a broker on a
 database registry is refreshed by its own entrypoint calling
 `broker.sync("freetier")` — see [Servers & clusters](server.md#sync). That keeps

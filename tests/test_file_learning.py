@@ -1,26 +1,24 @@
 """Confirmed-bug repros: the default FileStore must feed the journal rebuild —
-learning, calls(), and peer cooldowns must all survive a restart over the same home."""
-
-import uuid
-from datetime import UTC, datetime, timedelta
+quality and calls() must survive a restart over the same home."""
 
 import pytest
 
 from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
-from llmbroker.models import Call, CallStatus, key_hash
 
-_LINEUP = '[[llms]]\nname = "m1"\nbase_url = "https://x/v1"\nmodel = "m"\napi_key_ref = "FL_KEY"\n'
+_MODEL_LIST = (
+    '[[llms]]\nname = "m1"\nbase_url = "https://x/v1"\nmodel = "m"\napi_key_ref = "FL_KEY"\n'
+)
 
 
 @pytest.fixture(autouse=True)
 def preset(monkeypatch):
-    """Serve the curated lineup to ``sync("freetier")`` without touching the network."""
-    monkeypatch.setattr(presets, "fetch_preset_text", lambda _name: _LINEUP)
+    """Serve the curated model list to ``sync("freetier")`` without touching the network."""
+    monkeypatch.setattr(presets, "fetch_preset_text", lambda _name: _MODEL_LIST)
 
 
 def _home(tmp_path):
-    (tmp_path / "lineup.toml").write_text(_LINEUP)
+    (tmp_path / "model-list.toml").write_text(_MODEL_LIST)
     return tmp_path
 
 
@@ -53,7 +51,9 @@ async def test_calls_works_on_default_file_store(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("store_kind", ["file", "sqlite"])
-async def test_two_brokers_converge_over_one_journal(tmp_path, monkeypatch, store_kind):
+async def test_two_brokers_converge_on_quality_over_one_journal(tmp_path, monkeypatch, store_kind):
+    """Quality is the one thing derived from the journal, so a rating one broker
+    persisted must reach the other's next rebuild — over either store."""
     monkeypatch.setenv("FL_KEY", "sk-test")
 
     if store_kind == "file":
@@ -70,23 +70,12 @@ async def test_two_brokers_converge_over_one_journal(tmp_path, monkeypatch, stor
         await a.ensure_pool()
         await b.ensure_pool()
 
-    until = datetime.now(UTC) + timedelta(seconds=60)
-    await a._store.record(
-        Call(
-            id=str(uuid.uuid4()),
-            llm_name="m1",
-            operation=None,
-            trace_id=None,
-            status=CallStatus.RATE_LIMITED,
-            ts=datetime.now(UTC),
-            http_status=429,
-            cooldown_until=until,
-            key_hash=key_hash("sk-test"),
-        )
-    )
-    for _ in range(10):
-        await a._store.record_quality("m1", "summarize", 0.0)
+    try:
+        for _ in range(10):
+            await a._store.record_quality("m1", "summarize", 0.0)
 
-    await b._learner.maybe_rebuild(force=True)
-    assert b._optimizer.is_demoted("m1", "summarize")
-    assert b._pool._slots["m1"].cooldown_until == until
+        await b.rebuild()
+        assert b._optimizer.is_demoted("m1", "summarize")
+    finally:
+        await a.aclose()
+        await b.aclose()

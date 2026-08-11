@@ -5,6 +5,14 @@ has been picked. Which model that is belongs to
 [`selection.md`](selection.md). The cross-cutting rules this file elaborates are
 in [`../invariants.md`](../invariants.md).
 
+There is one pool per process and every caller routes over it, so the per-model
+concurrency cap is the installation's: the slot counter that enforces it is the
+pool's, and a counter per caller would not be a cap at all
+([`decisions.md`](../decisions.md#the-broker-is-the-installation-a-caller-is-a-scope)).
+What differs per caller is which models it can pay for — a model whose key that
+caller does not hold is not a candidate for it, and the exhaustion reason a caller
+sees is computed against its own keys.
+
 ## The error contract
 
 When no model can answer, the broker raises `NoLLMAvailableError` carrying a

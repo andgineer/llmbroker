@@ -1,8 +1,9 @@
 # Selection
 
-Which model a call gets, and the two mechanisms that move it: cooldown
-(availability) and quality demotion (ordering). What happens once a model is
-picked is [`call-path.md`](call-path.md). The cross-cutting rules this file
+Which model a call gets, the two mechanisms that move it — cooldown
+(availability) and quality demotion (ordering) — and whether enough of the pool
+is left to fail over at all. What happens once a model is picked is
+[`call-path.md`](call-path.md). The cross-cutting rules this file
 elaborates are in [`../invariants.md`](../invariants.md).
 
 The `Optimizer` computes both. `optimize=True` (the default) activates it; an
@@ -25,10 +26,19 @@ uses the same formula with the flat base, there being no `Retry-After` to read.
 The streak follows the cooldown exactly: a failure that did not cool the model
 does not advance its backoff exponent either.
 
-An HTTP 401/403 is a dead key: the model drops from the pool immediately and
+An HTTP 401/403 is a dead key, and it withdraws the *key*, not the model: the ref
+stops being payable in the ring that handed the value over, immediately and
 unconditionally — no amount of retrying fixes an invalid key — logged at error
-level naming the `api_key_ref`. The drop lasts until the pool is rebuilt, which
-re-reads the key and takes the model back if a working value has appeared.
+level naming the `api_key_ref`. The model is not cooled, since nothing is wrong
+with it and cooling it would take it from every other caller. The withdrawal lasts
+until the pool is rebuilt, which re-reads the ref and takes it back if a working
+value has appeared. Which callers it reaches is in
+[`backends.md`](backends.md#per-user-scoping).
+
+Nothing about availability is on the journal tail and no failure forces a read of
+its own: a cooldown and a rejected key belong to the process that found them, are
+written to no row, and are read back from none (invariant 8's other half — quality
+is the only thing derived from the journal).
 
 **A cooldown belongs to the process that met it** (invariant 11). It is held in
 memory, written to no row, and no process reads another's
@@ -170,3 +180,74 @@ dead key, a demotion flip, an under-provisioned pool (every keyed model COOLING
 at once, debounced) — are log lines.
 `snapshot()` serves each model's raw facts and metrics; the host derives
 whatever presentation it wants.
+
+## Pool health
+
+**The measure is the provider, not the entry.** Of the distinct `api_key_ref`s
+among managed entries, how many have a key: `providers_usable` of
+`providers_total`. Two entries on one ref are one quota and one failure domain,
+so they count once.
+
+**One usable provider is degraded**: a single quota with nothing to fail over
+to, which is the failover feature's own definition rather than a tuning knob.
+Zero is a dead pool. Missing keys are never an alarm on their own — two
+providers may be all a host wants.
+
+A registry that pools nothing is not a degraded pool but the absence of one: a
+host whose entries are all its own asked for no failover and is told nothing
+about it. That shape is ordinary — a broker that only reaches declared paid
+models has exactly it.
+
+**A key missing on a model reached only by name is reported apart from the
+pool's.** Such a model is never routed, so it can neither degrade the pool nor
+be repaired by it, and folding it in would make "degraded" mean two things. It
+still has to be visible — a host cannot be expected to discover by a failed call
+that its paid model has no key — so it is its own list on the snapshot, named by
+the handle the caller passes to `direct()` rather than by a resolved name
+carrying a model version the caller never typed.
+
+**Where a key comes from is data, and it travels with whatever knows it.** The
+registry's own key help wins — a host that wrote a hint meant it — and the paid
+catalog's is the fallback, carried out of the resolution because nothing stores
+a declared model and no later read could recover it. That help reaches the
+snapshot, the sync report, the `direct()` error, and one log line the first time
+a ref turns up missing. The log is deduplicated on the set of missing refs
+rather than on a clock: a rebuild can fire on every exhausted call, and a key
+that stays missing must not fill the log.
+
+### The alarm
+
+It rides the pool rebuild, so all four triggers carry it in one place
+([`model-list.md`](model-list.md)): `ERROR` on the transition into one usable
+provider ("no failover left") and into zero ("cannot serve any request"), naming
+the missing refs; one `INFO` on the way back. This is the only way an installation
+learns that a curated removal cost it its last provider, which is what the mirror
+rule leans on ([`model-list.md`](model-list.md)).
+
+These are transitions of *state*, not of severity — both are errors, and losing
+the step between them would mute the moment the pool stops answering at all.
+Every count that is not degraded is one state, so a healthy log carries none of
+these lines, gaining a further provider is not news, and a broken pool carries
+exactly one line per change.
+
+**The measure is key presence, and it follows the last rebuild.** Keys are read
+afresh there, so a ref that has stopped resolving leaves the count at that rebuild
+rather than keeping the value it had. The counts and the per-model `has_key` come
+from the same measurement and therefore always agree; both describe the
+installation's own keys, never one caller's. An administratively disabled entry still
+counts its provider: the alarm reports the keys an installation holds, not
+verdicts the host set itself and already reads per model.
+
+### One measurement, two consumers
+
+`snapshot()` carries the same numbers the alarm uses — the per-LLM mapping, the
+counts, the missing keys with their help text, and the same `degraded`
+predicate. An admin UI needs one call, and the log and the UI cannot diverge.
+
+The help text is read from the registry only when a key is actually missing, so
+a fully-keyed pool adds no registry I/O to a rebuild at all, and `snapshot()`
+never performs any; a registry without key metadata yields empty help but
+correct refs and names.
+
+`snapshot()` is a view of the *live pool*, so it provisions — unlike a journal
+read, which never does (invariant 6).
