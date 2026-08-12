@@ -141,7 +141,7 @@ async def test_an_idle_broker_performs_no_io(tmp_path, fetches):
     """The check is lazy on activity: nothing schedules it, so a broker nobody calls
     never goes to the network a second time."""
     await _seeded(tmp_path)
-    broker = _broker(tmp_path, sync_interval=0.0)
+    broker = _broker(tmp_path, sync_interval=0.001)
     try:
         await broker.ensure_pool()
         await _settle(broker)
@@ -155,6 +155,13 @@ async def test_an_idle_broker_performs_no_io(tmp_path, fetches):
 async def test_a_negative_interval_is_refused(tmp_path):
     with pytest.raises(ValueError, match="sync_interval"):
         _broker(tmp_path, sync_interval=-1.0)
+
+
+async def test_a_zero_interval_is_refused(tmp_path):
+    """Zero would leave the clock permanently due, so a serving process would refetch
+    the curated list back to back. Switching the fetching off is ``None``."""
+    with pytest.raises(ValueError, match="positive"):
+        _broker(tmp_path, sync_interval=0)
 
 
 # ── The identity gate, end to end ────────────────────────────────────────────

@@ -256,7 +256,7 @@ async def test_the_refresh_catches_what_its_own_rebuild_raises(monkeypatch, capl
     async with _broker(
         _BrokenRegistry([_cfg()]),
         sync="freetier",
-        sync_interval=0.0,  # the clock is always due
+        sync_interval=0.00101,  # nothing was ever checked here, so the clock is due
     ) as broker:
         with caplog.at_level(logging.ERROR, logger="llmbroker.broker"):
             await broker.ensure_pool()  # arms and fires the refresh task

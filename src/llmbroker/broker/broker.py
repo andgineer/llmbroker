@@ -27,7 +27,6 @@ from llmbroker.broker.source import (
     resolve_source,
     zero_config_ports,
 )
-from llmbroker.broker.stats import stats_from_calls
 from llmbroker.direct import AsyncDirectClient
 from llmbroker.exceptions import (
     NoLLMAvailableError,
@@ -44,8 +43,6 @@ from llmbroker.models import (
     LLMStats,
     PoolSnapshot,
     SyncReport,
-    check_limit,
-    to_utc,
 )
 from llmbroker.optimizer import Optimizer
 from llmbroker.protocols.registry import RegistryProtocol
@@ -85,8 +82,13 @@ _SYNC_DEFAULT = _SyncDefault()
 
 
 def _check_sync_interval(sync_interval: float | None) -> None:
-    if sync_interval is not None and sync_interval < 0:
-        raise ValueError("sync_interval must not be negative")
+    """Zero is refused rather than read as "never": it makes the clock permanently due,
+    so the process would refetch the curated list back to back for as long as it serves."""
+    if sync_interval is not None and sync_interval <= 0:
+        raise ValueError(
+            "sync_interval must be a positive number of seconds, or None to fetch"
+            " nothing on this installation's own initiative",
+        )
 
 
 def _resolve_sync(sync: str | None | _SyncDefault, registry: object) -> str | None:
@@ -465,18 +467,10 @@ class AsyncBroker:
         kind: str | None = None,
         operation: str | None = None,
     ) -> list[Call]:
-        """Newest-first journal tail, narrowed by any of ``since`` (inclusive
-        ``called_at`` bound), ``kind`` (``"call"`` or ``"quality"``) and ``operation``.
-
-        Never provisions the pool — see ``stats``.
-        """
-        check_limit(limit)
-        return await self._require_queryable().calls(
-            limit=limit,
-            since=to_utc(since, "since") if since is not None else None,
-            kind=kind,
-            operation=operation,
-        )
+        """Newest-first journal tail for the whole installation — one caller's own rows
+        are ``for_scope(...).calls(...)``. Narrowed by any of ``since`` (inclusive
+        ``called_at`` bound), ``kind`` and ``operation``. Never provisions the pool."""
+        return await self.llms.calls(limit=limit, since=since, kind=kind, operation=operation)
 
     async def stats(
         self,
@@ -488,8 +482,7 @@ class AsyncBroker:
         """Per-model counts of call records over a window, keyed by model name.
         ``limit`` caps rows read, not the window: totals summing to it mean the
         window may be truncated. Never provisions the pool."""
-        rows = await self.calls(limit=limit, since=since, kind="call", operation=operation)
-        return stats_from_calls(rows)
+        return await self.llms.stats(since=since, limit=limit, operation=operation)
 
     async def _on_exhausted(self, exc: NoLLMAvailableError, ring: KeyRing) -> bool:
         """The reactive trigger: a pool that could not answer is re-read, debounced and
@@ -538,12 +531,3 @@ class AsyncBroker:
             logger.warning(
                 "pool under-provisioned: all LLMs are COOLING — add more LLMs to the registry",
             )
-
-    def _require_queryable(self) -> QueryableStoreProtocol:
-        store = self._store
-        if not isinstance(store, QueryableStoreProtocol):
-            raise TypeError(
-                "this store backend is not queryable — use a queryable backend"
-                " (e.g. llmbroker.sqlite.Store) for calls()",
-            )
-        return store

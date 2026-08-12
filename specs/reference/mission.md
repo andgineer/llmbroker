@@ -19,8 +19,8 @@ independent providers.
    the current version, so no application and no human tracks a version bump,
    and no second package is installed to make a paid call.
 5. **Keys optionally per-user**, with fallback to a shared key, over one shared
-   model list. Quota follows the key. Where the keys are not llmbroker's to see,
-   their absence proves nothing and the installation says what it holds.
+   model list. Quota follows the key, and an installation holding only per-user
+   keys is a working installation rather than an empty one.
 6. **Visibility from the host UI**: every per-model fact, the call journal, and
    the pool itself as a first-class object — how many providers can serve a
    request, which keys are missing, whether failover is still possible.

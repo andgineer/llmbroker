@@ -167,6 +167,27 @@ class LLMs:
     ) -> None:
         self._run(self._async.record_quality(llm_name, operation, score, call_id=call_id))
 
+    def calls(
+        self,
+        *,
+        limit: int,
+        since: datetime | None = None,
+        kind: str | None = None,
+        operation: str | None = None,
+    ) -> list[Call]:
+        return self._run(
+            self._async.calls(limit=limit, since=since, kind=kind, operation=operation),
+        )
+
+    def stats(
+        self,
+        *,
+        since: datetime | None = None,
+        limit: int = _DEFAULT_STATS_LIMIT,
+        operation: str | None = None,
+    ) -> Mapping[str, LLMStats]:
+        return self._run(self._async.stats(since=since, limit=limit, operation=operation))
+
 
 class Broker:
     """Synchronous client over an AsyncBroker on a background loop thread."""
@@ -288,9 +309,7 @@ class Broker:
         kind: str | None = None,
         operation: str | None = None,
     ) -> list[Call]:
-        return self._run(
-            self._async.calls(limit=limit, since=since, kind=kind, operation=operation),
-        )
+        return self.llms.calls(limit=limit, since=since, kind=kind, operation=operation)
 
     def stats(
         self,
@@ -299,7 +318,7 @@ class Broker:
         limit: int = _DEFAULT_STATS_LIMIT,
         operation: str | None = None,
     ) -> Mapping[str, LLMStats]:
-        return self._run(self._async.stats(since=since, limit=limit, operation=operation))
+        return self.llms.stats(since=since, limit=limit, operation=operation)
 
     # ── lifecycle ──
     def close(self) -> None:

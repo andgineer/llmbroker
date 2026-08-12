@@ -372,7 +372,8 @@ rebuild happens per process per day, not per request
    and a second key changes nothing until the first stops working — at which point
    the pool exhausts and this trigger fires.
 
-**Keys ride the rebuild.** One enumeration of the secrets store per rebuild
+**Keys ride the rebuild**, and are never declared to it or polled for
+([`decisions.md`](../decisions.md#a-key-is-found-not-declared)). One enumeration of the secrets store per rebuild
 answers which refs are held, so a ref nobody has a key for costs no read however
 many callers ask for it; a value is read on first use and dropped at the next
 rebuild, which is how a value an admin replaces takes effect within one period.

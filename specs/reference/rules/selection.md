@@ -236,7 +236,8 @@ rather than keeping the value it had. The counts and the per-model `has_key` com
 from the same measurement and therefore always agree.
 
 **What counts is a key this installation holds for anybody**, the shared one or one
-belonging to a single caller. Which caller is not the measure's business; that a key
+belonging to a single caller — read from the store rather than declared to it
+([`decisions.md`](../decisions.md#a-key-is-found-not-declared)). Which caller is not the measure's business; that a key
 is here, is. An installation that gives every user a key of its own and keeps no
 shared one answers every request it is handed, so a measure seeing only the shared
 value would report it dead — and then never move again, taking the removal alarm

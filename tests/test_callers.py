@@ -288,3 +288,32 @@ async def test_first_time_callers_cost_the_secrets_store_nothing(tmp_path, monke
             await broker.for_scope(f"user-{i}").ask("hi")
 
         assert secrets.reads == []
+
+
+async def test_a_caller_reads_back_its_own_history(tmp_path, monkeypatch):
+    """A host giving each user a key of their own must be able to show that user its
+    own calls; the broker's own read stays the whole installation's view."""
+    monkeypatch.setattr(_PATCH, _keys_used)
+    broker = await _broker(
+        tmp_path, {"KEY": "shared-key"}, store=SqliteStore(str(tmp_path / "j.db"))
+    )
+    async with broker:
+        await broker.for_scope("alice").ask("hi")
+        await broker.for_scope("bob").ask("hi")
+        await broker.llms.ask("hi")
+
+        assert [r.scope for r in await broker.for_scope("alice").calls(limit=10)] == ["alice"]
+        assert len(await broker.calls(limit=10, kind="call")) == 3
+
+        alice_total = sum(s.total for s in (await broker.for_scope("alice").stats()).values())
+        assert (alice_total, sum(s.total for s in (await broker.stats()).values())) == (1, 3)
+
+
+async def test_a_callers_journal_read_never_provisions_the_pool(tmp_path):
+    """Invariant 6 holds for a caller's read exactly as for the broker's."""
+    broker = await _broker(
+        tmp_path, {"KEY": "k"}, configs=(), store=SqliteStore(str(tmp_path / "j.db"))
+    )
+    assert await broker.for_scope("alice").calls(limit=10) == []
+    assert broker._provisioned is False
+    await broker.aclose()

@@ -397,3 +397,68 @@ that is this pass's to take, so the counts are reported rather than chased.
   limit withdraws every entry this process pays for with that key value. That
   predates this pass and the call path was out of scope — naming it here rather
   than fixing it.
+
+## Post-review changes
+
+Written by the review pass that followed the handover above. It kept everything
+that handover describes; what follows is what it changed on top, and why. The
+gate after it: `invoke pre` clean, **1294 passed**, zero skips.
+
+### Defects found and fixed
+
+- **`rebuild()` crashed when a request arrived mid-rebuild.** It iterated the map
+  of per-scope key rings across an `await`, and `for_scope` writes to that map, so
+  a caller built during a rebuild raised `RuntimeError: dictionary changed size
+  during iteration` — on the exact FastAPI shape the docs recommend. It now
+  iterates a copy.
+- **The refresh clock's rebuild was unguarded.** The refresh runs as a detached
+  task and the spec requires it to catch everything, but the rebuild sat outside
+  the `try`, so an unreadable registry vanished as an unretrieved exception with
+  nothing in the log. The trailing rebuild is now inside the refresh's own catch.
+- **The secrets store was enumerated once per key ring, not once per rebuild.**
+  With 20 callers a rebuild made 21 listings; at the caller cap, 1025. The
+  enumeration moved out of the ring into one call the broker makes, and the result
+  is handed to every ring.
+
+### Behaviour changed on top of the plan
+
+- **The health measure counts a key held for a single caller.** It read only the
+  shared ring, so an installation that gives every user a key of their own and
+  keeps no shared one reported `providers_usable = 0` and logged "pool cannot serve
+  any request" while serving every request. That also froze the removal alarm the
+  mirror rule is paid for with. The measure now reads the rebuild's listing, which
+  names scoped refs too.
+- **The exhaustion trigger is skipped for a caller already holding every key.** Its
+  purpose is to find a key that has just appeared; a caller with the full set has
+  nothing to look for, and its pool is exhausted for a reason no key would fix. An
+  empty pool is not a full set.
+- **The call that carried the re-read takes the answer with it.** The rebuild
+  already ran inside that request; leaving it with the error as well was paying
+  twice for nothing. One further pass, with `wait=0` so the caller's budget is not
+  spent again, and nothing past the first delta of a stream.
+- **A ring built between rebuilds inherits the last listing.** Without it a
+  first-time caller paid one round trip per pool ref — 3000 for 1000 new users.
+- **`calls`/`stats` are back on the caller**, scoped to it; the broker's own remain
+  the installation's view. The handover flagged their loss as a capability a scoped
+  host had before, and with a connection-string installation there was no other way
+  to reach one user's rows.
+- **`sync_interval=0` is refused.** It left the clock permanently due, so a serving
+  process refetched the curated list back to back. Tests that used it to force the
+  clock now use a small positive interval and the explicit deadline they already
+  poked.
+
+### What moved into the specs
+
+`mission.md` requirement 5 lost the clause describing the deleted key declaration.
+`decisions.md` gained `a-key-is-found-not-declared`. `invariants.md` 21 lost a
+rationale that named the removal rule this pass deleted. `model-list.md` lost a
+paragraph contradicting its own four-triggers section and gained the guard, the
+second pass and the deliberate wait for a caller's second key. `selection.md` and
+`backends.md` carry the health measure and the caller's journal read.
+
+### Deliberately left alone
+
+The FIFO eviction of key rings above the caller cap (below the scale the mission
+states), the missed line-count targets (closing them means deleting what this plan
+protects), and `docs/src/{en,ru}/usage.md`, `en/async.md`, `en/cli.md`, whose
+content this pass did not read.

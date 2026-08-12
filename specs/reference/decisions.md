@@ -603,6 +603,29 @@ order in the file — the preset is already curated.
 
 ## Surface and shape
 
+### a-key-is-found-not-declared
+
+The pool learns which keys exist by asking the secrets store, on the rebuild it
+already makes — never from the host declaring them, and never from a clock of its
+own.
+
+**Blocks:** a constructor argument naming the refs an installation expects its
+users to hold; a background poll of the secrets store; a short clock re-reading
+keys between rebuilds.
+**Why:** a declaration is a promise, and it fails badly in both directions —
+omitted, the installation is misjudged; naming a ref that is never provisioned,
+the pool reports capacity it does not have. The store answers the same question as
+a fact, in the one listing a rebuild already takes, and that listing is also what
+lets the health measure count a key belonging to a single caller. A clock is
+refused for a different reason: while any model still answers, the caller is being
+served, and a further key changes nothing until the first stops working — at which
+point the pool cannot answer, and that is itself the trigger. Polling would pay
+every period for a state change that is free to detect at the one moment it
+matters.
+**Accepted cost:** a caller's second key waits for the slow clock instead of taking
+effect at once, and an installation whose secrets store cannot list what it holds
+is measured on its shared keys alone.
+
 ### the-broker-is-the-installation-a-caller-is-a-scope
 
 A broker owns the installation: the ports, the pool, everything learned, the slow

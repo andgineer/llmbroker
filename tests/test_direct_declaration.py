@@ -77,7 +77,7 @@ async def test_a_declared_alias_is_reachable_and_absent_from_the_pool(tmp_path, 
 async def test_a_declared_alias_follows_the_catalog_on_the_refresh_clock(tmp_path, served):
     """Nothing pins the version: once the refresh has moved the cached catalog the
     next resolution follows it — inside the running process, and in the next one."""
-    async with _broker(tmp_path, direct=["opus"], sync_interval=0.0) as broker:
+    async with _broker(tmp_path, direct=["opus"], sync_interval=0.001) as broker:
         assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
         served["paid-catalog"] = _CATALOG_MOVED
         broker._refresher._next_refresh = 0.0
@@ -93,7 +93,7 @@ async def test_a_re_resolution_logs_the_version_it_moved_to(tmp_path, served, ca
     """A version move is the only notice a deployment gets that `direct("opus")` now
     answers from a different model. The first resolution has nothing to compare."""
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
-        async with _broker(tmp_path, direct=["opus"], sync_interval=0.0) as broker:
+        async with _broker(tmp_path, direct=["opus"], sync_interval=0.001) as broker:
             await _resolved(broker, "opus")
             assert [r.message for r in caplog.records if r.message.startswith("direct=:")] == []
             served["paid-catalog"] = _CATALOG_MOVED
@@ -229,7 +229,7 @@ async def test_an_alias_the_catalog_dropped_keeps_serving_and_does_not_stop_the_
     error. Raising there killed the refresh task — silently, since a detached task
     swallows it — so a model list change stopped reaching the live pool for the life of
     the process, and calls the previous resolution served fine started failing."""
-    async with _broker(tmp_path, direct=["opus"], sync_interval=0.0) as broker:
+    async with _broker(tmp_path, direct=["opus"], sync_interval=0.001) as broker:
         await broker.ensure_pool()
         await _settle(broker)
         assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
@@ -259,10 +259,11 @@ async def test_the_catalog_is_refreshed_where_no_model_list_is_synced(tmp_path, 
     """``sync=None`` is a real shape — a registry a deploy job fills. The catalog a
     declared alias resolves through still has to move, so it carries its own clock
     rather than riding on the model list's."""
-    async with _broker(tmp_path, direct=["opus"], sync=None, sync_interval=0.0) as broker:
+    async with _broker(tmp_path, direct=["opus"], sync=None, sync_interval=0.001) as broker:
         await _settle(broker)
         assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
         served["paid-catalog"] = _CATALOG_MOVED
+        broker._refresher._next_refresh = 0.0  # the period has elapsed
         await broker.count()  # the clock, armed by the broker itself, is due
         await _settle(broker)
         assert (await _resolved(broker, "opus")).model == "claude-opus-5"

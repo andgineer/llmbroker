@@ -1,8 +1,9 @@
 """``AsyncLLMs``: one caller's view of the installation's pool — the scope its
 journal rows carry and the keys it may pay with. Built by the broker only."""
 
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import aclosing
+from datetime import datetime
 
 import httpx
 
@@ -12,10 +13,13 @@ from llmbroker.broker.learning import Learner
 from llmbroker.broker.pool_view import PoolView
 from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.broker.router import Router
+from llmbroker.broker.stats import stats_from_calls
 from llmbroker.direct import AsyncDirectClient
 from llmbroker.exceptions import MissingKeyError, NoLLMAvailableError
-from llmbroker.models import LLMConfig, check_score
-from llmbroker.protocols.store import StoreProtocol
+from llmbroker.models import Call, LLMConfig, LLMStats, check_limit, check_score, to_utc
+from llmbroker.protocols.store import QueryableStoreProtocol, StoreProtocol
+
+_DEFAULT_STATS_LIMIT = 1000
 
 
 class AsyncLLMs:
@@ -232,3 +236,48 @@ class AsyncLLMs:
         )
         if self._learner is not None:
             self._learner.record_quality_observed(llm_name, operation, score)
+
+    # ------------------------------------------------------------------
+    # Call journal — the rows this caller's scope is on
+    # ------------------------------------------------------------------
+
+    async def calls(
+        self,
+        *,
+        limit: int,
+        since: datetime | None = None,
+        kind: str | None = None,
+        operation: str | None = None,
+    ) -> list[Call]:
+        """Newest-first journal tail for this caller, narrowed by any of ``since``
+        (inclusive ``called_at`` bound), ``kind`` and ``operation``. The unscoped
+        caller sees the whole installation. Never provisions the pool."""
+        check_limit(limit)
+        return await self._require_queryable().calls(
+            limit=limit,
+            scope=self.scope,
+            since=to_utc(since, "since") if since is not None else None,
+            kind=kind,
+            operation=operation,
+        )
+
+    async def stats(
+        self,
+        *,
+        since: datetime | None = None,
+        limit: int = _DEFAULT_STATS_LIMIT,
+        operation: str | None = None,
+    ) -> Mapping[str, LLMStats]:
+        """Per-model counts of this caller's call records over a window, keyed by model
+        name. ``limit`` caps rows read, not the window: totals summing to it mean the
+        window may be truncated. Never provisions the pool."""
+        rows = await self.calls(limit=limit, since=since, kind="call", operation=operation)
+        return stats_from_calls(rows)
+
+    def _require_queryable(self) -> QueryableStoreProtocol:
+        if not isinstance(self._store, QueryableStoreProtocol):
+            raise TypeError(
+                "this store backend is not queryable — use a queryable backend"
+                " (e.g. llmbroker.sqlite.Store) for calls()",
+            )
+        return self._store

@@ -286,9 +286,11 @@ never meets the second noun.
   exact-lookup key-value stores and never see the scope string itself, only the
   already-prefixed ref.
 - **The journal carries the scope as a plain attribution field**, written by the
-  caller that made the call and filterable on read at the store, but it does not
-  partition learning — the tail read is unscoped by design, and so is the broker's
-  own journal read, which is the installation's view.
+  caller that made the call, and that caller reads its own rows back — which is how
+  a host shows one user its own history without holding the store itself. The
+  broker's own read is its unscoped caller's and therefore the installation's view.
+  None of this partitions learning: the tail read a rebuild makes is unscoped by
+  design.
 - **A rejected key is withdrawn from whoever spent it.** The withdrawal is the
   caller's, not the pool's: a caller with a key of its own is untouched by a
   neighbour's 401, and a caller paying with the shared value loses it alongside
