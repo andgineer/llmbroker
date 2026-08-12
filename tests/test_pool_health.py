@@ -34,6 +34,14 @@ def _broker(tmp_path, *entries, present=(), keys=""):
     )
 
 
+class _ListingSecrets(DictSecrets):
+    """A backend that can say which refs it holds — AWS, Vault, a DB. What an
+    installation with per-user keys needs before it can be measured at all."""
+
+    async def refs(self, prefix=""):
+        return frozenset(r for r in self._mapping if r.startswith(prefix))
+
+
 # ── The snapshot is a mapping and carries the pool-wide facts ────────────────
 
 
@@ -298,3 +306,56 @@ async def test_a_fully_keyed_pool_never_reads_the_key_table(tmp_path):
         )
         await broker.rebuild()
     assert reads == 1
+
+
+# ── An installation whose keys are all per-user is not a dead pool ───────────
+
+
+async def test_a_key_belonging_to_one_caller_still_counts_its_provider(tmp_path, caplog):
+    """Requirement 5 of the mission: keys may be per-user, and their absence from the
+    shared ring proves nothing. Such an installation serves every request it is
+    handed, so reporting it dead would be false — and would freeze the removal alarm
+    at zero, where a curated removal could never move it again."""
+    secrets = _ListingSecrets({"alice/A": "sk", "bob/A": "sk"})
+    async with AsyncBroker(
+        registry=_registry(tmp_path, ("a", "A"), ("b", "B")),
+        secrets=secrets,
+        store=InMemoryStore(),
+        sync=None,
+    ) as broker:
+        with caplog.at_level(logging.ERROR, logger="llmbroker.broker"):
+            await broker.count()
+        snap = await broker.snapshot()
+
+    assert (snap.providers_usable, snap.providers_total) == (1, 2)
+    assert snap["a"].has_key is True
+    assert snap["b"].has_key is False
+    assert [k.api_key_ref for k in snap.missing_keys] == ["B"]
+    assert "no failover left" in _health_lines(caplog)[0][1]
+
+
+async def test_a_backend_that_cannot_list_sees_only_the_shared_key(tmp_path):
+    """The honest narrowing: an environment-backed store has nothing to enumerate,
+    and it is never where per-user keys live."""
+    async with AsyncBroker(
+        registry=_registry(tmp_path, ("a", "A")),
+        secrets=DictSecrets({"alice/A": "sk"}),
+        store=InMemoryStore(),
+        sync=None,
+    ) as broker:
+        snap = await broker.snapshot()
+    assert snap.providers_usable == 0
+
+
+async def test_a_scoped_ref_nothing_pools_is_not_counted(tmp_path):
+    """The measure follows the registry: a caller's key for a ref no entry names
+    cannot make a provider appear."""
+    secrets = _ListingSecrets({"alice/GHOST": "sk", "A": "sk"})
+    async with AsyncBroker(
+        registry=_registry(tmp_path, ("a", "A")),
+        secrets=secrets,
+        store=InMemoryStore(),
+        sync=None,
+    ) as broker:
+        snap = await broker.snapshot()
+    assert (snap.providers_usable, snap.providers_total) == (1, 1)

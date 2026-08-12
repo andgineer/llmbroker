@@ -99,11 +99,6 @@ whatever keys are present, and a config without a resolvable key simply stays
 inactive (logged at `info`, not `warning`) rather than enqueued for routing. The
 only genuine alarm is **zero** keyed configs at all — see [`selection.md`](selection.md).
 
-There is no background key re-resolve loop: a key added to the environment after
-startup takes effect at the next provisioning (a fresh process, or an explicit
-re-provision) or immediately if the host calls `sync` again, which re-bootstraps
-any newly resolvable secrets — never via a polling task.
-
 ### The CLI
 
 Two commands, and they are the two the mission asks for: the one irreducible
@@ -355,10 +350,27 @@ rebuild happens per process per day, not per request
 3. **On an explicit `sync()`**, applied or not: a sync bootstraps keys from the
    environment on every run, and a key that has just appeared is the reason a host
    calls one.
-4. **On pool exhaustion**, debounced. This is the reactive path, and it is what
-   makes a key an admin has just stored work without waiting out the slow clock.
-   The debounce is what stops a pool that stays exhausted under traffic from
-   asking the ports on every call.
+4. **On pool exhaustion**, debounced, and only for a caller that is not already
+   holding every key the pool names. This is the reactive path: a key just stored
+   is what it exists to find, so a caller with the full set has nothing to look
+   for and the ports are left alone — its pool is exhausted for some other reason,
+   which no key would fix. An empty pool is not a full set: there the registry
+   itself is what needs re-reading. The debounce is what stops a pool that stays
+   exhausted under traffic from asking the ports on every call.
+
+   **The call that carried the re-read takes the answer with it.** The re-read
+   happens inside that request, so the caller has already paid its latency; leaving
+   it with the error as well would be paying twice for nothing. It takes one more
+   pass over the pool, and that pass queues for nothing — a caller's `wait` is a
+   promise about how long it may be held, and a second pass may not spend it again.
+   So the pass succeeds exactly when the re-read made a model answerable at once,
+   which is the case it exists for. Nothing is retried past the first delta of a
+   stream (invariant 18).
+
+   **A key that is not the only one a caller holds waits for the slow clock**, and
+   that is deliberate: while some model still answers, the caller is being served,
+   and a second key changes nothing until the first stops working — at which point
+   the pool exhausts and this trigger fires.
 
 **Keys ride the rebuild.** One enumeration of the secrets store per rebuild
 answers which refs are held, so a ref nobody has a key for costs no read however

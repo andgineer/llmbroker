@@ -19,8 +19,8 @@ class MutableSecretsProtocol(SecretsProtocol, Protocol):
 class EnumerableSecretsProtocol(SecretsProtocol, Protocol):
     """Optional: the refs this store holds under a prefix, the prefix included.
 
-    A backend without it is asked ref by ref, which is what an environment-backed
-    store wants — the lookup is free there and there is nothing to enumerate.
+    A backend without it is asked ref by ref, which suits a store whose reads are
+    free; what it gives up is in ``rules/backends.md``.
     """
 
     async def refs(self, prefix: str = "") -> frozenset[str]: ...

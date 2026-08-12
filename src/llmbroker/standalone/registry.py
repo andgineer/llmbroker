@@ -91,7 +91,7 @@ def _check_no_declared_entries(data: dict) -> None:
 
 
 def parse_model_list(data: dict) -> ModelList:
-    """The one reader of a model_list: the ``[[llms]]`` entries in file order plus the
+    """The one reader of a model list: the ``[[llms]]`` entries in file order plus the
     ``[keys]`` metadata. Whether a list is valid is decided only here."""
     _check_no_declared_entries(data)
     configs: list[LLMConfig] = []
@@ -123,7 +123,7 @@ def read_model_list(path: Path) -> ModelList:
 
 
 class Registry:
-    """File-backed read-only registry over a TOML model_list.
+    """File-backed read-only registry over a TOML model list.
 
     The file is llmbroker's own output, rewritten in full by a sync; see
     ``specs/reference/rules/model-list.md``.

@@ -151,6 +151,7 @@ class AsyncBroker:
         self._presets = PresetSource(self._home)
         self._shared_ring = KeyRing(secrets)
         self._rings: dict[str, KeyRing] = {}
+        self._known: frozenset[str] | None = None
 
         self._declared = tuple(direct)
         self._autofetch = sync_interval is not None
@@ -228,7 +229,12 @@ class AsyncBroker:
         if ring is None:
             if len(self._rings) >= _MAX_CALLERS:
                 self._rings.pop(next(iter(self._rings)))
-            ring = KeyRing(self._secrets, scope=scope, shared=self._shared_ring)
+            ring = KeyRing(
+                self._secrets,
+                scope=scope,
+                shared=self._shared_ring,
+                known=self._known,
+            )
             self._rings[scope] = ring
         return self._caller(ring)
 
@@ -237,10 +243,11 @@ class AsyncBroker:
         disabled map and quality, wholesale. Fires on exactly four triggers — start,
         the refresh clock, an explicit ``sync()``, and pool exhaustion."""
         known = await known_refs(self._secrets)
+        self._known = known
         # Over a copy: a request may ask for a caller while this is awaiting.
         for ring in (self._shared_ring, *list(self._rings.values())):
             await ring.refresh(known)
-        await self._catalog.rebuild()
+        await self._catalog.rebuild(known)
 
     async def _relearn(self) -> None:
         if self._learner is not None:
@@ -484,15 +491,25 @@ class AsyncBroker:
         rows = await self.calls(limit=limit, since=since, kind="call", operation=operation)
         return stats_from_calls(rows)
 
-    async def _on_exhausted(self, exc: NoLLMAvailableError) -> None:
-        """The reactive trigger: a pool that could not answer is re-read, debounced, so
-        a key an admin has just stored works without waiting out the refresh clock."""
+    async def _on_exhausted(self, exc: NoLLMAvailableError, ring: KeyRing) -> bool:
+        """The reactive trigger: a pool that could not answer is re-read, debounced and
+        skipped for a caller already holding every key. Answers whether the re-read
+        actually ran, which is what makes the caller's second pass worth taking."""
         self._maybe_alert_underprov(exc)
         now = time.monotonic()
         if now < self._next_exhaustion_rebuild:
-            return
+            return False
+        if await self._fully_keyed(ring):
+            return False
         self._next_exhaustion_rebuild = now + _EXHAUSTION_DEBOUNCE_SEC
         await self._rebuild_safely("pool exhaustion")
+        return True
+
+    async def _fully_keyed(self, ring: KeyRing) -> bool:
+        """Whether this caller can already pay for every ref the pool names. An empty
+        pool is not a full set: there the registry itself is what needs re-reading."""
+        refs = {cfg.api_key_ref for cfg in self._pool.configs.values() if cfg.api_key_ref}
+        return bool(refs) and refs <= await ring.payable(refs)
 
     def _maybe_alert_underprov(self, exc: NoLLMAvailableError) -> None:
         """Fire when zero *keyed* configs are routable — the genuine alarm.

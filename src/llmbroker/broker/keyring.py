@@ -45,6 +45,7 @@ class KeyRing:
         *,
         scope: str | None = None,
         shared: "KeyRing | None" = None,
+        known: frozenset[str] | None = None,
     ) -> None:
         self._secrets = secrets
         self._scope = scope
@@ -52,7 +53,9 @@ class KeyRing:
         self._values: dict[str, str] = {}
         self._missing: set[str] = set()
         self._rejected: dict[str, str] = {}
-        self._known: frozenset[str] | None = None
+        # A ring built between rebuilds inherits the last listing rather than starting
+        # blind: without it a first-time caller pays a read per ref nobody holds.
+        self._known = known
 
     @property
     def scope(self) -> str | None:

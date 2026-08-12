@@ -289,6 +289,34 @@ async def any_secrets(request, tmp_path_factory, pg_pool, mongo_db) -> SecretsPr
         await mongo_db["llmbroker_secrets"].delete_many({})
 
 
+@pytest.fixture(
+    params=["sqlite", "postgres", "mongodb", "aws", "vault"],
+    ids=["sqlite", "postgres", "mongodb", "aws", "vault"],
+)
+async def mutable_secrets(request, tmp_path_factory, pg_pool, mongo_db):
+    """Every secrets backend a key can actually be stored into — the environment
+    resolver is read-only and therefore not among them."""
+    param = request.param
+    if param == "sqlite":
+        db_path = str(tmp_path_factory.mktemp("msec_sqlite") / "sec.db")
+        yield SqliteSecrets(db_path)
+    elif param == "postgres":
+        yield PostgresSecrets(pg_pool)
+        async with pg_pool.acquire() as conn:
+            await conn.execute("DELETE FROM llmbroker_secrets")
+    elif param == "mongodb":
+        yield MongoSecrets(mongo_db)
+        await mongo_db["llmbroker_secrets"].delete_many({})
+    elif param == "aws":
+        url = request.getfixturevalue("localstack_url")
+        yield AwsSecrets(region_name="us-east-1", endpoint_url=url)
+        await _aws_purge(url)
+    elif param == "vault":
+        url, token = request.getfixturevalue("vault_url_and_token")
+        yield VaultSecrets(url=url, token=token)
+        _vault_delete_recursive(hvac.Client(url=url, token=token), "llmbroker/")
+
+
 # ---------------------------------------------------------------------------
 # A2 — Stack factory fixture (broker E2E)
 # ---------------------------------------------------------------------------

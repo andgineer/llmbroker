@@ -125,9 +125,9 @@ rather than what the running system must never do.
     A host matching on message text has no contract at all. → `call-path.md`
 
 21. **A key exists only when it is non-empty.** A blank export, an unfilled
-    `KEY=` line, a backend returning `""` — all count as unset everywhere, since
-    key presence also authorizes removals during a sync.
-    → `model-list.md`
+    `KEY=` line, a backend returning `""` — all count as unset everywhere. One
+    admitted anywhere puts a model with no credential into the pool, where it
+    fails every request routed to it. → `model-list.md`
 
 22. **A sync never removes or overwrites an entry it did not write.** Every
     entry records whether a sync put it there, and the default is *no*, so

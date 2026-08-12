@@ -119,9 +119,15 @@ async def test_provisioning_rebuilds_once(monkeypatch):
 # ── Trigger 2: pool exhaustion, debounced ────────────────────────────────────
 
 
+# A pool the caller is not fully keyed for: p1 it can pay, p2 it cannot. Exhausting
+# it is the case a key appearing could actually fix.
+def _partly_keyed():
+    return [_cfg("p1", "K"), _cfg("p2", "K2")]
+
+
 async def test_exhaustion_triggers_a_rebuild_and_the_debounce_stops_the_second(monkeypatch):
     monkeypatch.setattr(_PATCH, AsyncMock(side_effect=_http_status_error(429)))
-    registry = _CountingRegistry([_cfg()])
+    registry = _CountingRegistry(_partly_keyed())
     async with _broker(registry, sync_interval=None) as broker:
         await broker.ensure_pool()
         at_start = registry.loads
@@ -136,9 +142,40 @@ async def test_exhaustion_triggers_a_rebuild_and_the_debounce_stops_the_second(m
         assert registry.loads == after_first
 
 
-async def test_the_debounce_lets_the_next_period_through(monkeypatch):
+async def test_a_caller_holding_every_key_does_not_rebuild(monkeypatch):
+    """The whole pool is cooling and this caller already pays for all of it: no key
+    that could appear would change the answer, so the ports are left alone."""
     monkeypatch.setattr(_PATCH, AsyncMock(side_effect=_http_status_error(429)))
     registry = _CountingRegistry([_cfg()])
+    async with _broker(registry, sync_interval=None) as broker:
+        await broker.ensure_pool()
+        at_start = registry.loads
+
+        for _ in range(5):
+            with pytest.raises(NoLLMAvailableError):
+                await broker.ask("hi", wait=0)
+
+        assert registry.loads == at_start
+
+
+async def test_a_pool_that_emptied_out_still_rebuilds(monkeypatch):
+    """No entry names a ref, so "every key" is vacuously held — but there the registry
+    itself is what needs re-reading, and skipping would strand the process."""
+    registry = _CountingRegistry([_cfg()])
+    async with _broker(registry, sync_interval=None) as broker:
+        await broker.ensure_pool()
+        registry._configs = []  # a peer dropped the last entry
+        await broker.rebuild()
+        at_start = registry.loads
+
+        with pytest.raises(NoLLMAvailableError):
+            await broker.ask("hi", wait=0)
+        assert registry.loads > at_start
+
+
+async def test_the_debounce_lets_the_next_period_through(monkeypatch):
+    monkeypatch.setattr(_PATCH, AsyncMock(side_effect=_http_status_error(429)))
+    registry = _CountingRegistry(_partly_keyed())
     async with _broker(registry, sync_interval=None) as broker:
         await broker.ensure_pool()
         with pytest.raises(NoLLMAvailableError):
@@ -161,14 +198,14 @@ async def test_a_rebuild_that_raises_never_reaches_the_caller(tmp_path, monkeypa
             await super().load()
             if self.loads > 1:
                 raise OSError("registry is gone")
-            return [_cfg()]
+            return _partly_keyed()
 
-    async with _broker(_BrokenRegistry([_cfg()]), sync_interval=None) as broker:
+    async with _broker(_BrokenRegistry(_partly_keyed()), sync_interval=None) as broker:
         await broker.ensure_pool()
         with caplog.at_level(logging.ERROR, logger="llmbroker.broker"):
             with pytest.raises(NoLLMAvailableError):
                 await broker.ask("hi", wait=0)
-        assert await broker.count() == 1
+        assert await broker.count() == 2
     assert any("pool rebuild on pool exhaustion failed" in r.message for r in caplog.records)
 
 
@@ -258,11 +295,10 @@ async def test_an_explicit_sync_always_rebuilds(tmp_path, monkeypatch):
         assert rebuilds == 2
 
 
-async def test_a_key_stored_while_the_pool_is_exhausted_is_picked_up_by_the_next_call(
-    monkeypatch,
-):
+async def test_a_key_stored_while_the_pool_is_exhausted_answers_the_same_call(monkeypatch):
     """What the reactive trigger exists for, end to end: no key at start, one stored
-    by an admin, and the very next call uses it without waiting out the clock."""
+    by an admin, and the very next call that needs it answers from it — the re-read
+    happens inside that request, so the caller never sees the failure."""
     monkeypatch.setattr(_PATCH, AsyncMock(return_value=("ok", None, None)))
     secrets = DictSecrets({})
     async with _broker(_CountingRegistry([_cfg()]), secrets=secrets, sync_interval=None) as broker:
@@ -271,7 +307,5 @@ async def test_a_key_stored_while_the_pool_is_exhausted_is_picked_up_by_the_next
 
         secrets._mapping["K"] = "stored-now"  # noqa: SLF001 - test double, direct mutation
         broker._next_exhaustion_rebuild = float("-inf")
-        with pytest.raises(NoLLMAvailableError):
-            await broker.ask("hi", wait=0)  # this call is what re-reads the keys
 
-        assert (await broker.ask("hi")).text == "ok"
+        assert (await broker.ask("hi", wait=0)).text == "ok"

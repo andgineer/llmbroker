@@ -1,5 +1,5 @@
 """Keeping the stored model list following the curated one: its own clock, task, check
-record and failure policy. Rules in ``specs/reference/rules/model model-list.md``."""
+record and failure policy. Rules in ``specs/reference/rules/model-list.md``."""
 
 import asyncio
 import contextlib
@@ -179,7 +179,7 @@ class ModelListRefresher:
 
     def _stamp_key(self, source: str) -> str:
         """What was checked, and for whom. Keyed by both because two projects on one
-        machine have two model_lists to keep current, and one project's check must not
+        machine have two model lists to keep current, and one project's check must not
         gate the other's."""
         return f"{source} {self._target_identity()}"
 

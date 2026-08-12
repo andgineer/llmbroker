@@ -169,13 +169,24 @@ folder and answer a listing with directory names instead of refs. Such a backend
 flattens on write and unflattens on read, and refuses a ref that already contains
 the flattening marker rather than storing something it could not hand back.
 
-**Listing refs is optional, and worth implementing.** A backend that can answer
-"which refs do you hold under this prefix" is asked once per rebuild, and a ref it
-does not name then costs no read at all, however many callers want it; one that
-cannot is asked ref by ref, which is what an environment-backed store wants —
-the lookup is free there and there is nothing to enumerate. Nothing a listing or a
-read raises reaches a caller: it is logged and the ref is read as unset, because a
-key nobody can fetch must not turn into a failed call
+**Listing refs is optional, and worth implementing wherever a read is not free.** A
+backend that can answer "which refs do you hold under this prefix" is asked once per
+rebuild, and a ref it does not name then costs no read at all, however many callers
+want it — which is what saves a metered API from one call per ref per caller. A
+caller that arrives between rebuilds is answered from that same listing rather than
+going to the store itself: a deployment meeting new users constantly would otherwise
+pay a round trip per user per ref, which is the shape the listing exists to remove. A
+backend that cannot is asked ref by ref instead, and an environment-backed store is
+content that way: reading from it costs nothing, so a listing would save nothing.
+What it gives up is the second use of a listing — the health measure reads it to see
+the keys held for a single caller, so an installation resolving its secrets from the
+environment is measured on its shared keys alone
+([`selection.md`](selection.md)). That combination does not arise: an installation
+that gives its users keys of their own keeps them in a store, not in its process
+environment.
+
+Nothing a listing or a read raises reaches a caller: it is logged and the ref is read
+as unset, because a key nobody can fetch must not turn into a failed call
 ([`model-list.md`](model-list.md)).
 
 ## The journal

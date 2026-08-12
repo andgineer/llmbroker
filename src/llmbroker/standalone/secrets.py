@@ -72,8 +72,8 @@ class Secrets:
         return self._file_mapping(self._env_file).get(ref) or None
 
     async def resolve(self, ref: str) -> str:
-        # A blank export is as unset as no export at all — key presence authorizes
-        # removals in a preset sync, so it must never be satisfied by whitespace.
+        # A blank export is as unset as no export at all: whitespace admitted here
+        # would put a model with no credential into the pool (invariant 21).
         value = os.environ.get(ref)
         if value is None or not value.strip():
             value = self._from_file(ref)

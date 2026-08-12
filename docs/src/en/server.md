@@ -372,11 +372,14 @@ start, on the refresh clock (about once a day), on an explicit `sync()`, and whe
 the pool has just failed to answer. Nothing else re-reads the ports, so a
 successful call costs no database traffic beyond its own journal row.
 
-**A key stored while the pool is exhausted is picked up by the next call.** That
-last trigger is what makes it work: the failing call re-reads the keys, and the
-call after it routes on the new one — no restart, and no waiting out the clock.
-A rebuild that finds the same rejected value keeps the rejection, so a key that
-is simply dead costs one call per period rather than one per request.
+**A key stored into a running installation is picked up by the first call that
+needs it.** That last trigger is what makes it work: a call the pool cannot serve
+re-reads the keys and then answers from them, so the caller sees no error at all —
+no restart, and no waiting out the clock. The re-read is skipped for a caller that
+already holds every key, since no key that appeared could help it, and it happens
+at most once a minute. A rebuild that finds the same rejected value keeps the
+rejection, so a key that is simply dead costs one call per period rather than one
+per request.
 
 ## Alembic
 

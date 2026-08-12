@@ -233,10 +233,22 @@ exactly one line per change.
 **The measure is key presence, and it follows the last rebuild.** Keys are read
 afresh there, so a ref that has stopped resolving leaves the count at that rebuild
 rather than keeping the value it had. The counts and the per-model `has_key` come
-from the same measurement and therefore always agree; both describe the
-installation's own keys, never one caller's. An administratively disabled entry still
-counts its provider: the alarm reports the keys an installation holds, not
-verdicts the host set itself and already reads per model.
+from the same measurement and therefore always agree.
+
+**What counts is a key this installation holds for anybody**, the shared one or one
+belonging to a single caller. Which caller is not the measure's business; that a key
+is here, is. An installation that gives every user a key of its own and keeps no
+shared one answers every request it is handed, so a measure seeing only the shared
+value would report it dead — and then never move again, taking the removal alarm
+with it, which is the safety net the mirror rule is paid for with
+([`decisions.md`](../decisions.md#a-sync-mirrors-what-a-sync-wrote)). The keys held
+are read from the one listing a rebuild already makes; where the secrets store
+cannot list what it holds, only the shared value is visible and the measure narrows
+to it ([`backends.md`](backends.md)).
+
+An administratively disabled entry still counts its provider: the alarm reports the
+keys an installation holds, not verdicts the host set itself and already reads per
+model.
 
 ### One measurement, two consumers
 

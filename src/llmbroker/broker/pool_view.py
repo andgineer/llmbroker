@@ -10,8 +10,8 @@ from llmbroker.models import LLMSnapshot, PendingKey, PoolHealth, PoolSnapshot
 class PoolView:
     """Live views over the pool: a single LLM handle, the count, a full snapshot.
 
-    ``has_key`` is the installation's own answer — the shared ring's — never one
-    caller's, since the snapshot describes the pool rather than a request."""
+    ``has_key`` says whether the installation holds a key at all, a caller's own
+    included: the snapshot describes the pool rather than one request."""
 
     def __init__(  # noqa: PLR0913 - one read-only view over the parts it reports on
         self,

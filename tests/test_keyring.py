@@ -162,6 +162,22 @@ async def test_one_listing_answers_for_every_caller():
     assert secrets.listings == 1
 
 
+async def test_a_ring_built_between_rebuilds_inherits_the_listing():
+    """A caller arriving mid-period must not start blind: without the last listing it
+    would pay a round trip per ref nobody holds, on its very first call."""
+    secrets = _CountingSecrets({"A": "a"})
+    listing = await known_refs(secrets)
+    shared = KeyRing(secrets)
+    await shared.refresh(listing)
+    assert await shared.payable(["A"]) == frozenset({"A"})
+    secrets.reads.clear()
+
+    newcomer = KeyRing(secrets, scope="alice", shared=shared, known=listing)
+
+    assert await newcomer.payable(["A", "B", "C"]) == frozenset({"A"})
+    assert secrets.reads == []
+
+
 async def test_a_rebuild_re_reads_what_it_holds():
     secrets = _CountingSecrets({"A": "a"})
     ring = KeyRing(secrets)

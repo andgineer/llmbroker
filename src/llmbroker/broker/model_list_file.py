@@ -93,7 +93,7 @@ def write_model_list(path: Path, model_list: ModelList) -> bool:
 @dataclass(frozen=True, slots=True)
 class FileSyncOutcome:
     """The result of syncing the file: the report, whether it was rewritten, and the
-    merged model_list."""
+    merged model list."""
 
     report: SyncReport
     changed: bool

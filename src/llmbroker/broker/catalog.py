@@ -155,6 +155,7 @@ class Catalog:
         self._direct_missing_keys: tuple[PendingKey, ...] = ()
         self._key_info: dict[str, KeyInfo] = {}
         self._payable: frozenset[str] = frozenset()
+        self._scoped_refs: frozenset[str] = frozenset()
         self._empty = False
         self._reported_state: int | None = None
         self._reported_missing: set[str] = set()
@@ -167,8 +168,8 @@ class Catalog:
 
     @property
     def payable(self) -> frozenset[str]:
-        """The refs the installation's shared ring can pay for, as of the last
-        reconcile — what an admin read reports and the alarm counts."""
+        """The refs this installation holds a key for as of the last rebuild, a
+        caller's own included — what an admin read reports and the alarm counts."""
         return self._payable
 
     @property
@@ -214,10 +215,17 @@ class Catalog:
                 self._declared = declared
             return self._declared if self._declared is not None else DeclaredModels()
 
-    async def rebuild(self) -> None:
+    async def rebuild(self, known: frozenset[str] | None = None) -> None:
         """Re-read the registry and re-derive everything learned: pool membership, the
-        admin disabled map, and quality from the journal tail. The only way the live
-        pool ever changes; the keys are refreshed by the broker just before this."""
+        admin disabled map, and quality from the journal tail. ``known`` is the one
+        listing of the secrets store the broker made just before, or ``None``."""
+        # A caller's ref is the shared one behind its scope prefix; a ref itself never
+        # carries a separator, so the last segment is the ref whatever the scope holds.
+        self._scoped_refs = (
+            frozenset(r.rsplit("/", 1)[-1] for r in known if "/" in r)
+            if known is not None
+            else frozenset()
+        )
         stored, declared = await self.entries()
         self._empty = not stored and not declared
         await self._reconcile(stored, declared)
@@ -254,8 +262,14 @@ class Catalog:
         self._report_health()
         self._report_missing_keys()
 
+    def _held(self, ref: str, shared: frozenset[str]) -> bool:
+        """Whether this installation holds a key for ``ref`` at all — the shared value,
+        or one belonging to a single caller. Which caller is not the measure's
+        business; that a key is here, is."""
+        return ref in shared or ref in self._scoped_refs
+
     async def _measure(self, managed: list[LLMConfig], direct: list[LLMConfig]) -> None:
-        self._payable = await self._ring.payable(c.api_key_ref for c in managed)
+        shared = await self._ring.payable(c.api_key_ref for c in managed)
         usable: set[str] = set()
         missing: dict[str, list[str]] = {}
         total: set[str] = set()
@@ -263,10 +277,11 @@ class Catalog:
             if not cfg.api_key_ref:
                 continue
             total.add(cfg.api_key_ref)
-            if cfg.api_key_ref in self._payable:
+            if self._held(cfg.api_key_ref, shared):
                 usable.add(cfg.api_key_ref)
             else:
                 missing.setdefault(cfg.api_key_ref, []).append(cfg.name)
+        self._payable = frozenset(usable)
         held_back = {ref: names for ref, names in missing.items() if ref not in usable}
         direct_held = await self._direct_without_keys(direct)
         # Help text is read only for a ref that is missing, so a fully-keyed
@@ -288,7 +303,8 @@ class Catalog:
         for cfg in direct:
             if not cfg.api_key_ref:
                 continue
-            if await self._ring.resolve(cfg.api_key_ref) is None:
+            shared = await self._ring.resolve(cfg.api_key_ref) is not None
+            if not self._held(cfg.api_key_ref, frozenset({cfg.api_key_ref} if shared else ())):
                 missing.setdefault(cfg.api_key_ref, []).append(cfg.alias or cfg.name)
         return missing
 

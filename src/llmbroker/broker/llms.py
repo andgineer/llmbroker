@@ -32,7 +32,7 @@ class AsyncLLMs:
         store: StoreProtocol,
         learner: Learner | None,
         ensure_pool: Callable[[], Awaitable[None]],
-        on_exhausted: Callable[[NoLLMAvailableError], Awaitable[None]],
+        on_exhausted: Callable[[NoLLMAvailableError, KeyRing], Awaitable[bool]],
     ) -> None:
         self._ring = ring
         self._router = router
@@ -87,8 +87,18 @@ class AsyncLLMs:
                 wait=wait,
             )
         except NoLLMAvailableError as exc:
-            await self._on_exhausted(exc)
-            raise
+            if not await self._on_exhausted(exc, self._ring):
+                raise
+        # The ports were re-read inside this request, so it may as well have the
+        # answer. ``wait=0``: a second pass may not spend the budget twice.
+        return await self._router.chat(
+            self._ring,
+            messages,
+            tools=tools,
+            operation=operation,
+            trace_id=trace_id,
+            wait=0,
+        )
 
     async def stream(
         self,
@@ -102,21 +112,38 @@ class AsyncLLMs:
         Fails over like ``ask`` until the first delta, then raises
         ``StreamInterruptedError``. Async-only."""
         await self._ensure_pool()
+        messages = [{"role": "user", "content": prompt}]
+        produced = False
         try:
             async with aclosing(
                 self._router.stream(
                     self._ring,
-                    [{"role": "user", "content": prompt}],
+                    messages,
                     operation=operation,
                     trace_id=trace_id,
                     wait=wait,
                 ),
             ) as deltas:
                 async for delta in deltas:
+                    produced = True
                     yield delta
+            return
         except NoLLMAvailableError as exc:
-            await self._on_exhausted(exc)
-            raise
+            # ``produced`` guards invariant 18: past the first delta the answer is
+            # already partly the caller's, and a second pass could only splice.
+            if produced or not await self._on_exhausted(exc, self._ring):
+                raise
+        async with aclosing(
+            self._router.stream(
+                self._ring,
+                messages,
+                operation=operation,
+                trace_id=trace_id,
+                wait=0,
+            ),
+        ) as deltas:
+            async for delta in deltas:
+                yield delta
 
     # ------------------------------------------------------------------
     # Direct single-model access (no pool, no failover)

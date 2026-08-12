@@ -253,3 +253,38 @@ async def test_the_broker_verbs_are_the_unscoped_caller(tmp_path, monkeypatch):
         assert (await broker.ask("hi")).text == "ok"
         assert await broker.count() == await broker.llms.count()
         assert (await broker.get("p1")).config == (await broker.llms.get("p1")).config
+
+
+class _CostlySecrets:
+    """A store where every lookup is a network round trip — Vault, AWS, a DB."""
+
+    def __init__(self, mapping):
+        self._mapping = dict(mapping)
+        self.reads: list[str] = []
+
+    async def resolve(self, ref):
+        self.reads.append(ref)
+        if ref not in self._mapping:
+            raise KeyError(ref)
+        return self._mapping[ref]
+
+    async def refs(self, prefix=""):
+        return frozenset(r for r in self._mapping if r.startswith(prefix))
+
+
+async def test_first_time_callers_cost_the_secrets_store_nothing(tmp_path, monkeypatch):
+    """A per-user deployment meets new scopes constantly. None of them may cost a
+    round trip for a ref the last listing already said nobody holds."""
+    monkeypatch.setattr(_PATCH, _keys_used)
+    secrets = _CostlySecrets({"KEY": "shared-key"})
+    db = str(tmp_path / "b.db")
+    await SqliteRegistry(db).mirror([_cfg(), _cfg(name="p2", ref="KEY2")])
+    broker = AsyncBroker(SqliteRegistry(db), secrets=secrets, store=InMemoryStore(), sync=None)
+    async with broker:
+        await broker.ensure_pool()
+        secrets.reads.clear()
+
+        for i in range(200):
+            await broker.for_scope(f"user-{i}").ask("hi")
+
+        assert secrets.reads == []
