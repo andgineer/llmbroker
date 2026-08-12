@@ -1,6 +1,8 @@
 # Implementation plans
 
-One plan is queued. **Take [`one-broker-four-triggers`](one-broker-four-triggers.md).**
+**Nothing is queued — take nothing from here.** The one plan below is implemented
+and reviewed; it stays only as the artifact a reviewer reads, and its file and its
+row go together once the maintainer asks.
 
 **How a plan is executed** — the rules an agent follows when told to implement one — live in
 `CLAUDE.md` under "Executing a plan": code wins over a stale plan, gate on `invoke pre` + `pytest`
@@ -11,7 +13,7 @@ for review. Nothing needs restating in the request.
 
 | Plan | Status | Blocked by | Notes |
 |---|---|---|---|
-| [one-broker-four-triggers](one-broker-four-triggers.md) | queued | — | the deletion pass: the merge becomes a mirror, availability stops being shared, one broker per process with callers per request, the pool rebuilt on four triggers with keys riding them, ten rule files become five, then an audit against `git diff 1.3.0..HEAD` |
+| [one-broker-four-triggers](one-broker-four-triggers.md) | implemented, reviewed | — | the deletion pass: the merge becomes a mirror, availability stops being shared, one broker per process with callers per request, the pool rebuilt on four triggers with keys riding them, ten rule files become five, then an audit against `git diff 1.3.0..HEAD` |
 
 ## What happened to the previous queue
 
