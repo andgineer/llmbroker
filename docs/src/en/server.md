@@ -259,6 +259,36 @@ llms.calls(limit=50, kind="call", since=week_ago, operation="summarize")
 carry no finer precision, so both stored timestamps and the bound are rounded
 down to whole milliseconds.
 
+### Tracing one request {#trace}
+
+`ask`, `chat` and `stream` all take `trace_id=` — an id of your own that
+llmbroker writes onto every journal row the call produces and never interprets.
+Pass whatever your system already uses, a request id or a job id, and the journal
+lines up with your logs without a second correlation scheme of its own.
+
+```python
+llms.ask("Summarize this clause", operation="summarize", trace_id=request_id)
+```
+
+**One call is usually several rows.** Failover journals every attempt it made,
+and they all carry the same `trace_id` — which is what the field is for: the
+trace keeps the two models that rate-limited before the third one answered, and
+that is the evidence for why the request took as long as it did. The attempt that
+answered is the row whose `status` is `CallStatus.OK`; a stream that died after
+emitting deltas is not it, having never completed.
+
+```python
+from llmbroker.models import CallStatus
+
+rows = [c for c in llms.calls(limit=200, kind="call") if c.trace_id == request_id]
+answered = next((c for c in rows if c.status is CallStatus.OK), None)
+```
+
+`calls()` has no `trace_id` filter, so narrow the tail yourself — and keep `limit`
+comfortably above what the window can hold, since the tail is newest-first and a
+trace pushed past its edge is simply not in the result. Reusing one `trace_id`
+across several calls is fine and groups them: llmbroker only ever stores it.
+
 ### Statistics over a window
 
 `stats()` counts call records per model over a time window — how many calls each

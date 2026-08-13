@@ -280,6 +280,10 @@ reply = llms.chat([
 ])
 ```
 
+Every call also takes `trace_id=` — your own request or job id, stored on the
+journal rows the call leaves behind and never interpreted, so that the journal
+lines up with your logs. See [Tracing one request](server.md#trace).
+
 Limit how long the whole call may take:
 
 ```python
