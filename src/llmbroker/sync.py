@@ -167,16 +167,25 @@ class LLMs:
     ) -> None:
         self._run(self._async.record_quality(llm_name, operation, score, call_id=call_id))
 
-    def calls(
+    def calls(  # noqa: PLR0913 - one narrowing dimension per parameter
         self,
         *,
         limit: int,
         since: datetime | None = None,
         kind: str | None = None,
         operation: str | None = None,
+        trace_id: str | None = None,
+        call_id: str | None = None,
     ) -> list[Call]:
         return self._run(
-            self._async.calls(limit=limit, since=since, kind=kind, operation=operation),
+            self._async.calls(
+                limit=limit,
+                since=since,
+                kind=kind,
+                operation=operation,
+                trace_id=trace_id,
+                call_id=call_id,
+            ),
         )
 
     def stats(
@@ -301,15 +310,24 @@ class Broker:
     def enable_llm(self, name: str) -> None:
         self._run(self._async.enable_llm(name))
 
-    def calls(
+    def calls(  # noqa: PLR0913 - one narrowing dimension per parameter
         self,
         *,
         limit: int,
         since: datetime | None = None,
         kind: str | None = None,
         operation: str | None = None,
+        trace_id: str | None = None,
+        call_id: str | None = None,
     ) -> list[Call]:
-        return self.llms.calls(limit=limit, since=since, kind=kind, operation=operation)
+        return self.llms.calls(
+            limit=limit,
+            since=since,
+            kind=kind,
+            operation=operation,
+            trace_id=trace_id,
+            call_id=call_id,
+        )
 
     def stats(
         self,

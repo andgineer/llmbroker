@@ -246,7 +246,8 @@ The journal cleans itself up; the retention depth is the journal backend's
 `retention` parameter (90 days by default). To read it: `llms.calls(limit=50)`.
 
 The journal holds two kinds of record — calls and quality ratings — interleaved
-in one stream. Narrow the read by kind, by time, or by operation:
+in one stream. Narrow the read by kind, by time, by operation, or by one of the
+ids you called with (see [Tracing one request](#trace)):
 
 ```python
 from datetime import UTC, datetime, timedelta
@@ -280,14 +281,21 @@ emitting deltas is not it, having never completed.
 ```python
 from llmbroker.models import CallStatus
 
-rows = [c for c in llms.calls(limit=200, kind="call") if c.trace_id == request_id]
+rows = llms.calls(limit=200, kind="call", trace_id=request_id)
 answered = next((c for c in rows if c.status is CallStatus.OK), None)
 ```
 
-`calls()` has no `trace_id` filter, so narrow the tail yourself — and keep `limit`
-comfortably above what the window can hold, since the tail is newest-first and a
-trace pushed past its edge is simply not in the result. Reusing one `trace_id`
-across several calls is fine and groups them: llmbroker only ever stores it.
+The filter runs inside the store, so `limit` caps the *matching* rows rather than
+the rows scanned — a trace made an hour and a million calls ago still comes back
+whole. On a DB backend the column is indexed; the file store has no index by
+construction, so there the filter buys correctness rather than speed.
+
+Pass `call_id=` to pull up a single attempt — `result.call_id` is exactly that
+value. Mind the name: it matches a call row's own `id`, not the same-named column
+a quality rating carries pointing back at the call it rates.
+
+Reusing one `trace_id` across several calls is fine and groups them: llmbroker
+only ever stores it.
 
 ### Statistics over a window
 

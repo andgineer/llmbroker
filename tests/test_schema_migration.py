@@ -167,6 +167,36 @@ async def test_sqlite_reopening_a_marker_database_leaves_the_header_alone(tmp_pa
     assert await _header(db_path) == 42
 
 
+async def _indexes(db_path):
+    async with aiosqlite.connect(db_path) as db:
+        rows = await (
+            await db.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
+        ).fetchall()
+    return {name for (name,) in rows}
+
+
+async def test_sqlite_ensure_schema_creates_the_trace_index(tmp_path):
+    db_path = str(tmp_path / "trace-index.db")
+    await SqliteDriver(db_path).ensure_schema()
+    assert "llmbroker_calls_idx_trace_id" in await _indexes(db_path)
+
+
+async def test_sqlite_existing_database_gains_a_new_index_without_a_version_bump(tmp_path):
+    """An index is not part of the version-gated column shape: a database created by
+    an earlier process picks one up when a process next opens it, no reset needed."""
+    db_path = str(tmp_path / "gains-index.db")
+    await SqliteDriver(db_path).ensure_schema()
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("DROP INDEX llmbroker_calls_idx_trace_id")
+        await db.commit()
+    assert "llmbroker_calls_idx_trace_id" not in await _indexes(db_path)
+
+    await _ensure_schema(db_path)
+
+    assert "llmbroker_calls_idx_trace_id" in await _indexes(db_path)
+    assert await _marker(db_path) == SCHEMA_VERSION
+
+
 async def test_postgres_ensure_schema_creates_fresh_and_stamps_version(pg_pool):
     async with pg_pool.acquire() as conn:
         await conn.execute("DROP TABLE IF EXISTS llmbroker_schema_version")
@@ -219,6 +249,13 @@ async def test_mongodb_ensure_schema_creates_fresh_and_stamps_version(mongo_db):
 
     indexes = await mongo_db["llmbroker_registry"].index_information()
     assert "llmbroker_registry_unique" in indexes
+
+
+async def test_mongodb_ensure_schema_creates_the_trace_index(mongo_db):
+    await MongoDriver(mongo_db).ensure_schema()
+
+    indexes = await mongo_db["llmbroker_calls"].index_information()
+    assert "llmbroker_calls_idx_trace_id" in indexes
 
 
 async def test_mongodb_ensure_schema_raises_on_version_mismatch(mongo_db):

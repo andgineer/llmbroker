@@ -200,16 +200,20 @@ store port above.
 The journal has two read forms, both newest-first and both over the same store
 port: a tail of raw records, and a per-model aggregate of call records over a
 time window. Both narrow by an inclusive lower time bound, by record kind, and
-by operation.
+by operation. The tail narrows further, by the two host-supplied ids a row can
+carry: the trace the request was made under, and one attempt's own id. Those two
+are on the tail form only — the aggregate is per model over a window and has no
+use for one request
+([`decisions.md`](../decisions.md#host-supplied-fields-earn-the-query-surface)).
 
 The kind filter matters because the two record kinds interleave in one stream
 and a quality record carries no status, so a host aggregating call outcomes
 without it gets a silently wrong denominator. The operation filter matters
 because the journal is shared by everything the broker calls.
 
-The operation filter matches a named operation only: an unset filter means "do
-not filter", so calls journaled without an operation label cannot currently be
-isolated as a group. A host that labels none of its calls therefore has two
+Every filter shares one semantics: unset means do not filter. The operation
+filter matches a named operation only, so calls journaled without an operation
+label cannot currently be isolated as a group. A host that labels none of its calls therefore has two
 readings — everything, or one named operation — and neither is "mine". This is
 sound while the broker journals no traffic of its own; it stops being sound the
 moment the broker writes rows under its own operation name, which is the point

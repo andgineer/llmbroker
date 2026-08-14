@@ -14,12 +14,20 @@ from llmbroker.models import Call, CallStatus, Usage
 _BASE = datetime(2030, 1, 1, tzinfo=UTC)
 
 
-def _call(call_id="c1", llm_name="p1", scope=None, operation=None, status=CallStatus.OK, **kw):
+def _call(
+    call_id="c1",
+    llm_name="p1",
+    scope=None,
+    operation=None,
+    status=CallStatus.OK,
+    trace_id=None,
+    **kw,
+):
     return Call(
         id=call_id,
         llm_name=llm_name,
         operation=operation,
-        trace_id=None,
+        trace_id=trace_id,
         status=status,
         scope=scope,
         **kw,
@@ -172,6 +180,104 @@ async def test_calls_combines_since_kind_and_operation(queryable_store):
         operation="summarize",
     )
     assert [c.id for c in rows] == ["new-summ"]
+
+
+async def test_calls_trace_id_filter_keeps_only_that_trace(queryable_store):
+    await queryable_store.record(_call("mine", trace_id="req-1", ts=_BASE))
+    await queryable_store.record(_call("theirs", trace_id="req-2", ts=_BASE))
+    rows = await queryable_store.calls(limit=10, trace_id="req-1")
+    assert [c.id for c in rows] == ["mine"]
+
+
+async def test_calls_trace_id_spans_a_failover_burst(queryable_store):
+    """The question the filter exists for: every attempt one request made, including
+    the ones that failed before another model answered."""
+    await queryable_store.record(
+        _call("a1", trace_id="req-1", status=CallStatus.RATE_LIMITED, ts=_BASE),
+    )
+    await queryable_store.record(
+        _call("a2", trace_id="req-1", status=CallStatus.RATE_LIMITED, ts=_BASE),
+    )
+    await queryable_store.record(_call("a3", trace_id="req-1", status=CallStatus.OK, ts=_BASE))
+    rows = await queryable_store.calls(limit=10, trace_id="req-1")
+    assert {c.id for c in rows} == {"a1", "a2", "a3"}
+    assert [c.id for c in rows if c.status is CallStatus.OK] == ["a3"]
+
+
+async def test_calls_trace_id_limit_bounds_matching_rows_not_scanned(queryable_store):
+    """``limit`` caps the rows returned, not the rows looked at: a trace buried under
+    newer traffic still comes back whole rather than being pushed off the tail."""
+    await queryable_store.record(_call("t1a", trace_id="req-1", ts=_BASE))
+    await queryable_store.record(_call("t1b", trace_id="req-1", ts=_BASE))
+    newer = _BASE + timedelta(days=2)
+    for i in range(4):
+        await queryable_store.record(_call(f"t2{i}", trace_id="req-2", ts=newer))
+    rows = await queryable_store.calls(limit=2, trace_id="req-1")
+    assert {c.id for c in rows} == {"t1a", "t1b"}
+
+
+async def test_calls_call_id_selects_one_attempt(queryable_store):
+    await queryable_store.record(_call("first", trace_id="req-1", ts=_BASE))
+    await queryable_store.record(_call("second", trace_id="req-1", ts=_BASE))
+    rows = await queryable_store.calls(limit=10, call_id="second")
+    assert [c.id for c in rows] == ["second"]
+
+
+async def test_calls_call_id_does_not_match_a_quality_rows_passthrough(queryable_store):
+    """``call_id=`` is named for the id the host holds, and that id is a call row's
+    own — never the same-named column a quality row carries pointing back at it."""
+    await queryable_store.record(_call("a", ts=_BASE))
+    await queryable_store.record_quality("p1", "summarize", 0.8, call_id="a")
+    rows = await queryable_store.calls(limit=10, call_id="a")
+    assert [(c.id, c.kind) for c in rows] == [("a", "call")]
+
+
+async def test_calls_combines_the_id_filters_with_since_kind_and_operation(queryable_store):
+    """Every decoy is excluded by exactly one argument, so dropping any of them
+    fails the assertion."""
+    in_window = _BASE + timedelta(days=2)
+    await queryable_store.record(_call("old-summ", trace_id="req-1", operation="summ", ts=_BASE))
+    await queryable_store.record(
+        _call("new-other", trace_id="req-1", operation="translate", ts=in_window),
+    )
+    await queryable_store.record(
+        _call(
+            "new-summ-quality",
+            trace_id="req-1",
+            operation="summ",
+            ts=in_window,
+            status=None,
+            kind="quality",
+        ),
+    )
+    await queryable_store.record(
+        _call("other-trace", trace_id="req-2", operation="summ", ts=in_window),
+    )
+    await queryable_store.record(
+        _call("new-summ", trace_id="req-1", operation="summ", ts=in_window)
+    )
+
+    narrowed = {
+        "limit": 10,
+        "since": _BASE + timedelta(days=1),
+        "kind": "call",
+        "operation": "summ",
+        "trace_id": "req-1",
+    }
+    assert [c.id for c in await queryable_store.calls(**narrowed)] == ["new-summ"]
+    assert [c.id for c in await queryable_store.calls(**narrowed, call_id="new-summ")] == [
+        "new-summ",
+    ]
+    assert await queryable_store.calls(**narrowed, call_id="old-summ") == []
+
+
+async def test_calls_unset_id_filters_return_every_row(queryable_store):
+    """Both share the operation filter's semantics: unset means do not filter, so a
+    row carrying no trace_id at all is not excluded by leaving the filter off."""
+    await queryable_store.record(_call("traced", trace_id="req-1", ts=_BASE))
+    await queryable_store.record(_call("untraced", ts=_BASE))
+    rows = await queryable_store.calls(limit=10, trace_id=None, call_id=None)
+    assert {c.id for c in rows} == {"traced", "untraced"}
 
 
 async def test_stats_over_a_window_counts_only_that_operation(queryable_store):

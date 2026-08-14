@@ -381,6 +381,44 @@ def test_stats_rejects_naive_since(tmp_path):
     asyncio.run(run())
 
 
+def test_calls_forwards_the_id_filters_to_the_store(tmp_path):
+    """The public keywords must reach the store unchanged — a filter dropped in the
+    pass-through would silently widen the result instead of failing."""
+
+    class _RecordingStore:
+        def __init__(self):
+            self.seen: list[dict] = []
+
+        async def record(self, call):
+            return
+
+        async def record_quality(self, *a, **kw):
+            return
+
+        async def calls(self, **kw):
+            self.seen.append(kw)
+            return []
+
+    async def run():
+        store = _RecordingStore()
+        broker = AsyncBroker(registry=_registry(tmp_path), store=store, sync=None)
+        await broker.calls(limit=5, trace_id="req-1", call_id="attempt-2")
+        assert store.seen == [
+            {
+                "limit": 5,
+                "scope": None,
+                "since": None,
+                "kind": None,
+                "operation": None,
+                "trace_id": "req-1",
+                "call_id": "attempt-2",
+            },
+        ]
+        await broker.aclose()
+
+    asyncio.run(run())
+
+
 def test_journal_read_contract_holds_for_a_third_party_store(tmp_path):
     """The bound/limit contract is a promise of the public API, so it must not
     depend on the store backend upholding it — a host's own QueryableStoreProtocol

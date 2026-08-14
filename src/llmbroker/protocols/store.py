@@ -25,10 +25,11 @@ class StoreProtocol(Protocol):
 
 @runtime_checkable
 class QueryableStoreProtocol(StoreProtocol, Protocol):
-    """``since`` must be timezone-aware and bounds the journal inclusively;
-    ``limit`` must be >= 1."""
+    """``since`` must be timezone-aware and bounds the journal inclusively; ``limit``
+    must be >= 1. ``call_id`` matches a call row's own id, not a quality row's
+    passthrough column of the same name."""
 
-    async def calls(
+    async def calls(  # noqa: PLR0913 - one narrowing dimension per parameter
         self,
         *,
         limit: int,
@@ -36,6 +37,8 @@ class QueryableStoreProtocol(StoreProtocol, Protocol):
         since: datetime | None = None,
         kind: str | None = None,
         operation: str | None = None,
+        trace_id: str | None = None,
+        call_id: str | None = None,
     ) -> list[Call]: ...
 
 

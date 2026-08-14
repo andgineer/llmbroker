@@ -130,12 +130,11 @@ class FileStore:
     def _read_tail(
         self,
         limit: int,
-        *,
-        scope: str | None,
+        match: dict[str, object],
         since: datetime | None,
-        kind: str | None,
-        operation: str | None,
     ) -> list[Call]:
+        """``match`` maps a ``Call`` attribute name to the value it must equal — the
+        file counterpart of the driver stores' column match."""
         result: list[Call] = []
         for path in self._day_files_newest_first():
             if since is not None and self._file_is_wholly_before(path, since):
@@ -146,11 +145,7 @@ class FileStore:
                 if not stripped:
                     continue
                 call = _call_from_jsonable(json.loads(stripped))
-                if scope is not None and call.scope != scope:
-                    continue
-                if kind is not None and call.kind != kind:
-                    continue
-                if operation is not None and call.operation != operation:
+                if any(getattr(call, attr) != want for attr, want in match.items()):
                     continue
                 if since is not None and (call.ts is None or call.ts < since):
                     continue
@@ -169,7 +164,7 @@ class FileStore:
             return False
         return file_date < since.date()
 
-    async def calls(
+    async def calls(  # noqa: PLR0913 - one narrowing dimension per parameter
         self,
         *,
         limit: int,
@@ -177,20 +172,23 @@ class FileStore:
         since: datetime | None = None,
         kind: str | None = None,
         operation: str | None = None,
+        trace_id: str | None = None,
+        call_id: str | None = None,
     ) -> list[Call]:
         """Newest-first tail of the journal, both kinds interleaved unless ``kind``
-        narrows them. Unfiltered by scope, which learning has no concept of; ``since``
-        must be timezone-aware and bounds the timestamp inclusively."""
+        narrows them. ``since`` must be timezone-aware and bounds the timestamp
+        inclusively; ``call_id`` matches a call row's own id, not a quality row's."""
         check_limit(limit)
         bound = to_utc(since, "since") if since is not None else None
-        return await asyncio.to_thread(
-            self._read_tail,
-            limit,
-            scope=scope,
-            since=bound,
-            kind=kind,
-            operation=operation,
-        )
+        wanted = {
+            "scope": scope,
+            "kind": kind,
+            "operation": operation,
+            "trace_id": trace_id,
+            "id": call_id,
+        }
+        match = {attr: want for attr, want in wanted.items() if want is not None}
+        return await asyncio.to_thread(self._read_tail, limit, match, bound)
 
     def _purge_old_day_files(self) -> None:
         cutoff = (datetime.now(UTC) - self._retention).date()

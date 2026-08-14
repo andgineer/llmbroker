@@ -190,3 +190,63 @@ testcontainers, so Docker must be running.
 
 `invoke pre` clean (ruff, ruff-format, pyrefly, docstring cap) and
 `python -m pytest` reporting `N passed` with zero failures, errors or skips.
+
+## Handover
+
+### Done as written
+
+Steps 1–7 in full. `SCHEMA_VERSION` stayed at 7; `TABLES["calls"].indexes` gained
+`("trace_id",)`; both filters were added to `QueryableStoreProtocol`,
+`DriverStore`, `FileStore` and every public pass-through; the `decisions.md` entry
+landed verbatim under `## Storage` after `store-is-not-logging`; `rules/backends.md`
+"The read path" records the two id dimensions, that they are tail-only, and the
+shared "unset means do not filter" semantics; both language docs were rewritten in
+the same batch. `sqlite`, `postgres` and `mongodb` needed no change, as the plan
+predicted — each `recent()` builds its filter generically from the `match` mapping.
+
+Step 8 (`invoke ver-feature`) skipped — the maintainer's.
+
+### Done differently
+
+**One more pass-through than the plan listed.** The plan named three
+(`broker/llms.py`, `broker/broker.py`, `sync.py:304`); `sync.py` has two — the
+sync `LLMs.calls` wrapper as well as `Broker.calls`. Both forward the keywords.
+
+**Seven `# noqa: PLR0913` the plan did not anticipate.** `calls()` now takes 7
+narrowing parameters against ruff's max of 5, at every layer. The project already
+uses this suppression at 15 sites with a short reason, so this follows the local
+convention rather than raising the global limit.
+
+**`FileStore._read_tail` took an attribute→value match mapping instead of a sixth
+keyword.** Adding the two predicates to the existing `if … is not None` chain
+pushed the method past ruff's C901 complexity ceiling (12 > 10) *and* PLR0913. It
+now takes the same shape the driver stores already use — a mapping the caller
+builds, with `call_id` mapped onto `id` exactly as `DriverStore` maps it onto the
+column — which removes both warnings without suppressing either, and makes the two
+store implementations mirror each other.
+
+**`DriverStore.calls` and `LLMs.calls` docstrings each lost one clause** to stay
+inside the 3-prose-line cap, since the naming trap had to go in. `DriverStore` lost
+"unfiltered by scope (learning is global)", which `rules/backends.md` states;
+`LLMs` lost "(inclusive `called_at` bound)" shortened to "(inclusive bound)".
+
+### Decisions taken during implementation
+
+- The plan's sqlite fresh-process test reuses the existing `_ensure_schema` helper
+  in `test_schema_migration.py`, which pops the per-path `_schema_ready` memo —
+  without it a second driver on the same path short-circuits in-process and the
+  test would pass for the wrong reason.
+- `test_calls_combines_the_id_filters_with_since_kind_and_operation` asserts three
+  times rather than once: `call_id` pins a single row, so combining it with the
+  other four filters would make them non-load-bearing. The first assertion proves
+  `trace_id` alongside since/kind/operation; the other two prove `call_id` narrows
+  further and excludes.
+- Docs gained one line beyond the plan: the "Call journal" intro in both languages
+  now names the id filters and links to the tracing section, since that intro
+  enumerates what a read can narrow by.
+
+### Gate
+
+`invoke pre` — clean (ruff, ruff-format, docstring cap, pyrefly 0 errors).
+`python -m pytest` — **1326 passed**, zero failures, errors or skips. Docker was
+running, so the postgres and mongodb testcontainer parametrizations all ran.

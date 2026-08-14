@@ -241,17 +241,19 @@ class AsyncLLMs:
     # Call journal — the rows this caller's scope is on
     # ------------------------------------------------------------------
 
-    async def calls(
+    async def calls(  # noqa: PLR0913 - one narrowing dimension per parameter
         self,
         *,
         limit: int,
         since: datetime | None = None,
         kind: str | None = None,
         operation: str | None = None,
+        trace_id: str | None = None,
+        call_id: str | None = None,
     ) -> list[Call]:
         """Newest-first journal tail for this caller, narrowed by any of ``since``
-        (inclusive ``called_at`` bound), ``kind`` and ``operation``. The unscoped
-        caller sees the whole installation. Never provisions the pool."""
+        (inclusive bound), ``kind``, ``operation``, ``trace_id`` and ``call_id`` (one
+        attempt's own id). The unscoped caller sees all. Never provisions the pool."""
         check_limit(limit)
         return await self._require_queryable().calls(
             limit=limit,
@@ -259,6 +261,8 @@ class AsyncLLMs:
             since=to_utc(since, "since") if since is not None else None,
             kind=kind,
             operation=operation,
+            trace_id=trace_id,
+            call_id=call_id,
         )
 
     async def stats(

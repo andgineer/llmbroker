@@ -459,18 +459,27 @@ class AsyncBroker:
     # Call journal
     # ------------------------------------------------------------------
 
-    async def calls(
+    async def calls(  # noqa: PLR0913 - one narrowing dimension per parameter
         self,
         *,
         limit: int,
         since: datetime | None = None,
         kind: str | None = None,
         operation: str | None = None,
+        trace_id: str | None = None,
+        call_id: str | None = None,
     ) -> list[Call]:
         """Newest-first journal tail for the whole installation — one caller's own rows
         are ``for_scope(...).calls(...)``. Narrowed by any of ``since`` (inclusive
-        ``called_at`` bound), ``kind`` and ``operation``. Never provisions the pool."""
-        return await self.llms.calls(limit=limit, since=since, kind=kind, operation=operation)
+        bound), ``kind``, ``operation``, ``trace_id`` and ``call_id``."""
+        return await self.llms.calls(
+            limit=limit,
+            since=since,
+            kind=kind,
+            operation=operation,
+            trace_id=trace_id,
+            call_id=call_id,
+        )
 
     async def stats(
         self,

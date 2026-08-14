@@ -163,7 +163,7 @@ class DriverStore:
     ) -> None:
         await self.record(quality_call(llm_name, operation, score, call_id=call_id, scope=scope))
 
-    async def calls(
+    async def calls(  # noqa: PLR0913 - one narrowing dimension per parameter
         self,
         *,
         limit: int,
@@ -171,10 +171,12 @@ class DriverStore:
         since: datetime | None = None,
         kind: str | None = None,
         operation: str | None = None,
+        trace_id: str | None = None,
+        call_id: str | None = None,
     ) -> list[Call]:
         """Newest-first tail of the journal, both kinds interleaved unless ``kind``
-        narrows them — unfiltered by scope (learning is global); ``scope`` is accepted
-        for the host-facing filter only. ``since`` bounds ``called_at`` inclusively."""
+        narrows them. ``since`` bounds ``called_at`` inclusively; ``call_id`` matches a
+        call row's own id, not a quality row's passthrough column of the same name."""
         check_limit(limit)
         match: Row = {}
         if scope is not None:
@@ -183,6 +185,10 @@ class DriverStore:
             match["kind"] = kind
         if operation is not None:
             match["operation"] = operation
+        if trace_id is not None:
+            match["trace_id"] = trace_id
+        if call_id is not None:
+            match["id"] = call_id
         bound = to_utc(since, "since") if since is not None else None
         rows = await self._driver.recent("calls", limit, match or None, bound)
         return [_row_to_call(r) for r in rows]

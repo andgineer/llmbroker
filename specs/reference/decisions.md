@@ -229,6 +229,23 @@ fixed by the library is wrong for the next consumer.
 **Why:** the store holds raw material llmbroker reads back, not a human-facing
 log. The application logs by its own means.
 
+### host-supplied-fields-earn-the-query-surface
+
+A journal field the library never interprets is still filterable when a host's own
+question is asked in its terms.
+
+**Blocks:** keeping `trace_id` stored but unqueryable, on the grounds that
+llmbroker itself never routes or learns by it.
+**Why:** `scope` is the same shape — host-supplied, uninterpreted — and has been a
+filter since the store port existed, so "the library does not read it" was never
+the line. The line is whether the field answers a question about the journal, and
+one request's attempts are exactly such a question: failover writes a row per
+attempt, so without the filter a host rebuilds the set by scanning a tail whose
+depth it must guess, and a trace pushed past that depth is indistinguishable from
+one that never happened. `store-is-not-logging` does not reach this — it blocks
+emitting store events outward into logging, not answering a query over a column
+already stored.
+
 ### no-schema-migrations
 
 **Blocks:** an `ALTER`-based migration path.
