@@ -10,13 +10,13 @@
 | src/llmbroker/backends/driver.py          |        8 |        0 |    100% |           |
 | src/llmbroker/backends/inmemory.py        |       42 |        1 |     98% |        20 |
 | src/llmbroker/backends/ports.py           |      100 |        0 |    100% |           |
-| src/llmbroker/backends/spec.py            |        7 |        0 |    100% |           |
+| src/llmbroker/backends/spec.py            |       13 |        0 |    100% |           |
 | src/llmbroker/broker/aliases.py           |       68 |        3 |     96% |62, 65, 90 |
 | src/llmbroker/broker/broker.py            |      226 |        6 |     97% |78, 233, 271-273, 526 |
 | src/llmbroker/broker/catalog.py           |      217 |        5 |     98% |54, 64, 113, 278, 305 |
 | src/llmbroker/broker/keyring.py           |       73 |        1 |     99% |        16 |
 | src/llmbroker/broker/learning.py          |       67 |        0 |    100% |           |
-| src/llmbroker/broker/llms.py              |      108 |        9 |     92% |150-165, 244, 260, 268 |
+| src/llmbroker/broker/llms.py              |      108 |        6 |     94% |   150-165 |
 | src/llmbroker/broker/merge.py             |       65 |        0 |    100% |           |
 | src/llmbroker/broker/model\_list\_file.py |       58 |        1 |     98% |        37 |
 | src/llmbroker/broker/pool.py              |      159 |        0 |    100% |           |
@@ -42,7 +42,7 @@
 | src/llmbroker/mongodb/registry.py         |        6 |        0 |    100% |           |
 | src/llmbroker/mongodb/secrets.py          |        6 |        0 |    100% |           |
 | src/llmbroker/mongodb/store.py            |        8 |        0 |    100% |           |
-| src/llmbroker/optimizer.py                |       77 |        1 |     99% |       150 |
+| src/llmbroker/optimizer.py                |       81 |        1 |     99% |       167 |
 | src/llmbroker/postgres/driver.py          |      144 |        5 |     97% |106, 121, 123, 230-231 |
 | src/llmbroker/postgres/registry.py        |        6 |        0 |    100% |           |
 | src/llmbroker/postgres/secrets.py         |        6 |        0 |    100% |           |
@@ -60,7 +60,7 @@
 | src/llmbroker/sync.py                     |      130 |        1 |     99% |        96 |
 | src/llmbroker/util/atomic.py              |       17 |        3 |     82% |     29-31 |
 | src/llmbroker/vault/secrets.py            |       29 |        3 |     90% | 26, 61-62 |
-| **TOTAL**                                 | **3634** |  **111** | **97%** |           |
+| **TOTAL**                                 | **3644** |  **108** | **97%** |           |
 
 
 ## Setup coverage badge

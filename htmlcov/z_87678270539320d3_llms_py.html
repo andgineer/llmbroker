@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for src/llmbroker/broker/llms.py: 92%</title>
+    <title>Coverage for src/llmbroker/broker/llms.py: 94%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>src<span class="sep">/</span>llmbroker<span class="sep">/</span>broker<span class="sep">/</span>llms.py</b>:
-            <span class="pc_cov">92%</span>
+            <span class="pc_cov">94%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">108 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">99<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">9<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">102<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">6<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_87678270539320d3_merge_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-08-15 11:49 +0000
+            created at 2026-08-15 15:28 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -323,15 +323,15 @@
     <p class="pln"><span class="n"><a id="t241" href="#t241">241</a></span><span class="t"><span class="str">        See ``docs/`` &quot;Quality rating&quot;.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t242" href="#t242">242</a></span><span class="t">        <span class="nam">check_score</span><span class="op">(</span><span class="nam">score</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t243" href="#t243">243</a></span><span class="t">        <span class="key">if</span> <span class="op">(</span><span class="nam">call_id</span> <span class="key">is</span> <span class="key">None</span><span class="op">)</span> <span class="op">==</span> <span class="op">(</span><span class="nam">trace_id</span> <span class="key">is</span> <span class="key">None</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t244" href="#t244">244</a></span><span class="t">            <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t245" href="#t245">245</a></span><span class="t">                <span class="str">&quot;record_quality() takes exactly one of call_id= or trace_id= &#8212;&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t246" href="#t246">246</a></span><span class="t">                <span class="str">&quot; a rating names the call it rates&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t247" href="#t247">247</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t244" href="#t244">244</a></span><span class="t">            <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t245" href="#t245">245</a></span><span class="t">                <span class="str">&quot;record_quality() takes exactly one of call_id= or trace_id= &#8212;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t246" href="#t246">246</a></span><span class="t">                <span class="str">&quot; a rating names the call it rates&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t247" href="#t247">247</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t248" href="#t248">248</a></span><span class="t">        <span class="nam">rated</span> <span class="op">=</span> <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_resolve_rated</span><span class="op">(</span><span class="nam">call_id</span><span class="op">=</span><span class="nam">call_id</span><span class="op">,</span> <span class="nam">trace_id</span><span class="op">=</span><span class="nam">trace_id</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t249" href="#t249">249</a></span><span class="t">        <span class="key">for</span> <span class="nam">row</span> <span class="key">in</span> <span class="nam">rated</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t250" href="#t250">250</a></span><span class="t">            <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_store</span><span class="op">.</span><span class="nam">record_quality</span><span class="op">(</span><span class="nam">row</span><span class="op">.</span><span class="nam">id</span><span class="op">,</span> <span class="nam">score</span><span class="op">,</span> <span class="nam">scope</span><span class="op">=</span><span class="nam">self</span><span class="op">.</span><span class="nam">scope</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t251" href="#t251">251</a></span><span class="t">            <span class="key">if</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_learner</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t252" href="#t252">252</a></span><span class="t">                <span class="nam">self</span><span class="op">.</span><span class="nam">_learner</span><span class="op">.</span><span class="nam">record_quality_observed</span><span class="op">(</span><span class="nam">row</span><span class="op">.</span><span class="nam">llm_name</span><span class="op">,</span> <span class="nam">row</span><span class="op">.</span><span class="nam">operation</span><span class="op">,</span> <span class="nam">score</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t252" href="#t252">252</a></span><span class="t">                <span class="nam">self</span><span class="op">.</span><span class="nam">_learner</span><span class="op">.</span><span class="nam">record_quality_observed</span><span class="op">(</span><span class="nam">row</span><span class="op">.</span><span class="nam">llm_name</span><span class="op">,</span> <span class="nam">row</span><span class="op">.</span><span class="nam">operation</span><span class="op">,</span> <span class="nam">row</span><span class="op">.</span><span class="nam">id</span><span class="op">,</span> <span class="nam">score</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t253" href="#t253">253</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t254" href="#t254">254</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">_resolve_rated</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="op">*</span><span class="op">,</span> <span class="nam">call_id</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span><span class="op">,</span> <span class="nam">trace_id</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">list</span><span class="op">[</span><span class="nam">Call</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t255" href="#t255">255</a></span><span class="t">        <span class="str">&quot;&quot;&quot;The answered attempts a rating key names. A page that comes back full may</span>&nbsp;</span><span class="r"></span></p>
@@ -339,18 +339,18 @@
     <p class="run"><span class="n"><a id="t257" href="#t257">257</a></span><span class="t">        <span class="nam">key</span> <span class="op">=</span> <span class="fst">f&quot;</span><span class="fst">call_id=</span><span class="op">{</span><span class="nam">call_id</span><span class="op">!</span><span class="nam">r</span><span class="op">}</span><span class="fst">&quot;</span> <span class="key">if</span> <span class="nam">call_id</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span> <span class="key">else</span> <span class="fst">f&quot;</span><span class="fst">trace_id=</span><span class="op">{</span><span class="nam">trace_id</span><span class="op">!</span><span class="nam">r</span><span class="op">}</span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t258" href="#t258">258</a></span><span class="t">        <span class="nam">rows</span> <span class="op">=</span> <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">calls</span><span class="op">(</span><span class="nam">limit</span><span class="op">=</span><span class="nam">_RATING_PAGE</span><span class="op">,</span> <span class="nam">call_id</span><span class="op">=</span><span class="nam">call_id</span><span class="op">,</span> <span class="nam">trace_id</span><span class="op">=</span><span class="nam">trace_id</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t259" href="#t259">259</a></span><span class="t">        <span class="key">if</span> <span class="nam">len</span><span class="op">(</span><span class="nam">rows</span><span class="op">)</span> <span class="op">==</span> <span class="nam">_RATING_PAGE</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t260" href="#t260">260</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t">                <span class="str">&quot;record_quality: %s resolved to %d rows, the read bound &#8212; attempts past&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t262" href="#t262">262</a></span><span class="t">                <span class="str">&quot; it are not rated&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t263" href="#t263">263</a></span><span class="t">                <span class="nam">key</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t264" href="#t264">264</a></span><span class="t">                <span class="nam">_RATING_PAGE</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t265" href="#t265">265</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t260" href="#t260">260</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t">                <span class="str">&quot;record_quality: %s resolved to %d rows, the read bound &#8212; attempts past&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t262" href="#t262">262</a></span><span class="t">                <span class="str">&quot; it are not rated&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t263" href="#t263">263</a></span><span class="t">                <span class="nam">key</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t264" href="#t264">264</a></span><span class="t">                <span class="nam">_RATING_PAGE</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t265" href="#t265">265</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t266" href="#t266">266</a></span><span class="t">        <span class="nam">answered</span> <span class="op">=</span> <span class="op">[</span><span class="nam">row</span> <span class="key">for</span> <span class="nam">row</span> <span class="key">in</span> <span class="nam">rows</span> <span class="key">if</span> <span class="nam">row</span><span class="op">.</span><span class="nam">status</span> <span class="key">is</span> <span class="nam">CallStatus</span><span class="op">.</span><span class="nam">OK</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t267" href="#t267">267</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">answered</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t268" href="#t268">268</a></span><span class="t">            <span class="key">raise</span> <span class="nam">UnknownCallError</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t269" href="#t269">269</a></span><span class="t">                <span class="fst">f&quot;</span><span class="fst">no answered call found for </span><span class="op">{</span><span class="nam">key</span><span class="op">}</span><span class="fst"> &#8212; retention may have purged it,</span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t270" href="#t270">270</a></span><span class="t">                <span class="str">&quot; or every attempt under it failed&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t271" href="#t271">271</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t268" href="#t268">268</a></span><span class="t">            <span class="key">raise</span> <span class="nam">UnknownCallError</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t269" href="#t269">269</a></span><span class="t">                <span class="fst">f&quot;</span><span class="fst">no answered call found for </span><span class="op">{</span><span class="nam">key</span><span class="op">}</span><span class="fst"> &#8212; retention may have purged it,</span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t270" href="#t270">270</a></span><span class="t">                <span class="str">&quot; or every attempt under it failed&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t271" href="#t271">271</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t272" href="#t272">272</a></span><span class="t">        <span class="key">return</span> <span class="nam">answered</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t273" href="#t273">273</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t274" href="#t274">274</a></span><span class="t">    <span class="com"># ------------------------------------------------------------------</span>&nbsp;</span><span class="r"></span></p>
@@ -408,7 +408,7 @@
             <a class="nav" href="z_87678270539320d3_merge_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-08-15 11:49 +0000
+            created at 2026-08-15 15:28 +0000
         </p>
     </div>
 </footer>
