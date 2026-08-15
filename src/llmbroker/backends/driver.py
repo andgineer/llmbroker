@@ -1,6 +1,6 @@
 """The per-DB storage contract: one round-trip per read, and no logic two correct
-backends could answer differently — that stays in ``backends.ports``. Table and
-column names come from ``backends.spec``, never spelled out in a driver body."""
+backends could answer differently — that stays in ``backends.ports``. The journal
+fold names its columns here; ``backends.spec`` refuses to load if one is renamed away."""
 
 from datetime import datetime
 from typing import Protocol

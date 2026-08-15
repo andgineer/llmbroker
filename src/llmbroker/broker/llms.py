@@ -249,7 +249,7 @@ class AsyncLLMs:
         for row in rated:
             await self._store.record_quality(row.id, score, scope=self.scope)
             if self._learner is not None:
-                self._learner.record_quality_observed(row.llm_name, row.operation, score)
+                self._learner.record_quality_observed(row.llm_name, row.operation, row.id, score)
 
     async def _resolve_rated(self, *, call_id: str | None, trace_id: str | None) -> list[Call]:
         """The answered attempts a rating key names. A page that comes back full may

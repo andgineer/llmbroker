@@ -345,8 +345,8 @@ async def test_pool_acquire_returns_only_available_slot():
 
 async def test_demoted_for_operation_sorts_last_while_alternative_exists():
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
-    for _ in range(10):
-        opt.record_quality("bad", "summarize", 0.0)
+    for i in range(10):
+        opt.record_quality("bad", "summarize", f"c{i}", 0.0)
     pool = LLMPool(optimizer=opt)
     await pool.add(_cfg("bad"), order=0)
     await pool.add(_cfg("good"), order=1)
@@ -357,8 +357,8 @@ async def test_demoted_for_operation_sorts_last_while_alternative_exists():
 
 async def test_demoted_model_still_serves_when_no_alternative():
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
-    for _ in range(10):
-        opt.record_quality("bad", "summarize", 0.0)
+    for i in range(10):
+        opt.record_quality("bad", "summarize", f"c{i}", 0.0)
     pool = LLMPool(optimizer=opt)
     await pool.add(_cfg("bad"))
 
@@ -368,8 +368,8 @@ async def test_demoted_model_still_serves_when_no_alternative():
 
 async def test_demotion_is_per_operation_not_global():
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
-    for _ in range(10):
-        opt.record_quality("bad", "summarize", 0.0)
+    for i in range(10):
+        opt.record_quality("bad", "summarize", f"c{i}", 0.0)
     pool = LLMPool(optimizer=opt)
     await pool.add(_cfg("bad"))
 
@@ -381,9 +381,9 @@ async def test_every_model_demoted_pool_still_serves():
     """A rater that scores everything low demotes everything — the pool keeps
     operating on curated order within the demoted set, never goes empty."""
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
-    for _ in range(10):
-        opt.record_quality("a", None, 0.0)
-        opt.record_quality("b", None, 0.0)
+    for i in range(10):
+        opt.record_quality("a", None, f"c{i}", 0.0)
+        opt.record_quality("b", None, f"c{i}", 0.0)
     pool = LLMPool(optimizer=opt)
     await pool.add(_cfg("a"))
     await pool.add(_cfg("b"))

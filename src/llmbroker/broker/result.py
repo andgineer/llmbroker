@@ -26,7 +26,7 @@ class AsyncResult:
         operation: str | None = None,
         store: StoreProtocol,
         scope: str | None = None,
-        observe_quality: Callable[[str, str | None, float], None] | None = None,
+        observe_quality: Callable[[str, str | None, str, float], None] | None = None,
     ) -> None:
         self.text = text
         self.tool_calls = tool_calls
@@ -59,7 +59,7 @@ class AsyncResult:
         check_score(score)
         await self._store.record_quality(self._call_id, score, scope=self._scope)
         if self._observe_quality is not None:
-            self._observe_quality(self._llm_name, self._operation, score)
+            self._observe_quality(self._llm_name, self._operation, self._call_id, score)
 
 
 class AsyncLLM:

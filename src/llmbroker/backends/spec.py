@@ -76,3 +76,21 @@ TABLES: dict[str, TableSpec] = {
 
 # Gates the current TABLES shape; ensure_schema creates it fresh or raises on mismatch.
 SCHEMA_VERSION = 7
+
+# The columns every driver's journal fold names directly in its query.
+JOURNAL_FOLD_COLUMNS = ("id", "called_at", "kind", "call_id", "quality_score")
+
+
+def _check_fold_columns(columns: dict[str, str]) -> None:
+    """Refuse to load when a fold column is gone from the journal: each driver spells
+    these out, so a rename reaching only this file diverges per backend — SQL fails,
+    Mongo keeps answering off the old name."""
+    missing = [col for col in JOURNAL_FOLD_COLUMNS if col not in columns]
+    if missing:
+        raise RuntimeError(
+            f"journal fold column(s) {missing} are not in the calls table — every"
+            " driver's journal_view names them directly, so rename them there too",
+        )
+
+
+_check_fold_columns(TABLES["calls"].columns)

@@ -528,6 +528,29 @@ def test_broker_record_quality_folds_onto_the_call_it_names(tmp_path):
     asyncio.run(run())
 
 
+def test_broker_record_quality_drives_demotion(tmp_path):
+    """Enough zero scores through the delayed entry point demote the bucket straight
+    away, with no rebuild — a delayed rating drives learning exactly as a live one."""
+
+    async def run():
+        db = str(tmp_path / "b.db")
+        opt = Optimizer(quality_min_count=10, quality_floor=0.3)
+        async with AsyncBroker(
+            registry=_registry(tmp_path),
+            secrets=_secrets(),
+            store=SqliteStore(db),
+            optimize=opt,
+            sync=None,
+        ) as broker:
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
+                for _ in range(10):
+                    result = await broker.ask("x", operation="summarize")
+                    await broker.record_quality(0.0, call_id=result.call_id)
+            assert opt.is_demoted("p1", "summarize") is True
+
+    asyncio.run(run())
+
+
 def test_broker_record_quality_survives_journal_rebuild(tmp_path):
     """A delayed rating is persisted, so demotion is re-derived from the journal on the
     next rebuild — not merely held in the in-memory window."""

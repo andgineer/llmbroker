@@ -56,9 +56,11 @@ so a fresh process is at worst optimistic for one call.
 
 ## Quality demotion
 
-Per `(model, operation)`, a window of the most recent ratings is kept. A bucket
-is **demoted** iff it holds enough of them and their Wilson-score upper bound
-sits below a floor — demote only when even the optimistic estimate is below it.
+Per `(model, operation)`, a window of the most recently rated calls is kept — one
+entry per call, so re-rating one replaces its verdict rather than adding a second
+([`decisions.md`](../decisions.md#a-rating-names-the-call-it-rates)). A bucket is
+**demoted** iff it holds enough of them and their Wilson-score upper bound sits
+below a floor — demote only when even the optimistic estimate is below it.
 Unlabelled calls fall into their own bucket.
 
 ```python

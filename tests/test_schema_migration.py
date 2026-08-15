@@ -8,7 +8,12 @@ stamped version.
 import aiosqlite
 import pytest
 
-from llmbroker.backends.spec import SCHEMA_VERSION
+from llmbroker.backends.spec import (
+    JOURNAL_FOLD_COLUMNS,
+    SCHEMA_VERSION,
+    TABLES,
+    _check_fold_columns,
+)
 from llmbroker.exceptions import SchemaVersionError
 from llmbroker.mongodb.driver import MongoDriver
 from llmbroker.postgres.driver import PostgresDriver
@@ -173,6 +178,22 @@ async def _indexes(db_path):
             await db.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
         ).fetchall()
     return {name for (name,) in rows}
+
+
+def test_the_declared_journal_holds_every_fold_column():
+    """The guard is only worth having if it currently passes on the real table."""
+    assert set(JOURNAL_FOLD_COLUMNS) <= set(TABLES["calls"].columns)
+
+
+@pytest.mark.parametrize("renamed", JOURNAL_FOLD_COLUMNS)
+def test_renaming_a_fold_column_refuses_to_load(renamed):
+    """Every driver's journal_view names these columns directly, so a rename that
+    reaches only the declaration must fail loudly and identically on all backends —
+    otherwise SQL breaks while a document store keeps answering off the old name."""
+    columns = {k: v for k, v in TABLES["calls"].columns.items() if k != renamed}
+    columns[f"{renamed}_renamed"] = "text"
+    with pytest.raises(RuntimeError, match=rf"journal fold column\(s\) \['{renamed}'\]"):
+        _check_fold_columns(columns)
 
 
 async def test_sqlite_ensure_schema_creates_the_trace_index(tmp_path):

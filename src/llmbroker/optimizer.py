@@ -45,7 +45,9 @@ class Optimizer:
     prior_strength: float = 10.0
 
     _rl_fail_count: dict[str, int] = field(default_factory=dict, init=False, repr=False)
-    _scores: dict[tuple[str, str | None], deque] = field(
+    # Oldest first, one entry per rated call: the id is what keeps a re-rating from
+    # counting as a second observation.
+    _scores: dict[tuple[str, str | None], deque[tuple[str, float]]] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -70,7 +72,7 @@ class Optimizer:
         window = self._scores.get((llm_name, operation))
         if not window:
             return None
-        return wilson_upper(list(window), _z_score(self.quality_confidence))
+        return wilson_upper([score for _, score in window], _z_score(self.quality_confidence))
 
     def quality_score(self, llm_name: str, operation: str | None, weight: float) -> float:
         """The curated weight, displaced by the observed window as that window fills.
@@ -84,7 +86,7 @@ class Optimizer:
         if not window:
             return weight
         n = len(window)
-        mean = sum(window) / n
+        mean = sum(score for _, score in window) / n
         strength = self.prior_strength * max(0.0, 1.0 - n / self.quality_window)
         if not strength:
             return mean
@@ -96,7 +98,7 @@ class Optimizer:
         window = self._scores.get((llm_name, operation))
         if window is None or len(window) < self.quality_min_count:
             return False
-        bound = wilson_upper(list(window), _z_score(self.quality_confidence))
+        bound = wilson_upper([score for _, score in window], _z_score(self.quality_confidence))
         return bound < self.quality_floor
 
     def demoted_operations(self, llm_name: str) -> frozenset[str | None]:
@@ -106,18 +108,33 @@ class Optimizer:
             if name == llm_name and self.is_demoted(name, operation)
         )
 
-    def record_quality(self, llm_name: str, operation: str | None, score: float) -> None:
-        """Fold one rating into the (model, operation) window, oldest evicted first."""
+    def record_quality(
+        self,
+        llm_name: str,
+        operation: str | None,
+        call_id: str,
+        score: float,
+    ) -> None:
+        """Fold one call's rating into the (model, operation) window, oldest evicted
+        first. A call already in the window keeps its place and takes the new value:
+        one rated call is one observation however often the host changes its mind."""
         before = self.is_demoted(llm_name, operation)
         window = self._scores.setdefault(
             (llm_name, operation),
             deque(maxlen=self.quality_window),
         )
-        window.append(score)
+        for i, (rated, _) in enumerate(window):
+            if rated == call_id:
+                window[i] = (call_id, score)
+                break
+        else:
+            window.append((call_id, score))
         self._log_flip(llm_name, operation, before, self.is_demoted(llm_name, operation))
 
-    def load_scores(self, scores: dict[tuple[str, str | None], list[float]]) -> None:
-        """Replace every window wholesale — used by the journal rebuild."""
+    def load_scores(self, scores: dict[tuple[str, str | None], list[tuple[str, float]]]) -> None:
+        """Replace every window wholesale — used by the journal rebuild. Values come
+        oldest first, so the next rating evicts the oldest rated call and not the
+        newest one the rebuild just put in."""
         keys = set(self._scores) | set(scores)
         before = {key: self.is_demoted(*key) for key in keys}
         self._scores = {

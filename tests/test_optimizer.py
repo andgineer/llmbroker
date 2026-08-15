@@ -69,15 +69,15 @@ def test_wilson_upper_all_bad_low_bound():
 
 def test_is_demoted_false_below_min_count():
     opt = Optimizer(quality_min_count=10)
-    for _ in range(9):
-        opt.record_quality("x", None, 0.0)
+    for i in range(9):
+        opt.record_quality("x", None, f"c{i}", 0.0)
     assert opt.is_demoted("x", None) is False
 
 
 def test_is_demoted_true_once_min_count_reached_with_bad_scores():
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
-    for _ in range(10):
-        opt.record_quality("x", None, 0.0)
+    for i in range(10):
+        opt.record_quality("x", None, f"c{i}", 0.0)
     assert opt.is_demoted("x", None) is True
 
 
@@ -88,52 +88,73 @@ def test_is_demoted_false_for_unknown_model():
 
 def test_window_evicts_oldest_beyond_quality_window():
     opt = Optimizer(quality_window=5, quality_min_count=1, quality_floor=0.5)
-    for score in (0.0, 0.0, 0.0, 0.0, 0.0):
-        opt.record_quality("x", None, score)
+    for i, score in enumerate((0.0, 0.0, 0.0, 0.0, 0.0)):
+        opt.record_quality("x", None, f"bad{i}", score)
     assert opt.is_demoted("x", None) is True
-    for _ in range(5):
-        opt.record_quality("x", None, 1.0)  # evicts every 0.0
+    for i in range(5):
+        opt.record_quality("x", None, f"good{i}", 1.0)  # evicts every 0.0
     assert opt.is_demoted("x", None) is False
 
 
 def test_demoted_operations_only_lists_demoted_ops():
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
-    for _ in range(10):
-        opt.record_quality("x", "bad_op", 0.0)
-        opt.record_quality("x", "good_op", 1.0)
+    for i in range(10):
+        opt.record_quality("x", "bad_op", f"c{i}", 0.0)
+        opt.record_quality("x", "good_op", f"c{i}", 1.0)
     assert opt.demoted_operations("x") == frozenset({"bad_op"})
 
 
 def test_record_quality_logs_flip_warning_then_info(caplog):
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
     with caplog.at_level("WARNING", logger="llmbroker.broker"):
-        for _ in range(10):
-            opt.record_quality("x", "op", 0.0)
+        for i in range(10):
+            opt.record_quality("x", "op", f"bad{i}", 0.0)
     demote_msg = next(r.message for r in caplog.records if "quality-demoted" in r.message)
     assert "wilson upper" in demote_msg
     assert "< floor 0.30" in demote_msg
 
     caplog.clear()
     with caplog.at_level("INFO", logger="llmbroker.broker"):
-        for _ in range(10):
-            opt.record_quality("x", "op", 1.0)
+        for i in range(10):
+            opt.record_quality("x", "op", f"good{i}", 1.0)
     clear_msg = next(r.message for r in caplog.records if "demotion cleared" in r.message)
     assert "wilson upper" in clear_msg
 
 
 def test_load_scores_replaces_windows_wholesale():
     opt = Optimizer(quality_min_count=10, quality_floor=0.3)
-    opt.load_scores({("x", "op"): [0.0] * 10})
+    opt.load_scores({("x", "op"): [(f"c{i}", 0.0) for i in range(10)]})
     assert opt.is_demoted("x", "op") is True
-    opt.load_scores({("x", "op"): [1.0] * 10})
+    opt.load_scores({("x", "op"): [(f"c{i}", 1.0) for i in range(10)]})
     assert opt.is_demoted("x", "op") is False
 
 
 def test_load_scores_truncates_to_quality_window():
+    """Values arrive oldest-first, so the tail kept is the newest rated calls."""
     opt = Optimizer(quality_window=3, quality_min_count=1)
-    opt.load_scores({("x", "op"): [0.0, 0.0, 0.0, 1.0, 1.0, 1.0]})
-    assert len(opt._scores[("x", "op")]) == 3
-    assert list(opt._scores[("x", "op")]) == [1.0, 1.0, 1.0]
+    loaded = [(f"old{i}", 0.0) for i in range(3)] + [(f"new{i}", 1.0) for i in range(3)]
+    opt.load_scores({("x", "op"): loaded})
+    assert list(opt._scores[("x", "op")]) == [("new0", 1.0), ("new1", 1.0), ("new2", 1.0)]
+
+
+def test_re_rating_a_call_replaces_its_entry_instead_of_adding_one():
+    """A host changing its mind is not a second observation: the window is keyed by
+    the call, so ten verdicts on one answer stay one vote and cannot demote."""
+    opt = Optimizer(quality_min_count=10, quality_floor=0.3)
+    for _ in range(10):
+        opt.record_quality("x", "op", "the-one-call", 0.0)
+    assert list(opt._scores[("x", "op")]) == [("the-one-call", 0.0)]
+    assert opt.is_demoted("x", "op") is False
+
+
+def test_re_rating_a_call_keeps_its_place_in_the_window():
+    """The entry ages with the call it rates, not with the verdict, so a late change
+    of mind does not push an older call out of the window."""
+    opt = Optimizer(quality_window=3, quality_min_count=1)
+    for name in ("a", "b", "c"):
+        opt.record_quality("x", "op", name, 0.0)
+    opt.record_quality("x", "op", "a", 1.0)
+    assert list(opt._scores[("x", "op")]) == [("a", 1.0), ("b", 0.0), ("c", 0.0)]
 
 
 # ---------------------------------------------------------------------------
@@ -160,8 +181,8 @@ def test_broker_demoted_model_still_serves_as_last_resort(tmp_path):
 
     async def run():
         opt = Optimizer(quality_min_count=10, quality_floor=0.3)
-        for _ in range(10):
-            opt.record_quality("p1", None, 0.0)
+        for i in range(10):
+            opt.record_quality("p1", None, f"c{i}", 0.0)
         async with AsyncBroker(
             registry=_registry(tmp_path),
             secrets=DictSecrets({"K": "test"}),

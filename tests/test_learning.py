@@ -126,9 +126,9 @@ async def test_an_observed_rating_updates_the_window_instantly():
     opt = Optimizer()
     learner = _make_learner(opt, InMemoryStore(), pool)
 
-    learner.record_quality_observed("x", "summarize", 0.8)
+    learner.record_quality_observed("x", "summarize", "c1", 0.8)
 
-    assert list(opt._scores[("x", "summarize")]) == [0.8]
+    assert list(opt._scores[("x", "summarize")]) == [("c1", 0.8)]
 
 
 # ---------------------------------------------------------------------------

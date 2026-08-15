@@ -66,7 +66,7 @@ class _Journal:
         call = _call(llm_name, CallStatus.OK, operation)
         await self._store.record(call)
         await self._store.record_quality(call.id, score)
-        self._learner.record_quality_observed(llm_name, operation, score)
+        self._learner.record_quality_observed(llm_name, operation, call.id, score)
 
 
 # ---------------------------------------------------------------------------

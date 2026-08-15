@@ -73,9 +73,15 @@ class Learner:
         self._quality_rebuild_limit = quality_rebuild_limit
         self.metrics: dict[str, LLMMetrics] = {}
 
-    def record_quality_observed(self, llm_name: str, operation: str | None, score: float) -> None:
+    def record_quality_observed(
+        self,
+        llm_name: str,
+        operation: str | None,
+        call_id: str,
+        score: float,
+    ) -> None:
         """Fold a rating the caller has already persisted into the live window."""
-        self._opt.record_quality(llm_name, operation, score)
+        self._opt.record_quality(llm_name, operation, call_id, score)
 
     async def observe(self, call: Call) -> None:
         """Apply what this process just learned, in this process. Nothing here is
@@ -114,14 +120,14 @@ class Learner:
         await self._pool.apply_budget_bounds(budget_bounds_from_calls(rows, since=window_start))
 
     def _apply_scores_and_metrics(self, rows: list[Call]) -> None:
-        """rows are newest-first: keep the newest ``quality_window`` ratings per
-        bucket."""
-        scores: dict[tuple[str, str | None], list[float]] = {}
+        """rows are newest-first: keep the newest ``quality_window`` rated calls per
+        bucket, handed over oldest-first as the window expects."""
+        scores: dict[tuple[str, str | None], list[tuple[str, float]]] = {}
         for row in rows:
             if row.score is None:
                 continue
             bucket = scores.setdefault((row.llm_name, row.operation), [])
             if len(bucket) < self._opt.quality_window:
-                bucket.append(row.score)
-        self._opt.load_scores(scores)
+                bucket.append((row.id, row.score))
+        self._opt.load_scores({key: bucket[::-1] for key, bucket in scores.items()})
         self.metrics = metrics_from_calls(rows)

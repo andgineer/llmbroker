@@ -71,13 +71,18 @@ naming no call — or naming one the journal no longer holds — still counts.
 that names no call was never a real shape. Storing the pair on the rating let it
 disagree with the call about which model and which operation were rated, with
 nothing able to catch it; reading them off the call makes the disagreement
-impossible and lets one read answer the whole question, as one row per call. Two
-things stop counting and both were already worth nothing: a rating whose call
-retention has purged lands in a window rebuilt from a tail far shorter than the
-retention, so it reached a window that had forgotten everything around it; and a
-second rating of the same call is the host changing its mind, which should not
-vote twice. The journal stays append-only — no row is ever updated — and the fold
-is a read-time projection.
+impossible and lets one read answer the whole question, as one row per call. A
+rating whose call retention has purged stops counting, and it was already worth
+nothing: it landed in a window rebuilt from a tail far shorter than the retention,
+so it reached a window that had forgotten everything around it. The journal stays
+append-only — no row is ever updated — and the fold is a read-time projection.
+
+Rating the same call twice is the host changing its mind, and the newest verdict
+is the one that counts. No claim is made that the case is served well — only that
+it cannot corrupt the count: the quality window holds one entry per rated call,
+keyed by that call's id, so a second verdict replaces the entry where it stands
+instead of adding one. Without that, an answer rated often enough would clear the
+minimum-observations guard on its own and demote a model by itself.
 
 ### wilson-for-demotion
 
@@ -267,8 +272,12 @@ separately and matching them above the driver — two round-trips and a list of 
 on the wire, or a scan repeated in the file store, to avoid a correlated lookup
 each backend performs natively. The line that does work is whether two correct
 backends could answer differently: a projection cannot be disagreed about, a
-threshold or a window can, so those stay in the core. Table and column names still
-come from the one declarative spec, which is what keeps a rename to a single edit.
+threshold or a window can, so those stay in the core. The one declarative table
+description stays the only statement of the schema, but the fold's query names its
+columns in each driver, so renaming one is an edit there as well — and that
+description refuses to load when the two disagree, because the divergence is
+otherwise per-backend and partly silent: SQL fails on the missing name while a
+document store keeps answering off the old one.
 
 ### no-schema-migrations
 

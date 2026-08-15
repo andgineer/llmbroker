@@ -66,8 +66,8 @@ async def test_a_full_window_of_good_ratings_overtakes_an_unrated_favourite():
     them, decide the order by themselves."""
     optimizer = Optimizer()
     pool = await _pool(("proven", 0.2), ("curated", 0.9), optimizer=optimizer)
-    for _ in range(optimizer.quality_window):
-        optimizer.record_quality("proven", None, 1.0)
+    for i in range(optimizer.quality_window):
+        optimizer.record_quality("proven", None, f"c{i}", 1.0)
     assert await _acquired(pool) == "proven"
 
 
@@ -75,8 +75,8 @@ def test_a_full_window_replaces_the_weight_outright():
     """The weight says where a model starts, not where it stays: once the window is
     full it contributes nothing at all, whatever the curator wrote."""
     optimizer = Optimizer()
-    for _ in range(optimizer.quality_window):
-        optimizer.record_quality("m", None, 0.4)
+    for i in range(optimizer.quality_window):
+        optimizer.record_quality("m", None, f"c{i}", 0.4)
     assert optimizer.quality_score("m", None, 0.0) == pytest.approx(0.4)
     assert optimizer.quality_score("m", None, 1.0) == pytest.approx(0.4)
 
@@ -84,8 +84,8 @@ def test_a_full_window_replaces_the_weight_outright():
 async def test_a_full_window_of_bad_ratings_falls_below_a_weightless_entry():
     optimizer = Optimizer()
     pool = await _pool(("fallen", 0.9), ("plain", 0.0), optimizer=optimizer)
-    for _ in range(optimizer.quality_window):
-        optimizer.record_quality("fallen", None, 0.0)
+    for i in range(optimizer.quality_window):
+        optimizer.record_quality("fallen", None, f"c{i}", 0.0)
     # It measures 0.0 — the bottom of the scale, where an unrated weightless entry
     # also sits — and the demotion verdict one term above separates proven-bad from
     # never-tried. Without it the earlier `order` would still hand it the traffic.
@@ -102,8 +102,8 @@ async def test_ratings_move_the_priority_monotonically_from_weight_to_mean():
     pool = await _pool(("m", 0.9), optimizer=optimizer)
     slot = pool._slots["m"]
     seen = [pool._priority(slot, None)]
-    for _ in range(optimizer.quality_window):
-        optimizer.record_quality("m", None, 0.1)
+    for i in range(optimizer.quality_window):
+        optimizer.record_quality("m", None, f"c{i}", 0.1)
         seen.append(pool._priority(slot, None))
     assert seen[0] == 0.9
     assert all(later < earlier for earlier, later in zip(seen, seen[1:], strict=False))
@@ -114,8 +114,8 @@ async def test_ratings_on_one_operation_leave_the_other_buckets_alone():
     optimizer = Optimizer()
     pool = await _pool(("m", 0.7), optimizer=optimizer)
     slot = pool._slots["m"]
-    for _ in range(optimizer.quality_window):
-        optimizer.record_quality("m", "a", 0.0)
+    for i in range(optimizer.quality_window):
+        optimizer.record_quality("m", "a", f"c{i}", 0.0)
     assert pool._priority(slot, "a") < 0.3
     assert pool._priority(slot, None) == 0.7
     assert pool._priority(slot, "b") == 0.7
@@ -127,8 +127,8 @@ async def test_ratings_on_one_operation_leave_the_other_buckets_alone():
 async def test_demotion_outranks_priority():
     optimizer = Optimizer()
     pool = await _pool(("demoted", 0.95), ("plain", 0.0), optimizer=optimizer)
-    for _ in range(optimizer.quality_min_count):
-        optimizer.record_quality("demoted", None, 0.0)
+    for i in range(optimizer.quality_min_count):
+        optimizer.record_quality("demoted", None, f"c{i}", 0.0)
     assert optimizer.is_demoted("demoted", None)
     assert await _acquired(pool) == "plain"
 
