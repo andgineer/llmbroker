@@ -1,8 +1,7 @@
 # Every routed call hands back what answered it
 
-**Depends on nothing; ships after `journal-is-one-row-per-call.md`** — that plan
-removes the urgency this one used to carry, and the docs it rewrites are the ones
-this plan touches.
+**Depends on nothing.** Rating by key has already shipped, which removed the
+urgency this plan used to carry and rewrote the docs it touches.
 
 ## Goal
 
@@ -20,20 +19,22 @@ router held it:
 
 ## Why still, now that rating takes a key
 
-`journal-is-one-row-per-call.md` removes the main reason: a host no longer needs
-`llm_name` to rate a streamed call, it rates by its own `trace_id`. What is left
-is real but smaller, and this plan should be judged on it alone:
+Rating by key removed the main reason: a host no longer needs `llm_name` to rate a
+streamed call, it rates by its own `trace_id`. What is left is real but smaller,
+and this plan should be judged on it alone:
 
 - **`usage`** — token counts exist nowhere else in the caller's reach. Both shapes
   discard them entirely today.
 - **Which model answered, without a journal read.** A status screen naming the
   model that served the last request should not have to query the journal for it,
   and on a non-queryable store it cannot.
-- **Automatic raters that pass no `trace_id`.** They can rate from the handle
-  directly rather than being forced to invent an id.
+- **Rating a streamed call when no `trace_id` was passed.** A delayed rating takes
+  exactly one of the two keys and a stream hands back neither, so such a host must
+  invent a key or look the id up in the journal — and a non-queryable store has no
+  lookup at all, leaving the call unrateable.
 
-If none of those matter to the maintainer, this plan is droppable — the rule it
-buys is consistency, not capability.
+If none of those matter to the maintainer, this plan is droppable. The first two
+buy consistency; the third is the one capability nothing else reaches.
 
 ## The decision entry
 
@@ -89,11 +90,11 @@ receipt object filled at that same point with `config.name` and `attempt.call_id
 receipt into the existing `partial(self._stream_attempt, messages=messages)` in
 `router.stream` (line 503) rather than widening `_route`'s signature.
 
-### 3. `AsyncLLMs.stream` returns the handle — `broker/llms.py:107`
+### 3. `AsyncLLMs.stream` returns the handle — `broker/llms.py:122`
 
 Stops being an async generator; becomes a plain method that builds the receipt,
 wraps the current generator body, and returns `StreamHandle`. The body is
-unchanged, including the `_on_exhausted` second pass at line 140 — that retry stays
+unchanged, including the `_on_exhausted` second pass at line 153 — that retry stays
 inside the wrapped generator so a stream failing over after a pool re-read fills
 the same receipt.
 
