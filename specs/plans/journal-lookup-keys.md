@@ -6,8 +6,8 @@
 the rows of one request, or of one attempt, without scanning a tail whose depth it
 has to guess. `trace_id` gains an index in every port that can carry one.
 
-This is the lookup half of rating by key (`rating-by-key.md`, which depends on
-it). It stands on its own as observability: "show me every attempt this request
+This is the lookup half of rating by key, which depends on it. It stands on its
+own as observability: "show me every attempt this request
 made" is a question the journal holds the answer to and cannot currently be asked.
 
 Today `trace_id` is a dedicated column (`backends/spec.py:57`) with no query path

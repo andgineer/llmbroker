@@ -171,6 +171,14 @@ Any request to implement a plan — "выполни очередной план"
   `specs/reference/`), how to use the library (that is `docs/`), or a narration of the change being
   made. If it takes a paragraph to justify a decision, the paragraph belongs in a spec and the code
   gets a pointer at most.
+- **When the cap binds, what gets cut is not a free choice.** A docstring already at the cap that
+  must take something new evicts, in this order: first anything restating the signature — a
+  parameter list, a type, "narrowed by any of X, Y and Z"; then anything a reader gets faster from
+  the module itself. **A guarantee is never what gets cut.** A promise the signature cannot show —
+  what the call never does, what it refuses, what still holds on a broken installation — is the
+  reason the docstring exists. If it will not fit once the restatement is gone, then what is
+  crowding it out is the thing that belongs in `specs/`. The gate measures length only; this order
+  is yours to apply.
 - **The surrounding file is not the standard.** A long docstring next to the one you are writing is
   debt, not precedent, and "match the local comment density" does not apply here. Touching a
   function whose docstring is over the cap means shrinking it in the same edit — that is how the

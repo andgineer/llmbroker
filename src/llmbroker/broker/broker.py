@@ -470,8 +470,8 @@ class AsyncBroker:
         call_id: str | None = None,
     ) -> list[Call]:
         """Newest-first journal tail for the whole installation — one caller's own rows
-        are ``for_scope(...).calls(...)``. Narrowed by any of ``since`` (inclusive
-        bound), ``kind``, ``operation``, ``trace_id`` and ``call_id``."""
+        are ``for_scope(...).calls(...)``. ``since`` bounds ``called_at`` inclusively;
+        ``call_id`` matches a call row's own id. Never provisions the pool."""
         return await self.llms.calls(
             limit=limit,
             since=since,

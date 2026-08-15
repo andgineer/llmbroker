@@ -1,8 +1,8 @@
 # Every routed call hands back what answered it
 
-**Depends on nothing; ships after `rating-by-key.md`** — that plan removes the
-urgency this one used to carry, and the docs it rewrites are the ones this plan
-touches.
+**Depends on nothing; ships after `journal-is-one-row-per-call.md`** — that plan
+removes the urgency this one used to carry, and the docs it rewrites are the ones
+this plan touches.
 
 ## Goal
 
@@ -20,9 +20,9 @@ router held it:
 
 ## Why still, now that rating takes a key
 
-`rating-by-key.md` removed the main reason: a host no longer needs `llm_name` to
-rate a streamed call, it rates by its own `trace_id`. What is left is real but
-smaller, and this plan should be judged on it alone:
+`journal-is-one-row-per-call.md` removes the main reason: a host no longer needs
+`llm_name` to rate a streamed call, it rates by its own `trace_id`. What is left
+is real but smaller, and this plan should be judged on it alone:
 
 - **`usage`** — token counts exist nowhere else in the caller's reach. Both shapes
   discard them entirely today.
