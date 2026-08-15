@@ -21,9 +21,10 @@ onto calls, the two cannot ship apart. What it planned survives here in reduced
 form — one key form instead of three, and no write-time resolution of
 `(llm_name, operation)`, since the view reads both off the call.
 
-`journal-lookup-keys.md` (already implemented) is forward-compatible: its
-`trace_id`/`call_id` filters keep their meaning. Its docs paragraph about the
-naming trap is deleted by step 8 here, since the trap it warns about is gone.
+The shipped `trace_id` / `call_id` filters are forward-compatible and keep their
+meaning. The docs paragraph warning that `call_id=` matches a call row's own id
+rather than a quality row's passthrough is deleted by step 10 here: with ratings
+folded onto calls, the trap it warns about no longer exists.
 
 `routed-call-identity.md` is unaffected and stays queued after this one.
 
