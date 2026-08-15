@@ -67,10 +67,9 @@ reply.record_quality(0.9)  # rated on the "summarize" bucket specifically
 ```
 
 A rating may arrive at any time after the call, not only through the live result
-while the host still holds it: a host that persists the rating identity can
-record the verdict days or months later and it lands on the same bucket.
-Self-contained quality records are what makes an arbitrarily late rating safe,
-since retention may already have purged the original call row.
+while the host still holds it: a rating names the call it rates, and it lands for
+as long as the journal still holds that call — counting toward the model and the
+operation read off it. Past retention there is no call left to name.
 
 There is no global verdict — demotion is always per `(model, operation)`.
 Recovery is exactly: new ratings that push the window's bound back above the

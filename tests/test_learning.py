@@ -116,7 +116,7 @@ async def test_ok_calls_reset_rl_fail_count():
 
 
 # ---------------------------------------------------------------------------
-# record_quality: self-contained, no call_id index needed
+# record_quality: folded into the live window as the row is written
 # ---------------------------------------------------------------------------
 
 
@@ -144,7 +144,9 @@ async def test_rebuild_loads_quality_windows_from_journal(tmp_path):
     learner = _make_learner(opt, store, pool)
 
     for _ in range(10):
-        await store.record_quality("bad", "summarize", 0.0)
+        call = _call("bad", CallStatus.OK, operation="summarize")
+        await store.record(call)
+        await store.record_quality(call.id, 0.0)
 
     await learner.relearn()
 
@@ -170,21 +172,12 @@ async def test_rebuild_computes_metrics(tmp_path):
 # ── metrics_from_calls, now a projection of stats_from_calls ─────────────────
 
 
-def test_metrics_from_calls_counts_only_call_rows():
-    """Regression: rebuilding this on stats_from_calls must not change LLMMetrics."""
+def test_metrics_from_calls_counts_a_rated_call_once():
+    """Regression: rebuilding this on stats_from_calls must not change LLMMetrics, and
+    the score riding on a call row must not turn it into a second row."""
     rows = [
         _call("a", CallStatus.ERROR),
-        Call(
-            id=str(uuid.uuid4()),
-            llm_name="a",
-            operation=None,
-            trace_id=None,
-            status=None,
-            kind="quality",
-            ts=datetime.now(UTC),
-            quality_score=1.0,
-        ),
-        _call("a", CallStatus.OK),
+        _call("a", CallStatus.OK, score=1.0),
         _call("b", CallStatus.OK),
     ]
     metrics = metrics_from_calls(rows)
@@ -203,17 +196,5 @@ def test_metrics_from_calls_takes_last_status_from_the_newest_row():
     assert metrics["a"].last_at == newest
 
 
-def test_metrics_from_calls_on_only_quality_rows_is_empty():
-    rows = [
-        Call(
-            id=str(uuid.uuid4()),
-            llm_name="a",
-            operation=None,
-            trace_id=None,
-            status=None,
-            kind="quality",
-            ts=datetime.now(UTC),
-            quality_score=1.0,
-        ),
-    ]
-    assert metrics_from_calls(rows) == {}
+def test_metrics_from_calls_on_no_rows_is_empty():
+    assert metrics_from_calls([]) == {}

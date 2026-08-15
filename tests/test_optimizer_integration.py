@@ -62,7 +62,10 @@ class _Journal:
         await self._learner.observe(call)
 
     async def record_quality(self, llm_name: str, operation: str | None, score: float) -> None:
-        await self._store.record_quality(llm_name, operation, score)
+        """A rating names a call, so the call it rates is journaled first."""
+        call = _call(llm_name, CallStatus.OK, operation)
+        await self._store.record(call)
+        await self._store.record_quality(call.id, score)
         self._learner.record_quality_observed(llm_name, operation, score)
 
 

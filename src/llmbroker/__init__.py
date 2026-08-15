@@ -21,6 +21,7 @@ from llmbroker.exceptions import (
     StreamInterruptedError,
     SyncRefusedError,
     ToolLoopLimitError,
+    UnknownCallError,
     UnknownModelError,
 )
 from llmbroker.models import (
@@ -67,6 +68,7 @@ __all__ = [
     "SyncRefusedError",
     "SyncReport",
     "ToolLoopLimitError",
+    "UnknownCallError",
     "UnknownModelError",
     "Result",
     "Secrets",

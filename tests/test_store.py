@@ -35,7 +35,7 @@ def test_in_memory_store_record_does_not_raise():
 
 
 def test_in_memory_store_record_quality_does_not_raise():
-    asyncio.run(InMemoryStore().record_quality("p1", "summarize", 1.0, call_id="c1"))
+    asyncio.run(InMemoryStore().record_quality("c1", 1.0))
 
 
 def test_in_memory_store_disabled_map_is_in_memory_only():
@@ -170,7 +170,7 @@ def test_file_store_record_writes_day_file(tmp_path):
     asyncio.run(FileStore(tmp_path).record(_call(ts=_TODAY)))
     path = tmp_path / "calls" / f"{_TODAY.date().isoformat()}.jsonl"
     line = json.loads(path.read_text())
-    assert line["kind"] == "call"
+    assert "kind" not in line  # a call row is the only kind the type carries
     assert line["id"] == "c1"
     assert line["llm_name"] == "p1"
     assert line["status"] == "ok"
@@ -178,16 +178,16 @@ def test_file_store_record_writes_day_file(tmp_path):
 
 
 def test_file_store_record_quality_writes_line(tmp_path):
-    asyncio.run(FileStore(tmp_path).record_quality("p1", "summarize", 0.8, call_id="c1"))
+    asyncio.run(FileStore(tmp_path).record_quality("c1", 0.8))
     day_files = list((tmp_path / "calls").glob("*.jsonl"))
     assert len(day_files) == 1
     line = json.loads(day_files[0].read_text())
     assert line["kind"] == "quality"
-    assert line["llm_name"] == "p1"
-    assert line["operation"] == "summarize"
     assert line["call_id"] == "c1"
     assert line["quality_score"] == 0.8
-    assert "status" not in line  # None fields are dropped at serialization
+    # The model and the operation are read off the call, never stored on the rating.
+    assert "llm_name" not in line
+    assert "operation" not in line
 
 
 def test_file_store_record_appends_multiple_same_day(tmp_path):

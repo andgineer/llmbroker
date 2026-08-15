@@ -41,7 +41,7 @@ def budget_bounds_from_calls(
     bounds: dict[str, tuple[float, datetime]] = {}
     answered: set[str] = set()
     for row in rows:  # newest-first
-        if row.kind != "call" or row.llm_name in answered:
+        if row.llm_name in answered:
             continue
         if row.status == CallStatus.OK:
             answered.add(row.llm_name)
@@ -118,11 +118,10 @@ class Learner:
         bucket."""
         scores: dict[tuple[str, str | None], list[float]] = {}
         for row in rows:
-            if row.kind != "quality":
+            if row.score is None:
                 continue
-            key = (row.llm_name, row.operation)
-            bucket = scores.setdefault(key, [])
+            bucket = scores.setdefault((row.llm_name, row.operation), [])
             if len(bucket) < self._opt.quality_window:
-                bucket.append(row.quality_score if row.quality_score is not None else 0.0)
+                bucket.append(row.score)
         self._opt.load_scores(scores)
         self.metrics = metrics_from_calls(rows)

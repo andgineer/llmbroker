@@ -4,7 +4,7 @@ scope exists in this layer — the broker turns ``scope`` into a ref prefix inst
 from datetime import UTC, datetime, timedelta
 
 from llmbroker.backends.driver import Driver, Row
-from llmbroker.journal_policy import RETENTION_DEFAULT, PurgeClock, quality_call
+from llmbroker.journal_policy import KIND_CALL, RETENTION_DEFAULT, PurgeClock, quality_row
 from llmbroker.models import (
     Call,
     CallStatus,
@@ -89,12 +89,12 @@ def _call_to_row(call: Call) -> Row:
         "operation": call.operation,
         "trace_id": call.trace_id,
         "status": call.status.value if call.status is not None else None,
-        "kind": call.kind,
+        "kind": KIND_CALL,
         "http_status": call.http_status,
         "latency_ms": call.latency_ms,
         "error_detail": call.error_detail,
-        "quality_score": call.quality_score,
-        "call_id": call.call_id,
+        "quality_score": None,
+        "call_id": None,
         "called_at": call.ts,
         "scope": call.scope,
         "cooldown_until": call.cooldown_until,
@@ -122,14 +122,12 @@ def _row_to_call(row: Row) -> Call:
         operation=row.get("operation"),  # type: ignore[arg-type]
         trace_id=row.get("trace_id"),  # type: ignore[arg-type]
         status=CallStatus(status) if status is not None else None,
-        kind=str(row.get("kind", "call")),
         ts=row.get("called_at"),  # type: ignore[arg-type]
         http_status=row.get("http_status"),  # type: ignore[arg-type]
         latency_ms=row.get("latency_ms"),  # type: ignore[arg-type]
         error_detail=row.get("error_detail"),  # type: ignore[arg-type]
         usage=usage,
-        quality_score=row.get("quality_score"),  # type: ignore[arg-type]
-        call_id=row.get("call_id"),  # type: ignore[arg-type]
+        score=row.get("score"),  # type: ignore[arg-type]
         scope=row.get("scope"),  # type: ignore[arg-type]
         cooldown_until=row.get("cooldown_until"),  # type: ignore[arg-type]
         budget_ms=row.get("budget_ms"),  # type: ignore[arg-type]
@@ -137,7 +135,7 @@ def _row_to_call(row: Row) -> Call:
 
 
 class DriverStore:
-    """Journal (append/recent/purge) + admin disabled-map, over any ``Driver``.
+    """Journal (append/read/purge) + admin disabled-map, over any ``Driver``.
 
     Self-purges call rows older than ``retention``, checked at most once per
     hour on write activity.
@@ -154,14 +152,13 @@ class DriverStore:
 
     async def record_quality(
         self,
-        llm_name: str,
-        operation: str | None,
+        call_id: str,
         score: float,
         *,
-        call_id: str | None = None,
         scope: str | None = None,
     ) -> None:
-        await self.record(quality_call(llm_name, operation, score, call_id=call_id, scope=scope))
+        await self._driver.append("calls", quality_row(call_id, score, scope))
+        await self._maybe_purge()
 
     async def calls(  # noqa: PLR0913 - one narrowing dimension per parameter
         self,
@@ -169,20 +166,17 @@ class DriverStore:
         limit: int,
         scope: str | None = None,
         since: datetime | None = None,
-        kind: str | None = None,
         operation: str | None = None,
         trace_id: str | None = None,
         call_id: str | None = None,
     ) -> list[Call]:
-        """Newest-first tail of the journal, both kinds interleaved unless ``kind``
-        narrows them. ``since`` bounds ``called_at`` inclusively; ``call_id`` matches a
-        call row's own id, not a quality row's passthrough column of the same name."""
+        """Newest-first tail of the journal, one row per call attempt carrying the
+        newest score it was rated with. ``since`` bounds ``called_at`` inclusively; the
+        filters narrow the call rows only, never the ratings folded onto them."""
         check_limit(limit)
         match: Row = {}
         if scope is not None:
             match["scope"] = scope
-        if kind is not None:
-            match["kind"] = kind
         if operation is not None:
             match["operation"] = operation
         if trace_id is not None:
@@ -190,7 +184,7 @@ class DriverStore:
         if call_id is not None:
             match["id"] = call_id
         bound = to_utc(since, "since") if since is not None else None
-        rows = await self._driver.recent("calls", limit, match or None, bound)
+        rows = await self._driver.journal_view(limit, match or None, bound)
         return [_row_to_call(r) for r in rows]
 
     async def _purge_old_calls(self) -> None:

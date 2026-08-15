@@ -410,16 +410,17 @@ class AsyncBroker:
 
     async def record_quality(
         self,
-        llm_name: str,
-        operation: str | None,
         score: float,
         *,
         call_id: str | None = None,
+        trace_id: str | None = None,
     ) -> None:
-        """Record a quality score for a past call — the delayed counterpart of
-        ``result.record_quality``. The host supplies the rating identity, so the
-        rated call need not still be in the journal."""
-        await self.llms.record_quality(llm_name, operation, score, call_id=call_id)
+        """Rate a past call — the delayed counterpart of ``result.record_quality``.
+
+        Takes exactly one key; a trace rates every attempt under it that answered.
+        Raises ``UnknownCallError`` when the key names no answered call.
+        """
+        await self.llms.record_quality(score, call_id=call_id, trace_id=trace_id)
 
     # ------------------------------------------------------------------
     # Inspection
@@ -459,23 +460,21 @@ class AsyncBroker:
     # Call journal
     # ------------------------------------------------------------------
 
-    async def calls(  # noqa: PLR0913 - one narrowing dimension per parameter
+    async def calls(
         self,
         *,
         limit: int,
         since: datetime | None = None,
-        kind: str | None = None,
         operation: str | None = None,
         trace_id: str | None = None,
         call_id: str | None = None,
     ) -> list[Call]:
         """Newest-first journal tail for the whole installation — one caller's own rows
-        are ``for_scope(...).calls(...)``. ``since`` bounds ``called_at`` inclusively;
-        ``call_id`` matches a call row's own id. Never provisions the pool."""
+        are ``for_scope(...).calls(...)``. One row per call attempt, each carrying the
+        newest score it was rated with. Never provisions the pool."""
         return await self.llms.calls(
             limit=limit,
             since=since,
-            kind=kind,
             operation=operation,
             trace_id=trace_id,
             call_id=call_id,

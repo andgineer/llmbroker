@@ -88,19 +88,22 @@ async def test_each_caller_writes_its_own_scope_on_its_rows(tmp_path, monkeypatc
         await broker.for_scope("alice").ask("hi")
         await broker.for_scope("bob").ask("hi")
         await broker.llms.ask("hi")
-        rows = await broker.calls(limit=10, kind="call")
+        rows = await broker.calls(limit=10)
     assert {r.scope for r in rows} == {"alice", "bob", None}
 
 
-async def test_a_delayed_rating_carries_the_callers_scope(tmp_path, monkeypatch):
+async def test_a_delayed_rating_resolves_within_the_callers_scope(tmp_path, monkeypatch):
+    """The scope comes from the caller object, not from the key: a caller resolves
+    the call it rates among its own rows."""
     monkeypatch.setattr(_PATCH, _keys_used)
     broker = await _broker(
         tmp_path, {"KEY": "shared-key"}, store=SqliteStore(str(tmp_path / "j.db"))
     )
     async with broker:
-        await broker.for_scope("alice").record_quality("p1", "summarize", 1.0)
-        rows = await broker.calls(limit=10, kind="quality")
-    assert [r.scope for r in rows] == ["alice"]
+        alice = await broker.for_scope("alice").ask("hi")
+        await broker.for_scope("alice").record_quality(1.0, call_id=alice.call_id)
+        rows = await broker.for_scope("alice").calls(limit=10)
+    assert [(r.scope, r.score) for r in rows] == [("alice", 1.0)]
 
 
 # ── A caller costs nothing to make ───────────────────────────────────────────
@@ -303,7 +306,7 @@ async def test_a_caller_reads_back_its_own_history(tmp_path, monkeypatch):
         await broker.llms.ask("hi")
 
         assert [r.scope for r in await broker.for_scope("alice").calls(limit=10)] == ["alice"]
-        assert len(await broker.calls(limit=10, kind="call")) == 3
+        assert len(await broker.calls(limit=10)) == 3
 
         alice_total = sum(s.total for s in (await broker.for_scope("alice").stats()).values())
         assert (alice_total, sum(s.total for s in (await broker.stats()).values())) == (1, 3)

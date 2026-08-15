@@ -34,8 +34,9 @@ rather than what the running system must never do.
 ## The invariants
 
 1. **The journal is append-only.** No backend ever updates a journal row. A
-   quality rating is a separate self-contained record, never joined to the call
-   it rates. → `backends.md`
+   quality rating is its own appended record naming the call it rates, and what
+   a host reads is a projection over both, never a row rewritten in place.
+   → `backends.md`
 
 2. **Nothing inside llmbroker writes the registry but `sync`.** There is no
    add/update/remove path; learning, the optimizer and the admin verbs never

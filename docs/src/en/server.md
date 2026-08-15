@@ -245,16 +245,20 @@ with llmbroker.Broker("broker.db") as llms:
 The journal cleans itself up; the retention depth is the journal backend's
 `retention` parameter (90 days by default). To read it: `llms.calls(limit=50)`.
 
-The journal holds two kinds of record — calls and quality ratings — interleaved
-in one stream. Narrow the read by kind, by time, by operation, or by one of the
-ids you called with (see [Tracing one request](#trace)):
+One row per call attempt, each carrying in `score` the quality rating you gave it
+(or `None`). Narrow the read by time, by operation, or by one of the ids you
+called with (see [Tracing one request](#trace)):
 
 ```python
 from datetime import UTC, datetime, timedelta
 
 week_ago = datetime.now(UTC) - timedelta(days=7)
-llms.calls(limit=50, kind="call", since=week_ago, operation="summarize")
+llms.calls(limit=50, since=week_ago, operation="summarize")
 ```
+
+The filters narrow the calls, never the ratings folded onto them: a verdict
+recorded a month after the call still shows up on it, and rating a call twice
+shows the newer verdict.
 
 `since` is inclusive. On MongoDB it is inclusive to the millisecond — BSON dates
 carry no finer precision, so both stored timestamps and the bound are rounded
@@ -281,7 +285,7 @@ emitting deltas is not it, having never completed.
 ```python
 from llmbroker.models import CallStatus
 
-rows = llms.calls(limit=200, kind="call", trace_id=request_id)
+rows = llms.calls(limit=200, trace_id=request_id)
 answered = next((c for c in rows if c.status is CallStatus.OK), None)
 ```
 
@@ -291,11 +295,11 @@ whole. On a DB backend the column is indexed; the file store has no index by
 construction, so there the filter buys correctness rather than speed.
 
 Pass `call_id=` to pull up a single attempt — `result.call_id` is exactly that
-value. Mind the name: it matches a call row's own `id`, not the same-named column
-a quality rating carries pointing back at the call it rates.
+value.
 
 Reusing one `trace_id` across several calls is fine and groups them: llmbroker
-only ever stores it.
+only ever stores it. Both ids are also how you rate a call after the fact — see
+[Quality rating](usage.md#quality).
 
 ### Statistics over a window
 
@@ -314,8 +318,8 @@ Fields — in [`LLMStats`](reference.md#llmbroker.models.LLMStats).
 
 `by_status` holds only the statuses actually seen in the window, so count the
 failures by subtracting from `total` rather than by adding up the other statuses.
-Quality ratings are never counted — they are not calls. Pass `operation=` to
-count one operation only.
+Rating a call does not add a row, so it cannot inflate the counts. Pass
+`operation=` to count one operation only.
 
 What counts as a failure, how long the window should be, and how a model with no
 calls in the window should read are yours to decide; llmbroker returns the counts

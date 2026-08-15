@@ -1,10 +1,14 @@
 """Confirmed-bug repros: the default FileStore must feed the journal rebuild —
 quality and calls() must survive a restart over the same home."""
 
+import uuid
+from datetime import UTC, datetime
+
 import pytest
 
 from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
+from llmbroker.models import Call, CallStatus
 
 _MODEL_LIST = (
     '[[llms]]\nname = "m1"\nbase_url = "https://x/v1"\nmodel = "m"\napi_key_ref = "FL_KEY"\n'
@@ -22,13 +26,27 @@ def _home(tmp_path):
     return tmp_path
 
 
+async def _journal_call(broker, name="m1", operation="summarize") -> str:
+    """A rating names a call, so one is journaled for it to name."""
+    call = Call(
+        id=str(uuid.uuid4()),
+        llm_name=name,
+        operation=operation,
+        trace_id=None,
+        status=CallStatus.OK,
+        ts=datetime.now(UTC),
+    )
+    await broker._store.record(call)
+    return call.id
+
+
 async def test_learning_survives_restart_on_default_file_store(tmp_path, monkeypatch):
     monkeypatch.setenv("FL_KEY", "sk-test")
     home = _home(tmp_path)
     b1 = AsyncBroker(home=home, sync=None)
     await b1.ensure_pool()
     for _ in range(10):  # quality_min_count=10; 10 zeros → wilson upper ≈0.28 < floor 0.3
-        await b1.record_quality("m1", "summarize", 0.0)
+        await b1.record_quality(0.0, call_id=await _journal_call(b1))
     assert b1._optimizer.is_demoted("m1", "summarize")
 
     b2 = AsyncBroker(home=home, sync=None)  # fresh process over the same home
@@ -41,13 +59,13 @@ async def test_calls_works_on_default_file_store(tmp_path, monkeypatch):
     home = _home(tmp_path)
     b1 = AsyncBroker(home=home, sync=None)
     await b1.ensure_pool()
-    await b1._store.record_quality("m1", "summarize", 1.0)
+    call_id = await _journal_call(b1)
+    await b1.record_quality(1.0, call_id=call_id)
 
     b2 = AsyncBroker(home=home, sync=None)
     await b2.ensure_pool()
     rows = await b2.calls(limit=10)
-    assert rows
-    assert rows[0].kind == "quality"
+    assert [(r.id, r.score) for r in rows] == [(call_id, 1.0)]
 
 
 @pytest.mark.parametrize("store_kind", ["file", "sqlite"])
@@ -72,7 +90,7 @@ async def test_two_brokers_converge_on_quality_over_one_journal(tmp_path, monkey
 
     try:
         for _ in range(10):
-            await a._store.record_quality("m1", "summarize", 0.0)
+            await a.record_quality(0.0, call_id=await _journal_call(a))
 
         await b.rebuild()
         assert b._optimizer.is_demoted("m1", "summarize")

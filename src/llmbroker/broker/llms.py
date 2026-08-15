@@ -1,6 +1,7 @@
 """``AsyncLLMs``: one caller's view of the installation's pool — the scope its
 journal rows carry and the keys it may pay with. Built by the broker only."""
 
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import aclosing
 from datetime import datetime
@@ -15,11 +16,25 @@ from llmbroker.broker.result import AsyncLLM, AsyncResult
 from llmbroker.broker.router import Router
 from llmbroker.broker.stats import stats_from_calls
 from llmbroker.direct import AsyncDirectClient
-from llmbroker.exceptions import MissingKeyError, NoLLMAvailableError
-from llmbroker.models import Call, LLMConfig, LLMStats, check_limit, check_score, to_utc
+from llmbroker.exceptions import MissingKeyError, NoLLMAvailableError, UnknownCallError
+from llmbroker.models import (
+    Call,
+    CallStatus,
+    LLMConfig,
+    LLMStats,
+    check_limit,
+    check_score,
+    to_utc,
+)
 from llmbroker.protocols.store import QueryableStoreProtocol, StoreProtocol
 
+logger = logging.getLogger("llmbroker.broker")
+
 _DEFAULT_STATS_LIMIT = 1000
+
+# A rating key resolves through a bounded read: one trace covers a request's
+# attempts, and a host reusing one across a whole session gets the warning instead.
+_RATING_PAGE = 100
 
 
 class AsyncLLMs:
@@ -216,50 +231,67 @@ class AsyncLLMs:
 
     async def record_quality(
         self,
-        llm_name: str,
-        operation: str | None,
         score: float,
         *,
         call_id: str | None = None,
+        trace_id: str | None = None,
     ) -> None:
-        """Record a quality score for a past call — the delayed counterpart of
-        ``result.record_quality``. The host supplies the rating identity, so the
-        rated call need not still be in the journal."""
+        """Rate a past call, by exactly one key — a trace rates every attempt under it
+        that answered. Raises ``UnknownCallError`` when the key names no answered call.
+        See ``docs/`` "Quality rating"."""
         check_score(score)
-        await self._ensure_pool()
-        await self._store.record_quality(
-            llm_name,
-            operation,
-            score,
-            call_id=call_id,
-            scope=self.scope,
-        )
-        if self._learner is not None:
-            self._learner.record_quality_observed(llm_name, operation, score)
+        if (call_id is None) == (trace_id is None):
+            raise ValueError(
+                "record_quality() takes exactly one of call_id= or trace_id= —"
+                " a rating names the call it rates",
+            )
+        rated = await self._resolve_rated(call_id=call_id, trace_id=trace_id)
+        for row in rated:
+            await self._store.record_quality(row.id, score, scope=self.scope)
+            if self._learner is not None:
+                self._learner.record_quality_observed(row.llm_name, row.operation, score)
+
+    async def _resolve_rated(self, *, call_id: str | None, trace_id: str | None) -> list[Call]:
+        """The answered attempts a rating key names. A page that comes back full may
+        have left attempts unrated, so it is reported rather than silently truncated."""
+        key = f"call_id={call_id!r}" if call_id is not None else f"trace_id={trace_id!r}"
+        rows = await self.calls(limit=_RATING_PAGE, call_id=call_id, trace_id=trace_id)
+        if len(rows) == _RATING_PAGE:
+            logger.warning(
+                "record_quality: %s resolved to %d rows, the read bound — attempts past"
+                " it are not rated",
+                key,
+                _RATING_PAGE,
+            )
+        answered = [row for row in rows if row.status is CallStatus.OK]
+        if not answered:
+            raise UnknownCallError(
+                f"no answered call found for {key} — retention may have purged it,"
+                " or every attempt under it failed",
+            )
+        return answered
 
     # ------------------------------------------------------------------
     # Call journal — the rows this caller's scope is on
     # ------------------------------------------------------------------
 
-    async def calls(  # noqa: PLR0913 - one narrowing dimension per parameter
+    async def calls(
         self,
         *,
         limit: int,
         since: datetime | None = None,
-        kind: str | None = None,
         operation: str | None = None,
         trace_id: str | None = None,
         call_id: str | None = None,
     ) -> list[Call]:
-        """Newest-first journal tail for this caller, narrowed by any of ``since``
-        (inclusive bound), ``kind``, ``operation``, ``trace_id`` and ``call_id`` (one
-        attempt's own id). The unscoped caller sees all. Never provisions the pool."""
+        """Newest-first journal tail for this caller: one row per call attempt, each
+        carrying the newest score it was rated with. The unscoped caller sees all.
+        Never provisions the pool."""
         check_limit(limit)
         return await self._require_queryable().calls(
             limit=limit,
             scope=self.scope,
             since=to_utc(since, "since") if since is not None else None,
-            kind=kind,
             operation=operation,
             trace_id=trace_id,
             call_id=call_id,
@@ -275,7 +307,7 @@ class AsyncLLMs:
         """Per-model counts of this caller's call records over a window, keyed by model
         name. ``limit`` caps rows read, not the window: totals summing to it mean the
         window may be truncated. Never provisions the pool."""
-        rows = await self.calls(limit=limit, since=since, kind="call", operation=operation)
+        rows = await self.calls(limit=limit, since=since, operation=operation)
         return stats_from_calls(rows)
 
     def _require_queryable(self) -> QueryableStoreProtocol:

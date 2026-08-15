@@ -329,19 +329,31 @@ models are left, it still answers — and it lifts with new good ratings; there 
 no separate "reset". Calls without `operation=` share one common bucket.
 
 **Rate it later.** The verdict often arrives long after the call — a user reviews
-an LLM-produced artifact a day later. Persist `reply.llm_name` and the operation
-you passed at call time, then record the rating whenever it arrives:
+an LLM-produced artifact a day later. A rating names the call it rates, and there
+are two ways to name it. Pass an id of your own as `trace_id=` at call time and
+rate by it later:
 
 ```python
-# at call time, persist what you need
-llm_name, operation = reply.llm_name, reply.operation
+llms.ask("Summarize this clause", operation="summarize", trace_id=document_id)
 
 # ...a day later, when the user's review comes in
-llms.record_quality(llm_name, operation, 0.0)
+llms.record_quality(0.0, trace_id=document_id)
 ```
 
-This folds into the same `(model, operation)` bucket as `reply.record_quality`;
-the original call need not still exist — the rating is self-contained.
+Or persist `reply.call_id` and rate that one attempt: `llms.record_quality(0.0,
+call_id=saved_call_id)`. Exactly one of the two is required.
+
+The model and the operation are read off the call, so you store neither. One
+`trace_id` covering several calls rates them all, and the attempts that failed —
+a model that rate-limited before another answered — are not rated: there was no
+answer to judge. If nothing under the key answered, or retention has already
+purged it, you get an `UnknownCallError` rather than a rating that quietly went
+nowhere.
+
+Rate through the same caller that made the call: the scope comes from the caller
+object, not from the key, so a scoped call is rated with
+`broker.for_scope(user).record_quality(...)` — sent through the bare broker it
+would land unscoped.
 
 Thresholds and the rating window are configurable — see
 [`Optimizer`](reference.md#llmbroker.Optimizer).

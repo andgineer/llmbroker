@@ -14,20 +14,18 @@ class StoreProtocol(Protocol):
     async def record(self, call: Call) -> None: ...
     async def record_quality(
         self,
-        llm_name: str,
-        operation: str | None,
+        call_id: str,
         score: float,
         *,
-        call_id: str | None = None,
         scope: str | None = None,
     ) -> None: ...
 
 
 @runtime_checkable
 class QueryableStoreProtocol(StoreProtocol, Protocol):
-    """``since`` must be timezone-aware and bounds the journal inclusively; ``limit``
-    must be >= 1. ``call_id`` matches a call row's own id, not a quality row's
-    passthrough column of the same name."""
+    """One row per call attempt, carrying the newest score it was rated with. ``since``
+    must be timezone-aware and bounds the journal inclusively; ``limit`` must be >= 1.
+    Every filter narrows the call rows only, never the ratings folded onto them."""
 
     async def calls(  # noqa: PLR0913 - one narrowing dimension per parameter
         self,
@@ -35,7 +33,6 @@ class QueryableStoreProtocol(StoreProtocol, Protocol):
         limit: int,
         scope: str | None = None,
         since: datetime | None = None,
-        kind: str | None = None,
         operation: str | None = None,
         trace_id: str | None = None,
         call_id: str | None = None,

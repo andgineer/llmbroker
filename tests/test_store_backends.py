@@ -1,6 +1,7 @@
 """Backend-parametrized tests for the QueryableStoreProtocol (file, sqlite, postgres,
 mongodb)."""
 
+import asyncio
 from dataclasses import fields
 from datetime import UTC, datetime, timedelta, timezone
 
@@ -12,6 +13,9 @@ from llmbroker.journal_policy import PurgeClock
 from llmbroker.models import Call, CallStatus, Usage
 
 _BASE = datetime(2030, 1, 1, tzinfo=UTC)
+# A rating is stamped as it is written, so a call it rates must be older than the
+# run itself — the file store folds in one newest-first pass over its day files.
+_NOW = datetime.now(UTC)
 
 
 def _call(
@@ -80,23 +84,83 @@ async def test_calls_none_usage_roundtrips_as_none(queryable_store):
     assert calls[0].usage is None
 
 
-async def test_record_quality_appends_self_contained_row(queryable_store):
-    """record_quality appends its own journal row — never updates the call row."""
-    await queryable_store.record(_call("c1"))
-    await queryable_store.record_quality("p1", "summarize", 0.8, call_id="c1")
+async def test_calls_returns_one_row_per_call_with_its_score(queryable_store):
+    """A rating is appended as its own row and comes back folded onto the call it
+    names — the journal is never updated in place."""
+    await queryable_store.record(_call("c1", ts=_NOW))
+    await queryable_store.record_quality("c1", 0.8)
 
     rows = await queryable_store.calls(limit=10)
-    assert len(rows) == 2
-    quality_rows = [r for r in rows if r.kind == "quality"]
-    assert len(quality_rows) == 1
-    assert quality_rows[0].quality_score == pytest.approx(0.8)
-    assert quality_rows[0].llm_name == "p1"
-    assert quality_rows[0].operation == "summarize"
-    assert quality_rows[0].call_id == "c1"
-    assert quality_rows[0].status is None
+    assert [r.id for r in rows] == ["c1"]
+    assert rows[0].score == pytest.approx(0.8)
+    assert rows[0].status is CallStatus.OK
 
-    call_rows = [r for r in rows if r.kind == "call"]
-    assert call_rows[0].quality_score is None
+
+async def test_calls_returns_none_score_for_an_unrated_call(queryable_store):
+    await queryable_store.record(_call("c1", ts=_NOW))
+    (row,) = await queryable_store.calls(limit=10)
+    assert row.score is None
+
+
+async def test_calls_never_returns_a_rating_as_its_own_row(queryable_store):
+    """Above the storage layer the two record kinds stop existing: a rating names a
+    call, and ``call_id=`` still means that call's own id."""
+    await queryable_store.record(_call("a", ts=_NOW))
+    await queryable_store.record_quality("a", 0.8)
+    assert [r.id for r in await queryable_store.calls(limit=10)] == ["a"]
+    assert [r.id for r in await queryable_store.calls(limit=10, call_id="a")] == ["a"]
+
+
+async def test_calls_newest_rating_wins_when_a_call_is_rated_twice(queryable_store):
+    """Ratings are append-only with no dedup, so a host changing its mind must not
+    vote twice — the projection takes the newest."""
+    await queryable_store.record(_call("c1", ts=_NOW))
+    await queryable_store.record_quality("c1", 0.1)
+    await asyncio.sleep(0.01)  # BSON dates carry whole milliseconds only
+    await queryable_store.record_quality("c1", 0.9)
+    (row,) = await queryable_store.calls(limit=10)
+    assert row.score == pytest.approx(0.9)
+
+
+async def test_calls_limit_counts_calls_not_journal_rows(queryable_store):
+    """A rated journal must not cost a host half its page."""
+    for i in range(3):
+        await queryable_store.record(_call(f"c{i}", ts=_NOW - timedelta(seconds=3 - i)))
+    for i in range(3):
+        await queryable_store.record_quality(f"c{i}", 0.5)
+    rows = await queryable_store.calls(limit=3)
+    assert {r.id for r in rows} == {"c0", "c1", "c2"}
+    assert all(r.score == pytest.approx(0.5) for r in rows)
+
+
+async def test_calls_score_attaches_though_the_rating_is_outside_since(queryable_store):
+    """``since`` bounds the call row only: a rating written later than the window was
+    formed still lands on the call inside it."""
+    await queryable_store.record(_call("stale", ts=_NOW - timedelta(days=2)))
+    await queryable_store.record(_call("fresh", ts=_NOW - timedelta(hours=1)))
+    await queryable_store.record_quality("fresh", 0.7)
+    rows = await queryable_store.calls(limit=10, since=_NOW - timedelta(days=1))
+    assert [(r.id, r.score) for r in rows] == [("fresh", pytest.approx(0.7))]
+
+
+async def test_calls_score_attaches_though_the_rating_carries_another_scope(queryable_store):
+    """A rating carries its writer's scope, and the read never consults it — the
+    filters narrow the calls."""
+    await queryable_store.record(_call("c1", scope="alice", ts=_NOW))
+    await queryable_store.record_quality("c1", 0.6, scope="bob")
+    (row,) = await queryable_store.calls(limit=10, scope="alice")
+    assert row.score == pytest.approx(0.6)
+
+
+async def test_calls_operation_and_trace_filters_do_not_drop_a_rated_call(queryable_store):
+    """A rating carries neither an operation nor a trace, so narrowing by them must
+    not lose the score."""
+    await queryable_store.record(
+        _call("c1", operation="summarize", trace_id="req-1", ts=_NOW),
+    )
+    await queryable_store.record_quality("c1", 0.4)
+    rows = await queryable_store.calls(limit=10, operation="summarize", trace_id="req-1")
+    assert [(r.id, r.score) for r in rows] == [("c1", pytest.approx(0.4))]
 
 
 async def test_retention_purges_old_calls_via_maybe_purge(queryable_store):
@@ -133,16 +197,6 @@ async def test_metrics_counts_calls_per_llm(queryable_store):
 # ── Windowed / narrowed journal reads ───────────────────────────────────────
 
 
-async def test_calls_kind_filter_drops_quality_records(queryable_store):
-    """Without it a host computing a failure ratio silently gets quality rows —
-    which carry status=None by construction — in its denominator."""
-    await queryable_store.record(_call("c1", ts=_BASE))
-    await queryable_store.record_quality("p1", "summarize", 0.9)
-    assert {c.id for c in await queryable_store.calls(limit=10, kind="call")} == {"c1"}
-    quality = await queryable_store.calls(limit=10, kind="quality")
-    assert [c.kind for c in quality] == ["quality"]
-
-
 async def test_calls_since_bounds_the_window(queryable_store):
     await queryable_store.record(_call("old", ts=_BASE))
     await queryable_store.record(_call("new", ts=_BASE + timedelta(days=2)))
@@ -163,20 +217,16 @@ async def test_calls_operation_filter_keeps_only_that_operation(queryable_store)
     assert [c.id for c in rows] == ["summ"]
 
 
-async def test_calls_combines_since_kind_and_operation(queryable_store):
-    """Each of the three must be load-bearing: every decoy below is excluded by
-    exactly one of them, so dropping any argument fails the assertion."""
+async def test_calls_combines_since_and_operation(queryable_store):
+    """Both must be load-bearing: every decoy below is excluded by exactly one of
+    them, so dropping either argument fails the assertion."""
     in_window = _BASE + timedelta(days=2)
     await queryable_store.record(_call("old-summ", operation="summarize", ts=_BASE))
     await queryable_store.record(_call("new-other", operation="translate", ts=in_window))
-    await queryable_store.record(
-        _call("new-summ-quality", operation="summarize", ts=in_window, status=None, kind="quality"),
-    )
     await queryable_store.record(_call("new-summ", operation="summarize", ts=in_window))
     rows = await queryable_store.calls(
         limit=10,
         since=_BASE + timedelta(days=1),
-        kind="call",
         operation="summarize",
     )
     assert [c.id for c in rows] == ["new-summ"]
@@ -223,32 +273,13 @@ async def test_calls_call_id_selects_one_attempt(queryable_store):
     assert [c.id for c in rows] == ["second"]
 
 
-async def test_calls_call_id_does_not_match_a_quality_rows_passthrough(queryable_store):
-    """``call_id=`` is named for the id the host holds, and that id is a call row's
-    own — never the same-named column a quality row carries pointing back at it."""
-    await queryable_store.record(_call("a", ts=_BASE))
-    await queryable_store.record_quality("p1", "summarize", 0.8, call_id="a")
-    rows = await queryable_store.calls(limit=10, call_id="a")
-    assert [(c.id, c.kind) for c in rows] == [("a", "call")]
-
-
-async def test_calls_combines_the_id_filters_with_since_kind_and_operation(queryable_store):
+async def test_calls_combines_the_id_filters_with_since_and_operation(queryable_store):
     """Every decoy is excluded by exactly one argument, so dropping any of them
     fails the assertion."""
     in_window = _BASE + timedelta(days=2)
     await queryable_store.record(_call("old-summ", trace_id="req-1", operation="summ", ts=_BASE))
     await queryable_store.record(
         _call("new-other", trace_id="req-1", operation="translate", ts=in_window),
-    )
-    await queryable_store.record(
-        _call(
-            "new-summ-quality",
-            trace_id="req-1",
-            operation="summ",
-            ts=in_window,
-            status=None,
-            kind="quality",
-        ),
     )
     await queryable_store.record(
         _call("other-trace", trace_id="req-2", operation="summ", ts=in_window),
@@ -260,7 +291,6 @@ async def test_calls_combines_the_id_filters_with_since_kind_and_operation(query
     narrowed = {
         "limit": 10,
         "since": _BASE + timedelta(days=1),
-        "kind": "call",
         "operation": "summ",
         "trace_id": "req-1",
     }
@@ -352,23 +382,24 @@ _FIELD_SAMPLES = {
     "operation": "summarize",
     "trace_id": "trace-abc",
     "status": CallStatus.ERROR,
-    "kind": "call",
     "ts": _BASE,
     "http_status": 503,
     "latency_ms": 1234,
     "error_detail": "provider said no",
     "usage": Usage(prompt_tokens=1, completion_tokens=2, total_tokens=3, extra={"cached": 4}),
-    "quality_score": 0.75,
-    "call_id": "corr-9",
     "scope": "tenant-a",
     "cooldown_until": _BASE + timedelta(minutes=30),
     "budget_ms": 1500,
 }
 
 
+# Filled by the read, never written: a rating is its own appended row.
+_READ_ONLY_FIELDS = {"score"}
+
+
 def _fully_populated_call() -> Call:
     declared = {f.name for f in fields(Call)}
-    unsampled = declared - _FIELD_SAMPLES.keys()
+    unsampled = declared - _FIELD_SAMPLES.keys() - _READ_ONLY_FIELDS
     assert not unsampled, (
         f"journal field(s) {sorted(unsampled)} have no sample value — add one, or the "
         f"lossless-persistence guarantee silently stops covering them"

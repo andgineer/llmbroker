@@ -60,17 +60,24 @@ CAS folds in every backend; and an append-only journal cannot be incremented in
 place at all, so the "aggregate from rows" path has to exist regardless. Even
 the cheap counter form is not worth a second mechanism.
 
-### self-contained-quality-records
+### a-rating-names-the-call-it-rates
 
-A rating carries (model, operation, score) by itself and is never joined to the
-call it rates.
+A rating is an appended row carrying a call's id and a score; the model and the
+operation it counts toward are read off that call.
 
-**Blocks:** updating the call row with its score, or stitching a score to its
-call by id during recomputation.
-**Why:** a rating may arrive after retention has purged the call row. Self-
-contained records make an arbitrarily late rating land correctly and keep the
-append-only invariant absolute. A call id survives only as an opaque passthrough
-for the host's own UI, never read by llmbroker.
+**Blocks:** storing the model and operation on the rating itself, so that a rating
+naming no call — or naming one the journal no longer holds — still counts.
+**Why:** every quality signal a host has is about a specific answer, so a rating
+that names no call was never a real shape. Storing the pair on the rating let it
+disagree with the call about which model and which operation were rated, with
+nothing able to catch it; reading them off the call makes the disagreement
+impossible and lets one read answer the whole question, as one row per call. Two
+things stop counting and both were already worth nothing: a rating whose call
+retention has purged lands in a window rebuilt from a tail far shorter than the
+retention, so it reached a window that had forgotten everything around it; and a
+second rating of the same call is the host changing its mind, which should not
+vote twice. The journal stays append-only — no row is ever updated — and the fold
+is a read-time projection.
 
 ### wilson-for-demotion
 
@@ -245,6 +252,23 @@ depth it must guess, and a trace pushed past that depth is indistinguishable fro
 one that never happened. `store-is-not-logging` does not reach this — it blocks
 emitting store events outward into logging, not answering a query over a column
 already stored.
+
+### a-driver-may-know-the-domain
+
+A driver holds whatever answers the core's question in one round-trip; the core
+holds what is a pure fold over rows already read.
+
+**Blocks:** "record-shaped, not domain-shaped" as the dividing line — keeping
+llmbroker's vocabulary out of driver bodies.
+**Why:** that line never held. The journal operations only ever receive one table,
+and the driver protocol already states the append-only rule and what a quality row
+is. It also priced a read wrong: obeying it meant fetching calls and ratings
+separately and matching them above the driver — two round-trips and a list of ids
+on the wire, or a scan repeated in the file store, to avoid a correlated lookup
+each backend performs natively. The line that does work is whether two correct
+backends could answer differently: a projection cannot be disagreed about, a
+threshold or a window can, so those stay in the core. Table and column names still
+come from the one declarative spec, which is what keeps a rename to a single edit.
 
 ### no-schema-migrations
 

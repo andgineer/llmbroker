@@ -5,33 +5,23 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from llmbroker.models import Call
-
 RETENTION_DEFAULT = timedelta(days=90)
 PURGE_INTERVAL = 3600.0
 
+KIND_CALL = "call"
+KIND_QUALITY = "quality"
 
-def quality_call(
-    llm_name: str,
-    operation: str | None,
-    score: float,
-    *,
-    call_id: str | None,
-    scope: str | None,
-) -> Call:
-    """Build the self-contained ``kind="quality"`` record — never joined to the call it rates."""
-    return Call(
-        id=str(uuid.uuid4()),
-        llm_name=llm_name,
-        operation=operation,
-        trace_id=None,
-        status=None,
-        kind="quality",
-        ts=datetime.now(UTC),
-        quality_score=score,
-        call_id=call_id,
-        scope=scope,
-    )
+
+def quality_row(call_id: str, score: float, scope: str | None) -> dict[str, object]:
+    """The appended rating: names the call, carries no model and no operation."""
+    return {
+        "id": str(uuid.uuid4()),
+        "kind": KIND_QUALITY,
+        "call_id": call_id,
+        "quality_score": score,
+        "scope": scope,
+        "called_at": datetime.now(UTC),
+    }
 
 
 class PurgeClock:

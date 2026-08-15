@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets
+from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.standalone.store import InMemoryStore
 from llmbroker.sync import Broker
 
@@ -22,21 +23,24 @@ def _registry(tmp_path):
     return Registry(f)
 
 
-def _async_broker(tmp_path) -> AsyncBroker:
+def _async_broker(tmp_path, store=None) -> AsyncBroker:
     return AsyncBroker(
         registry=_registry(tmp_path),
         secrets=DictSecrets({"K": "test"}),
-        store=InMemoryStore(),
+        store=store if store is not None else InMemoryStore(),
         sync=None,
     )
 
 
 @pytest.mark.parametrize("score", [-0.1, 1.1, float("nan")])
 def test_broker_record_quality_rejects_out_of_range(tmp_path, score):
+    """The score is checked before the key is resolved, so a bad one is a ValueError
+    rather than an UnknownCallError about a call that was never looked for."""
+
     async def run():
         async with _async_broker(tmp_path) as broker:
             with pytest.raises(ValueError, match=r"\[0.0, 1.0\]"):
-                await broker.record_quality("p1", None, score)
+                await broker.record_quality(score, call_id="never-looked-up")
 
     asyncio.run(run())
 
@@ -44,8 +48,10 @@ def test_broker_record_quality_rejects_out_of_range(tmp_path, score):
 @pytest.mark.parametrize("score", [0.0, 1.0, 0.5])
 def test_broker_record_quality_accepts_the_boundaries(tmp_path, score):
     async def run():
-        async with _async_broker(tmp_path) as broker:
-            await broker.record_quality("p1", None, score)
+        async with _async_broker(tmp_path, SqliteStore(str(tmp_path / "b.db"))) as broker:
+            with patch(_PATCH, new=AsyncMock(return_value=("ok", None, None))):
+                result = await broker.ask("hi")
+            await broker.record_quality(score, call_id=result.call_id)
 
     asyncio.run(run())
 
@@ -82,7 +88,7 @@ def test_sync_broker_record_quality_inherits_the_check(tmp_path):
     )
     try:
         with pytest.raises(ValueError, match=r"\[0.0, 1.0\]"):
-            broker.record_quality("p1", None, 1.5)
+            broker.record_quality(1.5, call_id="never-looked-up")
     finally:
         broker.close()
 

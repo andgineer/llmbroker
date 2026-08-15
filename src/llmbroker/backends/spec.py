@@ -70,7 +70,7 @@ TABLES: dict[str, TableSpec] = {
             "cooldown_until": "timestamp",
             "budget_ms": "int",
         },
-        indexes=(("llm_name",), ("called_at",), ("trace_id",)),
+        indexes=(("llm_name",), ("called_at",), ("trace_id",), ("call_id",)),
     ),
 }
 

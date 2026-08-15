@@ -10,28 +10,15 @@ from llmbroker.models import Call, CallStatus, to_utc
 _BASE = datetime(2030, 1, 1, tzinfo=UTC)
 
 
-def _call(call_id, llm_name="p1", status=CallStatus.OK, kind="call", ts=None, operation=None):
+def _call(call_id, llm_name="p1", status=CallStatus.OK, ts=None, operation=None, score=None):
     return Call(
         id=call_id,
         llm_name=llm_name,
         operation=operation,
         trace_id=None,
         status=status,
-        kind=kind,
         ts=ts if ts is not None else _BASE,
-    )
-
-
-def _quality(call_id, llm_name="p1", ts=None):
-    return Call(
-        id=call_id,
-        llm_name=llm_name,
-        operation=None,
-        trace_id=None,
-        status=None,
-        kind="quality",
-        ts=ts if ts is not None else _BASE,
-        quality_score=1.0,
+        score=score,
     )
 
 
@@ -74,15 +61,12 @@ def test_by_status_holds_only_statuses_actually_seen():
     assert stats.total - stats.by_status.get(CallStatus.OK, 0) == 0
 
 
-def test_quality_rows_are_not_counted_as_calls():
-    rows = [_quality("q1"), _call("c1"), _quality("q2")]
+def test_a_rated_call_counts_once_like_any_other():
+    """The score rides on the call row, so rating a call cannot inflate its count."""
+    rows = [_call("c2", score=1.0), _call("c1")]
     stats = stats_from_calls(rows)["p1"]
-    assert stats.total == 1
-    assert stats.by_status == {CallStatus.OK: 1}
-
-
-def test_model_with_only_quality_records_is_absent():
-    assert stats_from_calls([_quality("q1", llm_name="p1")]) == {}
+    assert stats.total == 2
+    assert stats.by_status == {CallStatus.OK: 2}
 
 
 def test_first_last_and_last_status_from_newest_first_sequence():
@@ -97,19 +81,6 @@ def test_first_last_and_last_status_from_newest_first_sequence():
     assert stats.last_at == newest
     assert stats.first_at == oldest
     assert stats.last_status is CallStatus.ERROR
-
-
-def test_quality_rows_do_not_move_the_window_bounds():
-    """A quality record outside the calls' span must not widen first_at/last_at."""
-    rows = [
-        _quality("q-newest", ts=_BASE + timedelta(days=9)),
-        _call("c2", ts=_BASE + timedelta(days=2)),
-        _call("c1", ts=_BASE + timedelta(days=1)),
-        _quality("q-oldest", ts=_BASE),
-    ]
-    stats = stats_from_calls(rows)["p1"]
-    assert stats.first_at == _BASE + timedelta(days=1)
-    assert stats.last_at == _BASE + timedelta(days=2)
 
 
 def test_models_are_aggregated_independently():

@@ -12,6 +12,7 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from llmbroker.backends.driver import Key, Row
 from llmbroker.backends.spec import SCHEMA_VERSION, TABLES, TableSpec
 from llmbroker.exceptions import SchemaVersionError
+from llmbroker.journal_policy import KIND_CALL, KIND_QUALITY
 
 
 def _ensure_utc(dt: datetime | None) -> datetime | None:
@@ -127,21 +128,49 @@ class MongoDriver:
         await self.ensure_schema()
         await self._db[spec.name].insert_one(dict(row))
 
-    async def recent(
+    async def journal_view(
         self,
-        table: str,
         limit: int,
         match: Row | None = None,
         since: datetime | None = None,
     ) -> list[Row]:
-        spec = TABLES[table]
+        spec = TABLES["calls"]
         await self.ensure_schema()
         query: dict[str, object] = dict(match) if match else {}
+        query["kind"] = KIND_CALL
         if since is not None:
             query["called_at"] = {"$gte": since}
-        cursor = self._db[spec.name].find(query).sort("called_at", -1).limit(limit)
-        docs = await cursor.to_list(length=None)
-        return [_decode_doc(d, spec) for d in docs]
+        # The lookup runs on the limited page, so it keeps the page at exactly
+        # ``limit`` calls. ``$arrayElemAt``, not ``$first``: the latter is 4.4+.
+        pipeline: list[dict[str, object]] = [
+            {"$match": query},
+            {"$sort": {"called_at": -1}},
+            {"$limit": limit},
+            {
+                "$lookup": {
+                    "from": spec.name,
+                    "let": {"cid": "$id"},
+                    "pipeline": [
+                        {
+                            "$match": {
+                                "$expr": {
+                                    "$and": [
+                                        {"$eq": ["$kind", KIND_QUALITY]},
+                                        {"$eq": ["$call_id", "$$cid"]},
+                                    ],
+                                },
+                            },
+                        },
+                        {"$sort": {"called_at": -1}},
+                        {"$limit": 1},
+                    ],
+                    "as": "_rating",
+                },
+            },
+            {"$addFields": {"score": {"$arrayElemAt": ["$_rating.quality_score", 0]}}},
+        ]
+        docs = await self._db[spec.name].aggregate(pipeline).to_list(length=None)
+        return [{**_decode_doc(d, spec), "score": d.get("score")} for d in docs]
 
     async def purge(self, table: str, before: datetime) -> int:
         spec = TABLES[table]

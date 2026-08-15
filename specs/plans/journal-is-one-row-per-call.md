@@ -409,3 +409,71 @@ testcontainers, so Docker must be running.
 `python -m pytest` reporting `N passed` with zero failures, errors or skips.
 
 Version bump (`invoke ver-feature`) is the maintainer's and is skipped here.
+
+## Handover
+
+### Done
+
+Every section of the work order (1–10), the Specs section, and the Tests section.
+`calls()` now returns one row per call attempt carrying `score`; the fold happens in
+each driver's `journal_view` in one round-trip; `record_quality` takes a score plus
+exactly one of `call_id=` / `trace_id=`.
+
+### Done differently from the plan
+
+- **A fourth driver.** The plan names three (sqlite, postgres, mongodb).
+  `backends.inmemory.InMemoryDriver` is a fourth `Driver` implementation and part of
+  the conformance parametrization, so it got `journal_view` too — same semantics,
+  fold done in Python.
+- **`# noqa: PLR0913` on `calls` is not removable.** The plan asked to recount after
+  dropping `kind`: six keyword parameters remain and the ruff cap is five, so the
+  suppression stays on `DriverStore.calls`, `FileStore.calls` and the protocol.
+- **`AsyncLLMs.record_quality` no longer calls `_ensure_pool()`.** The plan rewrites
+  the body without mentioning it, and the new body performs a journal read, which
+  invariant 6 binds: rating must keep working on an install whose registry is empty
+  or gone. Nothing in the rating path needs the pool — the learner exists from
+  construction, and the optimizer window is independent of it.
+- **`UnknownCallError` also covers "every attempt under this key failed".** The plan
+  says "Nothing resolved → `UnknownCallError`"; read as "nothing rateable resolved",
+  since silently rating zero calls is the failure mode the exception exists to
+  prevent. Covered by `test_record_quality_raises_when_every_attempt_failed`.
+- **The file store's rating line keeps the store's own `ts` key** rather than the
+  column name `called_at`, so both record kinds carry one timestamp key in the JSONL.
+- **`_FIELD_SAMPLES` in `test_store_backends.py` gained a named exemption**
+  (`_READ_ONLY_FIELDS = {"score"}`). The lossless-persistence guard asserts every
+  declared `Call` field has a sample; `score` is filled by the read and never
+  written, so exempting it by name keeps the guard live for anything new that *is*
+  persisted.
+- **`test_calls_score_attaches_though_the_rating_is_outside_since`** is written in
+  the direction the plan's Semantics section states — the rating is newer than the
+  window bound, the call is inside it. The reverse (a rating older than the call it
+  names) cannot be produced through the API and is what the file store's single
+  reverse pass assumes away; the new backend tests therefore stamp their calls in
+  the recent past (`_NOW`) rather than at the suite's usual future `_BASE`, so the
+  ratings they write are genuinely newer.
+
+### Decisions taken during implementation
+
+- `_RATING_PAGE = 100` is the fixed bound the rating key resolves through; a read
+  that comes back full logs a warning naming the key and rates what it found.
+- The score subquery is passed its two kind literals as bound parameters rather than
+  interpolated, in both SQL drivers.
+
+### Tests deleted rather than adapted
+
+`test_calls_kind_filter_drops_quality_records`,
+`test_calls_call_id_does_not_match_a_quality_rows_passthrough`,
+`test_quality_rows_do_not_move_the_window_bounds`,
+`test_quality_rows_are_not_counted_as_calls`,
+`test_model_with_only_quality_records_is_absent`,
+`test_broker_record_quality_unknown_llm_does_not_raise` — each described a trap that
+no longer exists. Their subject is covered by the new tests in
+`test_store_backends.py`, `test_driver_conformance.py` and `test_rating_by_call.py`.
+
+### Gate
+
+`invoke pre` clean (ruff, ruff-format, pyrefly, docstring cap) and
+`python -m pytest` → **1365 passed**, zero failures, errors or skips, with Docker up
+for the postgres and mongodb testcontainers.
+
+Version bump skipped, as the plan and `CLAUDE.md` both require.

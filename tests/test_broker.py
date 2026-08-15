@@ -300,9 +300,9 @@ def test_stats_aggregates_recorded_calls_per_model(tmp_path):
     asyncio.run(run())
 
 
-def test_stats_ignores_quality_records(tmp_path):
-    """A quality record carries status=None by construction; counting it would put a
-    row with no status in the host's denominator."""
+def test_stats_counts_a_rated_call_once(tmp_path):
+    """The score rides on the call row, so rating an answer cannot double it in the
+    host's denominator."""
 
     async def run():
         db = str(tmp_path / "b.db")
@@ -408,7 +408,6 @@ def test_calls_forwards_the_id_filters_to_the_store(tmp_path):
                 "limit": 5,
                 "scope": None,
                 "since": None,
-                "kind": None,
                 "operation": None,
                 "trace_id": "req-1",
                 "call_id": "attempt-2",
@@ -502,15 +501,14 @@ def test_result_exposes_rating_identity(tmp_path):
             assert result.operation == "summarize"
             assert isinstance(result.call_id, str) and result.call_id
             calls = await broker.calls(limit=10)
-            call_rows = [c for c in calls if c.kind == "call"]
-            assert call_rows[0].id == result.call_id
+            assert calls[0].id == result.call_id
 
     asyncio.run(run())
 
 
-def test_broker_record_quality_appends_self_contained_row(tmp_path):
-    """Delayed record_quality through the broker appends its own quality journal row —
-    identity supplied by the host, call row untouched."""
+def test_broker_record_quality_folds_onto_the_call_it_names(tmp_path):
+    """The delayed entry point appends its own rating row; the call row is untouched
+    and comes back carrying the score."""
 
     async def run():
         db = str(tmp_path / "b.db")
@@ -519,36 +517,13 @@ def test_broker_record_quality_appends_self_contained_row(tmp_path):
         ) as broker:
             with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
                 result = await broker.ask("x", operation="summarize")
-            await broker.record_quality("p1", "summarize", 0.8, call_id=result.call_id)
+            await broker.record_quality(0.8, call_id=result.call_id)
 
             rows = await broker.calls(limit=10)
-            quality_rows = [r for r in rows if r.kind == "quality"]
-            assert len(quality_rows) == 1
-            assert quality_rows[0].llm_name == "p1"
-            assert quality_rows[0].operation == "summarize"
-            assert quality_rows[0].quality_score == pytest.approx(0.8)
-            assert quality_rows[0].call_id == result.call_id
-            assert quality_rows[0].status is None
-
-    asyncio.run(run())
-
-
-def test_broker_record_quality_drives_demotion(tmp_path):
-    """Enough zero scores fed through the delayed entry point demote the bucket —
-    a delayed rating drives learning exactly as a live one would."""
-
-    async def run():
-        opt = Optimizer(quality_min_count=10, quality_floor=0.3)
-        async with AsyncBroker(
-            registry=_registry(tmp_path),
-            secrets=_secrets(),
-            store=InMemoryStore(),
-            optimize=opt,
-            sync=None,
-        ) as broker:
-            for _ in range(10):
-                await broker.record_quality("p1", "summarize", 0.0)
-            assert opt.is_demoted("p1", "summarize") is True
+            assert [(r.id, r.llm_name, r.operation) for r in rows] == [
+                (result.call_id, "p1", "summarize"),
+            ]
+            assert rows[0].score == pytest.approx(0.8)
 
     asyncio.run(run())
 
@@ -567,38 +542,16 @@ def test_broker_record_quality_survives_journal_rebuild(tmp_path):
             optimize=opt,
             sync=None,
         ) as broker:
-            for _ in range(10):
-                await broker.record_quality("p1", "summarize", 0.0)
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
+                for _ in range(10):
+                    result = await broker.ask("x", operation="summarize")
+                    await broker.record_quality(0.0, call_id=result.call_id)
             # Drop the in-memory window so only the persisted journal rows remain.
             opt.load_scores({})
             assert opt.is_demoted("p1", "summarize") is False
-            # The forced rebuild re-derives the verdict purely from the quality rows.
+            # The forced rebuild re-derives the verdict purely from the journal.
             await broker.rebuild()
             assert opt.is_demoted("p1", "summarize") is True
-
-    asyncio.run(run())
-
-
-def test_a_caller_stamps_its_scope_on_a_delayed_quality_row(tmp_path):
-    """The scope reaches the journal as attribution, so a store-level
-    calls(scope=...) filter surfaces one caller's ratings."""
-
-    async def run():
-        db = str(tmp_path / "b.db")
-        await SqliteRegistry(db).mirror(
-            [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")],
-        )
-        async with AsyncBroker(
-            registry=SqliteRegistry(db),
-            secrets=DictSecrets({"K": "test"}),
-            store=SqliteStore(db),
-            sync=None,
-        ) as broker:
-            await broker.for_scope("alice").record_quality("p1", "summarize", 0.0)
-            rows = await broker._store.calls(limit=10, scope="alice")
-            quality_rows = [r for r in rows if r.kind == "quality"]
-            assert len(quality_rows) == 1
-            assert quality_rows[0].scope == "alice"
 
     asyncio.run(run())
 
@@ -615,21 +568,10 @@ def test_broker_record_quality_with_optimizer_off_does_not_raise(tmp_path):
             optimize=False,
             sync=None,
         ) as broker:
-            await broker.record_quality("p1", "summarize", 0.0)
-            rows = await broker.calls(limit=10)
-            assert [r for r in rows if r.kind == "quality"]
-
-    asyncio.run(run())
-
-
-def test_broker_record_quality_unknown_llm_does_not_raise(tmp_path):
-    """Rating a model not in the pool is harmless — it appends a record nobody consults."""
-
-    async def run():
-        async with AsyncBroker(
-            registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore(), sync=None
-        ) as broker:
-            await broker.record_quality("ghost", "summarize", 0.0)
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
+                result = await broker.ask("x", operation="summarize")
+            await broker.record_quality(0.0, call_id=result.call_id)
+            assert (await broker.calls(limit=10))[0].score == pytest.approx(0.0)
 
     asyncio.run(run())
 
@@ -933,7 +875,7 @@ def test_default_store_is_file_store_inside_the_home_directory(tmp_path):
 
     async def run():
         async with AsyncBroker(home=tmp_path, sync=None) as broker:
-            await broker._store.record_quality("p1", None, 1.0)
+            await broker._store.record_quality("c1", 1.0)
 
     asyncio.run(run())
     assert (tmp_path / "store").is_dir()
@@ -953,7 +895,7 @@ def test_default_store_falls_back_to_cwd_store_for_bare_db_registry(tmp_path, mo
             [LLMConfig(name="p1", base_url="https://x/v1", model="m", api_key_ref="K")]
         )
         async with AsyncBroker(registry=SqliteRegistry(db), sync=None) as broker:
-            await broker._store.record_quality("p1", None, 1.0)
+            await broker._store.record_quality("c1", 1.0)
 
     asyncio.run(run())
     assert (tmp_path / "store").is_dir()

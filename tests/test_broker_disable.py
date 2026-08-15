@@ -59,7 +59,7 @@ async def test_disable_enable_llm_round_trip_preserves_quality_window(tmp_path):
         for i in range(5):
             call = _call(f"c{i}", operation="summarize")
             await broker._store.record(call)
-            await broker.record_quality("p1", "summarize", 0.0)
+            await broker.record_quality(0.0, call_id=call.id)
         assert len(opt._scores[("p1", "summarize")]) == 5
 
         await broker.disable_llm("p1")

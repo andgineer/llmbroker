@@ -54,14 +54,10 @@ class AsyncResult:
         return self._call_id
 
     async def record_quality(self, score: float) -> None:
+        """Rate the call this result came from — no journal read: the model, the
+        operation and the call id are already here."""
         check_score(score)
-        await self._store.record_quality(
-            self._llm_name,
-            self._operation,
-            score,
-            call_id=self._call_id,
-            scope=self._scope,
-        )
+        await self._store.record_quality(self._call_id, score, scope=self._scope)
         if self._observe_quality is not None:
             self._observe_quality(self._llm_name, self._operation, score)
 

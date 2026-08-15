@@ -200,23 +200,21 @@ class Usage:
 
 @dataclass(frozen=True, slots=True)
 class Call:
-    """One append-only journal record: a call attempt or a self-contained quality
-    rating, interleaved in one stream. ``status`` is ``None`` exactly on a quality
-    record, whose ``call_id`` is an opaque passthrough that is never joined on."""
+    """One call attempt, as the journal holds it. ``score`` is the newest host rating
+    of this attempt and is filled on reads only — a rating is its own appended row,
+    never a field the record was written with."""
 
     id: str
     llm_name: str
     operation: str | None
     trace_id: str | None
     status: CallStatus | None
-    kind: str = "call"
     ts: datetime | None = None
     http_status: int | None = None
     latency_ms: int | None = None
     error_detail: str | None = None
     usage: Usage | None = None
-    quality_score: float | None = None
-    call_id: str | None = None
+    score: float | None = None
     scope: str | None = None
     cooldown_until: datetime | None = None
     # Set only where the caller's own budget ran out mid-attempt: the bound the

@@ -181,6 +181,14 @@ async def test_sqlite_ensure_schema_creates_the_trace_index(tmp_path):
     assert "llmbroker_calls_idx_trace_id" in await _indexes(db_path)
 
 
+async def test_sqlite_ensure_schema_creates_the_call_id_index(tmp_path):
+    """Load-bearing for the journal view: the correlated rating lookup runs once per
+    returned row."""
+    db_path = str(tmp_path / "call-id-index.db")
+    await SqliteDriver(db_path).ensure_schema()
+    assert "llmbroker_calls_idx_call_id" in await _indexes(db_path)
+
+
 async def test_sqlite_existing_database_gains_a_new_index_without_a_version_bump(tmp_path):
     """An index is not part of the version-gated column shape: a database created by
     an earlier process picks one up when a process next opens it, no reset needed."""
@@ -256,6 +264,14 @@ async def test_mongodb_ensure_schema_creates_the_trace_index(mongo_db):
 
     indexes = await mongo_db["llmbroker_calls"].index_information()
     assert "llmbroker_calls_idx_trace_id" in indexes
+
+
+async def test_mongodb_ensure_schema_creates_the_call_id_index(mongo_db):
+    """Load-bearing for the journal view: the rating lookup runs once per page row."""
+    await MongoDriver(mongo_db).ensure_schema()
+
+    indexes = await mongo_db["llmbroker_calls"].index_information()
+    assert "llmbroker_calls_idx_call_id" in indexes
 
 
 async def test_mongodb_ensure_schema_raises_on_version_mismatch(mongo_db):

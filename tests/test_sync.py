@@ -132,19 +132,17 @@ def test_result_exposes_rating_identity(tmp_path):
 
 
 def test_broker_record_quality_delayed(tmp_path):
-    """Sync Broker.record_quality records a delayed rating from persisted identity alone —
-    no live result object required."""
+    """Sync Broker.record_quality rates a past call from the id alone — no live result
+    object required."""
     db = str(tmp_path / "b.db")
     with Broker(
         registry=_registry(tmp_path), secrets=_secrets(), store=SqliteStore(db), sync=None
     ) as broker:
         with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
             result = broker.ask("x", operation="summarize")
-        broker.record_quality(result.llm_name, "summarize", 0.9, call_id=result.call_id)
-        quality_rows = [r for r in broker.calls(limit=10) if r.kind == "quality"]
-        assert len(quality_rows) == 1
-        assert quality_rows[0].llm_name == "p1"
-        assert quality_rows[0].call_id == result.call_id
+        broker.record_quality(0.9, call_id=result.call_id)
+        rows = broker.calls(limit=10)
+        assert [(r.id, r.llm_name, r.score) for r in rows] == [(result.call_id, "p1", 0.9)]
 
 
 def test_broker_stats_mirrors_the_async_aggregate(tmp_path):
@@ -166,9 +164,8 @@ def test_broker_calls_accepts_the_narrowing_filters(tmp_path):
     ) as broker:
         with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
             result = broker.ask("x", operation="summarize")
-        broker.record_quality(result.llm_name, "summarize", 0.9)
-        assert [r.kind for r in broker.calls(limit=10, kind="quality")] == ["quality"]
-        assert [r.kind for r in broker.calls(limit=10, kind="call")] == ["call"]
+        assert [r.id for r in broker.calls(limit=10, operation="summarize")] == [result.call_id]
+        assert broker.calls(limit=10, operation="translate") == []
         assert broker.calls(limit=10, since=datetime.now(UTC) + timedelta(days=1)) == []
 
 

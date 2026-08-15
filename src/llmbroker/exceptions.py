@@ -33,6 +33,11 @@ class SyncRefusedError(LLMBrokerError):
         self.report = report
 
 
+class UnknownCallError(LLMBrokerError):
+    """The key a rating named matched no answered call in the journal — it was purged
+    by retention, never existed, or every attempt under it failed."""
+
+
 class SchemaVersionError(LLMBrokerError):
     """The store holds a schema version this release cannot use."""
 

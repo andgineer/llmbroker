@@ -41,7 +41,7 @@ class _RecordingStore:
     async def record(self, call: Call) -> None:
         self.rows.append(call)
 
-    async def record_quality(self, llm_name, operation, score, *, call_id=None, scope=None):
+    async def record_quality(self, call_id, score, *, scope=None):
         pass
 
     async def calls(self, *, limit: int, **_kw) -> list[Call]:
@@ -164,6 +164,16 @@ def test_the_bound_is_the_largest_budget_missed():
     ]
     derived = budget_bounds_from_calls(rows, since=_LONG_AGO)
     assert derived["a"][0] == 0.9
+
+
+def test_a_rated_row_is_still_weighed_for_its_missed_budget():
+    """Every row of the view is a call now, score or not — the bound must not start
+    depending on whether the host happened to rate the attempt."""
+    rows = [
+        _row("a", CallStatus.ERROR, budget_ms=200),
+        replace(_row("a", CallStatus.ERROR, budget_ms=900), score=1.0),
+    ]
+    assert budget_bounds_from_calls(rows, since=_LONG_AGO)["a"][0] == 0.9
 
 
 def test_a_success_retires_every_miss_older_than_it():

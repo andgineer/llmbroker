@@ -23,7 +23,7 @@ class _NoStore:
     async def record(self, call):
         pass
 
-    async def record_quality(self, llm_name, operation, score, *, call_id=None):
+    async def record_quality(self, call_id, score, *, scope=None):
         pass
 
 
@@ -36,7 +36,7 @@ class _RecordingStore:
     async def record(self, call):
         self.calls.append(call)
 
-    async def record_quality(self, llm_name, operation, score, *, call_id=None):
+    async def record_quality(self, call_id, score, *, scope=None):
         pass
 
 
@@ -516,7 +516,7 @@ def test_a_store_that_cannot_record_still_drives_the_learner():
             async def record(self, call):
                 raise OSError("journal is gone")
 
-            async def record_quality(self, llm_name, operation, score, *, call_id=None):
+            async def record_quality(self, call_id, score, *, scope=None):
                 pass
 
         store = _BrokenStore()

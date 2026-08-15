@@ -2,7 +2,7 @@
 ``:memory:``), postgres, mongodb, and the in-memory reference driver.
 
 Behavior is tested once here — keyed-op round-trips, fetch ordering, and
-journal ops (append/recent/purge) — rather than duplicated per backend.
+journal ops (append/journal_view/purge) — rather than duplicated per backend.
 """
 
 from datetime import UTC, datetime, timedelta, timezone
@@ -42,6 +42,17 @@ def _call_row(
         "scope": scope,
         "cooldown_until": None,
         "budget_ms": None,
+    }
+
+
+def _quality_row(id_: str, *, call_id: str, score: float, called_at: datetime) -> dict[str, object]:
+    return {
+        "id": id_,
+        "kind": "quality",
+        "call_id": call_id,
+        "quality_score": score,
+        "scope": None,
+        "called_at": called_at,
     }
 
 
@@ -151,82 +162,82 @@ async def test_json_column_round_trips_nested_metadata(driver):
     assert row["metadata"] == {"parallel": 3}
 
 
-# ── Journal ops (append/recent/purge) ────────────────────────────────────────
+# ── Journal ops (append/journal_view/purge) ───────────────────────────────────
 
 
-async def test_journal_append_and_recent_newest_first(driver):
+async def test_journal_append_and_view_newest_first(driver):
     base = datetime(2030, 1, 1, tzinfo=UTC)
     for i, name in enumerate(("c1", "c2", "c3")):
         await driver.append(
             "calls", _call_row(name, llm_name="x", called_at=base + timedelta(seconds=i))
         )
-    rows = await driver.recent("calls", 10)
+    rows = await driver.journal_view(10)
     assert [r["id"] for r in rows] == ["c3", "c2", "c1"]
 
 
-async def test_journal_recent_respects_limit(driver):
+async def test_journal_view_respects_limit(driver):
     base = datetime(2030, 1, 1, tzinfo=UTC)
     for i in range(5):
         await driver.append(
             "calls", _call_row(f"c{i}", llm_name="x", called_at=base + timedelta(seconds=i))
         )
-    rows = await driver.recent("calls", 2)
+    rows = await driver.journal_view(2)
     assert [r["id"] for r in rows] == ["c4", "c3"]
 
 
-async def test_journal_recent_with_match_filter(driver):
+async def test_journal_view_with_match_filter(driver):
     base = datetime(2030, 1, 1, tzinfo=UTC)
     await driver.append("calls", _call_row("c1", llm_name="x", called_at=base, scope="alice"))
     await driver.append(
         "calls",
         _call_row("c2", llm_name="x", called_at=base + timedelta(seconds=1), scope="bob"),
     )
-    rows = await driver.recent("calls", 10, match={"scope": "alice"})
+    rows = await driver.journal_view(10, match={"scope": "alice"})
     assert [r["id"] for r in rows] == ["c1"]
 
 
-async def test_journal_recent_with_none_match_value_matches_null(driver):
+async def test_journal_view_with_none_match_value_matches_null(driver):
     base = datetime(2030, 1, 1, tzinfo=UTC)
     await driver.append("calls", _call_row("c1", llm_name="x", called_at=base, scope=None))
     await driver.append(
         "calls",
         _call_row("c2", llm_name="x", called_at=base + timedelta(seconds=1), scope="bob"),
     )
-    rows = await driver.recent("calls", 10, match={"scope": None})
+    rows = await driver.journal_view(10, match={"scope": None})
     assert [r["id"] for r in rows] == ["c1"]
 
 
-async def test_journal_recent_since_excludes_older_rows(driver):
+async def test_journal_view_since_excludes_older_rows(driver):
     base = datetime(2030, 1, 1, tzinfo=UTC)
     await driver.append("calls", _call_row("old", llm_name="x", called_at=base))
     await driver.append(
         "calls",
         _call_row("new", llm_name="x", called_at=base + timedelta(days=2)),
     )
-    rows = await driver.recent("calls", 10, since=base + timedelta(days=1))
+    rows = await driver.journal_view(10, since=base + timedelta(days=1))
     assert [r["id"] for r in rows] == ["new"]
 
 
-async def test_journal_recent_since_is_inclusive_at_the_bound(driver):
+async def test_journal_view_since_is_inclusive_at_the_bound(driver):
     """The bound is inclusive: a row stamped exactly at ``since`` is in the window."""
     base = datetime(2030, 1, 1, tzinfo=UTC)
     await driver.append("calls", _call_row("exactly-at", llm_name="x", called_at=base))
-    rows = await driver.recent("calls", 10, since=base)
+    rows = await driver.journal_view(10, since=base)
     assert [r["id"] for r in rows] == ["exactly-at"]
 
 
-async def test_journal_recent_since_none_returns_everything(driver):
+async def test_journal_view_since_none_returns_everything(driver):
     base = datetime(2030, 1, 1, tzinfo=UTC)
     await driver.append("calls", _call_row("c1", llm_name="x", called_at=base))
     await driver.append(
         "calls",
         _call_row("c2", llm_name="x", called_at=base + timedelta(days=400)),
     )
-    rows = await driver.recent("calls", 10, since=None)
+    rows = await driver.journal_view(10, since=None)
     assert [r["id"] for r in rows] == ["c2", "c1"]
 
 
-async def test_journal_recent_since_compares_instants_not_wall_clocks(driver):
+async def test_journal_view_since_compares_instants_not_wall_clocks(driver):
     """A bound expressed in another offset must select by the instant it denotes.
 
     SQLite stores ``called_at`` as ISO text and compares it lexicographically, so an
@@ -239,12 +250,12 @@ async def test_journal_recent_since_compares_instants_not_wall_clocks(driver):
     east = timezone(timedelta(hours=5))
     same_instant = row_at.astimezone(east)
     assert same_instant.hour == 5  # guards the fixture, not the driver
-    rows = await driver.recent("calls", 10, since=same_instant)
+    rows = await driver.journal_view(10, since=same_instant)
     assert [r["id"] for r in rows] == ["c1"]
 
     west = timezone(timedelta(hours=-5))
     an_hour_later = (row_at + timedelta(hours=1)).astimezone(west)
-    assert await driver.recent("calls", 10, since=an_hour_later) == []
+    assert await driver.journal_view(10, since=an_hour_later) == []
 
 
 async def test_journal_stores_instants_not_wall_clocks(driver):
@@ -260,15 +271,15 @@ async def test_journal_stores_instants_not_wall_clocks(driver):
     await driver.append("calls", _call_row("older-eastern", llm_name="x", called_at=eastern))
     await driver.append("calls", _call_row("newer-utc", llm_name="x", called_at=utc))
 
-    rows = await driver.recent("calls", 10)
+    rows = await driver.journal_view(10)
     assert [r["id"] for r in rows] == ["newer-utc", "older-eastern"]
 
     bound = datetime(2030, 1, 1, 10, tzinfo=UTC)
-    assert [r["id"] for r in await driver.recent("calls", 10, since=bound)] == ["newer-utc"]
+    assert [r["id"] for r in await driver.journal_view(10, since=bound)] == ["newer-utc"]
     assert await driver.purge("calls", bound) == 1
 
 
-async def test_journal_recent_combines_since_with_match(driver):
+async def test_journal_view_combines_since_with_match(driver):
     base = datetime(2030, 1, 1, tzinfo=UTC)
     await driver.append(
         "calls", _call_row("old-alice", llm_name="x", called_at=base, scope="alice")
@@ -281,8 +292,7 @@ async def test_journal_recent_combines_since_with_match(driver):
         "calls",
         _call_row("new-alice", llm_name="x", called_at=base + timedelta(days=2), scope="alice"),
     )
-    rows = await driver.recent(
-        "calls",
+    rows = await driver.journal_view(
         10,
         match={"scope": "alice"},
         since=base + timedelta(days=1),
@@ -296,8 +306,49 @@ async def test_journal_round_trips_the_missed_budget(driver):
     row = _call_row("c1", llm_name="x", called_at=datetime(2030, 1, 1, tzinfo=UTC))
     row["budget_ms"] = 1500
     await driver.append("calls", row)
-    rows = await driver.recent("calls", 10)
+    rows = await driver.journal_view(10)
     assert [r["budget_ms"] for r in rows] == [1500]
+
+
+async def test_journal_view_folds_the_newest_rating_onto_its_call(driver):
+    """One round-trip answers the whole question: the rows are calls, each carrying
+    the value of the newest rating that names it."""
+    base = datetime(2030, 1, 1, tzinfo=UTC)
+    await driver.append("calls", _call_row("c1", llm_name="x", called_at=base))
+    await driver.append("calls", _call_row("c2", llm_name="x", called_at=base))
+    await driver.append(
+        "calls",
+        _quality_row("q1", call_id="c1", score=0.1, called_at=base + timedelta(seconds=1)),
+    )
+    await driver.append(
+        "calls",
+        _quality_row("q2", call_id="c1", score=0.9, called_at=base + timedelta(seconds=2)),
+    )
+    rows = await driver.journal_view(10)
+    assert {r["id"] for r in rows} == {"c1", "c2"}
+    scored = {r["id"]: r["score"] for r in rows}
+    assert scored["c1"] == pytest.approx(0.9)
+    assert scored["c2"] is None
+
+
+async def test_journal_view_limit_counts_calls_not_rating_rows(driver):
+    """The rating rows are correlated to the page, not competing for it."""
+    base = datetime(2030, 1, 1, tzinfo=UTC)
+    for i in range(3):
+        await driver.append(
+            "calls", _call_row(f"c{i}", llm_name="x", called_at=base + timedelta(seconds=i))
+        )
+        await driver.append(
+            "calls",
+            _quality_row(
+                f"q{i}",
+                call_id=f"c{i}",
+                score=0.5,
+                called_at=base + timedelta(seconds=i, milliseconds=500),
+            ),
+        )
+    rows = await driver.journal_view(3)
+    assert {r["id"] for r in rows} == {"c0", "c1", "c2"}
 
 
 async def test_journal_purge_removes_rows_before_cutoff(driver):
@@ -307,7 +358,7 @@ async def test_journal_purge_removes_rows_before_cutoff(driver):
     await driver.append("calls", _call_row("new", llm_name="x", called_at=new))
     removed = await driver.purge("calls", datetime(2025, 1, 1, tzinfo=UTC))
     assert removed == 1
-    rows = await driver.recent("calls", 10)
+    rows = await driver.journal_view(10)
     assert [r["id"] for r in rows] == ["new"]
 
 
@@ -325,7 +376,7 @@ async def test_mongodb_naive_datetime_reattaches_utc(mongo_db):
         {"id": "legacy", "llm_name": "x", "kind": "call", "called_at": naive},
     )
     try:
-        rows = await driver_.recent("calls", 10)
+        rows = await driver_.journal_view(10)
         row = next(r for r in rows if r["id"] == "legacy")
         assert row["called_at"].tzinfo is not None
     finally:

@@ -4,7 +4,7 @@ from llmbroker.models import Call, CallStatus, LLMStats
 
 
 def stats_from_calls(rows: list[Call]) -> dict[str, LLMStats]:
-    """Aggregate ``kind="call"`` rows per model; quality records are not calls.
+    """Aggregate call rows per model.
 
     ``rows`` are newest-first, as everywhere else in this codebase, so the first
     row seen for a model is its most recent and the last is its oldest.
@@ -28,8 +28,6 @@ def stats_from_calls(rows: list[Call]) -> dict[str, LLMStats]:
     newest: dict[str, Call] = {}
     oldest: dict[str, Call] = {}
     for row in rows:
-        if row.kind != "call":
-            continue
         name = row.llm_name
         totals[name] = totals.get(name, 0) + 1
         if row.status is not None:

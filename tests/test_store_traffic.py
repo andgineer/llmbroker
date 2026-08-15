@@ -32,8 +32,8 @@ class CountingStore:
         self.record_calls += 1
         await self._inner.record(call)
 
-    async def record_quality(self, llm_name, operation, score, *, call_id=None) -> None:
-        await self._inner.record_quality(llm_name, operation, score, call_id=call_id)
+    async def record_quality(self, call_id, score, *, scope=None) -> None:
+        await self._inner.record_quality(call_id, score, scope=scope)
 
     async def calls(self, *, limit: int, scope: str | None = None) -> list:
         self.calls_invocations += 1

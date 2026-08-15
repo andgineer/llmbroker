@@ -13,6 +13,7 @@ import aiosqlite
 from llmbroker.backends.driver import Key, Row
 from llmbroker.backends.spec import SCHEMA_VERSION, TABLES, TableSpec
 from llmbroker.exceptions import SchemaVersionError
+from llmbroker.journal_policy import KIND_CALL, KIND_QUALITY
 
 _SQL_TYPES = {"text": "TEXT", "int": "INTEGER", "real": "REAL", "json": "TEXT", "timestamp": "TEXT"}
 
@@ -242,39 +243,46 @@ class SqliteDriver:
             await db.execute(query, [encoded[c] for c in cols])
             await db.commit()
 
-    async def recent(
+    async def journal_view(
         self,
-        table: str,
         limit: int,
         match: Row | None = None,
         since: datetime | None = None,
     ) -> list[Row]:
-        spec = TABLES[table]
+        spec = TABLES["calls"]
         await self.ensure_schema()
-        cols = ", ".join(spec.columns)
-        params: list[object] = []
-        conditions: list[str] = []
+        cols = ", ".join(f"c.{col}" for col in spec.columns)
+        # The correlated subquery runs once per returned row, so it keeps the page at
+        # exactly ``limit`` calls and makes "newest rating wins" free.
+        score = (
+            f"(SELECT q.quality_score FROM {spec.name} q"  # noqa: S608
+            " WHERE q.kind = ? AND q.call_id = c.id"
+            " ORDER BY q.called_at DESC LIMIT 1) AS score"
+        )
+        params: list[object] = [KIND_QUALITY, KIND_CALL]
+        conditions = ["c.kind = ?"]
         if match:
             # "=" never matches NULL in SQL; a None filter value means "IS NULL".
             for k, v in match.items():
                 if v is None:
-                    conditions.append(f"{k} IS NULL")
+                    conditions.append(f"c.{k} IS NULL")
                 else:
-                    conditions.append(f"{k} = ?")
+                    conditions.append(f"c.{k} = ?")
                     params.append(v)
         if since is not None:
-            conditions.append("called_at >= ?")
+            conditions.append("c.called_at >= ?")
             params.append(_iso(since))
-        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        where = " WHERE " + " AND ".join(conditions)
         params.append(limit)
         async with self._connection() as db:
             rows = await (
                 await db.execute(
-                    f"SELECT {cols} FROM {spec.name}{where} ORDER BY called_at DESC LIMIT ?",  # noqa: S608
+                    f"SELECT {cols}, {score} FROM {spec.name} c{where}"  # noqa: S608
+                    " ORDER BY c.called_at DESC LIMIT ?",
                     params,
                 )
             ).fetchall()
-        return [_decode_row(r, spec) for r in rows]
+        return [{**_decode_row(r[:-1], spec), "score": r[-1]} for r in rows]
 
     async def purge(self, table: str, before: datetime) -> int:
         spec = TABLES[table]

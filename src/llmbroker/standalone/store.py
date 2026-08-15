@@ -4,13 +4,18 @@ unlinking whole expired day files — no rewrite, no race with a concurrent appe
 
 import asyncio
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import yaml
 
-from llmbroker.journal_policy import RETENTION_DEFAULT, PurgeClock, quality_call
+from llmbroker.journal_policy import (
+    KIND_QUALITY,
+    RETENTION_DEFAULT,
+    PurgeClock,
+    quality_row,
+)
 from llmbroker.models import Call, CallStatus, Usage, check_limit, to_utc, with_utc_timestamps
 
 _DISABLED_HEADER = "# llmbroker: admin verdicts; values are yours, names are seeded automatically\n"
@@ -28,11 +33,9 @@ class InMemoryStore:
 
     async def record_quality(
         self,
-        _llm_name: str,
-        _operation: str | None,
+        _call_id: str,
         _score: float,
         *,
-        call_id: str | None = None,  # noqa: ARG002
         scope: str | None = None,  # noqa: ARG002
     ) -> None:
         return
@@ -71,14 +74,11 @@ def _call_from_jsonable(d: dict) -> Call:
         operation=d.get("operation"),
         trace_id=d.get("trace_id"),
         status=CallStatus(status) if status is not None else None,
-        kind=d.get("kind", "call"),
         ts=datetime.fromisoformat(ts_raw) if ts_raw else None,
         http_status=d.get("http_status"),
         latency_ms=d.get("latency_ms"),
         error_detail=d.get("error_detail"),
         usage=usage,
-        quality_score=d.get("quality_score"),
-        call_id=d.get("call_id"),
         scope=d.get("scope"),
         cooldown_until=datetime.fromisoformat(cooldown_raw) if cooldown_raw else None,
         budget_ms=d.get("budget_ms"),
@@ -100,27 +100,31 @@ class FileStore:
         files by name, so a file must never hold a row outside its named UTC day."""
         return self._calls_dir / f"{ts.astimezone(UTC).date().isoformat()}.jsonl"
 
-    def _append(self, call: Call) -> None:
-        path = self._day_path(call.ts)
+    def _append_line(self, ts: datetime, payload: dict) -> None:
+        path = self._day_path(ts)
         path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(_call_to_jsonable(call))
+        line = json.dumps(payload)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
 
     async def record(self, call: Call) -> None:
-        await asyncio.to_thread(self._append, with_utc_timestamps(call))
+        stamped = with_utc_timestamps(call)
+        await asyncio.to_thread(self._append_line, stamped.ts, _call_to_jsonable(stamped))
         await self._maybe_purge()
 
     async def record_quality(
         self,
-        llm_name: str,
-        operation: str | None,
+        call_id: str,
         score: float,
         *,
-        call_id: str | None = None,
         scope: str | None = None,
     ) -> None:
-        await self.record(quality_call(llm_name, operation, score, call_id=call_id, scope=scope))
+        row = quality_row(call_id, score, scope)
+        called_at: datetime = row["called_at"]  # type: ignore[assignment]
+        payload = {k: v for k, v in row.items() if k != "called_at" and v is not None}
+        payload["ts"] = called_at.isoformat()
+        await asyncio.to_thread(self._append_line, called_at, payload)
+        await self._maybe_purge()
 
     def _day_files_newest_first(self) -> list[Path]:
         if not self._calls_dir.exists():
@@ -134,8 +138,10 @@ class FileStore:
         since: datetime | None,
     ) -> list[Call]:
         """``match`` maps a ``Call`` attribute name to the value it must equal — the
-        file counterpart of the driver stores' column match."""
+        file counterpart of the driver stores' column match. One reverse pass: a rating
+        is newer than the call it names, so it is always met before that call."""
         result: list[Call] = []
+        pending: dict[str, float] = {}
         for path in self._day_files_newest_first():
             if since is not None and self._file_is_wholly_before(path, since):
                 continue
@@ -144,12 +150,18 @@ class FileStore:
                 stripped = raw_line.strip()
                 if not stripped:
                     continue
-                call = _call_from_jsonable(json.loads(stripped))
+                raw = json.loads(stripped)
+                if raw.get("kind") == KIND_QUALITY:
+                    rated, value = raw.get("call_id"), raw.get("quality_score")
+                    if rated is not None and value is not None:
+                        pending.setdefault(rated, value)
+                    continue
+                call = _call_from_jsonable(raw)
                 if any(getattr(call, attr) != want for attr, want in match.items()):
                     continue
                 if since is not None and (call.ts is None or call.ts < since):
                     continue
-                result.append(call)
+                result.append(replace(call, score=pending.pop(call.id, None)))
                 if len(result) >= limit:
                     return result
         return result
@@ -170,19 +182,17 @@ class FileStore:
         limit: int,
         scope: str | None = None,
         since: datetime | None = None,
-        kind: str | None = None,
         operation: str | None = None,
         trace_id: str | None = None,
         call_id: str | None = None,
     ) -> list[Call]:
-        """Newest-first tail of the journal, both kinds interleaved unless ``kind``
-        narrows them. ``since`` must be timezone-aware and bounds the timestamp
-        inclusively; ``call_id`` matches a call row's own id, not a quality row's."""
+        """Newest-first tail of the journal, one row per call attempt carrying the
+        newest score it was rated with. ``since`` must be timezone-aware and bounds the
+        timestamp inclusively; the filters narrow the calls, never the ratings."""
         check_limit(limit)
         bound = to_utc(since, "since") if since is not None else None
         wanted = {
             "scope": scope,
-            "kind": kind,
             "operation": operation,
             "trace_id": trace_id,
             "id": call_id,

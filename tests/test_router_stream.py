@@ -31,7 +31,7 @@ class _RecordingStore:
     async def record(self, call):
         self.calls.append(call)
 
-    async def record_quality(self, llm_name, operation, score, *, call_id=None):
+    async def record_quality(self, call_id, score, *, scope=None):
         pass
 
 

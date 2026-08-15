@@ -11,6 +11,7 @@ import asyncpg
 from llmbroker.backends.driver import Key, Row
 from llmbroker.backends.spec import SCHEMA_VERSION, TABLES, TableSpec
 from llmbroker.exceptions import SchemaVersionError
+from llmbroker.journal_policy import KIND_CALL, KIND_QUALITY
 
 _SQL_TYPES = {
     "text": "TEXT",
@@ -178,37 +179,44 @@ class PostgresDriver:
         async with self._pool.acquire() as conn:
             await conn.execute(query, *(encoded[c] for c in cols))
 
-    async def recent(
+    async def journal_view(
         self,
-        table: str,
         limit: int,
         match: Row | None = None,
         since: datetime | None = None,
     ) -> list[Row]:
-        spec = TABLES[table]
+        spec = TABLES["calls"]
         await self.ensure_schema()
-        cols = ", ".join(spec.columns)
-        params: list[object] = []
-        conditions: list[str] = []
+        cols = ", ".join(f"c.{col}" for col in spec.columns)
+        # The correlated subquery runs once per returned row, so it keeps the page at
+        # exactly ``limit`` calls and makes "newest rating wins" free.
+        params: list[object] = [KIND_QUALITY]
+        score = (
+            f"(SELECT q.quality_score FROM {spec.name} q"  # noqa: S608
+            f" WHERE q.kind = ${len(params)} AND q.call_id = c.id"
+            " ORDER BY q.called_at DESC LIMIT 1) AS score"
+        )
+        params.append(KIND_CALL)
+        conditions = [f"c.kind = ${len(params)}"]
         if match:
             for k, v in match.items():
                 if v is None:
-                    conditions.append(f"{k} IS NULL")
+                    conditions.append(f"c.{k} IS NULL")
                 else:
                     params.append(v)
-                    conditions.append(f"{k} = ${len(params)}")
+                    conditions.append(f"c.{k} = ${len(params)}")
         if since is not None:
             params.append(since)
-            conditions.append(f"called_at >= ${len(params)}")
-        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+            conditions.append(f"c.called_at >= ${len(params)}")
+        where = " WHERE " + " AND ".join(conditions)
         params.append(limit)
         async with self._pool.acquire() as conn:
             records = await conn.fetch(
-                f"SELECT {cols} FROM {spec.name}{where}"  # noqa: S608
-                f" ORDER BY called_at DESC LIMIT ${len(params)}",
+                f"SELECT {cols}, {score} FROM {spec.name} c{where}"  # noqa: S608
+                f" ORDER BY c.called_at DESC LIMIT ${len(params)}",
                 *params,
             )
-        return [_decode_row(r, spec) for r in records]
+        return [{**_decode_row(r, spec), "score": r["score"]} for r in records]
 
     async def purge(self, table: str, before: datetime) -> int:
         spec = TABLES[table]

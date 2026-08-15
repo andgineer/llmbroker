@@ -1,6 +1,6 @@
-"""The per-DB storage contract: record-shaped, not domain-shaped. A driver method
-body is the one statement that is genuinely DB-specific; everything else is
-``backends.ports``."""
+"""The per-DB storage contract: one round-trip per read, and no logic two correct
+backends could answer differently — that stays in ``backends.ports``. Table and
+column names come from ``backends.spec``, never spelled out in a driver body."""
 
 from datetime import datetime
 from typing import Protocol
@@ -34,16 +34,15 @@ class Driver(Protocol):
 
     async def append(self, table: str, row: Row) -> None: ...
 
-    async def recent(
+    async def journal_view(
         self,
-        table: str,
         limit: int,
         match: Row | None = None,
         since: datetime | None = None,
     ) -> list[Row]:
-        """Newest-first tail; ``match`` is an optional equality filter and ``since``
-        an inclusive UTC bound on ``called_at``. Mongo floors both stored values and
-        the bound to whole milliseconds — BSON dates carry no finer precision."""
+        """Newest-first call rows, each with a ``score`` key holding its newest rating's
+        value or ``None``. ``match`` and ``since`` narrow the call rows only; Mongo
+        floors stored values and the bound to whole milliseconds."""
         ...
 
     async def purge(self, table: str, before: datetime) -> int:
