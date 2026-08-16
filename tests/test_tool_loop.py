@@ -1,12 +1,16 @@
 """Tests for the tool loop and the dispatch it runs tools through."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from llmbroker.exceptions import ToolLoopLimitError
 from llmbroker.models import Usage
+from llmbroker.standalone.registry import Registry
+from llmbroker.standalone.secrets import DictSecrets
+from llmbroker.standalone.store import InMemoryStore
+from llmbroker.sync import Broker
 from llmbroker.tool_loop import arun_tool_loop, execute_tool_calls, run_tool_loop
 
 
@@ -105,6 +109,38 @@ def test_tool_loop_result_names_the_model_of_the_final_round():
 
     reply = asyncio.run(arun_tool_loop(llms, [], dispatch={"add": lambda: 3}))
     assert reply.llm_name == "second"
+
+
+def test_tool_loop_over_a_real_broker_hands_back_the_routed_call(tmp_path):
+    """Against a real broker rather than a mock: what comes back is the routed call
+    itself, so the shape the docs teach — text plus the model that produced it — holds."""
+    f = tmp_path / "llms.toml"
+    f.write_text('[[llms]]\nname="p1"\nbase_url="https://x/v1"\nmodel="m"\napi_key_ref="K"\n')
+    rounds = [
+        ("", [{"id": "1", "function": {"name": "add", "arguments": '{"a": 1, "b": 2}'}}], None),
+        ("3", None, Usage(prompt_tokens=9, completion_tokens=2, total_tokens=11)),
+    ]
+
+    with Broker(
+        registry=Registry(f),
+        secrets=DictSecrets({"K": "test"}),
+        store=InMemoryStore(),
+        sync=None,
+    ) as broker:
+        with patch(
+            "llmbroker.broker.router.call_provider",
+            new=AsyncMock(side_effect=rounds),
+        ) as provider:
+            reply = run_tool_loop(
+                broker,
+                [{"role": "user", "content": "1 + 2?"}],
+                dispatch={"add": lambda a, b: a + b},
+            )
+
+    assert provider.await_count == 2
+    assert (reply.text, reply.llm_name) == ("3", "p1")
+    assert reply.usage.total_tokens == 11  # noqa: PLR2004 - the final round's, not the loop's
+    assert reply.call_id
 
 
 def _always_wants_tools() -> MagicMock:

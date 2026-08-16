@@ -14,20 +14,22 @@ ObserveQuality = Callable[[str, str | None, str, float], None]
 
 logger = logging.getLogger("llmbroker.broker")
 
-_UNANSWERED = (
-    "nothing has answered this call yet — a streamed call names its model, and can be"
-    " rated, from its first delta on"
+_UNRATEABLE = (
+    "this call is not in the journal yet — a streamed call becomes rateable when its"
+    " answer ends; close the stream first if you stopped reading early"
 )
 
 
 @dataclass(slots=True)
 class CallReceipt:
     """What one routed call has settled so far: which model answered it, under what
-    call id, and what it reported spending. A stream fills it as it goes."""
+    call id, and what it spent. ``settled`` goes up only once the journal row is
+    written — a rating must never precede the row it names."""
 
     llm_name: str | None = None
     call_id: str | None = None
     usage: Usage | None = None
+    settled: bool = False
 
 
 class RoutedCall:
@@ -71,14 +73,15 @@ class RoutedCall:
 
     async def record_quality(self, score: float) -> None:
         """Rate the call this came from — no journal read: the model, the operation
-        and the call id are already here. Raises ``ValueError`` before an answer."""
+        and the call id are already here. Raises ``ValueError`` until the call has
+        settled, so a rating can never reach the store before the row it names."""
         check_score(score)
-        llm_name, call_id = self._receipt.llm_name, self._receipt.call_id
-        if llm_name is None or call_id is None:
-            raise ValueError(_UNANSWERED)
-        await self._store.record_quality(call_id, score, scope=self._scope)
+        receipt = self._receipt
+        if not receipt.settled or receipt.llm_name is None or receipt.call_id is None:
+            raise ValueError(_UNRATEABLE)
+        await self._store.record_quality(receipt.call_id, score, scope=self._scope)
         if self._observe_quality is not None:
-            self._observe_quality(llm_name, self._operation, call_id, score)
+            self._observe_quality(receipt.llm_name, self._operation, receipt.call_id, score)
 
 
 class AsyncResult(RoutedCall):
@@ -98,7 +101,7 @@ class AsyncResult(RoutedCall):
         observe_quality: ObserveQuality | None = None,
     ) -> None:
         super().__init__(
-            CallReceipt(llm_name=llm_name, call_id=call_id, usage=usage),
+            CallReceipt(llm_name=llm_name, call_id=call_id, usage=usage, settled=True),
             operation=operation,
             store=store,
             scope=scope,
@@ -120,8 +123,8 @@ class AsyncResult(RoutedCall):
 
 class StreamHandle(RoutedCall):
     """Returned by ``stream()``: an async iterator of text deltas that also names the
-    model answering them — unset until the first delta, since failover may still move
-    before it. Closing it is the consumer's move, exactly as for the raw iterator."""
+    model answering them, from the first delta on — or, for an answer that had none,
+    once it ends. Closing it is the consumer's move, exactly as for the raw iterator."""
 
     def __init__(  # noqa: PLR0913
         self,

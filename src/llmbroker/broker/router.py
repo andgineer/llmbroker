@@ -119,11 +119,13 @@ class _StreamProgress:
         self.receipt.llm_name = self.llm_name
         self.receipt.call_id = self.call_id
 
-    def settled(self) -> Usage | None:
-        """This attempt is over and its counts are final — hand them to the caller's
-        handle as well as to the journal row."""
+    def settle(self) -> None:
+        """Called once this attempt's journal row is written: an answer carrying no
+        delta never reached ``opened``, and a rating may not precede the row it names."""
+        self.receipt.llm_name = self.llm_name
+        self.receipt.call_id = self.call_id
         self.receipt.usage = self.usage
-        return self.usage
+        self.receipt.settled = True
 
 
 async def _stream_deltas(
@@ -520,21 +522,17 @@ class Router:
         self,
         ring: KeyRing,
         messages: list[dict],
+        receipt: CallReceipt,
         *,
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
-        receipt: CallReceipt | None = None,
     ) -> AsyncIterator[str]:
         """Route a streaming completion over the pool, yielding text deltas and naming
         what answered on ``receipt``. Fails over exactly like ``chat`` up to the first
         delta; past it a death raises ``StreamInterruptedError`` instead."""
         routed = self._route(
-            partial(
-                self._stream_attempt,
-                messages=messages,
-                receipt=receipt if receipt is not None else CallReceipt(),
-            ),
+            partial(self._stream_attempt, messages=messages, receipt=receipt),
             ring=ring,
             operation=operation,
             trace_id=trace_id,
@@ -602,7 +600,8 @@ class Router:
         except GeneratorExit:
             # The consumer stopped pulling. The model answered and did nothing wrong,
             # so this is a completed attempt, not a failure the pool should learn from.
-            await self._finish_ok(attempt, progress.settled())
+            await self._finish_ok(attempt, progress.usage)
+            progress.settle()
             raise
         except BaseException as exc:
             await self._pool.release(config)
@@ -610,7 +609,8 @@ class Router:
                 await self._record(attempt, CallStatus.ERROR, error_detail=type(exc).__name__)
             raise
         else:
-            await self._finish_ok(attempt, progress.settled())
+            await self._finish_ok(attempt, progress.usage)
+            progress.settle()
             outcome.answered = True
 
     async def _fail_stream(  # noqa: PLR0913

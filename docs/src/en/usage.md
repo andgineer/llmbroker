@@ -345,7 +345,8 @@ call_id=saved_call_id)`. Exactly one of the two is required.
 
 A key is the way to rate a call you no longer hold. If you do still hold it —
 including the handle a [stream](direct.md#streaming-from-the-pool) hands back —
-its own `record_quality(...)` needs no key and no journal read.
+its own `record_quality(...)` needs no key and no journal read. On a stream it
+becomes available once the answer is over, not while it is still arriving.
 
 The model and the operation are read off the call, so you store neither. One
 `trace_id` covering several calls rates them all, and the attempts that failed —

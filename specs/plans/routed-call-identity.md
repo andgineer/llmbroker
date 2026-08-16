@@ -232,3 +232,87 @@ is the maintainer's and was skipped.
 - No summing of `usage` across tool-loop rounds — the plan forbids it, and the docs in
   both languages now say the counts are the final round's and the total is in the journal.
 - Nothing about `direct(...)` changed, and the blocking façade has no `stream` to change.
+
+## Review fixes
+
+Two defects found reviewing this plan's implementation, both in the handle it added.
+Fixed in one batch with the small cleanups below.
+
+**Gate:** `invoke pre` clean; `python -m pytest` → **1392 passed**, zero failures,
+errors or skips.
+
+### 1. A rating could reach the store before the row it names
+
+The handle let a stream be rated from the first delta on, but a stream's journal row is
+written only when its answer ends. On `FileStore` the rating then landed *above* the call
+row, and the single reverse pass that folds the two never saw it: the score vanished with
+no error, and a pool rebuild re-derives from that same read, so it never came back. SQL
+drivers fold with a correlated subquery and were unaffected — the loss was silent and
+backend-dependent.
+
+Rating now waits for the call to settle; before that it is a `ValueError` naming the fix.
+The rationale, and the alternatives weighed against it, are in
+`decisions.md#identity-rides-the-object-a-call-returns` — not repeated here.
+
+Invariant 1 gained the clause the whole thing rested on and nobody had written down: a
+rating is always appended after the call it names, and nothing inside llmbroker may offer
+a host a way to rate a call that is not on a row yet.
+
+### 2. An answer carrying no delta was left anonymous
+
+`test_empty_completion_is_a_success_not_a_garbage_200` already fixed that an empty
+streamed answer is a success and is journaled `OK`. Its handle never reached the
+first-delta point, so it named nothing — while still reporting the token counts of the
+call it would not name, and refusing to rate a call that had answered.
+
+Identity is now filled at the settle point as well as at the first delta. Invariant 18 is
+untouched: settle is only reached on the paths where the attempt answered, long after
+failover could still move.
+
+### The mechanism
+
+The receipt gained a settled marker; `AsyncResult` builds one already settled, being by
+definition a call that has finished. The streaming attempt has two fill points: the first
+delta (identity, for display while the answer arrives) and settle (identity again, the
+counts, the marker). The marker goes up **after** the journal write returns, not before —
+otherwise a concurrent holder of the same handle could rate inside the window between the
+two, which is the original defect in miniature.
+
+### Also in this batch
+
+- `tool_loop.py`: the two `# noqa: ANN001` suppressions went away and both public loops
+  now type their broker. The cycle they cited stopped existing when the loops moved out of
+  `chat.py` — in the commit that added them.
+- A tool-loop test against a real broker rather than `MagicMock`: nothing proved that what
+  comes back is the routed call itself, which is what `tools.md` now teaches.
+
+### Tests
+
+`test_stream_handle_record_quality_mid_stream_raises`,
+`test_stream_handle_rating_survives_a_broken_off_stream`,
+`test_stream_handle_names_an_answer_that_carried_no_delta`,
+`test_tool_loop_over_a_real_broker_hands_back_the_routed_call` — the first three are the
+repros of the two defects and stay in the suite.
+`test_stream_handle_record_quality_before_an_answer_raises` changed only the message it
+matches. Both slot-ownership tests still pass untouched.
+
+### `Router.stream`'s receipt is required
+
+It was optional, defaulting to a throwaway, so the router had a mode where it worked out
+who answered a call and dropped it — a branch no production caller ever takes, since
+`AsyncLLMs` always passes one. It is now positional and required.
+
+The first justification for keeping it optional was that making it required would edit the
+two slot-ownership tests this plan required to pass untouched. That reading was wrong
+twice: the requirement was a checkpoint on the original batch, already delivered and
+reviewed, not a permanent freeze; and the edit shortens those tests rather than disturbing
+them. Six tests called `Router.stream` directly, repeating the same ring and message
+literal; they now go through one `_stream(router, **kwargs)` helper, as `_drain` already
+did. Both ownership tests keep their bodies, assertions and meaning — only the call form
+changed.
+
+### Left as it is
+
+- `sync.Result` keeps its hand-written surface rather than sharing the base — a blocking
+  wrapper cannot inherit an async one, and the win would be cosmetic.
+- `RoutedCall` stays unexported. `AsyncResult | StreamHandle` covers naming it.

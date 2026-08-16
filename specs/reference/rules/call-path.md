@@ -119,10 +119,19 @@ It is async-only, like the direct client's streaming.
 **A streamed call names what answered it**, like every routed call: what it hands
 back carries the model and the call id its deltas came from, plus the token counts
 once the attempt is over, so a host can attribute or rate the answer without a
-journal read — which a non-queryable store would not allow at all. That naming is
-unset until the first delta and fixed from then on: before it failover may still
-move, so an earlier value would name a model that did not answer
+journal read — which a non-queryable store would not allow at all
 ([`decisions.md`](../decisions.md#identity-rides-the-object-a-call-returns)).
+
+The naming is unset until the call settles on a model, and fixed from then on.
+That is the first delta; an answer that carried no delta settles when it ends,
+which is why an empty answer is named too rather than left anonymous on a row
+journaled `OK`. Earlier it must stay unset: failover may still move, so any value
+before that point would name a model that did not answer.
+
+**Rating through what the call handed back is refused until the call is
+journaled**, and a stream reaches that point only when its answer ends — closing
+an abandoned stream is what ends it. Offering it sooner would let a rating be
+appended before the row it names, which invariant 1 forbids.
 
 Every failure before the first delta — 429, 5xx, transport, malformed response —
 cools the model and moves to the next candidate through the same

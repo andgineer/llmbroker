@@ -9,6 +9,7 @@ import pytest
 from llmbroker.broker import router as router_module
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.pool import LLMPool
+from llmbroker.broker.result import CallReceipt
 from llmbroker.broker.router import Router
 from llmbroker.direct import AsyncDirectClient
 from llmbroker.exceptions import (
@@ -57,10 +58,13 @@ def _mount(router: Router, handler) -> None:
     router._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5.0)  # noqa: SLF001
 
 
+def _stream(router: Router, **kwargs):
+    """One routed stream over a throwaway receipt, for tests reading only the deltas."""
+    return router.stream(make_ring(), [{"role": "user", "content": "hi"}], CallReceipt(), **kwargs)
+
+
 async def _drain(router: Router, **kwargs) -> list[str]:
-    return [
-        d async for d in router.stream(make_ring(), [{"role": "user", "content": "hi"}], **kwargs)
-    ]
+    return [d async for d in _stream(router, **kwargs)]
 
 
 # --------------------------------------------------------------------------- #
@@ -111,7 +115,7 @@ def test_stream_arrives_incrementally():
             ),
         )
         seen: list[str] = []
-        async for delta in router.stream(make_ring(), [{"role": "user", "content": "hi"}]):
+        async for delta in _stream(router):
             seen.append(delta)
             released.set()  # only reached if "one" arrived without "two" being ready
         return seen
@@ -224,9 +228,7 @@ def test_wait_does_not_bound_a_slow_consumer():
             ),
         )
         seen: list[str] = []
-        async for delta in router.stream(
-            make_ring(), [{"role": "user", "content": "hi"}], wait=0.3
-        ):
+        async for delta in _stream(router, wait=0.3):
             seen.append(delta)
             await asyncio.sleep(0.25)  # well past the budget, between deltas
         return seen
@@ -257,7 +259,7 @@ def test_stream_error_after_first_delta_propagates_and_journals_error():
         )
         seen: list[str] = []
         with pytest.raises(StreamInterruptedError) as excinfo:
-            async for delta in router.stream(make_ring(), [{"role": "user", "content": "hi"}]):
+            async for delta in _stream(router):
                 seen.append(delta)
         return seen, excinfo.value
 
@@ -528,7 +530,7 @@ def test_a_malformed_chunk_after_the_first_delta_interrupts_the_stream():
         )
         seen: list[str] = []
         with pytest.raises(StreamInterruptedError) as exc_info:
-            async for delta in router.stream(make_ring(), [{"role": "user", "content": "hi"}]):
+            async for delta in _stream(router):
                 seen.append(delta)
         return seen, pool, exc_info.value
 
@@ -635,7 +637,7 @@ def test_abandoned_stream_releases_the_slot():
                 headers={"content-type": "text/event-stream"},
             ),
         )
-        async for delta in router.stream(make_ring(), [{"role": "user", "content": "hi"}]):
+        async for delta in _stream(router):
             assert delta == "one"
             break
         # a second stream can only start if the first released its only slot
@@ -662,9 +664,7 @@ def test_held_iterator_releases_the_slot_when_closed():
                 headers={"content-type": "text/event-stream"},
             ),
         )
-        async with aclosing(
-            router.stream(make_ring(), [{"role": "user", "content": "hi"}])
-        ) as deltas:
+        async with aclosing(_stream(router)) as deltas:
             async for delta in deltas:
                 assert delta == "one"
                 break
@@ -908,9 +908,79 @@ def test_stream_handle_record_quality_before_an_answer_raises(tmp_path):
         broker = await _streaming_broker(tmp_path, _ok_sse("ok"), "a")
         async with broker:
             handle = broker.stream("hi")
-            with pytest.raises(ValueError, match="nothing has answered"):
+            with pytest.raises(ValueError, match="not in the journal yet"):
                 await handle.record_quality(1.0)
             await handle.aclose()
             return await broker.calls(limit=10)
 
     assert asyncio.run(run()) == []  # nothing was journaled: no request was opened
+
+
+def test_stream_handle_record_quality_mid_stream_raises(tmp_path):
+    """A rating written before the call's own row would be dropped by a projection
+    that folds the two in one pass, so mid-stream it is refused rather than lost."""
+
+    async def run():
+        broker = await _streaming_broker(tmp_path, _ok_sse("one", "two"), "a")
+        async with broker:
+            handle = broker.stream("hi", operation="write")
+            named: list[str | None] = []
+            async for _delta in handle:
+                named.append(handle.llm_name)
+                with pytest.raises(ValueError, match="not in the journal yet"):
+                    await handle.record_quality(0.5)
+            await handle.record_quality(0.5)  # the answer is over: now it lands
+            return named, await broker.calls(limit=10)
+
+    named, (row,) = asyncio.run(run())
+    assert named == ["a", "a"]  # named all along — it is the rating that had to wait
+    assert row.score == 0.5  # noqa: PLR2004
+
+
+def test_stream_handle_rating_survives_a_broken_off_stream(tmp_path):
+    """Stopping early and rating what arrived: the close settles the call, so the
+    score is readable back rather than silently dropped."""
+
+    async def run():
+        broker = await _streaming_broker(tmp_path, _ok_sse("one", "two", "three"), "a")
+        async with broker:
+            handle = broker.stream("hi", operation="write")
+            async for _delta in handle:
+                break
+            await handle.aclose()
+            await handle.record_quality(0.0)
+            return await broker.calls(limit=10)
+
+    (row,) = asyncio.run(run())
+    assert (row.status, row.score) == (CallStatus.OK, 0.0)
+
+
+def test_stream_handle_names_an_answer_that_carried_no_delta(tmp_path):
+    """An empty answer is an answer: it is journaled OK, so the handle must name it
+    like any other routed call — there is no first delta to learn it from."""
+
+    async def run():
+        broker = await _streaming_broker(
+            tmp_path,
+            lambda _r: httpx.Response(
+                200,
+                content=b'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}\n\n'
+                b'data: {"choices": [], "usage": {"total_tokens": 4}}\n\n'
+                b"data: [DONE]\n\n",
+                headers={"content-type": "text/event-stream"},
+            ),
+            "a",
+        )
+        async with broker:
+            handle = broker.stream("hi", operation="write")
+            deltas = [d async for d in handle]
+            await handle.record_quality(1.0)
+            (row,) = await broker.calls(limit=10)
+            return deltas, handle.llm_name, handle.call_id, handle.usage, row
+
+    deltas, llm_name, call_id, usage, row = asyncio.run(run())
+    assert deltas == []
+    assert row.status is CallStatus.OK
+    assert (llm_name, call_id) == (row.llm_name, row.id)
+    assert usage.total_tokens == 4  # noqa: PLR2004
+    assert row.score == 1.0

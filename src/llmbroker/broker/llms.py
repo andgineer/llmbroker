@@ -159,10 +159,10 @@ class AsyncLLMs:
                 self._router.stream(
                     self._ring,
                     messages,
+                    receipt,
                     operation=operation,
                     trace_id=trace_id,
                     wait=wait,
-                    receipt=receipt,
                 ),
             ) as deltas:
                 async for delta in deltas:
@@ -178,10 +178,10 @@ class AsyncLLMs:
             self._router.stream(
                 self._ring,
                 messages,
+                receipt,
                 operation=operation,
                 trace_id=trace_id,
                 wait=0,
-                receipt=receipt,
             ),
         ) as deltas:
             async for delta in deltas:

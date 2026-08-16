@@ -5,9 +5,10 @@ broker, not beside the HTTP primitives it never touches."""
 import json
 from collections.abc import Callable, Mapping
 
+from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.result import AsyncResult
 from llmbroker.exceptions import ToolLoopLimitError
-from llmbroker.sync import Result
+from llmbroker.sync import Broker, Result
 
 _TOOL_LOOP_EXHAUSTED = (
     "the model still wanted tools after max_steps={max_steps} rounds —"
@@ -57,7 +58,7 @@ def _advance_tool_loop(
 
 
 async def arun_tool_loop(
-    llms,  # noqa: ANN001 - AsyncBroker (avoid import cycle)
+    llms: AsyncBroker,
     messages: list[dict],
     *,
     tools: list[dict] | None = None,
@@ -78,7 +79,7 @@ async def arun_tool_loop(
 
 
 def run_tool_loop(
-    llms,  # noqa: ANN001 - sync Broker
+    llms: Broker,
     messages: list[dict],
     *,
     tools: list[dict] | None = None,

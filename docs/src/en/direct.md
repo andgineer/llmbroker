@@ -145,14 +145,30 @@ has started arriving there is nothing left to fail over to, so a stream that
 dies mid-answer raises `StreamInterruptedError`; the deltas you already received
 stand. Pool streaming is async-only.
 
-That is also why the handle says nothing before the first delta: `llm_name`,
-`call_id` and `usage` are `None` until then, because the call may still move to
-another model. Rating it that early is a `ValueError` — there is no call to rate
-yet.
+That is also why the handle says nothing before the first delta: `llm_name` and
+`call_id` are `None` until then, because the call may still move to another
+model. `usage` fills in later still, when the answer is over.
+
+Rating waits for the same moment the counts do — the end of the answer, when the
+call reaches the journal. Ask earlier and you get a `ValueError` rather than a
+score that quietly goes nowhere.
 
 Stopping early is fine — `break` or an exception closes the iterator and hands
-the model's slot back. If you instead keep the handle in a variable and walk
-away from it, close it yourself, or the slot stays busy until Python collects it:
+the model's slot back. If you want to score what you did receive, close the
+stream first: closing is what ends the call.
+
+```python
+stream = llms.stream("Write a haiku about brokers")
+async for delta in stream:
+    if looks_wrong(delta):
+        break
+
+await stream.aclose()
+await stream.record_quality(0.0)
+```
+
+If you instead keep the handle in a variable and walk away from it, close it
+yourself, or the slot stays busy until Python collects it:
 
 ```python
 async with contextlib.aclosing(llms.stream("...")) as stream:

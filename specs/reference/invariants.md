@@ -35,8 +35,10 @@ rather than what the running system must never do.
 
 1. **The journal is append-only.** No backend ever updates a journal row. A
    quality rating is its own appended record naming the call it rates, and what
-   a host reads is a projection over both, never a row rewritten in place.
-   → `backends.md`
+   a host reads is a projection over both, never a row rewritten in place. A
+   rating is always appended *after* the call it names, so a projection may fold
+   the two in one pass; nothing inside llmbroker may offer a host a way to rate a
+   call that is not on a row yet. → `backends.md`, `call-path.md`
 
 2. **Nothing inside llmbroker writes the registry but `sync`.** There is no
    add/update/remove path; learning, the optimizer and the admin verbs never

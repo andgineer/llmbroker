@@ -198,8 +198,18 @@ it from the first delta on.
 wrapper charges every consumer per delta for something none reads more than once,
 and a callback splits one call's outcome across two places the caller must rejoin.
 A stream can carry it earlier than `ask` can: the call id precedes the request and
-the model stops moving at the first delta, so the object is readable while the
-answer is still arriving.
+the model stops moving at the first delta, so who is answering is readable while
+the answer is still arriving.
+
+Rating, unlike naming, waits for the end of the answer: a rating appended before
+the call's own row would be dropped by a projection that folds the two in one pass
+(invariant 1), and the alternatives cost more than the window is worth. Buffering
+the rating until the call settles hangs a store write off the path that returns a
+model's slot; teaching every store to fold out of order buys a few seconds of
+"rate it early" with a slower read of the journal on every call. Refusing it
+loudly leaves the one real use — abandoning a stream that went wrong and scoring
+it zero — working in the order a host already has to follow, since an abandoned
+stream must be closed anyway.
 
 ---
 
