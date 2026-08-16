@@ -116,6 +116,14 @@ The routed pool streams as well as it answers: deltas arrive as the provider
 produces them, over the same routing, failover and journaling as a pooled call.
 It is async-only, like the direct client's streaming.
 
+**A streamed call names what answered it**, like every routed call: what it hands
+back carries the model and the call id its deltas came from, plus the token counts
+once the attempt is over, so a host can attribute or rate the answer without a
+journal read — which a non-queryable store would not allow at all. That naming is
+unset until the first delta and fixed from then on: before it failover may still
+move, so an earlier value would name a model that did not answer
+([`decisions.md`](../decisions.md#identity-rides-the-object-a-call-returns)).
+
 Every failure before the first delta — 429, 5xx, transport, malformed response —
 cools the model and moves to the next candidate through the same
 classification above; there is no second failure surface for streams. After the

@@ -8,12 +8,16 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from llmbroker.exceptions import InvalidProviderResponseError, ToolLoopLimitError
 from llmbroker.models import LLMConfig, Usage
+
+if TYPE_CHECKING:  # both import this module, so only the annotations may name them
+    from llmbroker.broker.result import AsyncResult
+    from llmbroker.sync import Result
 
 _CHAT_PATH = "/chat/completions"
 HTTP_TIMEOUT = 60.0
@@ -293,17 +297,17 @@ def execute_tool_calls(
 
 def _advance_tool_loop(
     convo: list[dict],
-    result,  # noqa: ANN001 - AsyncResult | Result (avoid import cycle)
+    result: "AsyncResult | Result",
     dispatch: Mapping[str, Callable[..., object]],
-) -> str | None:
-    """Append the assistant turn and tool results; return the final text when done."""
+) -> bool:
+    """Append the assistant turn and tool results; ``True`` once the reply is final."""
     if not result.tool_calls:
-        return result.text
+        return True
     convo.append(
         {"role": "assistant", "content": result.text or None, "tool_calls": result.tool_calls},
     )
     convo.extend(execute_tool_calls(result.tool_calls, dispatch))
-    return None
+    return False
 
 
 async def arun_tool_loop(
@@ -314,15 +318,16 @@ async def arun_tool_loop(
     dispatch: Mapping[str, Callable[..., object]] | None = None,
     max_steps: int = 8,
     **chat_kwargs,
-) -> str:
-    """Drive ``broker.chat`` until a tool-call-free reply; execute tools via dispatch."""
+) -> "AsyncResult":
+    """Drive ``broker.chat`` until a tool-call-free reply; execute tools via dispatch.
+    Returns that last round's result: earlier rounds are routed calls of their own,
+    each with its own journal row, so ``usage`` is the final round's alone."""
     convo = list(messages)
     dispatch = dispatch or {}
     for _ in range(max_steps):
         result = await llms.chat(convo, tools=tools, **chat_kwargs)
-        text = _advance_tool_loop(convo, result, dispatch)
-        if text is not None:
-            return text
+        if _advance_tool_loop(convo, result, dispatch):
+            return result
     raise ToolLoopLimitError(_TOOL_LOOP_EXHAUSTED.format(max_steps=max_steps))
 
 
@@ -334,8 +339,8 @@ def run_tool_loop(
     dispatch: Mapping[str, Callable[..., object]] | None = None,
     max_steps: int = 8,
     **chat_kwargs,
-) -> str:
-    """Synchronous tool loop over a sync ``Broker``.
+) -> "Result":
+    """Synchronous tool loop over a sync ``Broker``, returning the final round's result.
 
     Mirrors ``arun_tool_loop`` but calls the blocking ``Broker.chat``; it does
     not use the async engine directly so it is safe to call from any thread.
@@ -344,9 +349,8 @@ def run_tool_loop(
     dispatch = dispatch or {}
     for _ in range(max_steps):
         result = llms.chat(convo, tools=tools, **chat_kwargs)
-        text = _advance_tool_loop(convo, result, dispatch)
-        if text is not None:
-            return text
+        if _advance_tool_loop(convo, result, dispatch):
+            return result
     raise ToolLoopLimitError(_TOOL_LOOP_EXHAUSTED.format(max_steps=max_steps))
 
 

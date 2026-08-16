@@ -18,7 +18,7 @@ from llmbroker import chat
 from llmbroker.broker.keyring import KeyRing
 from llmbroker.broker.learning import Learner
 from llmbroker.broker.pool import LLMPool
-from llmbroker.broker.result import AsyncResult
+from llmbroker.broker.result import AsyncResult, CallReceipt
 from llmbroker.chat import (
     aiter_chat_chunks,
     build_chat_request,
@@ -106,8 +106,24 @@ class _StreamProgress:
     """What one streaming attempt has produced so far — what its failure handling
     and its journal row are decided by, once the generator has been unwound."""
 
+    receipt: CallReceipt
+    llm_name: str
+    call_id: str
     started: bool = False
     usage: Usage | None = None
+
+    def opened(self) -> None:
+        """The first delta: what answered stops moving here, so the caller's handle can
+        name it while the rest of the answer is still arriving."""
+        self.started = True
+        self.receipt.llm_name = self.llm_name
+        self.receipt.call_id = self.call_id
+
+    def settled(self) -> Usage | None:
+        """This attempt is over and its counts are final — hand them to the caller's
+        handle as well as to the journal row."""
+        self.receipt.usage = self.usage
+        return self.usage
 
 
 async def _stream_deltas(
@@ -135,7 +151,7 @@ async def _stream_deltas(
             if not delta:
                 continue
             if not progress.started:
-                progress.started = True
+                progress.opened()
                 bound.reschedule(None)
             yield delta
 
@@ -500,7 +516,7 @@ class Router:
     # Streaming
     # ------------------------------------------------------------------
 
-    async def stream(
+    async def stream(  # noqa: PLR0913 - the chat knobs plus the caller's receipt
         self,
         ring: KeyRing,
         messages: list[dict],
@@ -508,14 +524,17 @@ class Router:
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
+        receipt: CallReceipt | None = None,
     ) -> AsyncIterator[str]:
-        """Route a streaming completion over the pool, yielding text deltas.
-
-        Fails over exactly like ``chat`` up to the first delta; past it the
-        answer is already the caller's and a death raises ``StreamInterruptedError``.
-        """
+        """Route a streaming completion over the pool, yielding text deltas and naming
+        what answered on ``receipt``. Fails over exactly like ``chat`` up to the first
+        delta; past it a death raises ``StreamInterruptedError`` instead."""
         routed = self._route(
-            partial(self._stream_attempt, messages=messages),
+            partial(
+                self._stream_attempt,
+                messages=messages,
+                receipt=receipt if receipt is not None else CallReceipt(),
+            ),
             ring=ring,
             operation=operation,
             trace_id=trace_id,
@@ -536,6 +555,7 @@ class Router:
         messages: list[dict],
         operation: str | None,
         trace_id: str | None,
+        receipt: CallReceipt,
     ) -> AsyncIterator[str]:
         """Stream one LLM, yielding its deltas. Leaves a verdict on ``outcome`` when it
         died before the first delta; the slot is settled and journaled by then."""
@@ -556,7 +576,7 @@ class Router:
             messages,
             stream=True,
         )
-        progress = _StreamProgress()
+        progress = _StreamProgress(receipt, config.name, attempt.call_id)
         try:
             async with aclosing(
                 _stream_deltas(
@@ -582,7 +602,7 @@ class Router:
         except GeneratorExit:
             # The consumer stopped pulling. The model answered and did nothing wrong,
             # so this is a completed attempt, not a failure the pool should learn from.
-            await self._finish_ok(attempt, progress.usage)
+            await self._finish_ok(attempt, progress.settled())
             raise
         except BaseException as exc:
             await self._pool.release(config)
@@ -590,7 +610,7 @@ class Router:
                 await self._record(attempt, CallStatus.ERROR, error_detail=type(exc).__name__)
             raise
         else:
-            await self._finish_ok(attempt, progress.usage)
+            await self._finish_ok(attempt, progress.settled())
             outcome.answered = True
 
     async def _fail_stream(  # noqa: PLR0913

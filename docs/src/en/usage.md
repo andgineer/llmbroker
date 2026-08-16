@@ -343,6 +343,10 @@ llms.record_quality(0.0, trace_id=document_id)
 Or persist `reply.call_id` and rate that one attempt: `llms.record_quality(0.0,
 call_id=saved_call_id)`. Exactly one of the two is required.
 
+A key is the way to rate a call you no longer hold. If you do still hold it —
+including the handle a [stream](direct.md#streaming-from-the-pool) hands back —
+its own `record_quality(...)` needs no key and no journal read.
+
 The model and the operation are read off the call, so you store neither. One
 `trace_id` covering several calls rates them all, and the attempts that failed —
 a model that rate-limited before another answered — are not rated: there was no

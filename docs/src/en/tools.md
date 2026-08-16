@@ -27,8 +27,13 @@ reply = llmbroker.run_tool_loop(
     tools=tools,
     dispatch={"get_weather": get_weather},
 )
-print(reply)
+print(reply.text, "— by", reply.llm_name)
 ```
+
+The loop returns the result of its final round, exactly like `chat`: the text,
+the model that produced it, and that round's `usage`. Every earlier round was a
+routed call of its own with its own journal row, so the counts here are the last
+round's, not the whole loop's — read the rows if you want the total.
 
 The async version is `await llmbroker.arun_tool_loop(...)` on top of
 [`AsyncBroker`](async.md).

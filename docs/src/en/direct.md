@@ -131,8 +131,12 @@ You do not need `direct` to stream. The pool streams too, with routing and
 failover intact:
 
 ```python
-async for delta in llms.stream("Write a haiku about brokers", operation="write"):
+stream = llms.stream("Write a haiku about brokers", operation="write")
+async for delta in stream:
     print(delta, end="", flush=True)
+
+print(stream.llm_name, stream.usage)   # who answered, and what it cost
+await stream.record_quality(0.9)       # rate it without naming the call yourself
 ```
 
 Failover works normally right up to the **first delta** — a rate-limited or
@@ -141,13 +145,18 @@ has started arriving there is nothing left to fail over to, so a stream that
 dies mid-answer raises `StreamInterruptedError`; the deltas you already received
 stand. Pool streaming is async-only.
 
+That is also why the handle says nothing before the first delta: `llm_name`,
+`call_id` and `usage` are `None` until then, because the call may still move to
+another model. Rating it that early is a `ValueError` — there is no call to rate
+yet.
+
 Stopping early is fine — `break` or an exception closes the iterator and hands
-the model's slot back. If you instead keep the iterator in a variable and walk
+the model's slot back. If you instead keep the handle in a variable and walk
 away from it, close it yourself, or the slot stays busy until Python collects it:
 
 ```python
-async with contextlib.aclosing(llms.stream("...")) as deltas:
-    async for delta in deltas:
+async with contextlib.aclosing(llms.stream("...")) as stream:
+    async for delta in stream:
         ...
 ```
 

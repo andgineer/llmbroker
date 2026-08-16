@@ -3,7 +3,7 @@
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.llms import AsyncLLMs
 from llmbroker.broker.report import format_report
-from llmbroker.broker.result import AsyncLLM, AsyncResult
+from llmbroker.broker.result import AsyncLLM, AsyncResult, StreamHandle
 from llmbroker.chat import arun_tool_loop, run_tool_loop
 from llmbroker.direct import AsyncDirectClient, DirectClient, DirectResult
 from llmbroker.exceptions import (
@@ -64,6 +64,7 @@ __all__ = [
     "PoolSnapshot",
     "ProviderError",
     "RateLimitError",
+    "StreamHandle",
     "StreamInterruptedError",
     "SyncRefusedError",
     "SyncReport",

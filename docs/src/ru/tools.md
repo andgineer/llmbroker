@@ -27,8 +27,13 @@ reply = llmbroker.run_tool_loop(
     tools=tools,
     dispatch={"get_weather": get_weather},
 )
-print(reply)
+print(reply.text, "— ответила", reply.llm_name)
 ```
+
+Цикл возвращает результат последнего раунда — ровно такой же, как у `chat`:
+текст, ответившую модель и `usage` этого раунда. Каждый предыдущий раунд был
+самостоятельным вызовом со своей строкой в журнале, поэтому счётчики здесь — за
+последний раунд, а не за весь цикл; сумму читайте по строкам журнала.
 
 Асинхронная версия — `await llmbroker.arun_tool_loop(...)` поверх
 [`AsyncBroker`](async.md).

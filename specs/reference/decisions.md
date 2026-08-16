@@ -187,6 +187,20 @@ configured yet" when the store is unusable.
 **Why:** a budget is the caller's, and a per-model number could not compose with
 failover once a call spans several models.
 
+### identity-rides-the-object-a-call-returns
+
+Every routed call returns an object naming the model that answered; a stream names
+it from the first delta on.
+
+**Blocks:** yielding structured chunk objects instead of text deltas; an
+`on_answered=` callback.
+**Why:** what answered is a property of the call, not of a delta, so a per-chunk
+wrapper charges every consumer per delta for something none reads more than once,
+and a callback splits one call's outcome across two places the caller must rejoin.
+A stream can carry it earlier than `ask` can: the call id precedes the request and
+the model stops moving at the first delta, so the object is readable while the
+answer is still arriving.
+
 ---
 
 ## Storage

@@ -13,9 +13,15 @@ async with llmbroker.AsyncBroker() as llms:
 роутингом и фейловером:
 
 ```python
-    async for delta in llms.stream("Напиши хокку про брокеров"):
+    stream = llms.stream("Напиши хокку про брокеров")
+    async for delta in stream:
         print(delta, end="", flush=True)
+    print(f"\n— ответила {stream.llm_name}, {stream.usage}")
 ```
+
+`stream(...)` возвращает handle: по нему вы итерируетесь за дельтами, а он же
+называет ответившую модель и — когда ответ закончился — во что он обошёлся. До
+первой дельты и то и другое `None`: до неё вызов ещё может уехать по фейловеру.
 
 Что фейловер успевает спасти посреди стрима, а что нет — см.
 [Прямые вызовы модели](direct.md).

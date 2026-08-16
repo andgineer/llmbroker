@@ -2,7 +2,7 @@
 journal rows carry and the keys it may pay with. Built by the broker only."""
 
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import aclosing
 from datetime import datetime
 
@@ -12,7 +12,7 @@ from llmbroker.broker.catalog import Catalog, find_declared
 from llmbroker.broker.keyring import KeyRing
 from llmbroker.broker.learning import Learner
 from llmbroker.broker.pool_view import PoolView
-from llmbroker.broker.result import AsyncLLM, AsyncResult
+from llmbroker.broker.result import AsyncLLM, AsyncResult, CallReceipt, StreamHandle
 from llmbroker.broker.router import Router
 from llmbroker.broker.stats import stats_from_calls
 from llmbroker.direct import AsyncDirectClient
@@ -119,17 +119,38 @@ class AsyncLLMs:
             wait=0,
         )
 
-    async def stream(
+    def stream(
         self,
         prompt: str,
         *,
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
-    ) -> AsyncIterator[str]:
-        """Route a completion over the pool and yield text deltas as they arrive.
-        Fails over like ``ask`` until the first delta, then raises
+    ) -> StreamHandle:
+        """Route a completion over the pool as a handle yielding text deltas and naming
+        what answered them. Fails over like ``ask`` until the first delta, then raises
         ``StreamInterruptedError``. Async-only."""
+        receipt = CallReceipt()
+        return StreamHandle(
+            self._deltas(receipt, prompt, operation=operation, trace_id=trace_id, wait=wait),
+            receipt,
+            operation=operation,
+            store=self._store,
+            scope=self.scope,
+            observe_quality=(
+                self._learner.record_quality_observed if self._learner is not None else None
+            ),
+        )
+
+    async def _deltas(  # noqa: PLR0913 - the prompt, the receipt and the three call knobs
+        self,
+        receipt: CallReceipt,
+        prompt: str,
+        *,
+        operation: str | None,
+        trace_id: str | None,
+        wait: float | None,
+    ) -> AsyncGenerator[str, None]:
         await self._ensure_pool()
         messages = [{"role": "user", "content": prompt}]
         produced = False
@@ -141,6 +162,7 @@ class AsyncLLMs:
                     operation=operation,
                     trace_id=trace_id,
                     wait=wait,
+                    receipt=receipt,
                 ),
             ) as deltas:
                 async for delta in deltas:
@@ -159,6 +181,7 @@ class AsyncLLMs:
                 operation=operation,
                 trace_id=trace_id,
                 wait=0,
+                receipt=receipt,
             ),
         ) as deltas:
             async for delta in deltas:

@@ -133,8 +133,12 @@ async with llmbroker.AsyncBroker(direct=["opus"]) as llms:
 фейловером:
 
 ```python
-async for delta in llms.stream("Напиши хокку про брокеров", operation="write"):
+stream = llms.stream("Напиши хокку про брокеров", operation="write")
+async for delta in stream:
     print(delta, end="", flush=True)
+
+print(stream.llm_name, stream.usage)   # кто ответил и во что это обошлось
+await stream.record_quality(0.9)       # оценить, не называя вызов самому
 ```
 
 Фейловер работает как обычно вплоть до **первой дельты**: зарейтлимиченная или
@@ -143,13 +147,17 @@ async for delta in llms.stream("Напиши хокку про брокеров"
 посреди ответа, бросает `StreamInterruptedError`; полученные дельты остаются при
 вас. Стриминг из пула — только async.
 
+По той же причине до первой дельты handle ничего не говорит: `llm_name`,
+`call_id` и `usage` до неё равны `None`, потому что вызов ещё может уехать на
+другую модель. Оценка в этот момент — `ValueError`: оценивать пока нечего.
+
 Оборвать чтение можно спокойно: `break` или исключение закрывают итератор и
-возвращают слот модели. Но если итератор сохранён в переменную и просто брошен —
+возвращают слот модели. Но если handle сохранён в переменную и просто брошен —
 закройте его сами, иначе слот будет занят до того, как Python его соберёт:
 
 ```python
-async with contextlib.aclosing(llms.stream("...")) as deltas:
-    async for delta in deltas:
+async with contextlib.aclosing(llms.stream("...")) as stream:
+    async for delta in stream:
         ...
 ```
 

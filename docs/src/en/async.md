@@ -13,9 +13,15 @@ Streaming is async-only — the pool yields deltas as they arrive, with routing
 and failover intact:
 
 ```python
-    async for delta in llms.stream("Write a haiku about brokers"):
+    stream = llms.stream("Write a haiku about brokers")
+    async for delta in stream:
         print(delta, end="", flush=True)
+    print(f"\n— by {stream.llm_name}, {stream.usage}")
 ```
+
+`stream(...)` hands back a handle you iterate for the deltas; it also names the
+model that answered and, once the answer is over, what it cost. Before the first
+delta both are `None` — until then failover may still move the call.
 
 See [Direct model calls](direct.md#streaming-from-the-pool) for what failover
 can and cannot rescue mid-stream.

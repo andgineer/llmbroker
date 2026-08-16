@@ -158,7 +158,7 @@ def test_mixed_keyed_and_keyless_pool_routes_over_keyed_only():
         with patch(_PATCH, new=AsyncMock(return_value=("ok", None, None))):
             result = await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=0)
         assert result.text == "ok"
-        assert result._llm_name == "keyed"
+        assert result.llm_name == "keyed"
 
     asyncio.run(run())
 

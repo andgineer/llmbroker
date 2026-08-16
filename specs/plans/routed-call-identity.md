@@ -177,3 +177,54 @@ No test may use `pytest.skip`/`importorskip`.
 
 `invoke pre` clean and `python -m pytest` reporting `N passed` with zero failures,
 errors or skips.
+
+## Handover
+
+**Done:** work order 1–8 and every test the plan names. Section 9 (`invoke ver-feature`)
+is the maintainer's and was skipped.
+
+**Gate:** `invoke pre` clean (ruff, ruff-format, docstring cap, pyrefly — 0 errors);
+`python -m pytest` → **1388 passed**, zero failures, errors or skips.
+
+### What differs from the plan
+
+- **The shared base holds `usage` too**, not only `llm_name`/`operation`/`call_id`/
+  `record_quality`. The plan says `AsyncResult` "adds `text` and `tool_calls`", which
+  only works if `usage` is already below it, and `StreamHandle` needs the same field.
+- **The base's `llm_name`/`call_id` are `str | None`; `AsyncResult` narrows both back to
+  `str`.** A routed `ask`/`chat` always names its model — that is a guarantee, and
+  widening it to `str | None` for the sake of a shared base would have made every caller
+  branch on a case that cannot happen.
+- **The receipt is filled through the per-attempt sideband, not beside it.** `_StreamProgress`
+  now carries the receipt plus this attempt's identity and gains two methods — one for the
+  first delta, one for the settled attempt — so the fill happens at exactly the two points
+  the plan names without threading a second object through `_stream_deltas`.
+- **`Router.stream`'s `receipt=` is optional**, defaulting to a throwaway. That is what
+  lets the router-level tests — including the two ownership tests the plan requires to
+  pass untouched — keep calling `router.stream(ring, messages)` unchanged.
+- **`chat.py` gained a `TYPE_CHECKING` block** so both tool loops can be annotated with
+  what they now return (`AsyncResult` / the sync `Result`). The runtime cycle the existing
+  `# noqa` comments guard against is real; the annotations are not affected by it. This is
+  the first use of `TYPE_CHECKING` in the repo — say so if it is unwanted, and the two
+  return annotations come off instead.
+- **`StreamHandle` is exported from the top-level package**, next to `AsyncResult`: it is
+  now a public return type a host may want to name.
+- **One test outside the plan's list changed**: `test_router.py`'s
+  `test_mixed_keyed_and_keyless_pool_routes_over_keyed_only` asserted on the private
+  `result._llm_name`, which no longer exists; it now asserts on `result.llm_name`.
+
+### Decisions taken during implementation
+
+- **Rating a stream before its first delta raises `ValueError`**, not a new exception
+  type. The nearest precedent is `record_quality()` called with both keys or neither,
+  which is also a `ValueError`: both are the caller reaching for a call that is not there
+  to name, and a host can test `handle.llm_name is None` rather than catch.
+- **`usage` on the handle is filled where the attempt completes** (a real answer or a
+  consumer that stopped pulling), not in a `finally`. A mid-stream death leaves it unset,
+  matching "None until the attempt completes".
+
+### Deliberately left out
+
+- No summing of `usage` across tool-loop rounds — the plan forbids it, and the docs in
+  both languages now say the counts are the final round's and the total is in the journal.
+- Nothing about `direct(...)` changed, and the blocking façade has no `stream` to change.

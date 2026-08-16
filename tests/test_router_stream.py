@@ -705,3 +705,212 @@ def test_broker_stream_end_to_end(tmp_path):
             return [d async for d in broker.stream("hi", operation="write")]
 
     assert asyncio.run(run()) == ["po", "ol"]
+
+
+# --------------------------------------------------------------------------- #
+# the handle: what answered, and what it spent
+# --------------------------------------------------------------------------- #
+
+
+async def _streaming_broker(tmp_path, handler, *names: str) -> AsyncBroker:
+    """A provisioned broker over ``names``, answering through ``handler``."""
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        "".join(
+            f'[[llms]]\nname="{n}"\nbase_url="https://{n}/v1"\nmodel="m"\napi_key_ref="K"\n'
+            for n in names
+        ),
+    )
+    broker = AsyncBroker(
+        registry=Registry(f),
+        secrets=DictSecrets({"K": "test"}),
+        store=FileStore(tmp_path / "store"),
+        sync=None,
+    )
+    await broker.ensure_pool()
+    broker._router._http_client = httpx.AsyncClient(  # noqa: SLF001
+        transport=httpx.MockTransport(handler),
+        timeout=5.0,
+    )
+    return broker
+
+
+def _ok_sse(*deltas: str):
+    return lambda _r: httpx.Response(
+        200, content=_sse(*deltas), headers={"content-type": "text/event-stream"}
+    )
+
+
+def test_stream_handle_names_the_model_that_answered(tmp_path):
+    async def run():
+        broker = await _streaming_broker(tmp_path, _ok_sse("Hel", "lo"), "a")
+        async with broker:
+            handle = broker.stream("hi", operation="write")
+            deltas = [d async for d in handle]
+            (row,) = await broker.calls(limit=10)
+            return deltas, handle.llm_name, handle.call_id, handle.operation, row
+
+    deltas, llm_name, call_id, operation, row = asyncio.run(run())
+    assert deltas == ["Hel", "lo"]
+    assert row.status is CallStatus.OK
+    assert (llm_name, call_id, operation) == (row.llm_name, row.id, "write")
+
+
+def test_stream_handle_identity_is_unset_before_the_first_delta(tmp_path):
+    """Failover may still move a call until then, so an earlier value would name a
+    model that did not answer."""
+    opened = asyncio.Event()
+    released = asyncio.Event()
+
+    async def body():
+        await released.wait()
+        yield b'data: {"choices": [{"delta": {"content": "late"}}]}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        opened.set()
+        return httpx.Response(200, content=body(), headers={"content-type": "text/event-stream"})
+
+    async def run():
+        broker = await _streaming_broker(tmp_path, handler, "a")
+        async with broker:
+            handle = broker.stream("hi")
+            deltas = handle.__aiter__()
+            pulling = asyncio.ensure_future(anext(deltas))
+            await opened.wait()  # the request is in flight, still no delta
+            before = (handle.llm_name, handle.call_id, handle.usage)
+            released.set()
+            first = await pulling
+            after = (handle.llm_name, handle.call_id)
+            await handle.aclose()
+            return before, first, after
+
+    before, first, after = asyncio.run(run())
+    assert before == (None, None, None)
+    assert first == "late"
+    assert after[0] == "a" and after[1] is not None
+
+
+def test_stream_handle_identity_survives_failover(tmp_path):
+    """The first candidate 429s before any delta; the handle names the one that
+    actually answered, whichever the pool reached for first."""
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url.host))
+        if len(seen) == 1:
+            return httpx.Response(429, text="slow down")
+        return httpx.Response(
+            200, content=_sse("ok"), headers={"content-type": "text/event-stream"}
+        )
+
+    async def run():
+        broker = await _streaming_broker(tmp_path, handler, "a", "b")
+        async with broker:
+            handle = broker.stream("hi")
+            deltas = [d async for d in handle]
+            rows = await broker.calls(limit=10)
+            return deltas, handle.llm_name, handle.call_id, rows
+
+    deltas, llm_name, call_id, rows = asyncio.run(run())
+    assert deltas == ["ok"]
+    cooled = next(r for r in rows if r.status is CallStatus.RATE_LIMITED)
+    answered = next(r for r in rows if r.status is CallStatus.OK)
+    assert llm_name == answered.llm_name != cooled.llm_name
+    assert call_id == answered.id
+
+
+def test_stream_handle_identity_matches_the_interrupted_stream_error(tmp_path):
+    """A mid-stream death names the model on the exception; the handle names the
+    same one, so a host has it whichever it reaches for."""
+
+    async def body():
+        yield b'data: {"choices": [{"delta": {"content": "par"}}]}\n\n'
+        raise httpx.ReadError("connection dropped")
+
+    async def run():
+        broker = await _streaming_broker(
+            tmp_path,
+            lambda _r: httpx.Response(
+                200, content=body(), headers={"content-type": "text/event-stream"}
+            ),
+            "a",
+        )
+        async with broker:
+            handle = broker.stream("hi")
+            seen: list[str] = []
+            with pytest.raises(StreamInterruptedError) as excinfo:
+                async for delta in handle:
+                    seen.append(delta)
+            return seen, handle.llm_name, excinfo.value.llm_name
+
+    seen, llm_name, error_name = asyncio.run(run())
+    assert seen == ["par"]
+    assert llm_name == error_name == "a"
+
+
+def test_stream_handle_identity_stands_after_an_abandoned_stream(tmp_path):
+    """A consumer that breaks out still got an answer — the handle keeps naming what
+    produced it, so the partial reply is still rateable."""
+
+    async def run():
+        broker = await _streaming_broker(tmp_path, _ok_sse("one", "two", "three"), "a")
+        async with broker:
+            handle = broker.stream("hi")
+            async for delta in handle:
+                assert delta == "one"
+                break
+            await handle.aclose()
+            (row,) = await broker.calls(limit=10)
+            return handle.llm_name, handle.call_id, row
+
+    llm_name, call_id, row = asyncio.run(run())
+    assert row.status is CallStatus.OK
+    assert (llm_name, call_id) == (row.llm_name, row.id)
+
+
+def test_stream_handle_reports_usage_after_completion(tmp_path):
+    """Token counts reach the caller nowhere else on this path."""
+
+    async def run():
+        broker = await _streaming_broker(tmp_path, _ok_sse("Hel", "lo"), "a")
+        async with broker:
+            handle = broker.stream("hi")
+            during: list[object] = []
+            async for _ in handle:
+                during.append(handle.usage)
+            return during, handle.usage
+
+    during, usage = asyncio.run(run())
+    assert during[0] is None  # not known until the attempt is over
+    assert usage.total_tokens == 7  # noqa: PLR2004
+
+
+def test_stream_handle_records_quality(tmp_path):
+    """Rating off the handle needs no key of the caller's and no journal read."""
+
+    async def run():
+        broker = await _streaming_broker(tmp_path, _ok_sse("ok"), "a")
+        async with broker:
+            handle = broker.stream("hi", operation="write")
+            _ = [d async for d in handle]
+            await handle.record_quality(0.25)
+            return await broker.calls(limit=10)
+
+    (row,) = asyncio.run(run())
+    assert row.score == 0.25  # noqa: PLR2004
+
+
+def test_stream_handle_record_quality_before_an_answer_raises(tmp_path):
+    """There is no call to rate yet: nothing has answered, and failover may still move."""
+
+    async def run():
+        broker = await _streaming_broker(tmp_path, _ok_sse("ok"), "a")
+        async with broker:
+            handle = broker.stream("hi")
+            with pytest.raises(ValueError, match="nothing has answered"):
+                await handle.record_quality(1.0)
+            await handle.aclose()
+            return await broker.calls(limit=10)
+
+    assert asyncio.run(run()) == []  # nothing was journaled: no request was opened

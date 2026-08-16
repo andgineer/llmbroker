@@ -4,8 +4,7 @@ once, and delegates each operation to the collaborator that owns it."""
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Mapping, Sequence
-from contextlib import aclosing
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -19,7 +18,7 @@ from llmbroker.broker.pool_view import PoolView
 from llmbroker.broker.presets import PresetSource
 from llmbroker.broker.refresher import ModelListRefresher
 from llmbroker.broker.report import alias_lines
-from llmbroker.broker.result import AsyncLLM, AsyncResult
+from llmbroker.broker.result import AsyncLLM, AsyncResult, StreamHandle
 from llmbroker.broker.router import Router
 from llmbroker.broker.source import (
     default_secrets,
@@ -378,22 +377,18 @@ class AsyncBroker:
             wait=wait,
         )
 
-    async def stream(
+    def stream(
         self,
         prompt: str,
         *,
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
-    ) -> AsyncIterator[str]:
-        """Route a completion over the pool and yield text deltas as they arrive.
-        Fails over like ``ask`` until the first delta, then raises
+    ) -> StreamHandle:
+        """Route a completion over the pool as a handle yielding text deltas and naming
+        what answered them. Fails over like ``ask`` until the first delta, then raises
         ``StreamInterruptedError``. Async-only."""
-        async with aclosing(
-            self.llms.stream(prompt, operation=operation, trace_id=trace_id, wait=wait),
-        ) as deltas:
-            async for delta in deltas:
-                yield delta
+        return self.llms.stream(prompt, operation=operation, trace_id=trace_id, wait=wait)
 
     async def direct(
         self,
