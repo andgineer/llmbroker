@@ -1,7 +1,4 @@
-# Usage
-
-A synchronous script is the simplest scenario. For FastAPI and workers see
-[Async](async.md).
+# Model pool and calls
 
 ## Model pool
 
@@ -18,32 +15,18 @@ fill in whichever keys are easy to get:
 llmbroker env freetier > .env
 ```
 
-`llmbroker env` prints a hint above each key — where to get it. A model without a
-key simply stays inactive, it is not an error. The broker reads the `.env` in your
-working directory; an exported variable wins over it.
+`llmbroker env` prints a hint above each key — where to get it, see
+[CLI](cli.md#env). A model without a key simply stays inactive, it is not an
+error.
 
 A provider that cannot handle parallel requests on one key is capped by
 `parallel` on its entry. For the pool that is the curated model list's call, not
 yours — the file is llmbroker's, see [below](#file); on a model of your own you
 set it, as a field of the `LLMConfig` you declare.
 
-### Your own paid models {#direct}
-
-Nothing you declare here ever joins the pool: what the pool sells is failover
-across interchangeable free endpoints, and your company gateway has no business
-being spilled onto by someone else's 429 unless you put it there
-[on purpose](#file). Declared models are reached by name instead:
-
-```python
-llms = llmbroker.Broker(direct=["opus"])
-llms.direct("opus").ask("...")
-```
-
-`"opus"` is an alias from a curated catalog of paid models — an eternal handle
-that llmbroker keeps pointing at the current generation. Pass an `LLMConfig`
-instead to declare an endpoint of your own, exactly as written. Either way
-nothing is stored: the declaration in your code is the only source of truth.
-See [Direct model calls](direct.md).
+A paid model can be reached by name: `Broker(direct=["opus"])`, then
+`llms.direct("opus").ask(...)`. It is called directly and never joins the pool —
+see [Direct model calls](direct.md).
 
 ### Where the model list lives {#file}
 
@@ -54,54 +37,10 @@ directory, which is what a container without a writable cache needs.
 That file is written by llmbroker, not by you: a refresh regenerates it in full,
 and it holds the pool and nothing else — a model you reach by name is
 [declared in code](direct.md). There is no way to point a broker at a model list file
-of your own — a model list arrives as a curated preset name and nothing else. What
-you can name is a database:
+of your own — a model list arrives as a curated preset name and nothing else.
 
-```python
-llms = llmbroker.Broker("postgresql://…")   # registry, keys and journal, all three
-```
-
-See [Servers & clusters](server.md). To supply the pool yourself, pass an object
-implementing the registry protocol and say what it follows:
-
-```python
-llms = llmbroker.Broker(registry=MyRegistry(), sync=None)        # only your entries
-llms = llmbroker.Broker(registry=MyRegistry(), sync="freetier")  # yours plus ours
-```
-
-| you pass | `sync=` left out | entries you put there yourself |
-|---|---|---|
-| nothing, or a database URL | follows `"freetier"` | never touched by a refresh |
-| a registry object | an error — say which | never touched by a refresh |
-
-A refresh only ever rewrites what a sync itself wrote, so "the curated free pool
-plus two endpoints of my own, routed together" is just a registry with both in
-it.
-
-#### An entry of your own, in the pool {#own-entry}
-
-You put your own entry there through the registry protocol, not by writing rows:
-the table layout is llmbroker's own and may change between releases. Read what is
-there, add yours, write it all back — `mirror` is a total mirror, so anything you
-leave out is deleted:
-
-```python
-from llmbroker.models import LLMConfig
-from llmbroker.postgres import Registry
-
-registry = Registry(pool)
-mine = LLMConfig(
-    name="my-gateway",
-    base_url="https://gw.internal/v1",
-    model="m",
-    api_key_ref="MY_GATEWAY_KEY",
-)
-await registry.mirror([*await registry.load(), mine])
-```
-
-Nothing marks it as ours, so no sync ever removes or rewrites it. It is a pool
-member and the router fails over onto it — an endpoint you want reached by name
-instead is [a declared model](direct.md), which is not stored at all.
+To keep the list in a database instead, shared across processes, or to fill the
+registry yourself — see [Servers & clusters](server.md#datasource).
 
 ### Which model is tried first {#weight}
 
@@ -119,7 +58,8 @@ weight      = 0.75
 A weight is a number from 0 to 1 — how good you expect this model's answers to
 be, on the same scale as the ratings you record. Higher goes first. The default
 is `0.0`, so an entry you add without one is tried after every weighted model:
-give your own entries a weight if you want them competing on merit.
+give [your own entries](server.md#own-entry) a weight if you want them competing
+on merit.
 
 It is a starting point, not a fixed order. Every rating you record through
 [`record_quality()`](#quality) moves the model off its weight and toward what it
@@ -186,8 +126,8 @@ registry at startup, and the freshness becomes yours to keep — see
   never had a key for just disappears quietly — there is nothing to revoke.
 
 A removal is never silent: taking a provider away is what moves the usable-provider
-count, and the pool alarm [below](#pool-health) fires on the way down to one and
-to none.
+count, and the [pool alarm](monitoring.md#alerts) fires on the way down to one
+and to none.
 
 ### Where llmbroker keeps its own state {#state}
 
@@ -217,55 +157,6 @@ the same 429. Pass `home=` if you want a project to keep its own.
 To keep a database registry current from your own deploy job, see
 [Servers & clusters](server.md).
 
-### Watching the pool {#pool-health}
-
-One call answers "is this pool healthy?" — per-model facts and the pool-wide
-picture come off the same object:
-
-```python
-snap = llms.snapshot()
-
-print(f"{snap.providers_usable} of {snap.providers_total} providers usable")
-if snap.degraded:
-    print("one quota left — nothing to fail over to")
-
-for key in snap.missing_keys:
-    print(f"{key.api_key_ref} holds back {', '.join(key.entry_names)}")
-    print(key.help)                      # where to get it
-
-for key in snap.direct_missing_keys:     # your own models, reached by name
-    print(f"{key.api_key_ref} — direct({key.entry_names[0]!r}) will fail")
-    print(key.help)
-
-for name, llm in snap.items():           # still a mapping of name -> per-model facts
-    print(name, llm.has_key, llm.cooldown_until)
-```
-
-`direct_missing_keys` is separate from `missing_keys` on purpose: a model you
-declared is never routed, so a key it lacks cannot degrade the pool and the pool
-gaining a provider cannot fix it. Both carry the same `help` — from your own
-`[keys]` block if you wrote one, otherwise from the curated catalog.
-
-The unit is the provider, not the model: two entries sharing one API key are one
-quota and count once. A pool with one usable provider is **degraded** — it can
-still answer, but a rate limit has nowhere to spill. Revoke or rotate a key and
-the count follows on the next reconcile, so the numbers never lag behind your
-keys. Models you disabled yourself still count their provider; that verdict is on
-the per-model rows above.
-
-llmbroker logs the same verdict, so you can alert on it without polling. Both
-lines are `ERROR`, and you get one each time the state changes — including
-falling from the first to the second:
-
-```
-pool degraded, no failover left: 1 of 3 providers usable — no key for GEMINI_API_KEY, GROQ_API_KEY
-pool cannot serve any request: no provider has a key — no key for ...
-```
-
-A recovery logs one `INFO` (`pool recovered: 3 of 3 providers usable`); gaining a
-further provider after that is not worth a line. Missing keys on their own are
-never an alarm — two providers may be all you want.
-
 ## Calling the broker {#calling}
 
 ```python
@@ -283,11 +174,11 @@ reply = llms.chat([
 
 Every call also takes `trace_id=` — your own request or job id, stored on the
 journal rows the call leaves behind and never interpreted, so that the journal
-lines up with your logs. See [Tracing one request](server.md#trace).
+lines up with your logs. See [Tracing one request](monitoring.md#trace).
 
 To print the answer as it is written rather than all at once, the pool streams
 too — `async for delta in llms.stream(...)`, async-only, see
-[Async](async.md).
+[Streaming](async.md#streaming-from-the-pool).
 
 Scripts do not need to close the broker; when you do need to — see
 [Servers & clusters](server.md#closing).
@@ -347,7 +238,7 @@ Or persist `reply.call_id` and rate that one attempt: `llms.record_quality(0.0,
 call_id=saved_call_id)`. Exactly one of the two is required.
 
 A key is the way to rate a call you no longer hold. If you do still hold it —
-including the handle a [stream](direct.md#streaming-from-the-pool) hands back —
+including the handle a [stream](async.md#streaming-from-the-pool) hands back —
 its own `record_quality(...)` needs no key and no journal read. On a stream it
 becomes available once the answer is over, not while it is still arriving.
 

@@ -106,8 +106,8 @@ def _resolve_sync(sync: str | None | _SyncDefault, registry: object) -> str | No
 class AsyncBroker:
     """Façade over the LLM pool: route completions, inspect state, edit the catalog.
 
-    Every constructor argument is documented in ``docs/`` — see "Usage" for the
-    source, ``sync`` and ``home``, and "Direct model calls" for ``direct``.
+    Every constructor argument is documented in ``docs/`` — "Model pool and calls"
+    and "Direct model calls".
     """
 
     def __init__(  # noqa: PLR0913

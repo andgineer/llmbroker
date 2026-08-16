@@ -1,65 +1,56 @@
 # llmbroker
 
-Turn a crowd of free, rate-limited LLMs into one reliable model — no premium
-subscription, no single point of failure. No heavy dependencies like LangChain.
+Combine many free, rate-limited LLMs into one reliable model — with no premium
+subscription and no single point of failure. No heavyweight dependencies like
+LangChain.
 
 ## Quick start
 
-[Install llmbroker](installation.md), get a key, and call:
+[Install llmbroker](installation.md). Free models are called with the providers'
+API keys — which keys you need and where to get them, llmbroker tells you itself:
 
 ```bash
-llmbroker env freetier > .env   # which keys you need, and where to get them
+llmbroker env freetier > .env   # a .env skeleton: each key, and above it where to get it
 ```
+
+Fill in whichever are easy to get — one is enough — and call:
 
 ```python
 llms = llmbroker.Broker()
 print(llms.ask("Hello, how are you?").text)
 ```
 
-That is the whole setup — no config file. `Broker()` runs the curated pool of
-free models, reads your keys from the environment (and the `.env` in your working
-directory), and keeps the model list current by itself.
+That is the whole setup — no config file. `Broker()` brings up a curated pool of
+free models, reads keys from the environment (and from a `.env` in the working
+directory) and keeps the model list current by itself.
 
-Fill in whichever keys are easy to get: a model without a key simply stays
-inactive. When a model hits its rate limit, the broker cools it down and switches
-to the next one — you get an answer, not an error, as long as any model is up.
+A key you never got breaks nothing: a model without one simply stays inactive.
+And when a model hits its rate limit, the broker cools it down and moves to the
+next — you get an answer rather than an error, for as long as one model is alive.
 
-Need a paid model too? Name it — it is reached directly and never joins the pool:
+## What it can do
 
-```python
-llms = llmbroker.Broker(direct=["opus"])
-llms.ask("Summarise this")               # the free pool, routed and learned
-llms.direct("opus").ask("Now the hard part")   # Claude Opus, current version
-```
-
-Prefer your model list in a file you review? That still works — see
-[Usage](usage.md#file).
-
-## Where to go next
-
-| Your scenario | Read |
-|---|---|
-| **A simple script** | [Usage](usage.md): the pool, timeouts, quality rating |
-| **FastAPI, agents, workers** | [Async](async.md): the same API with `await` |
-| **Function calling** | [Tools & agents](tools.md): the whole tool loop in one call |
-| **Secrets already in AWS or Vault** | [API keys](secrets.md): the broker reads them right from there |
-| **Multiple instances, a shared DB** | [Servers & clusters](server.md): sqlite / Postgres / MongoDB, per-user keys |
-
-## Features
-
-- **No configuration** — `Broker()` takes no arguments at all; the curated pool
-  arrives and keeps itself current on its own.
-- **Automatic failover** — an error only when no one is left at all
+- **No configuration** — `Broker()` takes no arguments at all: the curated pool
+  arrives on its own and [keeps itself fresh](usage.md#sync).
+- **Automatic failover** — an error only once there is nobody left
   (`NoLLMAvailableError`).
-- **Chat, tools & agents** — `ask`, multi-turn `chat`, [tool calling](tools.md).
-- **Async-first** — [`AsyncBroker`](async.md); `Broker` is a blocking wrapper
-  around the same engine.
-- **Self-learning pool** — [rate the replies](usage.md#quality), weak models sink
-  to the back of the queue.
-- **Keys anywhere** — environment, `.env`, DB, [AWS, Vault](secrets.md) or your
-  own backend.
-- **Scale out without code changes** — a [shared DB](server.md) across instances,
-  a per-user key.
-- **[Disabling models](disable.md)** manually, plus a pool state snapshot.
+- **Chat, tools and agents** — `ask`, multi-turn `chat`, [the whole tool loop in
+  one function](tools.md).
+- **Async and streaming** — [the same API with `await`](async.md), and the answer
+  can be printed as the model writes it.
+- **A paid model by name** — [`direct("opus")`](direct.md) alongside the free
+  pool: an eternal alias instead of a version number, called directly, past the
+  pool.
+- **A pool that learns** — [rate the answers](usage.md#quality) and weak models
+  drop to the back of the queue.
+- **Keys anywhere** — the environment, `.env`, a DB, [AWS, Vault](secrets.md) or
+  storage of your own; a key per user.
+- **Scaling without code changes** — [a shared DB](server.md) across processes
+  and hosts, [an endpoint of your own in the same
+  routing](server.md#own-entry).
+- **You can see what happens** — [pool snapshot, call journal and
+  statistics](monitoring.md), tracing by your own `trace_id`, an alarm on
+  degradation.
+- **[Disabling models](disable.md)** by hand.
 
 Full API reference — [Reference](reference.md).

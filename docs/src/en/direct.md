@@ -64,7 +64,7 @@ gateway dropped into it would be spilled onto by a rate limit that has nothing t
 do with it, and would be handed traffic you meant for the free tier.
 
 An endpoint of your own *can* be a pool member — by [writing it into your
-registry](usage.md#own-entry), where a refresh never touches it. That is a
+registry](server.md#own-entry), where a refresh never touches it. That is a
 decision you make once and record there, not a side effect of naming a model you
 wanted to call. A registry holds pool members and nothing else, so putting a
 model there is the opposite choice from declaring it here.
@@ -109,7 +109,7 @@ that env var before the next call.
 A declaration you wrote out in full is never re-pointed: llmbroker was never told
 which catalog line it follows.
 
-## Stream and ask (async)
+## Stream and ask (async) {#streaming}
 
 ```python
 async with llmbroker.AsyncBroker(direct=["opus"]) as llms:
@@ -124,56 +124,8 @@ async with llmbroker.AsyncBroker(direct=["opus"]) as llms:
     print(result.text, result.usage)
 ```
 
-## Streaming from the pool
-
-You do not need `direct` to stream. The pool streams too, with routing and
-failover intact:
-
-```python
-stream = llms.stream("Write a haiku about brokers", operation="write")
-async for delta in stream:
-    print(delta, end="", flush=True)
-
-print(stream.llm_name, stream.usage)   # who answered, and what it cost
-await stream.record_quality(0.9)       # rate it without naming the call yourself
-```
-
-Failover works normally right up to the **first delta** — a rate-limited or
-broken model is cooled down and the next one takes over, invisibly. Once text
-has started arriving there is nothing left to fail over to, so a stream that
-dies mid-answer raises `StreamInterruptedError`; the deltas you already received
-stand. Pool streaming is async-only.
-
-That is also why the handle says nothing before the first delta: `llm_name` and
-`call_id` are `None` until then, because the call may still move to another
-model. `usage` fills in later still, when the answer is over.
-
-Rating waits for the same moment the counts do — the end of the answer, when the
-call reaches the journal. Ask earlier and you get a `ValueError` rather than a
-score that quietly goes nowhere.
-
-Stopping early is fine, but what hands the model's slot back is closing the
-stream: a `break` does not close the handle by itself — abandoned, it frees the
-slot only once Python collects it. Close it yourself; that is also the only way
-to score what you did receive, since closing is what ends the call.
-
-```python
-stream = llms.stream("Write a haiku about brokers")
-async for delta in stream:
-    if looks_wrong(delta):
-        break
-
-await stream.aclose()
-await stream.record_quality(0.0)
-```
-
-Or let a context manager close it — where there is nothing to score:
-
-```python
-async with contextlib.aclosing(llms.stream("...")) as stream:
-    async for delta in stream:
-        ...
-```
+This streams from the one model you named: no routing, no failover, no journal
+row. Streaming over the pool is in [Async & streaming](async.md#streaming-from-the-pool).
 
 ## Synchronous
 

@@ -4,12 +4,17 @@ You need none of this to use llmbroker — `Broker()` fetches the pool itself. T
 two commands cover the two things llmbroker cannot do for you: get you the
 provider keys, and show you which models the curated lists carry.
 
+There is no command that writes or refreshes a model list: a broker keeps its own
+list current [by itself](usage.md#sync), and a database registry is refreshed by
+your application's entrypoint calling `broker.sync("freetier")` — see
+[Servers & clusters](server.md#sync).
+
 Both work offline: a copy of both curated lists ships inside the package, so a
 machine with no network falls back to it rather than failing. That copy is frozen
 at the llmbroker release you installed, so when it is used the command says so on
 stderr.
 
-## env — generate a .env with the keys
+## env — generate a .env with the keys {#env}
 
 ```bash
 llmbroker env freetier > .env
@@ -34,7 +39,7 @@ Get the keys themselves from the providers and fill them in. A broker reads the
 always wins over it. Keys do not have to live in `.env` at all — see
 [API keys](secrets.md).
 
-## list — show what the curated lists carry
+## list — show what the curated lists carry {#list}
 
 ```bash
 llmbroker list
@@ -51,14 +56,3 @@ direct opus anthropic claude-opus-5 https://api.anthropic.com/v1 ANTHROPIC_API_K
 
 Declare the alias where you build the broker — `Broker(direct=["opus"])` — and
 call it with `broker.direct("opus")`. See [Direct model calls](direct.md).
-
-## What the CLI does not do
-
-There is no command that writes a model list, and none that refreshes one.
-A model you reach by name is declared in your own code, never stored. A broker
-keeps its own model list current by itself (see [Usage](usage.md#sync)), and a
-broker on a database registry is refreshed by its own entrypoint calling
-`broker.sync("freetier")` — see [Servers & clusters](server.md#sync). That keeps
-the connection config and its secrets in one place, and it keeps the merge where
-it can see the keys your application will actually resolve: a merge that cannot
-see them would keep every entry.

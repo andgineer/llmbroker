@@ -2,14 +2,10 @@
 
 Every model in the model list refers to its key by name; where the value comes
 from is up to the configured secrets backend. The default is environment
-variables and `.env`:
+variables and `.env`, and the skeleton with the hints is printed by
+[`llmbroker env`](cli.md#env).
 
-```bash
-llmbroker env freetier > .env
-```
-
-The command prints a skeleton with a hint above each key, where to get it. The
-same hints reach your own code through the registry's key-info capability.
+The same hints reach your own code through the registry's key-info capability.
 
 A model without a key simply stays inactive — the pool runs on whatever keys are
 present. That holds for every source below.

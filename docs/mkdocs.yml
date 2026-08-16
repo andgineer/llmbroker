@@ -49,5 +49,6 @@ nav:
   - direct.md
   - secrets.md
   - server.md
+  - monitoring.md
   - disable.md
   - cli.md

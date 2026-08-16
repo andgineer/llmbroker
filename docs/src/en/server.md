@@ -18,6 +18,50 @@ llmbroker.Broker("mongodb://host/db")       # mongodb
 Each variant needs its extra — see [Installation](installation.md). Any part can
 be overridden explicitly via `registry=` / `secrets=` / `store=`.
 
+### A registry of your own {#own-registry}
+
+To supply the pool yourself, pass an object implementing the registry protocol
+and say what it follows:
+
+```python
+llms = llmbroker.Broker(registry=MyRegistry(), sync=None)        # only your entries
+llms = llmbroker.Broker(registry=MyRegistry(), sync="freetier")  # yours plus ours
+```
+
+| you pass | `sync=` left out | entries you put there yourself |
+|---|---|---|
+| nothing, or a database URL | follows `"freetier"` | never touched by a refresh |
+| a registry object | an error — say which | never touched by a refresh |
+
+A refresh only ever rewrites what a sync itself wrote, so "the curated free pool
+plus two endpoints of my own, routed together" is just a registry with both in
+it.
+
+#### An entry of your own, in the pool {#own-entry}
+
+You put your own entry there through the registry protocol, not by writing rows:
+the table layout is llmbroker's own and may change between releases. Read what is
+there, add yours, write it all back — `mirror` is a total mirror, so anything you
+leave out is deleted:
+
+```python
+from llmbroker.models import LLMConfig
+from llmbroker.postgres import Registry
+
+registry = Registry(pool)
+mine = LLMConfig(
+    name="my-gateway",
+    base_url="https://gw.internal/v1",
+    model="m",
+    api_key_ref="MY_GATEWAY_KEY",
+)
+await registry.mirror([*await registry.load(), mine])
+```
+
+Nothing marks it as ours, so no sync ever removes or rewrites it. It is a pool
+member and the router fails over onto it — an endpoint you want reached by name
+instead is [a declared model](direct.md), which is not stored at all.
+
 ### Filling the DB: a deploy job, not a startup step {#sync}
 
 The DB starts empty. Sync it from your own code, in the same deploy step that
@@ -131,46 +175,8 @@ failed migrations already use; hosts that forward elsewhere can read
 ### Watching the pool from an admin screen {#pool-health}
 
 `snapshot()` is one call and answers the whole screen — the per-model rows plus
-the pool-wide verdict:
-
-```python
-snap = await llms.snapshot()
-
-health = {
-    "providers_usable": snap.providers_usable,
-    "providers_total": snap.providers_total,
-    "degraded": snap.degraded,
-    "missing_keys": [
-        {"ref": k.api_key_ref, "help": k.help, "holds_back": list(k.entry_names)}
-        for k in snap.missing_keys
-    ],
-}
-rows = [{"name": name, "has_key": llm.has_key} for name, llm in snap.items()]
-```
-
-The unit is the provider (`api_key_ref`), not the model: two entries on one key
-are one quota and one failure domain, so they count once. `degraded` is true
-while fewer than two providers are usable: at one the pool still answers but a
-rate limit has nowhere to spill, at none it no longer answers at all. A registry
-that pools nothing has no pool to degrade, so there it is false.
-
-**What to alert on.** llmbroker logs the same verdict, so alerting needs no
-polling. Both lines are `ERROR` on the `llmbroker.broker` logger, emitted once
-per change of state — the second fires even when the first already has, since
-losing your last provider is its own event — and both name the refs that are
-missing:
-
-```
-pool degraded, no failover left: 1 of 3 providers usable — no key for GEMINI_API_KEY
-pool cannot serve any request: no provider has a key — no key for ...
-```
-
-Recovery logs one `INFO`; further providers after that are silent. A pending key
-on its own is not an alarm; two working providers may be exactly what you
-provisioned. A key revoked in your secrets backend drops out of the count on the
-next reconcile, so the numbers never lag behind your keys. A model you disabled
-yourself still counts its provider — that verdict is already on the per-model
-rows, and the alarm is about keys.
+the pool-wide verdict — and llmbroker logs that same verdict, so alerting needs
+no polling. See [Monitoring and the journal](monitoring.md#pool-health).
 
 ## SQLite: sharing and WAL {#sqlite}
 
@@ -249,105 +255,12 @@ with llmbroker.Broker("broker.db") as llms:
 
 ## Call journal
 
-The journal cleans itself up; the retention depth is the journal backend's
-`retention` parameter (90 days by default). To read it: `llms.calls(limit=50)`.
-
-One row per call attempt, each carrying in `score` the quality rating you gave it
-(or `None`). Narrow the read by time, by operation, or by one of the ids you
-called with (see [Tracing one request](#trace)):
-
-```python
-from datetime import UTC, datetime, timedelta
-
-week_ago = datetime.now(UTC) - timedelta(days=7)
-llms.calls(limit=50, since=week_ago, operation="summarize")
-```
-
-The filters narrow the calls, never the ratings folded onto them: a verdict
-recorded a month after the call still shows up on it, and rating a call twice
-shows the newer verdict.
-
-`since` is inclusive. On MongoDB it is inclusive to the millisecond — BSON dates
-carry no finer precision, so both stored timestamps and the bound are rounded
-down to whole milliseconds.
-
-### Tracing one request {#trace}
-
-`ask`, `chat` and `stream` all take `trace_id=` — an id of your own that
-llmbroker writes onto every journal row the call produces and never interprets.
-Pass whatever your system already uses, a request id or a job id, and the journal
-lines up with your logs without a second correlation scheme of its own.
-
-```python
-llms.ask("Summarize this clause", operation="summarize", trace_id=request_id)
-```
-
-**One call is usually several rows.** Failover journals every attempt it made,
-and they all carry the same `trace_id` — which is what the field is for: the
-trace keeps the two models that rate-limited before the third one answered, and
-that is the evidence for why the request took as long as it did. The attempt that
-answered is the row whose `status` is `CallStatus.OK`; a stream that died after
-emitting deltas is not it, having never completed.
-
-```python
-from llmbroker.models import CallStatus
-
-rows = llms.calls(limit=200, trace_id=request_id)
-answered = next((c for c in rows if c.status is CallStatus.OK), None)
-```
-
-The filter runs inside the store, so `limit` caps the *matching* rows rather than
-the rows scanned — a trace made an hour and a million calls ago still comes back
-whole. On a DB backend the column is indexed; the file store has no index by
-construction, so there the filter buys correctness rather than speed.
-
-Pass `call_id=` to pull up a single attempt — `result.call_id` is exactly that
-value.
-
-Reusing one `trace_id` across several calls is fine and groups them: llmbroker
-only ever stores it. Both ids are also how you rate a call after the fact — see
-[Quality rating](usage.md#quality).
-
-### Statistics over a window
-
-`stats()` counts call records per model over a time window — how many calls each
-model made and how they ended:
-
-```python
-from llmbroker.models import CallStatus
-
-for name, s in llms.stats(since=week_ago).items():
-    failed = s.total - s.by_status.get(CallStatus.OK, 0)
-    print(name, s.total, failed, s.last_status, s.last_at)
-```
-
-Fields — in [`LLMStats`](reference.md#llmbroker.models.LLMStats).
-
-`by_status` holds only the statuses actually seen in the window, so count the
-failures by subtracting from `total` rather than by adding up the other statuses.
-Rating a call does not add a row, so it cannot inflate the counts. Pass
-`operation=` to count one operation only.
-
-What counts as a failure, how long the window should be, and how a model with no
-calls in the window should read are yours to decide; llmbroker returns the counts
-and no policy.
-
-`limit` (1000 by default) caps how many records are read — a guard against an
-anomalous window such as a retry storm, not the window itself. It must be at
-least 1. If the totals add up to exactly `limit`, the window may have been
-truncated: raise the limit or shorten the window.
-
-`since` must be timezone-aware (`datetime.now(UTC)`, not `datetime.now()`) — a
-naive bound is refused rather than guessed at, since guessing would shift the
-window by your machine's offset.
-
-`calls()` and `stats()` read the journal only: unlike `snapshot()`, neither
-initializes the model pool, so an admin screen still renders on an installation
-whose registry was never synced. Construct the broker directly for that —
-entering it as a context manager (`with Broker(...) as llms`) initializes the
-pool up front: on an installation that fetches nothing by itself that is
-`EmptyRegistryError`, and on an ordinary one a trip for the curated list, which a
-statistics screen has no use for.
+Every call attempt leaves a row: what answered, how it ended, what it cost, the
+`trace_id` you called it with, and how you rated it afterwards. The journal
+cleans itself up — the depth is the backend's `retention` parameter (90 days by
+default). It is read with `llms.calls(...)` and `llms.stats(...)`, neither of
+which initializes the pool, so both work on an installation that was never
+synced. See [Monitoring and the journal](monitoring.md#journal).
 
 ## One broker, a caller per request {#multiuser}
 
