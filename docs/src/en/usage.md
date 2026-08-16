@@ -285,7 +285,14 @@ Every call also takes `trace_id=` — your own request or job id, stored on the
 journal rows the call leaves behind and never interpreted, so that the journal
 lines up with your logs. See [Tracing one request](server.md#trace).
 
-Limit how long the whole call may take:
+To print the answer as it is written rather than all at once, the pool streams
+too — `async for delta in llms.stream(...)`, async-only, see
+[Async](async.md).
+
+Scripts do not need to close the broker; when you do need to — see
+[Servers & clusters](server.md#closing).
+
+### How long to wait for an answer {#wait}
 
 ```python
 try:
@@ -307,12 +314,7 @@ it is the only one left, and its next successful answer clears the mark.
 
 `wait=0` is the one exception: it means "do not queue", not "answer instantly" —
 every model that is free right now is tried, with no deadline of yours on the
-answer. Scripts do not need to close the broker; when you do need to — see
-[Servers & clusters](server.md#closing).
-
-To print the answer as it is written rather than all at once, the pool streams
-too — `async for delta in llms.stream(...)`, async-only, see
-[Async](async.md).
+answer.
 
 ## Quality rating {#quality}
 

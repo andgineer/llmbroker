@@ -11,15 +11,17 @@ llmbroker env freetier > .env
 The command prints a skeleton with a hint above each key, where to get it. The
 same hints reach your own code through the registry's key-info capability.
 
+A model without a key simply stays inactive — the pool runs on whatever keys are
+present. That holds for every source below.
+
+## The environment and `.env`
+
 A broker with no source of its own reads the `.env` in its working directory as a
 fallback. An exported environment variable always wins over the file, and a
 missing `.env` is simply no fallback. Nothing is installed for this: the file is
 parsed with the standard library (`KEY=VALUE` lines, `#` comments, no
 interpolation). Point it elsewhere explicitly with
 `secrets=llmbroker.Secrets("/etc/llmbroker.env")`.
-
-A model without a key simply stays inactive — the pool runs on whatever keys are
-present.
 
 ## Keys from code
 
