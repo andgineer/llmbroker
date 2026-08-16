@@ -4,7 +4,6 @@ from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.llms import AsyncLLMs
 from llmbroker.broker.report import format_report
 from llmbroker.broker.result import AsyncLLM, AsyncResult, StreamHandle
-from llmbroker.chat import arun_tool_loop, run_tool_loop
 from llmbroker.direct import AsyncDirectClient, DirectClient, DirectResult
 from llmbroker.exceptions import (
     AuthError,
@@ -34,6 +33,7 @@ from llmbroker.optimizer import Optimizer
 from llmbroker.standalone.secrets import DictSecrets, Secrets
 from llmbroker.standalone.store import FileStore, InMemoryStore
 from llmbroker.sync import LLM, Broker, LLMs, Result
+from llmbroker.tool_loop import arun_tool_loop, run_tool_loop
 
 __all__ = [
     "AsyncBroker",

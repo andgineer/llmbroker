@@ -202,11 +202,15 @@ is the maintainer's and was skipped.
 - **`Router.stream`'s `receipt=` is optional**, defaulting to a throwaway. That is what
   lets the router-level tests — including the two ownership tests the plan requires to
   pass untouched — keep calling `router.stream(ring, messages)` unchanged.
-- **`chat.py` gained a `TYPE_CHECKING` block** so both tool loops can be annotated with
-  what they now return (`AsyncResult` / the sync `Result`). The runtime cycle the existing
-  `# noqa` comments guard against is real; the annotations are not affected by it. This is
-  the first use of `TYPE_CHECKING` in the repo — say so if it is unwanted, and the two
-  return annotations come off instead.
+- **The tool loops moved out of `chat.py` into `tool_loop.py`.** Annotating what they now
+  return needs the sync `Result`, and `chat.py` cannot import it: `router.py` imports
+  `chat`, so `chat → sync → broker.broker → llms → router → chat` closes a cycle that
+  breaks a bare `import llmbroker`. The cycle was a symptom — `chat.py` holds the HTTP
+  primitives `router.py` reaches for, while the loops sit *above* the broker and only ever
+  call its `chat`. Out of that file they import `AsyncResult` and `Result` for real, with
+  no `TYPE_CHECKING` block and no string annotations. `execute_tool_calls` went with them
+  (it runs the host's own functions); `parse_tool_calls`, which reads the wire format,
+  stayed. `tests/test_tool_loop.py` mirrors the split.
 - **`StreamHandle` is exported from the top-level package**, next to `AsyncResult`: it is
   now a public return type a host may want to name.
 - **One test outside the plan's list changed**: `test_router.py`'s
