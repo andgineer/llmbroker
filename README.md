@@ -11,8 +11,8 @@ llmbroker env freetier > .env   # which API keys to get, and where
 ```
 
 ```python
-llms = llmbroker.Broker()       # no config file: the curated pool of free models
-reply = llms.ask("Explain decorators in one sentence")
+broker = llmbroker.Broker()     # no config file: the curated pool of free models
+reply = broker.ask("Explain decorators in one sentence")
 print(reply.text)   # groq rate-limited? gemini answers instead
 ```
 
@@ -25,11 +25,13 @@ tasks. Set it up once, never administer it.
 
 | | |
 |---|---|
-| **Automatic failover** | `llms.ask(...)` — next model answers when one is down |
-| **Chat, tools & agents** | `llms.chat(messages, tools=...)`, `run_tool_loop(...)` |
-| **Async-first** | `AsyncBroker` — same engine, for FastAPI / agents / workers |
+| **Automatic failover** | `broker.ask(...)` — next model answers when one is down |
+| **Chat, tools & agents** | `broker.chat(messages, tools=...)`, `run_tool_loop(...)` |
+| **Async & streaming** | `AsyncBroker` — same engine for FastAPI / agents / workers, token by token |
+| **A paid model by name** | `Broker(direct=["opus"])` — an eternal alias, called past the pool |
 | **Scale out** | `Broker("postgresql://…")` — sqlite / Postgres / MongoDB, calling code unchanged |
-| **Self-regulating pool** | `reply.record_quality(0.3)` — weak models sink per task kind; rate later with `llms.record_quality(...)` |
+| **Self-regulating pool** | `reply.record_quality(0.3)` — weak models sink per task kind; rate later with `broker.record_quality(...)` |
+| **Nothing hidden** | `broker.snapshot()`, the call journal, tracing by your own `trace_id` |
 | **Pluggable secrets** | env vars, DB, AWS, Vault, or your own backend |
 | **Multi-user mode** | per-user API keys on top of one shared pool |
 
