@@ -33,7 +33,7 @@ The preset name is the whole argument, so the command works the same before you
 have anything local and on a broker whose registry lives in a database. The
 presets you can name:
 
-- `freetier` — free endpoints from Groq, OpenRouter and Gemini
+- `freetier` — free endpoints from Groq, OpenRouter, Gemini and Z.AI
 
 Get the keys themselves from the providers and fill them in. A broker reads the
 `.env` in its working directory automatically; an exported environment variable

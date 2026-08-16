@@ -83,12 +83,15 @@ def test_registry_satisfies_key_info_protocol(tmp_path):
 
 def test_shipped_freetier_preset_configs_load():
     configs = asyncio.run(Registry("src/llmbroker/presets/freetier.toml").load())
-    assert len(configs) == 4
+    assert configs
+    assert all(c.model and c.api_key_ref and 0.0 < c.weight <= 1.0 for c in configs)
 
 
 def test_shipped_freetier_preset_key_info_extra_passthrough():
-    info = asyncio.run(Registry("src/llmbroker/presets/freetier.toml").key_info())
-    assert len(info) == 3
-    assert info["GEMINI_API_KEY"].extra == {"effort": "oauth", "value": "high"}
-    assert info["GROQ_API_KEY"].extra == {"effort": "signup", "value": "good"}
-    assert info["OPENROUTER_API_KEY"].extra == {"effort": "signup", "value": "high"}
+    """Every pooled key carries the onboarding metadata the curation rules require;
+    the counts move with each catalog refresh, the passthrough does not."""
+    registry = Registry("src/llmbroker/presets/freetier.toml")
+    configs = asyncio.run(registry.load())
+    info = asyncio.run(registry.key_info())
+    assert {c.api_key_ref for c in configs} == set(info)
+    assert all(i.help and set(i.extra) == {"effort", "value"} for i in info.values())

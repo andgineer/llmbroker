@@ -118,29 +118,38 @@ routed pool, so nothing would read one.
 
 ## Curated providers
 
-Last refreshed 2026-08-01.
+Last refreshed 2026-08-16.
 
 | Key (`api_key_ref`) | Best free model | Effort | Value | RPM | RPD | Get a key |
 |---|---|---|---|---|---|---|
-| `GEMINI_API_KEY` | Gemini 3.5 Flash-Lite | `oauth` | `high` | 15 | 500 | <https://aistudio.google.com/apikey> |
+| `GEMINI_API_KEY` | Gemini 3.5 Flash-Lite | `oauth` | `high` | 30 | 1,500 | <https://aistudio.google.com/apikey> |
 | `GROQ_API_KEY` | openai/gpt-oss-120b | `signup` | `good` | 30 | 1,000 | <https://console.groq.com/keys> |
 | `OPENROUTER_API_KEY` | Nemotron 3 Ultra + Laguna S 2.1 `:free` | `signup` | `high` | 20 | 50 / 1,000 | <https://openrouter.ai/keys> |
+| `ZAI_API_KEY` | GLM-4.7-Flash | `signup` | `good` | not published | not published | <https://z.ai/manage-apikey/apikey-list> |
 
 Per-provider notes:
 
-- **Gemini** — the free tier reaches the whole Flash family, but at sharply
-  different daily caps: the Flash models (2.5 / 3.5 / 3.6) get 20 RPD, while
-  Flash-Lite gets 500 RPD at 15 RPM. Flash-Lite is therefore the pooled entry —
-  25× the daily cap for the same Artificial Analysis intelligence index (50, tied
-  with 3.6 Flash). Pro-series models are paid-only. Limits are per-project and
-  shown in the AI Studio dashboard, so these figures are nominal and may vary by
-  project/region/billing state.
+- **Gemini** — the free tier reaches the whole Flash family, the newest one
+  included; the Pro series is paid-only. Google publishes no free-tier limit
+  table anywhere, pointing instead at the per-project AI Studio dashboard, so the
+  figures above come from the community trackers and are nominal — they vary by
+  project, region and billing state. On those figures Flash-Lite and its Flash
+  siblings share one daily cap and Flash-Lite has twice the requests per minute,
+  which is why Flash-Lite stays the pooled entry although the newest Flash is the
+  more capable model. Moving the entry to a Flash needs a first-party number: the
+  daily cap is the outage that matters, and no first-party source confirms one.
 - **Groq** — only Groq's *production* models belong in the pool; preview models
   are documented as evaluation-only. `openai/gpt-oss-120b` is the strongest of
   those, and carries double the daily token cap of llama-3.3-70b-versatile
   (200K vs 100K TPD) at the same 1,000 RPD. Groq's standout is extreme inference
   speed. Limits apply at the organization level; cached tokens do not count
   toward them.
+- **Z.AI** — the GLM Flash models are free on Z.AI's own price list rather than
+  trial credits, and the key is an email signup with no card. No request-rate
+  table is published for them; the trackers report a one-concurrent-request cap,
+  which a pool absorbs — a busy moment fails over instead of queueing. The pooled
+  entry is the newest free text model; the full GLM flagship line is paid, so
+  this key unlocks one genuinely useful model rather than a family.
 - **OpenRouter** — aggregator access to many free models under one key, but the
   free roster churns hard: endpoints are delisted with no notice (`openai/gpt-oss-120b:free`
   disappeared entirely, leaving only the paid variant), so this entry needs
@@ -209,11 +218,12 @@ is carried.
 ## Candidate providers (not yet in the catalog)
 
 - **Cerebras** — extremely fast, and the only free tier here with no daily
-  *request* cap (5 RPM, 30K TPM, 1M TPD). Held back for two reasons: its one
-  production model is the `gpt-oss-120b` the Groq entry already carries, so it
-  buys another quota bucket rather than another capability (its `zai-glm-4.7` and
-  `gemma-4-31b` are preview-only); and free credits now require adding a verified
-  payment method, which makes it `verify`, not `signup`.
+  *request* cap (5 RPM, 30K TPM, 1M TPD, every catalog model). Held back for two
+  reasons: its strongest model is the `gpt-oss-120b` the Groq entry already
+  carries, so it buys another quota bucket rather than another capability; and
+  what is free is $5 of credits that expire 30 days after they are granted, which
+  makes it a trial rather than a standing free tier — a pooled entry would go
+  dead a month after onboarding.
 - **Mistral La Plateforme** — free "Experiment" tier requires phone verification
   and opting into data-training (`verify`).
 
@@ -233,9 +243,15 @@ Authoritative provider docs (best for exact numbers):
   rate limits — <https://ai.google.dev/gemini-api/docs/rate-limits> (which publishes
   no free-tier table, pointing instead at the per-project dashboard at
   <https://aistudio.google.com/rate-limit>)
+- Z.AI free models — <https://docs.z.ai/guides/overview/pricing>; model ids —
+  <https://docs.z.ai/guides/llm/glm-4.7>; OpenAI-compatible endpoint —
+  <https://docs.z.ai/api-reference/introduction>
+- Cerebras free-trial limits — <https://inference-docs.cerebras.ai/support/rate-limits>
 
 Community trackers (breadth, cross-checking):
 
-- `cheahjs/free-llm-api-resources` — the canonical maintained list.
-- `mnfst/awesome-free-llm-apis`, `amardeeplakshkar/awesome-free-llm-apis`,
-  `open-free-llm-api/awesome-freellm-apis` — overlapping, machine-readable.
+- `mnfst/awesome-free-llm-apis` — the freshest of them, and the only source for
+  the Gemini free-tier numbers, which no first-party page carries.
+- `amardeeplakshkar/awesome-free-llm-apis`,
+  `open-free-llm-api/awesome-freellm-apis` — overlapping and machine-readable,
+  but both lag a model generation behind, so cross-check a number before using it.

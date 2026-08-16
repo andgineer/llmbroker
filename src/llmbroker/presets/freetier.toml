@@ -35,6 +35,13 @@ model       = "gemini-3.5-flash-lite"
 api_key_ref = "GEMINI_API_KEY"
 weight      = 0.75
 
+[[llms]]
+name        = "zai-glm-4.7-flash"
+base_url    = "https://api.z.ai/api/paas/v4"
+model       = "glm-4.7-flash"
+api_key_ref = "ZAI_API_KEY"
+weight      = 0.55
+
 # Per-provider onboarding: how to get the key, how hard it is (effort), and how
 # good the model it unlocks is (value). See specs/reference/freetier-providers.md
 # for the taxonomies and the sources behind these numbers.
@@ -52,3 +59,8 @@ help   = "Create a free API key at [openrouter](https://openrouter.ai/keys)."
 effort = "oauth"
 value  = "high"
 help   = "Create a free API key at [aistudio](https://aistudio.google.com/apikey) (Google AI Studio)."
+
+[keys.ZAI_API_KEY]
+effort = "signup"
+value  = "good"
+help   = "Create a free API key at [z.ai](https://z.ai/manage-apikey/apikey-list) (register with an email, no card)."
