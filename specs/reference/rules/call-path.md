@@ -49,10 +49,16 @@ propagates untouched.
 **A client request error fails over without cooling anything.** It excludes the
 offending model for the rest of that call only — a later request may use it
 immediately. When every candidate rejects the request this way, the last
-provider error is re-raised rather than a generic "no LLM available": the fault
+provider error is raised rather than a generic "no LLM available": the fault
 is in the request and only the provider's own error is actionable. It also
 outranks a `wait` budget that expires later in the same call — an error the
 caller can act on beats "the clock ran out".
+
+**What surfaces is llmbroker's own provider-error type, carrying the status and a
+body snippet — the same type a direct call raises on the same answer.** One
+mapping serves both call paths, so a host catches one hierarchy rather than also
+catching the transport library's exceptions, which invariant 20 does not admit as
+a contract.
 
 **Malformed means malformed in the answer.** A reported token count that no
 64-bit integer column can hold is discarded and the answer returned. The reply

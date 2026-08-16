@@ -5,8 +5,10 @@
 окружения и `.env`, а заготовку с подсказками печатает
 [`llmbroker env`](cli.md#env).
 
-Те же подсказки доступны и вашему коду — через возможность реестра отдавать
-key-info.
+Те же подсказки приходят и вашему коду, готовыми: у каждого недостающего ключа в
+[снимке пула](monitoring.md#pool-health) есть поле `help`, и оно же есть в
+[отчёте о синхронизации](usage.md#sync). Так что экран «чего не хватает» строится
+без вашего собственного справочника провайдеров.
 
 Модель без ключа просто остаётся неактивной — пул работает на тех ключах, что
 есть. Это верно для любого источника ниже.
@@ -38,13 +40,13 @@ from llmbroker.aws import Secrets as AwsSecrets
 async with llmbroker.AsyncBroker(
     "postgresql://host/db",
     secrets=AwsSecrets(region_name="us-east-1"),
-) as llms:
-    reply = await llms.ask("Привет")
+) as broker:
+    reply = await broker.ask("Привет")
 ```
 
 Имена секретов — `llmbroker/{имя ключа}`; префикс настраивается.
 
-## HashiCorp Vault
+## HashiCorp Vault {#vault}
 
 Установите extra `llmbroker[vault]`:
 
@@ -56,6 +58,12 @@ secrets = VaultSecrets(url="https://vault.example.com", token="s.xxx")
 
 KV v2, путь `llmbroker/{имя ключа}`; точка монтирования настраивается через
 `mount_point=`.
+
+Одна особенность — [ключи на пользователя](server.md#multiuser). В KV слэш это
+разделитель каталогов, поэтому в пути имя `u-42/GROQ_API_KEY` схлопывается в один
+сегмент `u-42__GROQ_API_KEY`. Вам это видно только при ручном просмотре хранилища;
+но ref, в котором `__` уже есть, этот бэкенд отвергает — переименуйте ref или
+скоуп.
 
 ## Ключи в БД
 
@@ -71,4 +79,6 @@ llmbroker.AsyncBroker("postgresql://host/db", secrets=llmbroker.Secrets())
 ## Свой ключ на пользователя
 
 В многопользовательском приложении ключ ищется сначала по пользователю, потом
-общий — см. [scope](server.md#multiuser).
+общий. Ключ пользователя кладут в то же хранилище под именем `<скоуп>/<REF>` —
+например `u-42/GROQ_API_KEY`, — и вызывающий, созданный через `for_scope("u-42")`,
+возьмёт его вместо общего. Подробно — [scope](server.md#multiuser).

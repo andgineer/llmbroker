@@ -4,8 +4,8 @@
 methods are the same, just with `await`:
 
 ```python
-async with llmbroker.AsyncBroker() as llms:
-    reply = await llms.ask("Hello")
+async with llmbroker.AsyncBroker() as broker:
+    reply = await broker.ask("Hello")
     print(reply.text)
 ```
 
@@ -18,7 +18,7 @@ Streaming is async-only — the pool yields deltas as they arrive, with routing
 and failover intact:
 
 ```python
-stream = llms.stream("Write a haiku about brokers", operation="write")
+stream = broker.stream("Write a haiku about brokers", operation="write")
 async for delta in stream:
     print(delta, end="", flush=True)
 
@@ -49,7 +49,7 @@ slot only once Python collects it. Close it yourself; that is also the only way
 to score what you did receive, since closing is what ends the call.
 
 ```python
-stream = llms.stream("Write a haiku about brokers")
+stream = broker.stream("Write a haiku about brokers")
 async for delta in stream:
     if looks_wrong(delta):
         break
@@ -61,7 +61,7 @@ await stream.record_quality(0.0)
 Or let a context manager close it — where there is nothing to score:
 
 ```python
-async with contextlib.aclosing(llms.stream("...")) as stream:
+async with contextlib.aclosing(broker.stream("...")) as stream:
     async for delta in stream:
         ...
 ```
@@ -75,8 +75,8 @@ sqlite holds the models, the keys and the journal in one file — enough for a
 single-process service — and the curated model list fills it on the first call:
 
 ```python
-async with llmbroker.AsyncBroker("broker.db") as llms:
-    print((await llms.ask("Hello")).text)
+async with llmbroker.AsyncBroker("broker.db") as broker:
+    print((await broker.ask("Hello")).text)
 ```
 
 The database starts empty and is filled before the pool is provisioned, so there

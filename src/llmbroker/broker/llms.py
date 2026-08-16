@@ -4,7 +4,7 @@ journal rows carry and the keys it may pay with. Built by the broker only."""
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import aclosing
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -32,9 +32,13 @@ logger = logging.getLogger("llmbroker.broker")
 
 _DEFAULT_STATS_LIMIT = 1000
 
-# A rating key resolves through a bounded read: one trace covers a request's
-# attempts, and a host reusing one across a whole session gets the warning instead.
-_RATING_PAGE = 100
+# How far back a rating key is looked up: an older verdict could not outlive one
+# rebuild of the quality window, so it does not earn a scan (rules/selection.md).
+_RATING_WINDOW = timedelta(days=7)
+
+# One call's attempts: enough that the answered row is in the page even after failover
+# wrote several, small enough that a reused trace is a warning rather than a scan.
+_RATING_PAGE = 20
 
 
 class AsyncLLMs:
@@ -259,38 +263,46 @@ class AsyncLLMs:
         call_id: str | None = None,
         trace_id: str | None = None,
     ) -> None:
-        """Rate a past call, by exactly one key — a trace rates every attempt under it
-        that answered. Raises ``UnknownCallError`` when the key names no answered call.
-        See ``docs/`` "Quality rating"."""
+        """Rate a past call, by exactly one key — one rating, on the newest answered
+        call the key names within the rating window. Raises ``UnknownCallError`` when
+        nothing there answered. See ``docs/`` "Quality rating"."""
         check_score(score)
         if (call_id is None) == (trace_id is None):
             raise ValueError(
                 "record_quality() takes exactly one of call_id= or trace_id= —"
                 " a rating names the call it rates",
             )
-        rated = await self._resolve_rated(call_id=call_id, trace_id=trace_id)
-        for row in rated:
-            await self._store.record_quality(row.id, score, scope=self.scope)
-            if self._learner is not None:
-                self._learner.record_quality_observed(row.llm_name, row.operation, row.id, score)
+        row = await self._resolve_rated(call_id=call_id, trace_id=trace_id)
+        await self._store.record_quality(row.id, score, scope=self.scope)
+        if self._learner is not None:
+            self._learner.record_quality_observed(row.llm_name, row.operation, row.id, score)
 
-    async def _resolve_rated(self, *, call_id: str | None, trace_id: str | None) -> list[Call]:
-        """The answered attempts a rating key names. A page that comes back full may
-        have left attempts unrated, so it is reported rather than silently truncated."""
+    async def _resolve_rated(self, *, call_id: str | None, trace_id: str | None) -> Call:
+        """The one call a rating key names: the newest that answered, inside the window.
+        A trace naming more rows than one call's attempts is the host reusing it, which
+        is reported — the rating still lands on exactly one call."""
         key = f"call_id={call_id!r}" if call_id is not None else f"trace_id={trace_id!r}"
-        rows = await self.calls(limit=_RATING_PAGE, call_id=call_id, trace_id=trace_id)
-        if len(rows) == _RATING_PAGE:
+        # A call id names one row; a trace names one call's attempts.
+        limit = 1 if call_id is not None else _RATING_PAGE
+        rows = await self.calls(
+            limit=limit,
+            since=datetime.now(UTC) - _RATING_WINDOW,
+            call_id=call_id,
+            trace_id=trace_id,
+        )
+        if trace_id is not None and len(rows) == _RATING_PAGE:
             logger.warning(
-                "record_quality: %s resolved to %d rows, the read bound — attempts past"
-                " it are not rated",
+                "record_quality: %s matched the %d-row read bound — a trace names one"
+                " call, so the rating lands on the newest that answered under it",
                 key,
                 _RATING_PAGE,
             )
-        answered = [row for row in rows if row.status is CallStatus.OK]
-        if not answered:
+        answered = next((row for row in rows if row.status is CallStatus.OK), None)
+        if answered is None:
             raise UnknownCallError(
-                f"no answered call found for {key} — retention may have purged it,"
-                " or every attempt under it failed",
+                f"no answered call found for {key} within the last"
+                f" {_RATING_WINDOW.days} days — it may be older than that, purged by"
+                " retention, or every attempt under it failed",
             )
         return answered
 

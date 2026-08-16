@@ -11,7 +11,13 @@ import pytest
 from llmbroker.broker.learning import Learner
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.router import Router, _Outcome
-from llmbroker.exceptions import NoLLMAvailableError
+from llmbroker.exceptions import (
+    AuthError,
+    LLMRequestError,
+    NoLLMAvailableError,
+    ProviderError,
+    RateLimitError,
+)
 from llmbroker.models import LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
 from llmbroker.standalone.store import InMemoryStore
@@ -372,16 +378,22 @@ def test_400_fails_over_without_cooling_and_leaves_no_cooldown_on_the_row():
     asyncio.run(run())
 
 
-def test_both_models_400_propagates_the_second_http_error():
+def test_every_model_rejecting_the_request_raises_the_provider_error():
+    """The last rejection surfaces as llmbroker's own ProviderError, never as the
+    transport library's exception: a host catches one hierarchy, not two."""
+
     async def run():
         a, b = _cfg("a"), _cfg("b")
         pool = await _pool(a, b)
         router = _router(pool)
         err_a, err_b = _http_status_error(400), _http_status_error(400)
         with patch(_PATCH, new=AsyncMock(side_effect=[err_a, err_b])):
-            with pytest.raises(httpx.HTTPStatusError) as exc_info:
+            with pytest.raises(ProviderError) as exc_info:
                 await router.chat(make_ring(), [{"role": "user", "content": "hi"}])
-        assert exc_info.value is err_b
+        raised = exc_info.value
+        assert isinstance(raised, LLMRequestError)
+        assert not isinstance(raised, (AuthError, RateLimitError, httpx.HTTPError))
+        assert (raised.status, raised.detail) == (400, "HTTP 400")
 
     asyncio.run(run())
 

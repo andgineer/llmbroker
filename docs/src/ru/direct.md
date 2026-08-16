@@ -13,8 +13,8 @@
 ## Объявить и вызвать
 
 ```python
-llms = llmbroker.Broker(direct=["opus"])
-llms.direct("opus").ask("...")
+broker = llmbroker.Broker(direct=["opus"])
+broker.direct("opus").ask("...")
 ```
 
 `"opus"` — **алиас** из курируемого каталога платных провайдеров, вечная ручка.
@@ -47,8 +47,8 @@ gateway = LLMConfig(
     base_url="https://api.anthropic.com/v1",   # любой OpenAI-совместимый endpoint
     api_key_ref="ANTHROPIC_API_KEY",
 )
-llms = llmbroker.Broker(direct=[gateway])
-llms.direct(name="frontier").ask("...")
+broker = llmbroker.Broker(direct=[gateway])
+broker.direct(name="frontier").ask("...")
 ```
 
 Такая модель ваша вплоть до версии: никакое обновление её не тронет, потому что
@@ -114,8 +114,8 @@ direct=: opus: claude-opus-4-8 -> claude-opus-5
 ## Стриминг и ask (async) {#streaming}
 
 ```python
-async with llmbroker.AsyncBroker(direct=["opus"]) as llms:
-    client = await llms.direct("opus")
+async with llmbroker.AsyncBroker(direct=["opus"]) as broker:
+    client = await broker.direct("opus")
 
     # стриминг — async-итератор текстовых дельт
     async for delta in client.stream("Напиши хокку про брокеров"):
@@ -135,12 +135,12 @@ async with llmbroker.AsyncBroker(direct=["opus"]) as llms:
 async-only):
 
 ```python
-with llmbroker.Broker(direct=["opus"]) as llms:
-    result = llms.direct("opus").ask("...")
+with llmbroker.Broker(direct=["opus"]) as broker:
+    result = broker.direct("opus").ask("...")
     print(result.text)
 ```
 
-## Ошибки
+## Ошибки {#errors}
 
 Прямые вызовы бросают из одной иерархии под `LLMRequestError`:
 

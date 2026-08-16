@@ -34,8 +34,8 @@ class SyncRefusedError(LLMBrokerError):
 
 
 class UnknownCallError(LLMBrokerError):
-    """The key a rating named matched no answered call in the journal — it was purged
-    by retention, never existed, or every attempt under it failed."""
+    """The key a rating named matched no answered call inside the rating window — it
+    is older than that, was purged by retention, never existed, or never answered."""
 
 
 class SchemaVersionError(LLMBrokerError):

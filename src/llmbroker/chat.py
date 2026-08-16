@@ -11,7 +11,13 @@ from typing import Any
 
 import httpx
 
-from llmbroker.exceptions import InvalidProviderResponseError
+from llmbroker.exceptions import (
+    AuthError,
+    InvalidProviderResponseError,
+    ProviderError,
+    RateLimitError,
+)
+from llmbroker.http_status import is_auth_failure, is_rate_limit
 from llmbroker.models import LLMConfig, Usage
 
 _CHAT_PATH = "/chat/completions"
@@ -36,6 +42,25 @@ def retry_after_seconds(headers: Mapping[str, str], default_sec: int) -> int:
     if when.tzinfo is None:
         when = when.replace(tzinfo=UTC)
     return max(0, int((when - datetime.now(UTC)).total_seconds()))
+
+
+def provider_error(status: int, detail: str, headers: Mapping[str, str]) -> ProviderError:
+    """Map an error HTTP status onto the provider-error hierarchy — the one mapping
+    both call paths use, so a pooled call and a direct one report the same failure
+    as the same type."""
+    if is_auth_failure(status):
+        return AuthError(f"provider rejected the key (HTTP {status})", status=status, detail=detail)
+    if is_rate_limit(status):
+        retry_after = None
+        if headers.get("Retry-After") is not None:
+            retry_after = retry_after_seconds(headers, 0)
+        return RateLimitError(
+            f"provider rate-limited or unavailable (HTTP {status})",
+            status=status,
+            detail=detail,
+            retry_after=retry_after,
+        )
+    return ProviderError(f"provider returned HTTP {status}", status=status, detail=detail)
 
 
 def build_chat_request(  # noqa: PLR0913

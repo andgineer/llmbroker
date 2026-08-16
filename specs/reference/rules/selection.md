@@ -68,10 +68,19 @@ reply = await llms.ask("Summarize this contract clause", operation="summarize")
 reply.record_quality(0.9)  # rated on the "summarize" bucket specifically
 ```
 
-A rating may arrive at any time after the call, not only through the live result
-while the host still holds it: a rating names the call it rates, and it lands for
-as long as the journal still holds that call — counting toward the model and the
-operation read off it. Past retention there is no call left to name.
+A rating may arrive after the call, not only through the live result while the
+host still holds it: a rating names the call it rates, and counts toward the
+model and the operation read off that call. Reaching one by key instead — its own
+id, or the trace its request was made under — is a journal lookup, and that
+lookup is bounded to a recent window: a verdict older than the tail a rebuild
+re-derives from could not survive one anyway
+([`decisions.md`](../decisions.md#a-rating-names-the-call-it-rates)). Outside the
+window the rating is refused rather than resolved by scanning the journal. The
+live result carries what it needs and is bounded by nothing.
+
+**A key names one call, and one rating lands.** A trace is one request; a host
+that puts one on several calls is rating the newest of them that answered, and is
+told so. Rating a specific one is what a call id is for.
 
 There is no global verdict — demotion is always per `(model, operation)`.
 Recovery is exactly: new ratings that push the window's bound back above the

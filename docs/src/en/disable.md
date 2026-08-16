@@ -3,9 +3,9 @@
 Take a model out of routing manually — completely, until you enable it back:
 
 ```python
-llms.disable_llm("groq-llama")
+broker.disable_llm("groq-llama")
 # ... later ...
-llms.enable_llm("groq-llama")
+broker.enable_llm("groq-llama")
 ```
 
 The verdict survives a preset `sync` and does not touch the model's accumulated
@@ -14,7 +14,7 @@ quality history.
 A pool state snapshot shows who is disabled — one entry per model:
 
 ```python
-for name, entry in llms.snapshot().items():
+for name, entry in broker.snapshot().items():
     print(name, entry.disabled, entry.has_key, entry.cooldown_until, entry.demoted_operations)
 ```
 

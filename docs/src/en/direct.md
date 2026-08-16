@@ -12,8 +12,8 @@ route and learn; naming one raises `PoolModelError`.
 ## Declare it and call it
 
 ```python
-llms = llmbroker.Broker(direct=["opus"])
-llms.direct("opus").ask("...")
+broker = llmbroker.Broker(direct=["opus"])
+broker.direct("opus").ask("...")
 ```
 
 `"opus"` is an **alias** from a curated catalog of paid providers — an eternal
@@ -48,8 +48,8 @@ gateway = LLMConfig(
     base_url="https://api.anthropic.com/v1",   # any OpenAI-compatible endpoint
     api_key_ref="ANTHROPIC_API_KEY",
 )
-llms = llmbroker.Broker(direct=[gateway])
-llms.direct(name="frontier").ask("...")
+broker = llmbroker.Broker(direct=[gateway])
+broker.direct(name="frontier").ask("...")
 ```
 
 That one is yours down to the version: no refresh ever touches it, because
@@ -112,8 +112,8 @@ which catalog line it follows.
 ## Stream and ask (async) {#streaming}
 
 ```python
-async with llmbroker.AsyncBroker(direct=["opus"]) as llms:
-    client = await llms.direct("opus")
+async with llmbroker.AsyncBroker(direct=["opus"]) as broker:
+    client = await broker.direct("opus")
 
     # streaming — an async iterator of text deltas
     async for delta in client.stream("Write a haiku about brokers"):
@@ -133,12 +133,12 @@ The blocking `Broker` offers `direct(...)` too, with `ask()` only (streaming is
 async-only):
 
 ```python
-with llmbroker.Broker(direct=["opus"]) as llms:
-    result = llms.direct("opus").ask("...")
+with llmbroker.Broker(direct=["opus"]) as broker:
+    result = broker.direct("opus").ask("...")
     print(result.text)
 ```
 
-## Errors
+## Errors {#errors}
 
 Direct calls raise from one hierarchy under `LLMRequestError`:
 

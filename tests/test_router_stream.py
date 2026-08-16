@@ -15,6 +15,7 @@ from llmbroker.direct import AsyncDirectClient
 from llmbroker.exceptions import (
     InvalidProviderResponseError,
     NoLLMAvailableError,
+    ProviderError,
     StreamInterruptedError,
 )
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
@@ -581,12 +582,13 @@ def test_stream_reraises_the_provider_error_when_every_candidate_rejects_the_req
         pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
         router = Router(pool, store)
         _mount(router, lambda _r: httpx.Response(400, text="messages[0].role is invalid"))
-        with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        with pytest.raises(ProviderError) as exc_info:
             await _drain(router)
         return exc_info.value, pool
 
     err, pool = asyncio.run(run())
-    assert err.response.status_code == 400  # noqa: PLR2004
+    assert err.status == 400  # noqa: PLR2004
+    assert err.detail == "messages[0].role is invalid"
     assert [(c.llm_name, c.status) for c in store.calls] == [
         ("a", CallStatus.ERROR),
         ("b", CallStatus.ERROR),

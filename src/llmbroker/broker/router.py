@@ -24,11 +24,13 @@ from llmbroker.chat import (
     build_chat_request,
     call_provider,
     parse_stream_chunk,
+    provider_error,
     retry_after_seconds,
 )
 from llmbroker.exceptions import (
     InvalidProviderResponseError,
     NoLLMAvailableError,
+    ProviderError,
     StreamInterruptedError,
 )
 from llmbroker.http_status import (
@@ -56,7 +58,7 @@ class _Failed:
     genuine client error (never for a dead key), so the router can decide
     whether to surface it once every candidate is exhausted."""
 
-    error: httpx.HTTPStatusError | None
+    error: ProviderError | None
 
 
 @dataclass(frozen=True)
@@ -178,7 +180,14 @@ def _classify_status(exc: httpx.HTTPStatusError) -> _Verdict:
         # take it from every other caller over one caller's rejected key.
         return _Verdict(CallStatus.ERROR, detail, http_status=code, outcome=_Failed(error=None))
     if is_client_error(code):
-        return _Verdict(CallStatus.ERROR, detail, http_status=code, outcome=_Failed(error=exc))
+        # Mapped here, not at the re-raise: what a caller finally sees is llmbroker's
+        # own provider error, never the transport library's exception type.
+        return _Verdict(
+            CallStatus.ERROR,
+            detail,
+            http_status=code,
+            outcome=_Failed(error=provider_error(code, detail, exc.response.headers)),
+        )
     return _Verdict(CallStatus.ERROR, detail, http_status=code, cool_base=_DEFAULT_RATE_LIMIT_SEC)
 
 
@@ -279,7 +288,7 @@ class Router:
         # acquisition only, leaving the attempt on the global ceiling.
         answer_deadline = queue_deadline if wait else None
         client_failed: set[str] = set()
-        last_client_error: httpx.HTTPStatusError | None = None
+        last_client_error: ProviderError | None = None
         while True:
             try:
                 config = await self._pool.acquire(

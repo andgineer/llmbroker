@@ -412,8 +412,8 @@ class AsyncBroker:
     ) -> None:
         """Rate a past call — the delayed counterpart of ``result.record_quality``.
 
-        Takes exactly one key; a trace rates every attempt under it that answered.
-        Raises ``UnknownCallError`` when the key names no answered call.
+        Takes exactly one key and rates the newest answered call it names within the
+        rating window; raises ``UnknownCallError`` when nothing there answered.
         """
         await self.llms.record_quality(score, call_id=call_id, trace_id=trace_id)
 

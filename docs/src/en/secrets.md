@@ -5,7 +5,10 @@ from is up to the configured secrets backend. The default is environment
 variables and `.env`, and the skeleton with the hints is printed by
 [`llmbroker env`](cli.md#env).
 
-The same hints reach your own code through the registry's key-info capability.
+The same hints reach your own code ready-made: every missing key in the
+[pool snapshot](monitoring.md#pool-health) carries a `help` field, and so does
+every one in the [sync report](usage.md#sync). So a "what is missing" screen is
+built without a provider directory of your own.
 
 A model without a key simply stays inactive — the pool runs on whatever keys are
 present. That holds for every source below.
@@ -38,13 +41,13 @@ from llmbroker.aws import Secrets as AwsSecrets
 async with llmbroker.AsyncBroker(
     "postgresql://host/db",
     secrets=AwsSecrets(region_name="us-east-1"),
-) as llms:
-    reply = await llms.ask("Hello")
+) as broker:
+    reply = await broker.ask("Hello")
 ```
 
 Secret names are `llmbroker/{key name}`; the prefix is configurable.
 
-## HashiCorp Vault
+## HashiCorp Vault {#vault}
 
 Install the `llmbroker[vault]` extra:
 
@@ -56,6 +59,12 @@ secrets = VaultSecrets(url="https://vault.example.com", token="s.xxx")
 
 KV v2, path `llmbroker/{key name}`; the mount point is configurable via
 `mount_point=`.
+
+One quirk applies to [per-user keys](server.md#multiuser). A slash is a directory
+separator in KV, so the name `u-42/GROQ_API_KEY` is flattened into the single
+segment `u-42__GROQ_API_KEY` in the path. You only ever see that browsing the
+store by hand; but a ref that already contains `__` is refused by this backend —
+rename the ref or the scope.
 
 ## Keys in a DB
 
@@ -71,4 +80,6 @@ llmbroker.AsyncBroker("postgresql://host/db", secrets=llmbroker.Secrets())
 ## A key per user
 
 In a multi-user application the key is looked up by user first, then the shared
-one — see [scope](server.md#multiuser).
+one. A user's key goes into the same store under the name `<scope>/<REF>` —
+`u-42/GROQ_API_KEY`, say — and a caller built with `for_scope("u-42")` picks it up
+instead of the shared one. In full — [scope](server.md#multiuser).

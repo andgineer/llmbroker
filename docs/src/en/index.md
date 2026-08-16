@@ -16,8 +16,10 @@ llmbroker env freetier > .env   # a .env skeleton: each key, and above it where 
 Fill in whichever are easy to get — one is enough — and call:
 
 ```python
-llms = llmbroker.Broker()
-print(llms.ask("Hello, how are you?").text)
+import llmbroker
+
+broker = llmbroker.Broker()
+print(broker.ask("Hello, how are you?").text)
 ```
 
 That is the whole setup — no config file. `Broker()` brings up a curated pool of
@@ -32,8 +34,8 @@ next — you get an answer rather than an error, for as long as one model is ali
 
 - **No configuration** — `Broker()` takes no arguments at all: the curated pool
   arrives on its own and [keeps itself fresh](usage.md#sync).
-- **Automatic failover** — an error only once there is nobody left
-  (`NoLLMAvailableError`).
+- **Automatic failover** — the broker works through the models until one answers;
+  when nobody can, `NoLLMAvailableError` [says why](usage.md#errors).
 - **Chat, tools and agents** — `ask`, multi-turn `chat`, [the whole tool loop in
   one function](tools.md).
 - **Async and streaming** — [the same API with `await`](async.md), and the answer
@@ -52,5 +54,3 @@ next — you get an answer rather than an error, for as long as one model is ali
   statistics](monitoring.md), tracing by your own `trace_id`, an alarm on
   degradation.
 - **[Disabling models](disable.md)** by hand.
-
-Full API reference — [Reference](reference.md).

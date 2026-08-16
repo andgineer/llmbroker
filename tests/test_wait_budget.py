@@ -12,7 +12,7 @@ import pytest
 from llmbroker import chat
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.router import Router
-from llmbroker.exceptions import NoLLMAvailableError
+from llmbroker.exceptions import NoLLMAvailableError, ProviderError
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 
 from support import make_ring
@@ -172,9 +172,10 @@ def test_a_client_error_already_seen_outranks_the_expired_budget():
         )
         provider = _fake_provider([], results=[client_error, httpx.ReadTimeout("hung")])
         with patch(_PATCH, new=provider):
-            with pytest.raises(httpx.HTTPStatusError) as exc_info:
+            with pytest.raises(ProviderError) as exc_info:
                 await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=5.0)
-        assert exc_info.value.response.status_code == 400
+        assert exc_info.value.status == 400
+        assert exc_info.value.detail == "messages[0].role is invalid"
 
     asyncio.run(run())
 

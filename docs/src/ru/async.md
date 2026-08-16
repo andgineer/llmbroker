@@ -4,8 +4,8 @@
 же, только с `await`:
 
 ```python
-async with llmbroker.AsyncBroker() as llms:
-    reply = await llms.ask("Привет")
+async with llmbroker.AsyncBroker() as broker:
+    reply = await broker.ask("Привет")
     print(reply.text)
 ```
 
@@ -18,7 +18,7 @@ async with llmbroker.AsyncBroker() as llms:
 роутингом и фейловером:
 
 ```python
-stream = llms.stream("Напиши хокку про брокеров", operation="write")
+stream = broker.stream("Напиши хокку про брокеров", operation="write")
 async for delta in stream:
     print(delta, end="", flush=True)
 
@@ -49,7 +49,7 @@ await stream.record_quality(0.9)       # оценить, не называя в�
 единственный способ оценить то, что успело прийти, — закрытие завершает вызов:
 
 ```python
-stream = llms.stream("Напиши хокку про брокеров")
+stream = broker.stream("Напиши хокку про брокеров")
 async for delta in stream:
     if looks_wrong(delta):
         break
@@ -61,7 +61,7 @@ await stream.record_quality(0.0)
 Либо пусть закрывает контекстный менеджер — там, где оценивать нечего:
 
 ```python
-async with contextlib.aclosing(llms.stream("...")) as stream:
+async with contextlib.aclosing(broker.stream("...")) as stream:
     async for delta in stream:
         ...
 ```
@@ -76,8 +76,8 @@ sqlite держит модели, ключи и журнал в одном фа�
 вызовом:
 
 ```python
-async with llmbroker.AsyncBroker("broker.db") as llms:
-    print((await llms.ask("Привет")).text)
+async with llmbroker.AsyncBroker("broker.db") as broker:
+    print((await broker.ask("Привет")).text)
 ```
 
 База стартует пустой и наполняется до инициализации пула — отдельного шага

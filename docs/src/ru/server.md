@@ -23,14 +23,31 @@ llmbroker.Broker("mongodb://host/db")       # mongodb
 скажите, чему он следует:
 
 ```python
-llms = llmbroker.Broker(registry=MyRegistry(), sync=None)        # только ваши записи
-llms = llmbroker.Broker(registry=MyRegistry(), sync="freetier")  # ваши плюс наши
+broker = llmbroker.Broker(registry=MyRegistry(), sync=None)        # только ваши записи
+broker = llmbroker.Broker(registry=MyRegistry(), sync="freetier")  # ваши плюс наши
 ```
 
 | что передали | `sync=` не указан | записи, которые вы внесли сами |
 |---|---|---|
 | ничего или URL базы | следует `"freetier"` | обновление их не трогает |
 | объект реестра | ошибка — скажите, чему | обновление их не трогает |
+
+**Свой реестр закрывает только реестр.** Ключи и журнал — отдельные порты, и от
+того, что вы принесли свой реестр, они вашими не становятся: ключи будут читаться
+из окружения, а журнал ляжет в каталог `store` рядом с рабочим каталогом
+процесса. Для сервиса это почти наверняка не то, чего вы хотели, — задайте оба
+явно:
+
+```python
+from llmbroker.postgres import Secrets, Store
+
+broker = llmbroker.AsyncBroker(
+    registry=MyRegistry(),
+    secrets=Secrets(pool),            # ключи в вашей базе, а не в окружении
+    store=Store(pool),                # журнал туда же
+    sync=None,
+)
+```
 
 Обновление переписывает только то, что записала синхронизация, — так что
 «курируемый бесплатный пул плюс пара своих endpoint'ов, в одной маршрутизации» —
@@ -69,11 +86,11 @@ await registry.mirror([*await registry.load(), mine])
 чтобы DSN и его секреты жили ровно в одном месте:
 
 ```python
-llms = build_broker()                     # собственная фабрика приложения
+broker = build_broker()                   # собственная фабрика приложения
 try:
-    print(await llms.sync("freetier"))    # курируемый пресет — единственный источник
+    print(await broker.sync("freetier"))  # курируемый пресет — единственный источник
 finally:
-    await llms.aclose()
+    await broker.aclose()
 ```
 
 Обратите внимание: это не `async with`. Вход в брокер инициализирует пул, а
@@ -108,13 +125,13 @@ llmbroker.AsyncBroker("postgresql://host/db", sync_interval=None)   # в ваш�
 ```
 
 ```python
-llms = build_broker()
+broker = build_broker()
 try:
-    report = await llms.sync()        # без аргумента: то, чему следует эта установка
+    report = await broker.sync()      # без аргумента: то, чему следует эта установка
     if report is not None:            # один платный каталог ничего не сливает
         print(llmbroker.format_report(report))
 finally:
-    await llms.aclose()
+    await broker.aclose()
 ```
 
 `sync_interval=None` останавливает в процессе все часы, которые ходят в сеть, — и
@@ -174,7 +191,7 @@ await new.mirror(await old.load())
 каждом запуске, включая запуск без изменений, и называет ключ, который стал не
 нужен. Ненулевой код выхода задачи и её лог — тот же канал для админа, которым уже
 пользуется упавшая миграция; кому нужно переслать это дальше, читает
-`llms.last_sync_report`.
+`broker.last_sync_report`.
 
 ### Наблюдение за пулом с админского экрана {#pool-health}
 
@@ -232,7 +249,7 @@ sqlite3 broker.db 'PRAGMA journal_mode=WAL'
 
 ```python
 try:
-    models = llms.snapshot()
+    models = broker.snapshot()
 except llmbroker.EmptyRegistryError:
     models = {}   # ещё ничего не настроено — пустой экран, а не 500
 ```
@@ -243,7 +260,7 @@ except llmbroker.EmptyRegistryError:
 остальное.
 
 Ошибка самого запроса приходит из отдельного дерева (`LLMRequestError` и его
-наследники) — см. [Вызов брокера](usage.md#calling).
+наследники) — см. [Когда ответить некому](usage.md#errors).
 
 ## Закрытие брокера {#closing}
 
@@ -251,20 +268,37 @@ except llmbroker.EmptyRegistryError:
 подключена внешняя БД:
 
 ```python
-with llmbroker.Broker("broker.db") as llms:
-    reply = llms.ask("...")
+with llmbroker.Broker("broker.db") as broker:
+    reply = broker.ask("...")
 ```
 
-`AsyncBroker` — `async with` или `await llms.aclose()`.
+`AsyncBroker` — `async with` или `await broker.aclose()`.
 
-## Журнал вызовов
+## Журнал вызовов {#journal}
 
 Каждая попытка вызова оставляет запись: кто отвечал, чем кончилось, во что
-обошлось, с каким `trace_id` её звали и как её потом оценили. Журнал
-самоочищается — глубина хранения задаётся параметром `retention` бэкенда (по
-умолчанию 90 дней). Читают его `llms.calls(...)` и `llms.stats(...)`, и они не
-инициализируют пул, поэтому работают и на несинхронизированной установке. См.
+обошлось, с каким `trace_id` её звали и как её потом оценили. Читают его
+`broker.calls(...)` и `broker.stats(...)`, и они не инициализируют пул, поэтому
+работают и на несинхронизированной установке. См.
 [Наблюдение и журнал](monitoring.md#journal).
+
+Журнал самоочищается: записи старше `retention` удаляются, по умолчанию это 90
+дней. Глубина хранения — свойство бэкенда журнала, а не брокера, поэтому строкой
+подключения её не задать: соберите порты сами и задайте её тому, который пишет
+журнал.
+
+```python
+from datetime import timedelta
+
+from llmbroker.postgres import Registry, Secrets, Store
+
+broker = llmbroker.AsyncBroker(
+    registry=Registry(pool),
+    secrets=Secrets(pool),
+    store=Store(pool, retention=timedelta(days=365)),
+    sync="freetier",                  # реестр передан объектом — скажите, чему он следует
+)
+```
 
 ## Один брокер, вызывающий на запрос {#multiuser}
 
@@ -281,8 +315,8 @@ with llmbroker.Broker("broker.db") as llms:
 его безскоупный вызывающий, так что второе понятие вообще не появляется:
 
 ```python
-llms = llmbroker.Broker()
-print(llms.ask("hi").text)
+broker = llmbroker.Broker()
+print(broker.ask("hi").text)
 ```
 
 **Долгоживущий процесс с базой.** Создавайте брокер там же, где создаёте движок
@@ -317,12 +351,20 @@ def llms(request: Request) -> llmbroker.AsyncLLMs:
     return request.app.state.broker.for_scope(request.headers["x-user-id"])
 ```
 
-Вызывающий со скоупом сначала ищет свой ключ — ref с префиксом своего скоупа — и
-только потом падает на общий ключ инсталляции. Общее значение читается один раз на
-всех. Каждая строка журнала, которую пишет такой вызывающий, несёт его скоуп,
-поэтому `calls(scope=...)` на уровне хранилища даёт историю одного пользователя;
-`calls()` и `stats()` самого брокера — это взгляд всей инсталляции, и они не
-фильтруются по скоупу.
+**Ключ пользователя лежит под ref'ом с его скоупом впереди: `<скоуп>/<REF>`.**
+Вызывающий со скоупом `u-42` сначала спросит у хранилища секретов
+`u-42/GROQ_API_KEY` и только потом упадёт на общий `GROQ_API_KEY` инсталляции;
+общее значение читается один раз на всех. Значит, чтобы дать пользователю свой
+ключ, вы кладёте его под этим именем — в переменную окружения, в свою БД, в AWS
+или Vault, туда же, где лежат общие. Скоуп — это просто строка, которую вы
+передали в `for_scope(...)`; никакого понятия пользователя внутри llmbroker нет.
+У Vault одна оговорка про `/` в имени — см. [API-ключи](secrets.md#vault).
+
+Каждая строка журнала, которую пишет такой вызывающий, несёт его скоуп, так что
+история одного пользователя — это `broker.for_scope(user).calls(...)`. Отдельного
+параметра `scope=` у `calls()` нет: скоуп берётся у вызывающего, через которого
+вы читаете. Собственные `broker.calls()` и `broker.stats()` — это взгляд всей
+инсталляции, они видят строки всех скоупов сразу.
 
 Пул, накопленное качество и ограничение `parallel` на модель принадлежат брокеру,
 а не вызывающему: отдельный счётчик на пользователя — это уже не ограничение.

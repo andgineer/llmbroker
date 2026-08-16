@@ -24,14 +24,31 @@ To supply the pool yourself, pass an object implementing the registry protocol
 and say what it follows:
 
 ```python
-llms = llmbroker.Broker(registry=MyRegistry(), sync=None)        # only your entries
-llms = llmbroker.Broker(registry=MyRegistry(), sync="freetier")  # yours plus ours
+broker = llmbroker.Broker(registry=MyRegistry(), sync=None)        # only your entries
+broker = llmbroker.Broker(registry=MyRegistry(), sync="freetier")  # yours plus ours
 ```
 
 | you pass | `sync=` left out | entries you put there yourself |
 |---|---|---|
 | nothing, or a database URL | follows `"freetier"` | never touched by a refresh |
 | a registry object | an error — say which | never touched by a refresh |
+
+**A registry of your own covers the registry only.** Keys and the journal are
+separate ports, and bringing your own registry does not make them yours: the keys
+will still be read from the environment, and the journal will land in a `store`
+directory beside the process's working directory. For a service that is almost
+certainly not what you wanted — pass both explicitly:
+
+```python
+from llmbroker.postgres import Secrets, Store
+
+broker = llmbroker.AsyncBroker(
+    registry=MyRegistry(),
+    secrets=Secrets(pool),            # keys in your database, not in the environment
+    store=Store(pool),                # the journal there too
+    sync=None,
+)
+```
 
 A refresh only ever rewrites what a sync itself wrote, so "the curated free pool
 plus two endpoints of my own, routed together" is just a registry with both in
@@ -69,11 +86,11 @@ runs `alembic upgrade` — built by the factory your application already uses, s
 the DSN and its secrets live in exactly one place:
 
 ```python
-llms = build_broker()                     # your app's own factory
+broker = build_broker()                   # your app's own factory
 try:
-    print(await llms.sync("freetier"))    # the curated preset — the one source there is
+    print(await broker.sync("freetier"))  # the curated preset — the one source there is
 finally:
-    await llms.aclose()
+    await broker.aclose()
 ```
 
 Note this is *not* `async with`: entering the broker provisions the pool, and the
@@ -106,13 +123,13 @@ llmbroker.AsyncBroker("postgresql://host/db", sync_interval=None)   # in your fa
 ```
 
 ```python
-llms = build_broker()
+broker = build_broker()
 try:
-    report = await llms.sync()        # no argument: whatever this installation follows
+    report = await broker.sync()      # no argument: whatever this installation follows
     if report is not None:            # the paid catalog alone merges nothing
         print(llmbroker.format_report(report))
 finally:
-    await llms.aclose()
+    await broker.aclose()
 ```
 
 `sync_interval=None` stops every clock in the process that goes online — the
@@ -170,7 +187,7 @@ it only once it can no longer be called. The returned `SyncReport` says what
 happened, on every run including no-ops, and names any key that has become
 unused. A non-zero exit from the job and its log are the admin channel your
 failed migrations already use; hosts that forward elsewhere can read
-`llms.last_sync_report`.
+`broker.last_sync_report`.
 
 ### Watching the pool from an admin screen {#pool-health}
 
@@ -228,7 +245,7 @@ you need:
 
 ```python
 try:
-    models = llms.snapshot()
+    models = broker.snapshot()
 except llmbroker.EmptyRegistryError:
     models = {}   # nothing configured yet — render an empty screen, not a 500
 ```
@@ -239,7 +256,7 @@ swallowing it turns a schema mismatch into "no providers configured". Catching
 else.
 
 A failed request raises from a separate tree (`LLMRequestError` and its
-subclasses) — see [Calling the broker](usage.md#calling).
+subclasses) — see [When nobody can answer](usage.md#errors).
 
 ## Closing the broker {#closing}
 
@@ -247,20 +264,37 @@ Close the broker explicitly when a long-lived process creates brokers repeatedly
 or an external DB is attached:
 
 ```python
-with llmbroker.Broker("broker.db") as llms:
-    reply = llms.ask("...")
+with llmbroker.Broker("broker.db") as broker:
+    reply = broker.ask("...")
 ```
 
-`AsyncBroker` — `async with` or `await llms.aclose()`.
+`AsyncBroker` — `async with` or `await broker.aclose()`.
 
-## Call journal
+## Call journal {#journal}
 
 Every call attempt leaves a row: what answered, how it ended, what it cost, the
-`trace_id` you called it with, and how you rated it afterwards. The journal
-cleans itself up — the depth is the backend's `retention` parameter (90 days by
-default). It is read with `llms.calls(...)` and `llms.stats(...)`, neither of
-which initializes the pool, so both work on an installation that was never
-synced. See [Monitoring and the journal](monitoring.md#journal).
+`trace_id` you called it with, and how you rated it afterwards. It is read with
+`broker.calls(...)` and `broker.stats(...)`, neither of which initializes the
+pool, so both work on an installation that was never synced. See
+[Monitoring and the journal](monitoring.md#journal).
+
+The journal cleans itself up: rows older than `retention` are dropped, 90 days by
+default. The depth belongs to the journal backend rather than to the broker, so a
+connection string cannot set it — assemble the ports yourself and set it on the
+one that writes the journal.
+
+```python
+from datetime import timedelta
+
+from llmbroker.postgres import Registry, Secrets, Store
+
+broker = llmbroker.AsyncBroker(
+    registry=Registry(pool),
+    secrets=Secrets(pool),
+    store=Store(pool, retention=timedelta(days=365)),
+    sync="freetier",                  # a registry object — say what it follows
+)
+```
 
 ## One broker, a caller per request {#multiuser}
 
@@ -276,8 +310,8 @@ Four deployments, in order of how much they need:
 its unscoped caller, so the second noun never appears:
 
 ```python
-llms = llmbroker.Broker()
-print(llms.ask("hi").text)
+broker = llmbroker.Broker()
+print(broker.ask("hi").text)
 ```
 
 **A long-lived process with a database.** Build the broker where you build your
@@ -312,11 +346,20 @@ def llms(request: Request) -> llmbroker.AsyncLLMs:
     return request.app.state.broker.for_scope(request.headers["x-user-id"])
 ```
 
-A scoped caller resolves its own key first — the ref prefixed with its scope —
-and falls back to the installation's shared one. The shared value is read once
-for everybody. Every row that caller journals carries its scope, so a store-level
-`calls(scope=...)` gives you one user's history; the broker's own `calls()` and
-`stats()` are the installation's view and are not scoped.
+**A user's key lives under a ref with its scope in front: `<scope>/<REF>`.** A
+caller scoped `u-42` asks the secrets store for `u-42/GROQ_API_KEY` first and only
+then falls back to the installation's shared `GROQ_API_KEY`; the shared value is
+read once for everybody. So giving a user a key of their own means storing it
+under that name — in an environment variable, in your database, in AWS or Vault,
+wherever the shared ones live. The scope is simply the string you passed to
+`for_scope(...)`; llmbroker has no notion of a user inside it. Vault has one
+caveat about the `/` in that name — see [API keys](secrets.md#vault).
+
+Every row that caller journals carries its scope, so one user's history is
+`broker.for_scope(user).calls(...)`. There is no `scope=` parameter on `calls()`:
+the scope comes from the caller you read through. The broker's own
+`broker.calls()` and `broker.stats()` are the installation's view and see every
+scope's rows at once.
 
 The pool, the quality it has learned and the per-model `parallel` cap belong to
 the broker, not the caller — one counter per user would not be a cap at all.

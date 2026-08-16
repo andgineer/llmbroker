@@ -1,7 +1,7 @@
 """Direct single-model client: no pool, no failover, no journal. Reuses the
 request/response primitives in ``chat.py``."""
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 import httpx
@@ -12,15 +12,10 @@ from llmbroker.chat import (
     completion_from_response,
     make_client,
     parse_stream_chunk,
-    retry_after_seconds,
+    provider_error,
 )
-from llmbroker.exceptions import (
-    AuthError,
-    LLMTimeoutError,
-    ProviderError,
-    RateLimitError,
-)
-from llmbroker.http_status import DETAIL_SNIPPET, ERROR_FLOOR, is_auth_failure, is_rate_limit
+from llmbroker.exceptions import LLMTimeoutError
+from llmbroker.http_status import DETAIL_SNIPPET, ERROR_FLOOR
 from llmbroker.models import Usage
 
 _DEFAULT_TIMEOUT = 60.0
@@ -43,27 +38,10 @@ def _messages(prompt: str | None, messages: list[dict] | None) -> list[dict]:
     return [{"role": "user", "content": prompt}]
 
 
-def _provider_error(status: int, detail: str, headers: Mapping[str, str]) -> ProviderError:
-    """Map an error HTTP status onto the direct-client error hierarchy."""
-    if is_auth_failure(status):
-        return AuthError(f"provider rejected the key (HTTP {status})", status=status, detail=detail)
-    if is_rate_limit(status):
-        retry_after = None
-        if headers.get("Retry-After") is not None:
-            retry_after = retry_after_seconds(headers, 0)
-        return RateLimitError(
-            f"provider rate-limited or unavailable (HTTP {status})",
-            status=status,
-            detail=detail,
-            retry_after=retry_after,
-        )
-    return ProviderError(f"provider returned HTTP {status}", status=status, detail=detail)
-
-
 def _result(resp: httpx.Response, model: str) -> DirectResult:
     """Build a ``DirectResult`` from a completed response, raising on error status."""
     if resp.status_code >= ERROR_FLOOR:
-        raise _provider_error(resp.status_code, resp.text[:DETAIL_SNIPPET], resp.headers)
+        raise provider_error(resp.status_code, resp.text[:DETAIL_SNIPPET], resp.headers)
     text, _tool_calls, usage = completion_from_response(resp, model)
     return DirectResult(text=text, usage=usage)
 
@@ -146,7 +124,7 @@ class AsyncDirectClient:
             ) as resp:
                 if resp.status_code >= ERROR_FLOOR:
                     detail = (await resp.aread()).decode(errors="replace")[:DETAIL_SNIPPET]
-                    raise _provider_error(resp.status_code, detail, resp.headers)
+                    raise provider_error(resp.status_code, detail, resp.headers)
                 async for chunk in aiter_chat_chunks(resp, self._model):
                     delta, _ = parse_stream_chunk(chunk, self._model)
                     if delta:

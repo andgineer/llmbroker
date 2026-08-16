@@ -9,10 +9,11 @@ list current [by itself](usage.md#sync), and a database registry is refreshed by
 your application's entrypoint calling `broker.sync("freetier")` — see
 [Servers & clusters](server.md#sync).
 
-Both work offline: a copy of both curated lists ships inside the package, so a
-machine with no network falls back to it rather than failing. That copy is frozen
-at the llmbroker release you installed, so when it is used the command says so on
-stderr.
+Both ask the catalog for a fresh list first (a 10-second timeout), then the copy
+already fetched onto this machine, and only then the copy shipped inside the
+package. So offline and in a network-less CI they answer with what there is rather
+than failing; the bundled copy is frozen at the llmbroker release you installed,
+and when it comes to that the command warns about it on stderr.
 
 ## env — generate a .env with the keys {#env}
 

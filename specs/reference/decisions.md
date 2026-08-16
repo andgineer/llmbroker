@@ -84,6 +84,19 @@ keyed by that call's id, so a second verdict replaces the entry where it stands
 instead of adding one. Without that, an answer rated often enough would clear the
 minimum-observations guard on its own and demote a model by itself.
 
+**Blocks:** fanning one rating out over every answered call a trace covers.
+**Why:** a trace is one request, so the fan-out only ever fires on a host that
+reused one — and it serves that host worse than the single rating does. It
+multiplies one opinion into several observations, which is the same guard-clearing
+the paragraph above exists to prevent, and it spreads a verdict earned by one
+answer across models that had nothing to do with it. Resolving to one call keeps
+the rating exactly as heavy as the opinion behind it; the host that wants a
+specific call already has its id. The lookup is bounded in time for the same
+reason a purged call stops counting: the window a rating lands in is rebuilt from
+a journal tail far shorter than retention, so a verdict older than that tail
+cannot outlive one rebuild, and resolving it would mean scanning a journal to
+produce an effect that expires.
+
 ### wilson-for-demotion
 
 Demotion requires a minimum count and a Wilson upper bound below the floor.

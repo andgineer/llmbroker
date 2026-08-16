@@ -1,7 +1,7 @@
 """The delayed rating entry point: a rating names the call it rates, by the call's
 own id or by the trace the request was made under."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import aiosqlite
@@ -48,7 +48,7 @@ async def _journal(broker, id_, **kw) -> str:
             operation=kw.pop("operation", "summarize"),
             trace_id=kw.pop("trace_id", None),
             status=kw.pop("status", CallStatus.OK),
-            ts=datetime.now(UTC),
+            ts=kw.pop("ts", datetime.now(UTC)),
             **kw,
         ),
     )
@@ -97,33 +97,55 @@ async def test_record_quality_by_call_id_rates_that_model(tmp_path):
         assert list(broker._optimizer._scores[("p1", "summarize")]) == [("c1", 0.25)]
 
 
-async def test_record_quality_by_trace_id_rates_every_answering_attempt(tmp_path):
-    """One verdict about one request lands on every model that answered under it."""
-    async with _broker(tmp_path) as broker:
-        await _journal(broker, "a1", llm_name="p1", trace_id="req-1")
-        await _journal(broker, "a2", llm_name="p2", trace_id="req-1")
-        await _journal(broker, "other", llm_name="p1", trace_id="req-2")
-        await broker.record_quality(1.0, trace_id="req-1")
-
-        scored = {r.id: r.score for r in await broker.calls(limit=10)}
-        assert scored == {"a1": 1.0, "a2": 1.0, "other": None}
-        assert list(broker._optimizer._scores[("p1", "summarize")]) == [("a1", 1.0)]
-        assert list(broker._optimizer._scores[("p2", "summarize")]) == [("a2", 1.0)]
-
-
-async def test_record_quality_by_trace_id_ignores_the_attempts_that_failed(tmp_path):
-    """A rate-limited attempt produced nothing to judge, so it is not rated and does
-    not enter any quality window."""
+async def test_record_quality_by_trace_id_rates_the_call_that_answered(tmp_path):
+    """A trace names one request: the attempt that answered it is what the verdict is
+    about, and the model and operation come off that row."""
     async with _broker(tmp_path) as broker:
         await _journal(
             broker, "failed", llm_name="p2", trace_id="req-1", status=CallStatus.RATE_LIMITED
         )
         await _journal(broker, "answered", llm_name="p1", trace_id="req-1")
+        await _journal(broker, "other", llm_name="p1", trace_id="req-2")
+        await broker.record_quality(1.0, trace_id="req-1")
+
+        scored = {r.id: r.score for r in await broker.calls(limit=10)}
+        assert scored == {"failed": None, "answered": 1.0, "other": None}
+        assert list(broker._optimizer._scores[("p1", "summarize")]) == [("answered", 1.0)]
+        assert ("p2", "summarize") not in broker._optimizer._scores
+
+
+async def test_a_reused_trace_rates_only_its_newest_answered_call(tmp_path):
+    """One trace_id on several calls is the host's mistake, and it costs it precision,
+    never correctness: exactly one rating lands, on the newest call that answered."""
+    async with _broker(tmp_path) as broker:
+        now = datetime.now(UTC)
+        await _journal(
+            broker, "older", llm_name="p1", trace_id="req-1", ts=now - timedelta(hours=2)
+        )
+        await _journal(broker, "newer", llm_name="p2", trace_id="req-1", ts=now)
         await broker.record_quality(0.0, trace_id="req-1")
 
         scored = {r.id: r.score for r in await broker.calls(limit=10)}
-        assert scored == {"failed": None, "answered": 0.0}
-        assert ("p2", "summarize") not in broker._optimizer._scores
+        assert scored == {"older": None, "newer": 0.0}
+        assert ("p1", "summarize") not in broker._optimizer._scores
+        assert list(broker._optimizer._scores[("p2", "summarize")]) == [("newer", 0.0)]
+
+
+@pytest.mark.parametrize(
+    "key",
+    [{"call_id": "c1"}, {"trace_id": "req-1"}],
+    ids=["by-call-id", "by-trace-id"],
+)
+async def test_a_call_older_than_the_rating_window_is_not_found(tmp_path, key):
+    """The lookup is bounded: a verdict this late could not reach the quality window
+    anyway, so it is refused loudly instead of resolved by scanning the journal."""
+    async with _broker(tmp_path) as broker:
+        stale = datetime.now(UTC) - llms_module._RATING_WINDOW - timedelta(hours=1)
+        await _journal(broker, "c1", trace_id="req-1", ts=stale)
+
+        with pytest.raises(UnknownCallError, match="7 days"):
+            await broker.record_quality(1.0, **key)
+        assert not broker._optimizer._scores
 
 
 async def test_record_quality_raises_when_nothing_resolves(tmp_path):
@@ -154,16 +176,21 @@ async def test_record_quality_requires_exactly_one_key(tmp_path, keys):
 async def test_record_quality_warns_when_the_resolution_read_comes_back_full(
     tmp_path, monkeypatch, caplog
 ):
-    """A page that comes back full may have left attempts unrated, so the host hears
-    about it rather than getting a silently partial rating."""
+    """A page that comes back full is a trace carrying more than one call's attempts —
+    the host hears that its trace is reused rather than only losing precision."""
     monkeypatch.setattr(llms_module, "_RATING_PAGE", 2)
     async with _broker(tmp_path) as broker:
+        now = datetime.now(UTC)
         for i in range(3):
-            await _journal(broker, f"a{i}", trace_id="req-1")
+            await _journal(broker, f"a{i}", trace_id="req-1", ts=now - timedelta(minutes=i))
         with caplog.at_level("WARNING", logger="llmbroker.broker"):
             await broker.record_quality(1.0, trace_id="req-1")
         assert "req-1" in caplog.text
-        assert len([r for r in await broker.calls(limit=10) if r.score is not None]) == 2
+        assert {r.id: r.score for r in await broker.calls(limit=10)} == {
+            "a0": 1.0,
+            "a1": None,
+            "a2": None,
+        }
 
 
 async def test_result_record_quality_needs_no_read(tmp_path):
