@@ -32,9 +32,10 @@ finally:
     await llms.aclose()
 ```
 
-Note this is *not* `async with`: entering the broker provisions the pool, and a
-fresh registry is empty, so the context manager would raise `EmptyRegistryError`
-before the sync could fill it.
+Note this is *not* `async with`: entering the broker provisions the pool, and the
+deploy job has exactly one thing to do — fill the database. And where the broker
+may not reach the network ([below](#no-fetch)), the context manager raises
+`EmptyRegistryError` right there, before you ever call `sync()`.
 
 Run it as a one-shot job (release phase, a Kubernetes Job, an init container).
 **Keeping the model list current afterwards needs no job at all**: the serving
@@ -98,8 +99,11 @@ There is no migrate command; the two registries already expose everything it
 would need, so it is two lines in the same deploy script that holds both DSNs:
 
 ```python
-old = llmbroker.postgres.Registry(old_pool)
-new = llmbroker.mongodb.Registry(new_db)
+from llmbroker.mongodb import Registry as MongoRegistry
+from llmbroker.postgres import Registry as PostgresRegistry
+
+old = PostgresRegistry(old_pool)
+new = MongoRegistry(new_db)
 await new.mirror(await old.load())
 ```
 
@@ -145,8 +149,10 @@ rows = [{"name": name, "has_key": llm.has_key} for name, llm in snap.items()]
 ```
 
 The unit is the provider (`api_key_ref`), not the model: two entries on one key
-are one quota and one failure domain, so they count once. `degraded` is true at
-one usable provider — the pool answers, but a rate limit has nowhere to spill.
+are one quota and one failure domain, so they count once. `degraded` is true
+while fewer than two providers are usable: at one the pool still answers but a
+rate limit has nowhere to spill, at none it no longer answers at all. A registry
+that pools nothing has no pool to degrade, so there it is false.
 
 **What to alert on.** llmbroker logs the same verdict, so alerting needs no
 polling. Both lines are `ERROR` on the `llmbroker.broker` logger, emitted once
@@ -197,7 +203,7 @@ schema or database is optional tidiness, not a concurrency need.
 
 ## Startup errors {#errors}
 
-Two conditions can stop the broker before it serves a single request, and a host
+Three conditions can stop the broker before it serves a single request, and a host
 usually wants to treat them differently:
 
 - `EmptyRegistryError` — nothing has been synced into the registry yet. Benign:
@@ -210,8 +216,9 @@ usually wants to treat them differently:
   (export registry/secrets/calls first if you need them). `found` and `expected`
   carry the two versions.
 
-Both subclass `LLMBrokerError`, itself a `RuntimeError`, so catch at the
-granularity you need:
+All three live on `llmbroker` (`llmbroker.SchemaVersionError`, and so on) and
+subclass `LLMBrokerError`, itself a `RuntimeError`, so catch at the granularity
+you need:
 
 ```python
 try:
@@ -222,7 +229,7 @@ except llmbroker.EmptyRegistryError:
 
 `SchemaVersionError` propagates: its message is the operator's instruction, so
 swallowing it turns a schema mismatch into "no providers configured". Catching
-`LLMBrokerError` covers both, and `RuntimeError` covers both plus everything
+`LLMBrokerError` covers all three, and `RuntimeError` covers them plus everything
 else.
 
 A failed request raises from a separate tree (`LLMRequestError` and its
@@ -338,7 +345,9 @@ window by your machine's offset.
 initializes the model pool, so an admin screen still renders on an installation
 whose registry was never synced. Construct the broker directly for that —
 entering it as a context manager (`with Broker(...) as llms`) initializes the
-pool up front and will raise `EmptyRegistryError` on such an installation.
+pool up front: on an installation that fetches nothing by itself that is
+`EmptyRegistryError`, and on an ordinary one a trip for the curated list, which a
+statistics screen has no use for.
 
 ## One broker, a caller per request {#multiuser}
 

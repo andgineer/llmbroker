@@ -42,7 +42,8 @@ async with llmbroker.AsyncBroker("broker.db") as llms:
 The database starts empty and is filled before the pool is provisioned, so there
 is no separate init step to remember, and it is kept current from then on. It is
 best-effort: an unreachable catalog logs a warning and the process starts on
-whatever the file already holds.
+whatever the file already holds — and, where the file is empty, on the copy of
+the preset shipped inside the package.
 
 For several processes or hosts, fill the database once in the deploy job instead
 — see [Servers & clusters](server.md#datasource).

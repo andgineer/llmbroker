@@ -47,10 +47,9 @@ See [Direct model calls](direct.md).
 
 ### Where the model list lives {#file}
 
-You do not have to put it anywhere. A broker keeps its model list in llmbroker's own
-directory — `~/.cache/llmbroker` on Linux, `~/Library/Caches/llmbroker` on macOS
-— and refreshes it there. Set `LLMBROKER_HOME` to move that directory, which is
-what a container without a writable cache needs.
+You do not have to put it anywhere. A broker keeps its model list in [llmbroker's
+own directory](#state) and refreshes it there. Set `LLMBROKER_HOME` to move that
+directory, which is what a container without a writable cache needs.
 
 That file is written by llmbroker, not by you: a refresh regenerates it in full,
 and it holds the pool and nothing else — a model you reach by name is
@@ -171,34 +170,7 @@ serves: it stops every automatic fetch, including the one that fills an empty
 registry at startup, and the freshness becomes yours to keep — see
 [Servers & clusters](server.md#no-fetch).
 
-### Where llmbroker keeps its own state
-
-llmbroker keeps a little of its own: the fetched preset, the paid catalog, when it
-last checked for an update — and, when you named no database, the model list it
-runs and its call journal too. That lives in one machine directory —
-`~/Library/Caches/llmbroker` on macOS, `$XDG_CACHE_HOME/llmbroker` on Linux,
-`%LOCALAPPDATA%\llmbroker` on Windows. Point it elsewhere with `$LLMBROKER_HOME`,
-or per broker with `home=`, which is how two projects on one machine keep entirely
-separate state.
-
-None of it is authoritative: delete it, or run where nothing is writable — a
-read-only container — and the broker still works. It re-fetches, and in the
-read-only case simply remembers nothing between runs. Even with no network at all,
-a first run starts on the copy of the preset shipped inside the package.
-
-The one thing that does need a real directory is a refresh, which exists to leave
-a copy behind: with nowhere writable it fails and says so — make one writable, or
-run with `sync_interval=None` and fetch nothing by yourself.
-
-Sharing one journal per machine is deliberate in the zero-config case: your keys
-come from the environment, so the rate limits it remembers really are one pool,
-and scattering the journal per working directory would make every run rediscover
-the same 429. Pass `home=` if you want a project to keep its own.
-
-To keep a database registry current from your own deploy job, see
-[Servers & clusters](server.md).
-
-Three things in the report are worth understanding:
+**The sync report.** Three things in it are worth understanding:
 
 - **A pending key** is a model waiting for a key you have not set. Harmless: it
   stays inactive and the pool routes over the rest. The report prints where to
@@ -214,7 +186,36 @@ Three things in the report are worth understanding:
   never had a key for just disappears quietly — there is nothing to revoke.
 
 A removal is never silent: taking a provider away is what moves the usable-provider
-count, and the pool alarm below fires on the way down to one and to none.
+count, and the pool alarm [below](#pool-health) fires on the way down to one and
+to none.
+
+### Where llmbroker keeps its own state {#state}
+
+llmbroker keeps a little of its own: the fetched preset, the paid catalog, when it
+last checked for an update — and, when you named no database, the model list it
+runs and its call journal too. That lives in one machine directory —
+`~/Library/Caches/llmbroker` on macOS, `~/.cache/llmbroker` on Linux,
+`%LOCALAPPDATA%\llmbroker` on Windows; a set `$XDG_CACHE_HOME` overrides all
+three. Point it elsewhere with `$LLMBROKER_HOME`, or per broker with `home=`,
+which is how two projects on one machine keep entirely separate state.
+
+None of it is authoritative: delete it, or run where nothing is writable, and the
+broker still works. It re-fetches, and where no candidate directory is writable —
+the temporary one included — the state lives in memory for that run alone. Even
+with no network at all, a first run starts on the copy of the preset shipped
+inside the package.
+
+The one thing that does need a real directory is a refresh, which exists to leave
+a copy behind: with nowhere writable it fails and says so — make one writable, or
+run with `sync_interval=None` and fetch nothing by yourself.
+
+Sharing one journal per machine is deliberate in the zero-config case: your keys
+come from the environment, so the rate limits it remembers really are one pool,
+and scattering the journal per working directory would make every run rediscover
+the same 429. Pass `home=` if you want a project to keep its own.
+
+To keep a database registry current from your own deploy job, see
+[Servers & clusters](server.md).
 
 ### Watching the pool {#pool-health}
 

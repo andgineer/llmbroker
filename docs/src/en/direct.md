@@ -102,10 +102,9 @@ When the catalog moves it, one line is logged naming both versions:
 direct=: opus: claude-opus-4-8 -> claude-opus-5
 ```
 
-A re-resolution gives the model a new `name`, so its learned quality stats start
-clean — what one version was good at says nothing about the next. If it also
-moves to another provider, the line names the new `api_key_ref`: set that env var
-before the next call.
+A re-resolution gives the model a new `name` — that is what carries the version.
+If it also moves to another provider, the line names the new `api_key_ref`: set
+that env var before the next call.
 
 A declaration you wrote out in full is never re-pointed: llmbroker was never told
 which catalog line it follows.
@@ -153,9 +152,10 @@ Rating waits for the same moment the counts do — the end of the answer, when t
 call reaches the journal. Ask earlier and you get a `ValueError` rather than a
 score that quietly goes nowhere.
 
-Stopping early is fine — `break` or an exception closes the iterator and hands
-the model's slot back. If you want to score what you did receive, close the
-stream first: closing is what ends the call.
+Stopping early is fine, but what hands the model's slot back is closing the
+stream: a `break` does not close the handle by itself — abandoned, it frees the
+slot only once Python collects it. Close it yourself; that is also the only way
+to score what you did receive, since closing is what ends the call.
 
 ```python
 stream = llms.stream("Write a haiku about brokers")
@@ -167,8 +167,7 @@ await stream.aclose()
 await stream.record_quality(0.0)
 ```
 
-If you instead keep the handle in a variable and walk away from it, close it
-yourself, or the slot stays busy until Python collects it:
+Or let a context manager close it — where there is nothing to score:
 
 ```python
 async with contextlib.aclosing(llms.stream("...")) as stream:
