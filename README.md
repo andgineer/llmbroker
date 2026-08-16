@@ -22,10 +22,10 @@
 | src/llmbroker/broker/pool.py              |      159 |        0 |    100% |           |
 | src/llmbroker/broker/pool\_view.py        |       24 |        0 |    100% |           |
 | src/llmbroker/broker/presets.py           |      105 |        2 |     98% |   186-187 |
-| src/llmbroker/broker/refresher.py         |      147 |        4 |     97% |97, 106, 212-213 |
+| src/llmbroker/broker/refresher.py         |      147 |        3 |     98% |106, 212-213 |
 | src/llmbroker/broker/report.py            |       19 |        0 |    100% |           |
-| src/llmbroker/broker/result.py            |       79 |        0 |    100% |           |
-| src/llmbroker/broker/router.py            |      254 |       16 |     94% |233, 348-349, 462-463, 564-565, 569-570, 607-611, 650-651 |
+| src/llmbroker/broker/result.py            |       80 |        0 |    100% |           |
+| src/llmbroker/broker/router.py            |      258 |       16 |     94% |235, 350-351, 464-465, 562-563, 567-568, 606-610, 650-651 |
 | src/llmbroker/broker/source.py            |       48 |        2 |     96% |     29-30 |
 | src/llmbroker/broker/stamps.py            |       35 |        3 |     91% | 42, 56-57 |
 | src/llmbroker/broker/stats.py             |       15 |        0 |    100% |           |
@@ -58,10 +58,10 @@
 | src/llmbroker/standalone/secrets.py       |       74 |        4 |     95% |29, 106, 113, 118 |
 | src/llmbroker/standalone/store.py         |      147 |        5 |     97% |152, 175-176, 208-209 |
 | src/llmbroker/sync.py                     |      130 |        1 |     99% |        96 |
-| src/llmbroker/tool\_loop.py               |       47 |        1 |     98% |        31 |
+| src/llmbroker/tool\_loop.py               |       48 |        1 |     98% |        32 |
 | src/llmbroker/util/atomic.py              |       17 |        3 |     82% |     29-31 |
 | src/llmbroker/vault/secrets.py            |       29 |        3 |     90% | 26, 61-62 |
-| **TOTAL**                                 | **3683** |  **107** | **97%** |           |
+| **TOTAL**                                 | **3689** |  **106** | **97%** |           |
 
 
 ## Setup coverage badge
