@@ -44,7 +44,7 @@ llms = llmbroker.Broker(registry=MyRegistry(), sync="freetier")  # ваши пл
 всё не переданное удаляется:
 
 ```python
-from llmbroker.models import LLMConfig
+from llmbroker import LLMConfig
 from llmbroker.postgres import Registry
 
 registry = Registry(pool)

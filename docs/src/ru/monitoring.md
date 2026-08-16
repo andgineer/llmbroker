@@ -111,7 +111,7 @@ llms.ask("Перескажи этот пункт", operation="summarize", trace_
 оборвавшийся уже после первых дельт, ею не является: он не завершился.
 
 ```python
-from llmbroker.models import CallStatus
+from llmbroker import CallStatus
 
 rows = llms.calls(limit=200, trace_id=request_id)
 answered = next((c for c in rows if c.status is CallStatus.OK), None)
@@ -135,7 +135,7 @@ answered = next((c for c in rows if c.status is CallStatus.OK), None)
 каждая модель и чем они закончились:
 
 ```python
-from llmbroker.models import CallStatus
+from llmbroker import CallStatus
 
 for name, s in llms.stats(since=week_ago).items():
     failed = s.total - s.by_status.get(CallStatus.OK, 0)

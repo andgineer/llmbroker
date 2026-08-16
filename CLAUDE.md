@@ -193,7 +193,12 @@ Any request to implement a plan — "выполни очередной план"
 - **No re-export patterns** — when a symbol moves, update importers to point at the new module instead of leaving a shim re-export.
 - **`__init__.py` files carry no code**, with two exceptions for re-exports:
   - The top-level package `src/llmbroker/__init__.py` imports and re-exports the public API
-    surface (plus `__all__`), including the zero-dependency `standalone` backend.
+    surface (plus `__all__`), including the zero-dependency `standalone` backend. **What
+    belongs there is decided by who touches it, both ways:** everything an application uses —
+    entry points, the exceptions it catches, every DTO a public call returns or takes — is one
+    import away and needs no submodule path, except what an optional extra would drag in. What
+    only a backend or driver author builds — the port protocols, the DTOs they pass — stays in
+    its own module, so a host's autocomplete on `llmbroker.` shows only what a host can use.
   - Each optional-dependency backend subpackage (`sqlite/`, `postgres/`, `mongodb/`, `aws/`,
     `vault/`) imports and re-exports its own classes (plus `__all__`) from its `__init__.py` —
     e.g. `sqlite/__init__.py` re-exports `Registry`, `Store`, `Secrets` so callers can write

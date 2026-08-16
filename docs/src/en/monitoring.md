@@ -109,7 +109,7 @@ answered is the row whose `status` is `CallStatus.OK`; a stream that died after
 emitting deltas is not it, having never completed.
 
 ```python
-from llmbroker.models import CallStatus
+from llmbroker import CallStatus
 
 rows = llms.calls(limit=200, trace_id=request_id)
 answered = next((c for c in rows if c.status is CallStatus.OK), None)
@@ -133,7 +133,7 @@ only ever stores it. Both ids are also how you rate a call after the fact — se
 model made and how they ended:
 
 ```python
-from llmbroker.models import CallStatus
+from llmbroker import CallStatus
 
 for name, s in llms.stats(since=week_ago).items():
     failed = s.total - s.by_status.get(CallStatus.OK, 0)

@@ -45,7 +45,7 @@ there, add yours, write it all back — `mirror` is a total mirror, so anything 
 leave out is deleted:
 
 ```python
-from llmbroker.models import LLMConfig
+from llmbroker import LLMConfig
 from llmbroker.postgres import Registry
 
 registry = Registry(pool)

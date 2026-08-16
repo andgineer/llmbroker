@@ -25,10 +25,18 @@ from llmbroker.exceptions import (
     UnknownModelError,
 )
 from llmbroker.models import (
+    Call,
+    CallStatus,
     LifecyclePhase,
+    LLMConfig,
+    LLMMetrics,
+    LLMSnapshot,
+    LLMState,
+    LLMStats,
     PendingKey,
     PoolSnapshot,
     SyncReport,
+    Usage,
 )
 from llmbroker.optimizer import Optimizer
 from llmbroker.standalone.secrets import DictSecrets, Secrets
@@ -44,6 +52,8 @@ __all__ = [
     "AsyncResult",
     "AuthError",
     "Broker",
+    "Call",
+    "CallStatus",
     "DictSecrets",
     "DirectClient",
     "DirectResult",
@@ -55,7 +65,12 @@ __all__ = [
     "LLMs",
     "LifecyclePhase",
     "LLMBrokerError",
+    "LLMConfig",
+    "LLMMetrics",
     "LLMRequestError",
+    "LLMSnapshot",
+    "LLMState",
+    "LLMStats",
     "LLMTimeoutError",
     "MissingKeyError",
     "NoLLMAvailableError",
@@ -75,6 +90,7 @@ __all__ = [
     "UnknownModelError",
     "Result",
     "Secrets",
+    "Usage",
     "arun_tool_loop",
     "format_report",
     "run_tool_loop",

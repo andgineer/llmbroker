@@ -39,7 +39,7 @@ llms.direct("opus").ask("...")
 версия, которая двигаться не должна:
 
 ```python
-from llmbroker.models import LLMConfig
+from llmbroker import LLMConfig
 
 gateway = LLMConfig(
     name="frontier",

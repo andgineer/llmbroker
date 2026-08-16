@@ -40,7 +40,7 @@ Pass a config instead of an alias — a self-hosted endpoint, a company gateway,
 version you must pin:
 
 ```python
-from llmbroker.models import LLMConfig
+from llmbroker import LLMConfig
 
 gateway = LLMConfig(
     name="frontier",
