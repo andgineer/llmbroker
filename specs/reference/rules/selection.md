@@ -42,17 +42,16 @@ is the only thing derived from the journal).
 
 **A cooldown belongs to the process that met it** (invariant 11). It is held in
 memory, written to no row, and no process reads another's
-([`decisions.md`](../decisions.md#availability-is-not-shared)). Two entries
-resolving to the same key value share a quota and therefore a 429: what a rate
-limit withdraws is the key's capacity, not one endpoint's, so the cooldown
-applies to every entry this process is paying for with that value. A 5xx is
-provider-side and withdraws the entry it came from.
+([`decisions.md`](../decisions.md#availability-is-not-shared)). It withdraws the
+entry the failure came from and no other, whichever code caused it.
 
-The price is that each process pays its own first failing call against a model
-another has already found to be cooling — one wasted call, spilled over
-transparently, never seen by the caller. Nothing about availability survives a
-restart either, and nothing needs to: a cooldown carries the instant it expires,
-so a fresh process is at worst optimistic for one call.
+The price is one wasted call, spilled over transparently and never seen by the
+caller, paid twice over: each process pays it against a model another has
+already found to be cooling, and an entry sharing a provider quota with one that
+has just been rate-limited pays it to meet the same 429 for itself. Nothing
+about availability survives a restart either, and nothing needs to: a cooldown
+carries the instant it expires, so a fresh process is at worst optimistic for
+one call.
 
 ## Quality demotion
 
@@ -187,7 +186,8 @@ time-based recovery.
 
 There is no alerts API and no status enum. The few human-actionable events —
 dead key, a demotion flip, an under-provisioned pool (every keyed model COOLING
-at once, debounced) — are log lines.
+at once, debounced) — are log lines. So is each cooldown as it is applied, as a
+fact rather than something to act on.
 `snapshot()` serves each model's raw facts and metrics; the host derives
 whatever presentation it wants.
 

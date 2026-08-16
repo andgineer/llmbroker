@@ -131,11 +131,11 @@ identity. This is a hybrid, not "JSON everywhere" — identity and queried field
 stay first-class columns and keep their indexes. The journal's time column is
 indexed, so a time-bounded read is an indexed scan on every SQL backend.
 
-Four tables or collections exist and no more:
+Four tables or collections hold data, and no more — the version marker above is
+the only other object llmbroker creates:
 
-- **calls** — the journal. Failed rows also carry the cooldown instant and key
-  digest the shared-cooldown rebuild reads (see
-  [`selection.md`](selection.md)).
+- **calls** — the journal. A failed row also records the cooldown it caused, for
+  visibility only: nothing reads availability back out of a row (invariant 11).
 - **registry** — the merged list. Global, no scope dimension, no learned data,
   and nothing but `sync` writes it. It stores no ordering (invariant 3), so a
   backend author must not assume the load order means anything.
@@ -286,9 +286,9 @@ The broker's own call verbs are its unscoped caller, so a host with one tenant
 never meets the second noun.
 
 - **The registry and everything learned are user-agnostic** (invariant 16).
-  There is no per-tenant registry partition, and storage and the protocols have
-  no user concept at all: `scope` is interpreted by the broker, never passed to
-  a backend or protocol method.
+  There is no per-tenant registry partition, and nothing learned is partitioned
+  either. The store carries `scope` as an opaque attribution field it may narrow
+  a read by; no backend gives it any other meaning.
 - **Secrets are the one thing that is actually per-scope.** A caller resolves the
   scope-prefixed ref first and falls back to the shared one — an own key if one is
   set, the installation's otherwise. The shared value is read once for everybody.

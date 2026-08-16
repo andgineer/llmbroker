@@ -124,7 +124,7 @@ admin act, and the one thing llmbroker cannot decide for a host.
 **No command writes a model list.** A list is filled by a sync, and a model
 reached by name is declared where the application that calls it is configured, so
 there is nothing left for a command to append
-([`model-list.md`](model-list.md#the-model-list-file-is-written-never-authored)).
+([below](#the-model-list-file-is-written-never-authored)).
 
 **The CLI has no merge site.** Refreshing a list is the application's own
 entrypoint calling `broker.sync(...)`, built by the same factory the application

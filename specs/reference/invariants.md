@@ -109,8 +109,8 @@ rather than what the running system must never do.
     → `model-list.md`
 
 16. **The registry and everything learned are user-agnostic.** `scope` reaches
-    secret refs and journal attribution only; no protocol and no backend has a
-    user concept, and nothing is partitioned per user. → `backends.md`
+    secret refs and journal attribution only: no backend interprets it, and
+    nothing — registry, pool, quality — is partitioned per user. → `backends.md`
 
 17. **An empty answer is an answer.** A well-shaped completion carrying no text
     and no tool calls returns an empty string; it is never a provider failure
@@ -135,5 +135,4 @@ rather than what the running system must never do.
 22. **A sync never removes or overwrites an entry it did not write.** Every
     entry records whether a sync put it there, and the default is *no*, so
     anything reaching a registry by any other route is protected without doing
-    anything. The one exception is the alias an entry asked us to follow.
-    → `model-list.md`
+    anything. → `model-list.md`

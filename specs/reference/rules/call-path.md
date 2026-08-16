@@ -25,11 +25,9 @@ Lifecycle failures form their own tree rooted at `RuntimeError`, separate from
 the request-error tree. The two are different axes, and rooting lifecycle errors
 at `RuntimeError` keeps hosts that already catch it around provisioning working
 unchanged. A fatal condition carries as attributes the facts a host would
-otherwise parse out of the message. The top-level package exports the lifecycle
-base and the benign, application-handled member of the tree; an
-operator-actionable deployment failure stays reachable through
-`llmbroker.exceptions` without being promoted onto the package surface, which is
-reserved for what an application catches in normal operation.
+otherwise parse out of the message. Every exception a host may catch is on the
+top-level package surface, both trees and both bases, so nothing a caller has to
+handle is reached by a submodule path.
 
 ## Classifying a failure
 
@@ -75,10 +73,10 @@ connection and then hangs cannot outlive the budget.
 
 It does **not** bound the broker's own bookkeeping between attempts. Each failed
 attempt is journaled before the next starts, so a call failing over across
-several models overruns `wait` by the store's write latency. That write stays on
-the call path deliberately: the journal is the shared state a sibling node reads
-a cooldown from, and a caller released before the row lands would let the next
-one repeat the failure.
+several models overruns `wait` by the store's write latency. That ordering is
+deliberate: an attempt is settled whole — its slot handed back, its cooldown
+applied, its row written — before the next candidate is picked, so a failover
+never leaves a half-recorded attempt behind it.
 
 - **`None`** (the default) waits as long as at least one model can still come
   back by itself — a cooldown expiring, a capped slot releasing — and raises

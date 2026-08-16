@@ -18,7 +18,7 @@ class Driver(Protocol):
     # ------------------------------------------------------------------
 
     async def fetch(self, table: str) -> list[Row]:
-        """All rows, ordered by key columns (registry load order feeds selection priority)."""
+        """All rows, ordered by key columns — a stable order, never a ranking (invariant 3)."""
         ...
 
     async def get(self, table: str, key: Key) -> Row | None: ...

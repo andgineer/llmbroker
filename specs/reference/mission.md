@@ -73,9 +73,10 @@ mission rather than extending it.
 - **Cost is not an axis.** Nothing is routed by price, and no tokens or spend
   are counted. The free pool has no prices to compare, and a host reaching its
   own paid model by name already chose what it is paying for.
-- **Nothing wraps the request itself.** No prompt templates, no agent loop, no
-  embeddings, no retrieval. llmbroker decides who answers; what is asked and
-  what is done with the answer belong to the application.
+- **Nothing wraps what is asked.** No prompt templates, no embeddings, no
+  retrieval, no opinion about the content of a request or a reply. The tool loop
+  is the one thing above a single call that ships, and all it does is repeat
+  `chat` and hand each requested tool to the application's own dispatch.
 - **Free tiers are the provider's terms, not ours.** The keys are the caller's
   own, and so is the agreement each provider issued them under; llmbroker
   neither multiplies a quota nor conceals whose it is.
