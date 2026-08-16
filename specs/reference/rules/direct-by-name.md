@@ -114,10 +114,9 @@ declaring in code would be dead wherever secrets live in a backend rather than
 the environment, while the identical stored entry worked — and nothing else
 would ever carry that key across, since a declared model is never synced.
 
-**Learning resets by name change, with no dedicated mechanism.** A re-resolution
-rewrites the model id and the name together, so journal rows for the old name
-orphan naturally and the new model starts clean. Scores learned for one version
-never carry to another.
+**Nothing is learned about a declared model.** A direct call routes over nothing,
+journals nothing and is never rated, so a re-resolution has no accumulated verdict
+to carry or to reset — what a version change moves is the identity alone.
 
 ## Uniqueness
 
