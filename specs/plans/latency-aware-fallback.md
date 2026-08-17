@@ -3,8 +3,9 @@
 **Status: draft, deliberately not queued.** There is no row for it in
 [`README.md`](README.md), so nothing picks it up: it says what to implement, why, and
 roughly how, and leaves the work order, the tests and the spec moves to detailed
-planning. Five items, in descending order of value; they are independent and may
-well become separate plans.
+planning. Seven items, in descending order of value; items 1, 2, 2a and 2b are one
+subsystem seen from four sides, the rest stand alone, and they may well become
+separate plans.
 
 ## Where the evidence comes from
 
@@ -12,7 +13,10 @@ A downstream application (a vocabulary tool: one user, a couple of dozen words a
 day, an answer streamed into a browser) benchmarked the free pool and the paid
 direct client on ~40 items per source language across three languages, in two load
 profiles — a burst of four concurrent requests, and a paced single-user session.
-Numbers quoted below are from that run.
+Numbers quoted below are from that run. The provider-level observations from it are
+in
+[`../reference/freetier-providers.md`](../reference/freetier-providers.md#what-one-real-workload-met-measured-2026-08-17)
+and are not restated here.
 
 The headline is that the pool is excellent at what it is for: paced, a single user
 got 20 answers out of 20 from the highest-weighted model, first delta 0.8 s, whole
@@ -36,10 +40,16 @@ choices, and those are the slowest endpoints it has:
 | `openrouter-nemotron-3-ultra` | 0.72 | 35–57 s (worst 101 s) |
 | `openrouter-laguna-s-2.1` | 0.70 | 43 s |
 | `groq-gpt-oss-120b` | 0.55 | 2.8–3.5 s |
+| `zai-glm-4.7-flash` | 0.55 | 34 s, of which 31 s before the first token |
 
 The two slowest carry the highest weights after the primary, so the *first*
 fallback is the worst possible choice for an interactive caller, and the fastest
 alternative sorts last. The pool answers — 20 to 60 times slower than it needed to.
+
+The last row is the sharpest case: it is a reasoning model that emits nothing for
+31 seconds and then answers well. Its weight says it is worth routing to, and by
+the only measure the weight speaks about — the quality of what comes back — it is.
+Nothing in the pool can express "never route a streaming caller here".
 
 The existing term cannot catch this. A budget bounds queueing and the first delta;
 past the first delta the answer is unbounded (invariant 18). A model that opens
@@ -59,10 +69,11 @@ budget the term is equal for all and curated order stands.
 **Recorded decisions this touches — and where it contradicts one.**
 
 - [`budget-expiry-teaches-ordering`](../reference/decisions.md#budget-expiry-teaches-ordering)
-  is the mechanism being widened, not replaced. Its reasoning holds verbatim; only
-  its premise — "a model that never answers produces no successful rows, so this is
-  the only obtainable latency evidence" — turns out to be narrower than the problem.
-  A model that answers slowly produces successful rows *and* the latency on them.
+  is the mechanism being widened, not replaced, and its reasoning holds verbatim.
+  Its premise is narrower than the problem, though: "a model that never answers
+  produces no successful rows, so this is the only obtainable latency evidence"
+  leaves out the model that answers slowly, which produces successful rows *and*
+  the latency on them.
 - [`no-bandit-machinery`](../reference/decisions.md#no-bandit-machinery) blocks
   "latency ranking" outright, on the grounds that *a chronically failing model is
   already effectively disabled by exponential cooldown*. **That reason does not
@@ -98,10 +109,21 @@ it is cooling, so it cannot succeed, so the streak only grows — and the cooldo
 with it, doubling to the cap. A provider whose free tier flaps on a seconds timescale
 gets parked for far longer than it was ever unavailable.
 
-Measured on the pool's z.ai endpoint: HTTP 429 carrying **no `Retry-After`** (so the
-flat base is used), answering 2 attempts out of 6 in one minute, then refusing 26
-consecutive attempts twenty minutes later, then answering again. Six consecutive
-misses are enough to park it for an hour.
+**This one is narrow, and the measurements are what bound it.** Across a burst that
+cooled the highest-weighted model 16 times in seven minutes, *every* cooldown stayed
+at the flat 60-second base: the exponent never grows while a model keeps answering
+between rate-limit hits, because each success resets the streak. The missing decay
+therefore does not bite a model under ordinary load. It bites a model that rarely
+succeeds: the pool's z.ai endpoint answered 2 attempts out of 6 in one
+minute, refused 26 consecutively twenty minutes later, then answered again, all on
+HTTP 429 carrying **no `Retry-After`**. There, six consecutive misses are enough to
+park an endpoint for an hour that was never unavailable for more than seconds.
+
+Driving that endpoint alone through the pool demonstrates it directly: 8 requests,
+1 answered, and the cooldown climbing 60 → 120 → 240 → 480 seconds with the streak
+reaching 4. Worth noting what the same run shows working correctly — a failed
+attempt made *while* the model was already cooling did not advance the exponent,
+which is the documented rule holding.
 
 The library already recognises this exact trap elsewhere and solves it:
 `budget_bounds_from_calls` ages its evidence by a window precisely because "a model
@@ -118,6 +140,82 @@ Both are small and local to the optimizer's counter.
 which this is not — the streak already exists. The cooldown rules in
 [`selection.md`](../reference/rules/selection.md) state the current behaviour and
 would be updated with it.
+
+---
+
+## 2a. Giving up on a slow model erases the evidence that it was slow
+
+**What.** Decide what a consumer-side abandonment means, because today it means
+"the model did fine" — and it wipes the ordering evidence with it.
+
+**Why.** A caller with a whole-answer budget has exactly one defence against a
+model that opens promptly and then dribbles: stop pulling and go elsewhere. When it
+does, the attempt lands in `_finish_ok`, which is right in intent — a consumer that
+stops early because it has read enough must not punish the model — but it currently
+does three things at once: journals `CallStatus.OK`, which resets the model's
+failure streak through the learner; clears its cooldown; and **clears its budget
+bound**, the one piece of state that existed to sort it after its faster siblings.
+
+So the caller that most needs the pool to remember "this one is too slow for me"
+is the caller that deletes that memory. And the two situations are genuinely
+indistinguishable from inside the library: "I have enough text" and "you took too
+long" both arrive as a closed generator.
+
+The measurements make this concrete rather than theoretical: the model this
+happens to answered in 36–57 seconds against the primary's 1.6, and a downstream
+application has now specified exactly this abandon-and-step-up behaviour, so the
+erasure will happen on every slow answer it meets.
+
+**Roughly how.** Either let the caller say which kind of abandonment it was — one
+optional argument on the close path, defaulting to today's meaning — or stop
+`_finish_ok` from clearing the budget bound when the answer had not finished, since
+an unfinished answer is not evidence that the model met anybody's budget. The
+second needs no API change and is the smaller move.
+
+**Recorded decisions this touches.** None directly.
+[`budget-expiry-teaches-ordering`](../reference/decisions.md#budget-expiry-teaches-ordering)
+argues that latency evidence must be kept rather than discarded as pure loss, which
+is the same argument one step further along. Invariant 5 still forbids any of this
+reaching the quality window.
+
+---
+
+## 2b. The quality window has no input for the models whose order is wrong
+
+**What.** Recognise that host ratings cannot reorder the fallbacks, and stop
+treating them as the answer to fallback ordering.
+
+**Why.** This is arithmetic on the optimizer's own constants, not a measurement, and
+it is the reason item 1 cannot be waved away with "just rate your calls". A
+demotion verdict needs `quality_min_count` ratings in one `(model, operation)`
+bucket, and the curated weight keeps its majority until a window of comparable
+size fills. But a fallback is only ever picked when the primary is unavailable —
+which, at the paced single-user load this library names as its own scale, never
+happened once in 20 requests. A model that is never picked is never rated, so its
+window stays empty, so `is_demoted` is permanently False and its priority is
+permanently the curated weight.
+
+The ordering among fallbacks is therefore frozen at whatever the curated list said,
+and no amount of host diligence unfreezes it. Note this is not a tuning problem:
+with zero ratings in the bucket, no threshold is low enough.
+
+The library already names this exact trap for a different mechanism —
+`budget_bounds_from_calls` ages its evidence by a window because "a model never
+picked never succeeds, so nothing else would clear it". The quality window has the
+same shape and no such compensation.
+
+**Roughly how.** Nothing to change inside the optimizer: the constants are
+consistent with each other and the mechanism is right for what it is for, which is
+demoting a model that gives bad answers *while it is being used*. What follows is
+that the fallback order has to be improved by evidence obtainable without traffic —
+which is item 1, latency read off rows a model produced whenever it last answered.
+What is worth changing is the documentation: the ordering rules should say plainly
+that quality learning is a mechanism for the models that get traffic, so a host
+does not plan around ratings fixing an order they cannot reach.
+
+**Recorded decisions this touches.** Invariant 5 (nothing but a host rating enters
+the quality window) is what makes this structural rather than fixable in place, and
+it should stay — the alternative is synthetic scores, which it exists to forbid.
 
 ---
 
@@ -197,10 +295,12 @@ reason for dropping the deadline intact.
 
 ---
 
-## What detailed planning must settle across all five
+## What detailed planning must settle across all of them
 
-Which of these ship together and which stand alone; for each contested call, the
+Which of these ship together and which stand alone — 1, 2a and 2b in particular
+argue for being weighed as one change to how the pool learns about latency; for each
+contested call, the
 [`decisions.md`](../reference/decisions.md) entry that lands in the same batch as the
-behavior; the spec moves (items 1 and 2 both change what
+behavior; the spec moves (items 1, 2, 2a and 2b all change or add to what
 [`selection.md`](../reference/rules/selection.md) states today); and the tests. The
 gate is unchanged: `invoke pre` and `python -m pytest`, both green.

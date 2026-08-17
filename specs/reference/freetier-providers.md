@@ -187,6 +187,76 @@ to Nvidia) add nothing on either axis.
 
 ---
 
+## What one real workload met (measured 2026-08-17)
+
+The figures above are curated from public sources. This section is the other
+kind of knowledge: what a single application actually met when it drove the
+pool hard, on one key per provider, in one afternoon. It is one workload on one
+day, not a contract and not telemetry — but it is the only place here where the
+numbers come from calls rather than from documentation, and it is what makes
+the pool's *practical* ceiling visible, which no published RPM does.
+
+The workload: a vocabulary tool sending one prompt of ~1.2K tokens and reading
+back ~800, streamed.
+
+**A burst exhausts the best model in about a minute.** Four requests in flight,
+120 requests over seven minutes. The highest-weighted model answered the first
+14, then cooled; over the whole run it took 83, and the rest spilled down the
+list — 30, 3 and 1 to the three siblings. Three requests found nothing free
+within a 45-second budget and failed. Every one of the 16 cooldowns used the
+flat base: **not one provider sent a `Retry-After`**, so the published RPM
+figures are the only warning a host gets, and the router is guessing the wait
+every time.
+
+**Paced, the same pool never cools at all.** One request at a time, five seconds
+apart, 20 requests: zero cooldowns, zero failover, the highest-weighted model
+answered all 20. The gap between this and the burst above is the whole story of
+what the free tier is for.
+
+**Sustained through one key, the practical rate is ~15 requests a minute.** Two
+in flight with four seconds of pacing, 120 requests, no failures — but only
+because the caller retried on 429 with backoff. That is the ceiling of a single
+free key for a single model, and it is a *per-minute* ceiling: no daily cap was
+reached in any run.
+
+**The pool's latency spread is about thirtyfold, and weight does not encode
+it.** Median whole answer, per model that actually answered: 1.6–1.7 s for the
+highest-weighted one, 2.8–3.5 s for the fastest sibling, 36–57 s (worst
+observed 101 s) and 43 s for the two that carry the *second and third* highest
+weights. So a host whose first choice cools does not degrade gently — its
+answers get an order of magnitude slower, while the fastest alternative sorts
+last. Anyone pooling for an interactive workload should read the weights as
+what they are, a quality prior, and expect no help with latency.
+
+**An empty completion is not hypothetical.** One model returned a well-shaped
+answer carrying no text at all on 3 of 14 requests for one language, in under a
+second each. Hosts that treat "no error" as "usable answer" will ship those
+straight through.
+
+**The Z.AI entry works through the pool — and is still unusable for an
+interactive caller.** Driven with that key alone, so routing had exactly one
+candidate, it answered 1 request in 8: a complete, well-formed answer naming
+itself on the handle, so nothing about the endpoint's shape troubles the router.
+The 429s were classified as rate limits, the cooldown grew 60 → 120 → 240 → 480
+seconds exactly as documented, and the pool reported itself degraded and
+under-provisioned throughout. What makes it unusable is the other number: when it
+did answer, **the first token arrived after 31 seconds**. `glm-4.7-flash` is a
+reasoning model, and it thinks for half a minute before it says anything. So even
+a perfectly available Z.AI would miss a first-content budget of a few seconds by
+sixfold, and a caller that streams into a UI can never route to it — a property
+the weight axis, which is about answer quality, does not express.
+
+**Z.AI's free tier is oversubscribed enough to be unreliable.** Its 429 carries
+code 1305, "the service may be temporarily overloaded", and no `Retry-After`;
+availability swung from 2 answers in 6 attempts to 26 consecutive refusals
+within the same hour, for short prompts and real ones alike. Two traps worth
+knowing: the free flash model does **not** appear in that key's `/models`
+listing, so the listing is not a reachability check; and the paid models on the
+same key answer `1113 Insufficient balance`, which reads like an account
+problem and is not one.
+
+---
+
 ## Curation rules for adding and removing entries
 
 **A removal here reaches every installation that follows the list.** A sync
