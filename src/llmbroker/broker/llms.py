@@ -123,20 +123,30 @@ class AsyncLLMs:
             wait=0,
         )
 
-    def stream(
+    def stream(  # noqa: PLR0913 - the prompt and the four call knobs
         self,
         prompt: str,
         *,
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
+        stall: float | None = None,
     ) -> StreamHandle:
         """Route a completion over the pool as a handle yielding text deltas and naming
-        what answered them. Fails over like ``ask`` until the first delta, then raises
-        ``StreamInterruptedError``. Async-only."""
+        what answered them. ``stall`` bounds the gap between deltas, not the answer;
+        past the first delta a death raises ``StreamInterruptedError``. Async-only."""
+        if stall is not None and stall <= 0:
+            raise ValueError(f"stall must be a positive number of seconds, got {stall!r}")
         receipt = CallReceipt()
         return StreamHandle(
-            self._deltas(receipt, prompt, operation=operation, trace_id=trace_id, wait=wait),
+            self._deltas(
+                receipt,
+                prompt,
+                operation=operation,
+                trace_id=trace_id,
+                wait=wait,
+                stall=stall,
+            ),
             receipt,
             operation=operation,
             store=self._store,
@@ -146,7 +156,7 @@ class AsyncLLMs:
             ),
         )
 
-    async def _deltas(  # noqa: PLR0913 - the prompt, the receipt and the three call knobs
+    async def _deltas(  # noqa: PLR0913 - the prompt, the receipt and the four call knobs
         self,
         receipt: CallReceipt,
         prompt: str,
@@ -154,6 +164,7 @@ class AsyncLLMs:
         operation: str | None,
         trace_id: str | None,
         wait: float | None,
+        stall: float | None,
     ) -> AsyncGenerator[str, None]:
         await self._ensure_pool()
         messages = [{"role": "user", "content": prompt}]
@@ -167,6 +178,7 @@ class AsyncLLMs:
                     operation=operation,
                     trace_id=trace_id,
                     wait=wait,
+                    stall=stall,
                 ),
             ) as deltas:
                 async for delta in deltas:
@@ -186,6 +198,7 @@ class AsyncLLMs:
                 operation=operation,
                 trace_id=trace_id,
                 wait=0,
+                stall=stall,
             ),
         ) as deltas:
             async for delta in deltas:

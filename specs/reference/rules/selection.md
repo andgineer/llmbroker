@@ -37,8 +37,8 @@ value has appeared. Which callers it reaches is in
 
 Nothing about availability is on the journal tail and no failure forces a read of
 its own: a cooldown and a rejected key belong to the process that found them, are
-written to no row, and are read back from none (invariant 8's other half — quality
-is the only thing derived from the journal).
+written to no row, and are read back from none (invariant 8's other half — no
+routing signal costs the call path a read of its own).
 
 **A cooldown belongs to the process that met it** (invariant 11). It is held in
 memory, written to no row, and no process reads another's
@@ -89,12 +89,17 @@ warning (demoted) or info (cleared) naming the model, operation and bound.
 
 Own ratings apply to the in-memory window immediately, before any rebuild.
 
+Quality learning reaches only the models that get traffic, so a fallback the
+primary never yields to keeps its curated position however diligently a host
+rates — which is why the ordering evidence below has to be obtainable without
+traffic.
+
 ## Order of acquisition
 
 Slot acquisition sorts on one key, in this precedence:
 
-1. a slot that recently failed to answer within a budget as small as the one on
-   offer sorts last among its peers;
+1. a slot that recently took, or failed to answer within, a budget as small as
+   the one on offer sorts last among its peers;
 2. a slot quality-demoted for the requested operation sorts after every
    non-demoted slot;
 3. the higher priority wins;
@@ -124,48 +129,65 @@ serializes them.
 demotion** — the two answer different questions
 ([`decisions.md`](../decisions.md#blend-for-ranking)).
 
-## A budget expiry teaches ordering
+## Latency teaches ordering
 
-An expired `wait` never cools a model (see [`call-path.md`](call-path.md)), but
-it is evidence, and the only evidence obtainable: a model that never answers
-produces no successful rows, so its latency cannot be measured any other way.
-What the expiry proves is a lower bound — "this one did not answer within X
-seconds" — and that is enough to stop handing it to the next caller whose budget
-is no larger, so a hung endpoint costs one caller rather than all of them.
+Two numbers, neither of which withdraws anything. An expired `wait` never cools a
+model (see [`call-path.md`](call-path.md)), but it is evidence: it proves a lower
+bound — "this one did not answer within X seconds" — and that is enough to stop
+handing the model to the next caller whose budget is no larger, so a hung endpoint
+costs one caller rather than all of them. It is not the only evidence, because it
+is not the only way to be too slow: a model that answers slowly never misses a
+budget at all — it answers, successfully, taking a minute about it — so latency is
+also read off the answers a model did give. Acquisition compares the caller's
+remaining budget against the larger of the two
+([`decisions.md`](../decisions.md#observed-latency-is-its-own-number)).
 
-The expiry is journaled as the budget it missed, and the bound is derived from
-the journal tail with everything else llmbroker learns. A fresh expiry may raise
-the bound; two things retire it, and both are needed. A model's own success
+**The miss.** It is journaled as the budget it missed, and the bound is derived
+from the journal tail with everything else llmbroker learns. A fresh expiry may
+raise the bound; two things retire it, and both are needed. A model's own success
 retires every miss older than it. A window on the clock retires the rest —
 because a model kept out of first place produces no successful rows either, so
 success alone would let one observation invert the curated order indefinitely.
 Unlike a cooldown, which carries the instant it expires and so heals on its own,
 a recorded miss states only what happened; the window is what gives it an end.
-Four properties keep this from becoming a penalty in disguise:
 
-- **It is budget-relative.** A caller with a larger budget, or none, ignores the
-  bound entirely, so the signal can reorder a pool but never overturn one: when
-  nobody can meet a budget, every candidate carries a bound and the curated
-  ranking stands.
-- **It never withdraws a model.** A bounded model is still selected when it is
+**The answers.** What a stream contributes is the wait for its first delta, which
+no consumer can move; what a completion contributes is its whole time, no consumer
+standing between the model and the row. The statistic is a median over the most
+recent answers, read only once there are enough of them that one slow answer is
+not the whole of it. These observations have no clock of their own: success is
+what produces them, so any answer a model gives refreshes them, and a window would
+delete precisely the evidence about the untrafficked fallbacks this signal exists
+to order. They live as long as the pool holds them — appended as each call ends,
+and replaced wholesale by the tail read at each rebuild, exactly as the quality
+windows are. A model whose rows have fallen off the tail loses its number and
+falls back to its curated position, never to a worse one.
+
+These properties keep both numbers from becoming a penalty in disguise:
+
+- **They are budget-relative.** A caller with a larger budget, or none, ignores
+  them entirely, so the signal can reorder a pool but never overturn one: when
+  nobody can meet a budget, every candidate carries one and the curated ranking
+  stands.
+- **They never withdraw a model.** A slow model is still selected when it is
   the last candidate standing — exactly when a caller would rather have a slow
   answer than none.
-- **It applies the moment the miss is observed, from the call itself**, not at
+- **They apply the moment they are observed, from the call itself**, not at
   the next rebuild and not only where learning is switched on. Rebuilds are rare,
-  so every caller until the next one would otherwise walk into the same hang —
+  so every caller until the next one would otherwise walk into the same wait —
   the one thing this signal exists to prevent.
-- **It is the one routing signal that does survive on the journal**, unlike a
-  cooldown, because it is evidence about answers rather than about availability:
-  it only ever reorders, never withdraws, so a bound that does not hold on this
-  node costs one reordering. Latency belongs to a node's egress, region and
-  resolver, which makes another node's miss weaker evidence than this node's own;
-  it is admitted anyway, because partitioning it would put a node identity in the
-  journal that nothing else needs.
-- **It is one signal for both routing paths, deliberately approximate.** A
+- **They are the routing signals that do survive on the journal**, unlike a
+  cooldown, because they are evidence about answers rather than about
+  availability: they only ever reorder, never withdraw, so a number that does not
+  hold on this node costs one reordering. Latency belongs to a node's egress,
+  region and resolver, which makes another node's observation weaker evidence than
+  this node's own; it is admitted anyway, because partitioning it would put a node
+  identity in the journal that nothing else needs.
+- **The miss is one signal for both routing paths, deliberately approximate.** A
   stream contributes the budget it missed reaching the first delta, a completion
   the budget it missed answering in full, and neither is scaled. Ordering is all
-  it can affect, so a second signal with its own window would cost more on the
-  acquisition path than the sharper bound is worth.
+  it can affect, so splitting it per path, each with a window of its own, would
+  cost more on the acquisition path than the sharper bound is worth.
 
 An expiry that fired before the attempt reached the provider teaches nothing:
 the model never got a chance, and recording it would blame the model for the

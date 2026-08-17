@@ -154,3 +154,42 @@ types.
 - No stall on `ask`/`chat` — `wait` already bounds a completion end to end.
 - No failover after a stall (invariant 18).
 - No version bump — the maintainer does it by hand.
+
+## Handover
+
+**Done:** all four batches and the whole test list. `stall` runs the full signature
+chain, the gap is armed and disarmed in `_stream_deltas`, the disposal goes through
+`_dispose` with a `_BudgetExpired` outcome and the elapsed seconds, and
+`StreamStalledError` is exported from the package. Nothing was left out.
+
+**Done differently, and why**
+
+- **The bound is disarmed *before* every yield, not only at the first delta.** This
+  is a correctness fix to the plan's snippet, not a preference. That snippet re-arms
+  the gap after `yield delta` but never clears it, so from the second delta on the
+  previous deadline is still live while the consumer holds the generator — and
+  `asyncio.timeout` cancels the *task*, which is the consumer. Verified both ways:
+  with the plan's exact snippet
+  `test_a_slow_consumer_never_trips_the_stall` fails with a raw `CancelledError`
+  raised inside the consumer's own code; with the disarm, all 13 pass. The plan's
+  stated intent — the clock runs only while the library waits on the provider — is
+  what the extra line implements. The disarm subsumes the existing
+  `bound.reschedule(None)` at the first delta, so there is one line, not two.
+- **The marker is `_StalledError`, not `_Stalled`** — ruff's N818 requires the
+  suffix.
+- **It is raised from `_stream_deltas`' own `except TimeoutError`**, guarded on
+  `stall is not None and progress.started`. `asyncio.timeout` surfaces its fired
+  deadline as `TimeoutError` when the block exits, so that handler is the raise site
+  the plan means: past the first delta the first-delta bound is disarmed, so a
+  timeout there can only be the gap.
+- **`StreamStalledError` was also added to the exception rosters in
+  `docs/src/en/direct.md` and `docs/src/ru/direct.md`**, which is where the library's
+  catchable errors are listed; the plan named only the usage pages, and the knob
+  itself went into the streaming sections of `async.md` (en and ru) rather than
+  `usage.md`, because that is where streaming is documented.
+
+**As predicted:** `tests/test_router_stream.py` and `tests/test_wait_budget.py`
+needed no edit — every existing streaming test passes with `stall` unset.
+
+**Gate:** `invoke pre` clean; `python -m pytest` 1440 passed, 0 skipped, 0 errors.
+No version bump — the maintainer's.

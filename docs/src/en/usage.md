@@ -218,9 +218,11 @@ not penalised for it, because the deadline was yours, not its fault. Without
 
 A model that misses your budget does stop being the first choice for equally
 tight budgets, so the next caller is handed a sibling instead of the same trap —
-one call pays for the discovery, not all of them. Nothing is switched off:
-callers with a roomier budget still get that model first, it is still used when
-it is the only one left, and its next successful answer clears the mark.
+one call pays for the discovery, not all of them. So does one that merely answers
+slowly: how long its recent answers took is read the same way, against your budget
+and nothing else. Nothing is switched off: callers with a roomier budget still get
+that model first, it is still used when it is the only one left, and answering
+faster is all it takes to work the mark off.
 
 `wait=0` is the one exception: it means "do not queue", not "answer instantly" —
 every model that is free right now is tried, with no deadline of yours on the

@@ -159,3 +159,6 @@ Direct calls raise from one hierarchy under `LLMRequestError`:
 - `LLMTimeoutError` — the call exceeded its timeout.
 - `StreamInterruptedError` — a **pool** stream died after deltas had already been
   emitted, with `.llm_name` and the cause attached.
+- `StreamStalledError` — a **pool** stream went quiet for longer than the `stall`
+  gap you set, with `.llm_name` and `.elapsed`. The model was still connected; it
+  just stopped producing.

@@ -35,6 +35,30 @@ has started arriving there is nothing left to fail over to, so a stream that
 dies mid-answer raises `StreamInterruptedError`; the deltas you already received
 stand.
 
+### Bounding the gap between deltas {#stall}
+
+`wait` stops at the first delta, so a model that opens promptly and then dribbles
+for two minutes is inside its budget the whole time. `stall` bounds the *gap*
+between deltas — not the answer, and not your own reading of it:
+
+```python
+stream = broker.stream("Write a long answer", wait=5.0, stall=10.0)
+try:
+    async for delta in stream:
+        print(delta, end="", flush=True)
+except llmbroker.StreamStalledError as exc:
+    print(f"\n{exc.llm_name} went quiet after {exc.elapsed:.0f}s")
+```
+
+The clock runs only while the library is waiting on the provider: taking your time
+between deltas is yours to take, and never trips it. A chunk carrying no text does
+not restart it either, so a provider sending keepalives and nothing else stalls.
+
+Unset means unbounded, which is the default; a value of zero or less is refused.
+Like a missed `wait`, a stall costs the model nothing — it is not cooled and not
+penalised — but the pool remembers how long it took to give up, so equally tight
+callers are handed a sibling first.
+
 That is also why the handle says nothing before the first delta: `llm_name` and
 `call_id` are `None` until then, because the call may still move to another
 model. `usage` fills in later still, when the answer is over.

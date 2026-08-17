@@ -10,7 +10,7 @@ from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import partial
-from typing import TypeVar
+from typing import NoReturn, TypeVar
 
 import httpx
 
@@ -32,6 +32,7 @@ from llmbroker.exceptions import (
     NoLLMAvailableError,
     ProviderError,
     StreamInterruptedError,
+    StreamStalledError,
 )
 from llmbroker.http_status import (
     DETAIL_SNIPPET,
@@ -59,6 +60,12 @@ class _Failed:
     whether to surface it once every candidate is exhausted."""
 
     error: ProviderError | None
+
+
+class _StalledError(Exception):
+    """The caller's own gap between deltas fired. Private and raised only where the
+    clock is: a ``TimeoutError`` here would classify as a provider failure and cool
+    a model that answered."""
 
 
 @dataclass(frozen=True)
@@ -111,13 +118,17 @@ class _StreamProgress:
     receipt: CallReceipt
     llm_name: str
     call_id: str
-    started: bool = False
+    first_delta_at: float | None = None  # monotonic
     usage: Usage | None = None
+
+    @property
+    def started(self) -> bool:
+        return self.first_delta_at is not None
 
     def opened(self) -> None:
         """The first delta: what answered stops moving here, so the caller's handle can
         name it while the rest of the answer is still arriving."""
-        self.started = True
+        self.first_delta_at = time.monotonic()
         self.receipt.llm_name = self.llm_name
         self.receipt.call_id = self.call_id
 
@@ -130,34 +141,54 @@ class _StreamProgress:
         self.receipt.settled = True
 
 
-async def _stream_deltas(
+def _first_delta_ms(progress: _StreamProgress, t0: float) -> int | None:
+    """The wait for the first delta, which no consumer can move — ``None`` where the
+    answer carried none."""
+    if progress.first_delta_at is None:
+        return None
+    return int((progress.first_delta_at - t0) * 1000)
+
+
+async def _stream_deltas(  # noqa: PLR0913 - one request, its two clocks, its progress
     client: httpx.AsyncClient,
     request: tuple[str, dict[str, str], dict],
     *,
     model: str,
     timeout: float,
+    stall: float | None,
     progress: _StreamProgress,
 ) -> AsyncIterator[str]:
     """Open one streaming request and yield its text deltas, recording progress.
-    ``timeout`` bounds the first delta only, so a slow *consumer* suspending this
-    generator can never trip a deadline."""
+    ``timeout`` bounds the first delta and ``stall`` the gap between later ones;
+    both are disarmed across a yield, so a slow *consumer* can trip neither."""
     url, headers, body = request
-    async with (
-        asyncio.timeout(timeout) as bound,
-        client.stream("POST", url, headers=headers, json=body) as resp,
-    ):
-        if resp.status_code >= ERROR_FLOOR:
-            await resp.aread()
-            resp.raise_for_status()
-        async for chunk in aiter_chat_chunks(resp, model):
-            delta, usage = parse_stream_chunk(chunk, model)
-            progress.usage = usage or progress.usage
-            if not delta:
-                continue
-            if not progress.started:
-                progress.opened()
+    try:
+        async with (
+            asyncio.timeout(timeout) as bound,
+            client.stream("POST", url, headers=headers, json=body) as resp,
+        ):
+            if resp.status_code >= ERROR_FLOOR:
+                await resp.aread()
+                resp.raise_for_status()
+            async for chunk in aiter_chat_chunks(resp, model):
+                delta, usage = parse_stream_chunk(chunk, model)
+                progress.usage = usage or progress.usage
+                if not delta:
+                    continue
+                if not progress.started:
+                    progress.opened()
                 bound.reschedule(None)
-            yield delta
+                yield delta
+                # Armed only once the consumer has asked for more: anything earlier
+                # would put the consumer's own processing inside the deadline.
+                if stall is not None:
+                    bound.reschedule(asyncio.get_running_loop().time() + stall)
+    except TimeoutError:
+        # Only the raise site knows which clock fired, and past the first delta the
+        # first-delta bound is disarmed, so this one can only be the gap.
+        if stall is not None and progress.started:
+            raise _StalledError from None
+        raise
 
 
 _FAILOVER_ERRORS = (
@@ -384,6 +415,7 @@ class Router:
         usage: Usage | None = None,
         cooldown_delay: float | None = None,
         budget_ms: int | None = None,
+        first_delta_ms: int | None = None,
     ) -> None:
         cooldown_until = (
             datetime.now(UTC) + timedelta(seconds=cooldown_delay)
@@ -405,14 +437,33 @@ class Router:
                 scope=attempt.ring.scope,
                 cooldown_until=cooldown_until,
                 budget_ms=budget_ms,
+                first_delta_ms=first_delta_ms,
             ),
         )
 
-    async def _finish_ok(self, attempt: _Attempt, usage: Usage | None) -> None:
+    async def _finish_ok(
+        self,
+        attempt: _Attempt,
+        usage: Usage | None,
+        *,
+        first_delta_ms: int | None = None,
+    ) -> None:
         await self._pool.release(attempt.config)
         self._pool.clear_cooling(attempt.config.name)
         self._pool.clear_budget_bound(attempt.config.name)
-        await self._record(attempt, CallStatus.OK, http_status=200, usage=usage)
+        # From the call itself, like the miss bound: rebuilds are rare, and every
+        # caller until the next one would walk into the same wait.
+        self._pool.observe_latency(
+            attempt.config.name,
+            time.monotonic() - attempt.t0 if first_delta_ms is None else first_delta_ms / 1000,
+        )
+        await self._record(
+            attempt,
+            CallStatus.OK,
+            http_status=200,
+            usage=usage,
+            first_delta_ms=first_delta_ms,
+        )
 
     async def _dispose(
         self,
@@ -536,12 +587,13 @@ class Router:
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
+        stall: float | None = None,
     ) -> AsyncIterator[str]:
         """Route a streaming completion over the pool, yielding text deltas and naming
         what answered on ``receipt``. Fails over exactly like ``chat`` up to the first
         delta; past it a death raises ``StreamInterruptedError`` instead."""
         routed = self._route(
-            partial(self._stream_attempt, messages=messages, receipt=receipt),
+            partial(self._stream_attempt, messages=messages, receipt=receipt, stall=stall),
             ring=ring,
             operation=operation,
             trace_id=trace_id,
@@ -563,6 +615,7 @@ class Router:
         operation: str | None,
         trace_id: str | None,
         receipt: CallReceipt,
+        stall: float | None,
     ) -> AsyncIterator[str]:
         """Stream one LLM, yielding its deltas. Leaves a verdict on ``outcome`` when it
         died before the first delta; the slot is settled and journaled by then."""
@@ -591,11 +644,14 @@ class Router:
                     request,
                     model=config.name,
                     timeout=timeout,
+                    stall=stall,
                     progress=progress,
                 ),
             ) as deltas:
                 async for delta in deltas:
                     yield delta
+        except _StalledError:
+            await self._stalled(attempt, backoff=backoff, stall=stall)
         except _FAILOVER_ERRORS as exc:
             await self._fail_stream(
                 attempt,
@@ -609,7 +665,11 @@ class Router:
         except GeneratorExit:
             # The consumer stopped pulling. The model answered and did nothing wrong,
             # so this is a completed attempt, not a failure the pool should learn from.
-            await self._finish_ok(attempt, progress.usage)
+            await self._finish_ok(
+                attempt,
+                progress.usage,
+                first_delta_ms=_first_delta_ms(progress, attempt.t0),
+            )
             progress.settle()
             raise
         except BaseException as exc:
@@ -618,9 +678,41 @@ class Router:
                 await self._record(attempt, CallStatus.ERROR, error_detail=type(exc).__name__)
             raise
         else:
-            await self._finish_ok(attempt, progress.usage)
+            await self._finish_ok(
+                attempt,
+                progress.usage,
+                first_delta_ms=_first_delta_ms(progress, attempt.t0),
+            )
             progress.settle()
             outcome.answered = True
+
+    async def _stalled(
+        self,
+        attempt: _Attempt,
+        *,
+        backoff: float,
+        stall: float | None,
+    ) -> NoReturn:
+        """Settle a stalled stream: the model answered and did nothing wrong, so it is
+        journaled as a budget it did not finish within rather than cooled, and the call
+        ends by raising — there is no failover past the first delta."""
+        elapsed = time.monotonic() - attempt.t0
+        await self._dispose(
+            attempt,
+            _Verdict(
+                CallStatus.ERROR,
+                f"stall budget exhausted: no delta for {stall}s",
+                outcome=_BudgetExpired(),
+            ),
+            backoff=backoff,
+            timeout=elapsed,
+        )
+        raise StreamStalledError(
+            f"{attempt.config.name}: no delta for {stall}s — the answer stopped arriving"
+            f" {elapsed:.1f}s in, and nothing can be retried once output has reached the caller",
+            llm_name=attempt.config.name,
+            elapsed=elapsed,
+        )
 
     async def _fail_stream(  # noqa: PLR0913
         self,

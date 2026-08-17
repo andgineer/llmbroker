@@ -137,6 +137,23 @@ journaled**, and a stream reaches that point only when its answer ends — closi
 an abandoned stream is what ends it. Offering it sooner would let a rating be
 appended before the row it names, which invariant 1 forbids.
 
+**A caller may bound the gap between deltas.** `wait` stops binding at the first
+one, so without it nothing between the caller and the provider limits an answer
+that has started; the gap is what bounds the trickle, and it is the call's, never
+the model's (invariant 7). Unset is off, and a non-positive value is refused: a
+zero gap aborts every stream instantly and can never be meant. The clock runs only
+while the library waits on the provider and never while the consumer holds the
+generator, so a consumer that dawdles between deltas can no more trip this than it
+can trip `wait`. A chunk carrying no text does not restart it, so a provider
+emitting keepalives and nothing else stalls — which is the point.
+
+**A stall is a miss, not a failure.** The model answered, so it is not cooled and
+its streak does not advance; what it did not do is finish, which is recorded as a
+budget it did not finish within — the same evidence a `wait` expiry leaves, and it
+reaches ordering the same way ([`selection.md`](selection.md)). The call ends by
+raising an exception of its own, distinct from a mid-stream death (invariant 20);
+the deltas already yielded stand, and no failover follows (invariant 18).
+
 Every failure before the first delta — 429, 5xx, transport, malformed response —
 cools the model and moves to the next candidate through the same
 classification above; there is no second failure surface for streams. After the

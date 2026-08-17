@@ -1,11 +1,11 @@
 """``Learner``: the observer of the journal stream. Drives the optimizer's
-bookkeeping from live events, and re-derives quality from one read of the journal
-tail when the pool is rebuilt."""
+bookkeeping from live events, and re-derives what the pool learned from one read
+of the journal tail when it is rebuilt."""
 
 import logging
 from datetime import UTC, datetime, timedelta
 
-from llmbroker.broker.pool import BUDGET_BOUND_WINDOW_SEC, LLMPool
+from llmbroker.broker.pool import BUDGET_BOUND_WINDOW_SEC, LATENCY_SAMPLES, LLMPool
 from llmbroker.broker.stats import stats_from_calls
 from llmbroker.http_status import is_auth_failure
 from llmbroker.models import Call, CallStatus, LLMMetrics
@@ -55,9 +55,26 @@ def budget_bounds_from_calls(
     return bounds
 
 
+def observed_latencies_from_calls(rows: list[Call]) -> dict[str, list[float]]:
+    """Per model, what its most recent answers took, oldest-first. A stream contributes
+    the wait for its first delta — which no consumer can move — and a completion its
+    whole time; a row carrying neither is not evidence."""
+    samples: dict[str, list[float]] = {}
+    for row in rows:  # newest-first
+        if row.status != CallStatus.OK:
+            continue
+        elapsed_ms = row.first_delta_ms if row.first_delta_ms is not None else row.latency_ms
+        if elapsed_ms is None:
+            continue
+        bucket = samples.setdefault(row.llm_name, [])
+        if len(bucket) < LATENCY_SAMPLES:
+            bucket.append(elapsed_ms / 1000)
+    return {name: bucket[::-1] for name, bucket in samples.items()}
+
+
 class Learner:
     """Observes the journal stream: this process's own cooldown bookkeeping and dead-key
-    drops, and the quality re-derivation a rebuild asks for."""
+    drops, and the re-derivation a rebuild asks for."""
 
     def __init__(
         self,
@@ -109,15 +126,16 @@ class Learner:
                 self._opt.on_rate_limited(name)
 
     async def relearn(self) -> None:
-        """Re-derive quality, the budget bounds and the snapshot metrics from one read
-        of the journal tail. The rebuild's last step — quality is the only thing the
-        journal is read back for (invariant 8)."""
+        """Re-derive quality, the two latency numbers and the snapshot metrics from one
+        read of the journal tail. The rebuild's last step — and the only read of it
+        (invariant 8)."""
         if not isinstance(self._store, QueryableStoreProtocol):
             return
         rows = await self._store.calls(limit=self._quality_rebuild_limit)
         self._apply_scores_and_metrics(rows)
         window_start = datetime.now(UTC) - timedelta(seconds=BUDGET_BOUND_WINDOW_SEC)
         await self._pool.apply_budget_bounds(budget_bounds_from_calls(rows, since=window_start))
+        await self._pool.apply_latencies(observed_latencies_from_calls(rows))
 
     def _apply_scores_and_metrics(self, rows: list[Call]) -> None:
         """rows are newest-first: keep the newest ``quality_window`` rated calls per

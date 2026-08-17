@@ -127,6 +127,17 @@ class StreamInterruptedError(LLMRequestError):
         self.llm_name = llm_name
 
 
+class StreamStalledError(LLMRequestError):
+    """A pooled stream went quiet for longer than the caller's ``stall`` gap. Not a
+    death: the model was still connected, it just stopped producing. The deltas
+    already yielded stand, and ``elapsed`` is how long the attempt had run."""
+
+    def __init__(self, message: str, *, llm_name: str, elapsed: float) -> None:
+        super().__init__(message)
+        self.llm_name = llm_name
+        self.elapsed = elapsed
+
+
 class AuthError(ProviderError):
     """The key was missing, malformed, or rejected (HTTP 401/403)."""
 

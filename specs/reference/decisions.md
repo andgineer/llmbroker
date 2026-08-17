@@ -141,9 +141,13 @@ judge call spends the scarce quota the pool exists to conserve.
 
 ### no-bandit-machinery
 
-**Blocks:** ε-exploration, usable-rate floors, latency ranking, auto-retirement.
-**Why:** a chronically failing model is already effectively disabled by
-exponential cooldown; the only thing auto-removed is a dead key.
+**Blocks:** ε-exploration, usable-rate floors, auto-retirement, and a global speed
+ranking independent of the caller's budget.
+**Why:** a chronically failing model is already effectively disabled by exponential
+cooldown; the only thing auto-removed is a dead key. Slowness that *succeeds* is
+not reached by that reason — cooldown disables failure, and a model answering in 40
+seconds never fails — so it is ordered against the caller's own budget instead
+([`observed-latency-is-its-own-number`](#observed-latency-is-its-own-number)).
 
 ### budget-expiry-teaches-ordering
 
@@ -154,13 +158,34 @@ quality windows, reordering the pool for equally tight budgets.
 **Blocks:** discarding the expiry as pure loss; counting it as a failure or a
 cooldown; holding the bound as pool-local state no journal read produces;
 recovering it by matching the error text of a row.
-**Why:** a model that never answers produces no successful rows, so this is the
-only obtainable latency evidence — but blaming a model for the caller's clock
+**Why:** a model that never answers produces no successful rows, so the expiry is
+the only latency evidence it leaves — but blaming a model for the caller's clock
 would teach the broker that healthy models are failing. Ordering only,
-budget-relative, and never a withdrawal. Keeping the evidence on the row makes
-the bound one more thing the single tail read derives, rather than a second
-state subsystem beside it; keeping it as its own field rather than as prose in
-the error detail keeps a message the library formats out of a routing decision.
+budget-relative, and never a withdrawal. Latency from the answers a model *does*
+give is a separate number
+([`observed-latency-is-its-own-number`](#observed-latency-is-its-own-number)).
+Keeping the evidence on the row makes the bound one more thing the single tail
+read derives, rather than a second state subsystem beside it; keeping it as its
+own field rather than as prose in the error detail keeps a message the library
+formats out of a routing decision.
+
+### observed-latency-is-its-own-number
+
+Latency read off successful rows is a second number beside the miss bound, not a
+widening of it. Ordering compares the caller's remaining budget against the larger
+of the two.
+
+**Blocks:** widening the miss bound to take successful rows; a stream contributing
+its whole-answer time; observed latency in the quality window (invariant 5).
+**Why:** a model's own success retires every miss older than it, deliberately — so
+evidence derived from successful rows would be erased by the rows that produce it,
+and a slow model answers successfully every time. The whole-answer time on a stream
+is taken when the row is written, which is after the consumer finished pulling or
+abandoned the generator, so it measures the consumer as much as the model; an
+abandoned slow stream would journal a short time and teach the pool that the model
+is fast. What a stream contributes is the wait for its first delta, which no
+consumer can move — the same split between the two paths that the miss bound
+already makes.
 
 ---
 
@@ -199,6 +224,23 @@ configured yet" when the store is unusable.
 **Blocks:** a per-model timeout knob.
 **Why:** a budget is the caller's, and a per-model number could not compose with
 failover once a call spans several models.
+
+### a-stall-is-a-gap-not-a-deadline
+
+A streaming caller may bound the gap between deltas. It is journaled as a budget the
+model did not finish within, it never cools the model, and it raises its own
+exception.
+
+**Blocks:** an absolute deadline on the whole answer; a stall belonging to the model
+or the entry rather than to the call; reusing the mid-stream-death exception for it;
+cooling a model because a caller's gap expired.
+**Why:** an absolute deadline is what was dropped so a slow consumer could not trip
+it, and a gap keeps that intact — the clock is armed only while the library waits on
+the provider, never while the consumer holds the generator. The model did answer, so
+cooling it would take it from every other caller over one caller's knob; what it did
+not do is finish, which is what the miss bound already records. And a host must tell
+"the stream died" from "my own gap fired" (invariant 20), so the two are different
+types.
 
 ### identity-rides-the-object-a-call-returns
 

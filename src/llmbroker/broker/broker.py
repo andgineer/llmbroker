@@ -377,18 +377,25 @@ class AsyncBroker:
             wait=wait,
         )
 
-    def stream(
+    def stream(  # noqa: PLR0913 - the prompt and the four call knobs
         self,
         prompt: str,
         *,
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
+        stall: float | None = None,
     ) -> StreamHandle:
         """Route a completion over the pool as a handle yielding text deltas and naming
-        what answered them. Fails over like ``ask`` until the first delta, then raises
-        ``StreamInterruptedError``. Async-only."""
-        return self.llms.stream(prompt, operation=operation, trace_id=trace_id, wait=wait)
+        what answered them. ``stall`` bounds the gap between deltas, not the answer;
+        past the first delta a death raises ``StreamInterruptedError``. Async-only."""
+        return self.llms.stream(
+            prompt,
+            operation=operation,
+            trace_id=trace_id,
+            wait=wait,
+            stall=stall,
+        )
 
     async def direct(
         self,

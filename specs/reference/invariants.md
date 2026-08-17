@@ -65,12 +65,13 @@ rather than what the running system must never do.
    per-model timeout knob and will not be one — it could not compose with
    failover. → `call-path.md`
 
-8. **The journal is the only durable state, and quality is the only thing
-   derived from it.** There is no second state subsystem holding a truth of its
-   own: what a restart must not lose is on a row, never only in memory. Live
-   quality is reached two ways and only two — folded forward from the row just
-   journaled, which is not optional because a store with no read path has
-   nothing else to learn from, and re-derived from the tail, replaced wholesale.
+8. **The journal is the only durable state, and one read of its tail is all that
+   is re-derived from it.** There is no second state subsystem holding a truth of
+   its own: what a restart must not lose is on a row, never only in memory — and
+   no routing signal costs the call path a journal read of its own. Quality
+   specifically is reached two ways and only two — folded forward from the row just journaled,
+   which is not optional because a store with no read path has nothing else to
+   learn from, and re-derived from the tail, replaced wholesale.
    And a row survives its store whole: a backend that persists part of what it
    was handed is a defect, not a storage choice — the loss surfaces as degraded
    selection, never as an error. → `backends.md`

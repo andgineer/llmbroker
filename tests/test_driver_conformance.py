@@ -42,6 +42,7 @@ def _call_row(
         "scope": scope,
         "cooldown_until": None,
         "budget_ms": None,
+        "first_delta_ms": None,
     }
 
 
@@ -308,6 +309,15 @@ async def test_journal_round_trips_the_missed_budget(driver):
     await driver.append("calls", row)
     rows = await driver.journal_view(10)
     assert [r["budget_ms"] for r in rows] == [1500]
+
+
+async def test_journal_round_trips_the_time_to_the_first_delta(driver):
+    """The latency the pool orders by comes off this column on every rebuild."""
+    row = _call_row("c1", llm_name="x", called_at=datetime(2030, 1, 1, tzinfo=UTC))
+    row["first_delta_ms"] = 420
+    await driver.append("calls", row)
+    rows = await driver.journal_view(10)
+    assert [r["first_delta_ms"] for r in rows] == [420]
 
 
 async def test_journal_view_folds_the_newest_rating_onto_its_call(driver):

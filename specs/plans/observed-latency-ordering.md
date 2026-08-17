@@ -277,3 +277,55 @@ seconds never fails — so it is ordered against the caller's own budget instead
 - No global speed ranking: the number is only ever read against one caller's budget.
 - Nothing after the first delta is learned here. That is the other plan.
 - No version bump — the maintainer does it by hand.
+
+## Handover
+
+**Done:** all four batches and the whole test list. `first_delta_ms` on the journal
+row (schema 7 → 8, all three drivers plus the file store), the samples and their
+median in the pool, the live path and the rebuild feeding them, and the spec moves.
+Nothing was deliberately left out.
+
+**Done differently, and why**
+
+- **`_StreamProgress.started` became a property over the new instant** instead of
+  staying a separate bool. Two fields that must always agree is the divergence the
+  invariants file exists to prevent; behaviour is identical.
+- **`decisions.md`, `budget-expiry-teaches-ordering`: the plan's block was applied,
+  and the entry's existing last sentence kept.** The plan headed the amendment "one
+  clause of its **Why** only" but the quoted block ends before that sentence;
+  dropping it would leave two of the entry's own **Blocks** items ("holding the
+  bound as pool-local state", "recovering it by matching the error text") with no
+  defence. Both readings of the plan are satisfied this way.
+- **`selection.md`: the five properties were re-voiced for both numbers, and the
+  last one anchored to the miss.** "One signal for both routing paths … a second
+  signal with its own window would cost more than the sharper bound is worth" reads,
+  under the new section, as forbidding the number the section has just introduced.
+  It now says the *miss* is one signal, and that splitting *it* per path is what is
+  not worth paying for. The stale "Four properties" count (there were five bullets)
+  went with it.
+- **Three spec lines the plan did not name were corrected in the same batch**,
+  because the change made them false: `selection.md`'s cooldown paragraph and its
+  acquisition-order list, and `backends.md`'s sentence on what reaches live state
+  when the store has no read path.
+- **One sentence was added to the `wait` section of `docs/src/en/usage.md` and its
+  Russian twin.** The plan names no docs move, but those paragraphs stated that only
+  a *missed* budget reorders the pool, which this change makes untrue.
+
+**Decisions the plan did not make**
+
+- `apply_latencies` is skipped, like the rest of `relearn`, when the store is not
+  queryable — so an in-memory installation keeps its live samples instead of having
+  them wiped by every rebuild.
+- The median is computed per candidate per acquisition rather than cached. Ten
+  floats, and a cache would be a second thing to keep in sync.
+
+**Tests beyond the plan's list:** `test_only_answered_rows_carrying_a_time_are_evidence`
+and `test_a_rebuild_keeps_the_newest_answers_oldest_first` (the ordering and the
+per-model bound of the new derivation), plus
+`test_journal_round_trips_the_time_to_the_first_delta` in the driver conformance
+suite. `test_schema_migration.py` covers the version bump generically — confirmed,
+not extended.
+
+**Gate:** `invoke pre` clean (ruff, ruff-format, docstring cap, pyrefly 0 errors);
+`python -m pytest` 1440 passed, 0 skipped, 0 errors, with Docker up for the
+testcontainer suites. No version bump — the maintainer's.
