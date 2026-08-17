@@ -53,12 +53,23 @@ the pool — the same disposal a pre-first-delta expiry already gets, which is w
 slowness reach the ordering term of the other plan. The outcome is never read, because there
 is no failover past the first delta (invariant 18): the call ends by raising.
 
-**Why a private marker and not a flag.** `TimeoutError` subclasses `OSError`, so it is already
-inside `_FAILOVER_ERRORS`. Without a type of its own it lands in `_fail_stream` with
-`started=True`, is classified as a generic provider failure, **cools the model** and surfaces
-as `StreamInterruptedError` — one caller's knob withdrawing a model from every other caller.
-Distinguishing it by `progress.started` alone would work today and break the moment anything
-else inside that block raises a timeout.
+**Why a private marker and not a flag.** `TimeoutError` subclasses `OSError`, so it is
+already inside `_FAILOVER_ERRORS`. Without a type of its own the stall lands in
+`_fail_stream`, and there `_classify` is called as
+`_classify(exc, budget_bound=budget_bound and not started)`. A stall can only fire after a
+delta, so `started` is always true, the flag is always false, `_classify`'s own timeout
+branch is never reached, and the fallthrough verdict **cools the model** — one caller's knob
+withdrawing a model from every other caller.
+
+Note what is holding that together: `and not started`, and nothing else. Read
+`_classify` alone and its timeout branch looks like it already handles this. That is the
+trap in the flag route — a `stalled: bool` threaded through, or the `and not started` term
+dropped as redundant, and a stall raised while the caller supplied `wait` classifies as a
+budget expiry: the row is journaled as a budget the model missed and the miss bound rises
+for a budget the model actually met. So the two failure modes sit on either side of one
+boolean term — no `wait` cools a healthy model, `wait` fabricates a miss against it — and a
+bool computed by `_attempt_timeout` before the stream opened cannot tell which clock fired
+during the iteration in the first place. Only the raise site knows, so only it may say.
 
 **A new exception type.** `StreamStalledError(LLMRequestError)` in `exceptions.py`, carrying
 the model name and the elapsed seconds, re-exported from the top-level package and its

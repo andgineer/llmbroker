@@ -6,6 +6,14 @@ and roughly how; the work order, the tests and the spec moves belong to detailed
 planning. It carries **four plans and one out-of-band edit**, and names which of
 them must ship together.
 
+**Plans 1 and 2 below are superseded and must not be implemented from this file.**
+They are detailed in [`observed-latency-ordering.md`](observed-latency-ordering.md)
+and [`stream-stall-timeout.md`](stream-stall-timeout.md), which are the queued
+plans and the only ones to work from: detailed planning settled the statistic, the
+lifetime of the evidence and an amendment to invariant 8, and dissolved this file's
+"giving up on a slow model erases the evidence" into the two-number design. What is
+still live here is **Plan 3 and Plan 4**. The out-of-band catalog edit has shipped.
+
 ## Where the evidence comes from
 
 A downstream application — a vocabulary tool, one user, a couple of dozen words a
@@ -23,6 +31,9 @@ failover at all. Everything below is about the edges around that.
 ---
 
 # Plan 1 — latency enters the fallback order
+
+**Superseded — implement [`observed-latency-ordering.md`](observed-latency-ordering.md),
+not this section.** What follows is the reasoning that produced it, kept for the record.
 
 **Ships with Plan 2.** Without it the motivating case is not closed; see the cost
 at the end of this plan.
@@ -157,6 +168,9 @@ bound; and the wording of the amendments to the two entries and to
 
 # Plan 2 — a stall timeout on a stream
 
+**Superseded — implement [`stream-stall-timeout.md`](stream-stall-timeout.md), not
+this section.** What follows is the reasoning that produced it, kept for the record.
+
 **Ships with Plan 1.** It stops being optional the moment latency is learned from
 first-delta timing, because that timing is blind to the trickle.
 
@@ -220,17 +234,11 @@ are updated with it.
 
 # Plan 4 — a reachability check
 
-**Settle the shape before planning it.** The plan cannot be written against
-"walk the configured entries": the CLI reads presets and knows nothing of a
-registry, a store or a connection string — that configuration surface does not
-exist there. So the check is either a command over a preset plus environment
-secrets, exactly as `env <preset>` already is, or a call on a broker that already
-holds its registry and secrets.
-
-**Recommended shape:** one checking function taking model configs and a key
-resolver, with two thin wrappers — the CLI passing a preset with env-backed
-secrets, a host passing its own. Deciding this first is what keeps the detailed
-plan from being written against access that is not there.
+**The shape is settled.** It could not be written against "walk the configured
+entries": the CLI reads presets and knows nothing of a registry, a store or a
+connection string — that configuration surface does not exist there. So it is one
+checking function taking model configs and a key resolver, with two thin wrappers:
+the CLI passing a preset with env-backed secrets, a host passing its own.
 
 **What it reports,** per row: no key / key refused / model refused / answered, and
 how long it took. Read-only — it writes no registry row, no journal row, and
@@ -253,6 +261,13 @@ rejects probing that *decides* something, where this only reports to a person.
 ---
 
 # Out of band — one line in the paid catalog
+
+**Done.** The refresh prompt was re-run and the catalog now carries `gpt-5.6-luna`
+as `gpt-fast`, and Anthropic's fast tier as `haiku`. The curation rule that had
+dropped them — pick one to three models *on quality* — was widened first, so speed
+is now a tier the refresh must consider and report on, and that rule is recorded in
+[`../reference/decisions.md`](../reference/decisions.md#speed-is-a-catalog-tier).
+The free-tier note at the end of this section is **still open**.
 
 `gpt-5.6-luna` is absent from the curated paid catalog while OpenAI offers it. On
 45 items across three languages it reached first delta in 5.5-6.3 s against

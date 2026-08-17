@@ -25,6 +25,12 @@ stops one slow answer — a provider hiccup, a cold start — from reordering th
 is the smallest count at which a median is a median rather than the mean of two. Both live
 in `pool.py` beside `BUDGET_BOUND_WINDOW_SEC`.
 
+*What the floor costs.* Until its third observation a model is ordered by its curated weight
+alone, so the first two slow answers of a fallback that has just started getting traffic are
+paid in full, and paid again once per tail horizon. That is the price of immunity to a single
+outlier, and it is the same accounting the miss bound already carries — one caller burned per
+window — rather than a new kind of cost.
+
 **2. The observations have no clock window.** The miss window exists for a reason that does
 not transfer: a miss must expire on its own, because a model kept out of first place
 produces no successful rows and nothing else would ever clear it. An observed latency has
@@ -33,8 +39,20 @@ it, including the ones it gives as a last-resort candidate or to a caller with n
 ten-minute clock would instead delete precisely the evidence about the untrafficked
 fallbacks this plan exists to order. So the samples live exactly as long as the pool holds
 them: appended live, and replaced wholesale from the one journal-tail read at each rebuild,
-which is the quality windows' lifecycle exactly. Nothing new is invented, and a model whose
-rows have fallen off the tail loses its number at the next rebuild.
+which is the quality windows' lifecycle exactly. Nothing new is invented — the evidence lives
+by the horizon the quality windows already live by, so there is no second clock to keep
+correct — and a model whose rows have fallen off the tail loses its number at the next
+rebuild.
+
+*What falling off the tail costs, and why it is affordable.* At the scale this library names
+as its own the primary answers nearly every request, so the single row a quiet fallback left
+behind is pushed off the tail within weeks; the next rebuild replaces the live samples
+wholesale, and the number is gone from both places at once. **The fallback that this
+degrades to is today's behaviour** — ordering by curated weight — not something worse: what
+forgetting can cost is the improvement, never a good model being withdrawn or a bad one
+promoted. And the evidence costs exactly one call to come back, because one slow answer
+re-teaches it. That is the bookkeeping the miss bound already documents, one caller burned
+per window, and it is why the plan does not buy a longer-lived store for it.
 
 **3. The two numbers stay two, compared as the larger.** The miss bound keeps its semantics
 untouched, its window included. At acquisition the term compares the caller's remaining
@@ -48,7 +66,15 @@ the wait for its first delta, which no consumer can move, whether the answer the
 end or was abandoned. The one residual is a stream abandoned *before* any delta: it journals
 `OK` with a short whole time and would read as fast. It is rare, it is one sample, and the
 median-with-a-floor-of-three in decision 1 is what absorbs it — which is the second reason
-that floor is there.
+that floor is there. Note which way it errs: it can make a slow model look fast, which is
+today's behaviour, and never the reverse.
+
+*The two numbers divide the work, and the sharpest case stays the bound's.* A caller with a
+tight budget meeting the endpoint that emits nothing for 31 seconds never produces a
+successful row at all — its budget expires before the first delta, which is a miss and lands
+on the existing bound. The new number picks that endpoint up only when a caller with a large
+budget, or none, lets it answer. So the new number is not obliged to catch the case that
+hurts most: it widens the evidence, it does not replace it.
 
 **Deviation from the draft.** The draft's "`_finish_ok` stops clearing what it should not"
 needs no code. With two numbers, success clears the miss bound exactly as it does today, and
@@ -170,13 +196,29 @@ generically — confirm, do not extend.
   quality learning reaches only the models that get traffic, so a fallback the primary never
   yields to keeps its curated position however diligently a host rates. It is why the
   ordering evidence has to be obtainable without traffic. One sentence, no more.
-- **`invariants.md`, invariant 8** — its second clause is already narrower than the code
-  (the miss bound and the snapshot metrics are derived from the journal too), and this
-  change makes the drift plainly wrong. Replace the headline with **"The journal is the only
-  durable state, and one read of its tail is all that is re-derived from it."** The body
-  keeps every existing sentence about there being no second state subsystem and about live
-  quality being reached two ways and only two; only the "quality is the only thing derived
-  from it" claim goes. No new entry — the file is at its cap.
+- **`invariants.md`, invariant 8 — this is a deliberate loosening, not a drift fix, and the
+  plan says so.** The old clause forbids deriving anything but quality from the journal; the
+  new one permits whatever that single tail read yields. It is *also* true that the old
+  clause was already narrower than the code — the miss bound and the snapshot metrics come
+  off the same read — but repairing an inaccuracy and lifting a prohibition are different
+  acts, and only the second needs defending. What is being bought is one more ordering
+  signal on a read that already happens; what must not be read as bought with it is a second
+  place for truth to live.
+
+  **What stays forbidden, and is what the new wording has to carry:** one read and nothing
+  besides it — no state subsystem holding a truth of its own beside the journal, and no
+  routing signal that costs the call path a journal read of its own. Replace the headline
+  with **"The journal is the only durable state, and one read of its tail is all that is
+  re-derived from it."**, and extend the no-second-subsystem sentence with that second
+  prohibition, which the old headline carried implicitly and the new one does not.
+
+  **Then check the body reads as it did.** The clause "live quality is reached two ways and
+  only two" was unambiguous while the headline named quality; under the new headline it can
+  be misread as a rule about everything derived. Bind it explicitly to quality, so the two
+  do not contradict. The sentence about a row surviving its store whole is untouched.
+
+  No new entry — the file is at its cap, and this is a rewording of one that is already
+  there.
 - **`decisions.md`** — one new entry and two amendments, verbatim below.
 
 ### decisions.md, verbatim
