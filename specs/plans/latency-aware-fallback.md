@@ -1,306 +1,272 @@
 # Draft: what an interactive caller still needs
 
 **Status: draft, deliberately not queued.** There is no row for it in
-[`README.md`](README.md), so nothing picks it up: it says what to implement, why, and
-roughly how, and leaves the work order, the tests and the spec moves to detailed
-planning. Seven items, in descending order of value; items 1, 2, 2a and 2b are one
-subsystem seen from four sides, the rest stand alone, and they may well become
-separate plans.
+[`README.md`](README.md), so nothing picks it up. It says what to implement, why,
+and roughly how; the work order, the tests and the spec moves belong to detailed
+planning. It carries **four plans and one out-of-band edit**, and names which of
+them must ship together.
 
 ## Where the evidence comes from
 
-A downstream application (a vocabulary tool: one user, a couple of dozen words a
-day, an answer streamed into a browser) benchmarked the free pool and the paid
-direct client on ~40 items per source language across three languages, in two load
-profiles — a burst of four concurrent requests, and a paced single-user session.
-Numbers quoted below are from that run. The provider-level observations from it are
-in
+A downstream application — a vocabulary tool, one user, a couple of dozen words a
+day, answers streamed into a browser — drove the free pool and the paid direct
+client over ~40 items per source language across three languages, in two load
+profiles: a burst of four concurrent requests, and a paced single-user session.
+Provider-level observations from that run are in
 [`../reference/freetier-providers.md`](../reference/freetier-providers.md#what-one-real-workload-met-measured-2026-08-17)
 and are not restated here.
 
-The headline is that the pool is excellent at what it is for: paced, a single user
-got 20 answers out of 20 from the highest-weighted model, first delta 0.8 s, whole
-answer under 2 s, no failover at all. Everything below is about the edges around
-that.
+The pool is excellent at what it is for: paced, one user got 20 answers of 20
+from the highest-weighted model, first delta 0.8 s, whole answer under 2 s, no
+failover at all. Everything below is about the edges around that.
 
 ---
 
-## 1. The fallback order ignores latency
+# Plan 1 — latency enters the fallback order
 
-**What.** Widen the evidence behind the existing budget-relative ordering term:
-today it learns only from budgets that *expired*, so it should also learn from how
-long answers that *arrived* actually took.
+**Ships with Plan 2.** Without it the motivating case is not closed; see the cost
+at the end of this plan.
 
-**Why.** Under the burst profile the pool spilled over to its second and third
-choices, and those are the slowest endpoints it has:
+## The problem
+
+Under the burst profile the pool spilled to its second and third choices, and
+those are the slowest endpoints it has:
 
 | answering model | curated weight | median whole answer |
 |---|---|---|
-| `google-gemini-3.5-flash-lite` | 0.75 | 1.6–1.7 s |
-| `openrouter-nemotron-3-ultra` | 0.72 | 35–57 s (worst 101 s) |
+| `google-gemini-3.5-flash-lite` | 0.75 | 1.6-1.7 s |
+| `openrouter-nemotron-3-ultra` | 0.72 | 36-57 s (worst 101 s) |
 | `openrouter-laguna-s-2.1` | 0.70 | 43 s |
-| `groq-gpt-oss-120b` | 0.55 | 2.8–3.5 s |
+| `groq-gpt-oss-120b` | 0.55 | 2.8-3.5 s |
 | `zai-glm-4.7-flash` | 0.55 | 34 s, of which 31 s before the first token |
 
 The two slowest carry the highest weights after the primary, so the *first*
-fallback is the worst possible choice for an interactive caller, and the fastest
-alternative sorts last. The pool answers — 20 to 60 times slower than it needed to.
+fallback is the worst choice an interactive caller could be handed, and the
+fastest alternative sorts last. The last row is the sharpest case: a reasoning
+model that emits nothing for 31 seconds and then answers well. Its weight says it
+is worth routing to, and by the only thing weight speaks about — the quality of
+what comes back — it is right. Nothing in the pool can say "never hand a
+streaming caller this one".
 
-The last row is the sharpest case: it is a reasoning model that emits nothing for
-31 seconds and then answers well. Its weight says it is worth routing to, and by
-the only measure the weight speaks about — the quality of what comes back — it is.
-Nothing in the pool can express "never route a streaming caller here".
+## Why the existing bound cannot carry it, and why ratings cannot either
 
-The existing term cannot catch this. A budget bounds queueing and the first delta;
-past the first delta the answer is unbounded (invariant 18). A model that opens
-promptly and then trickles for 101 s therefore never expires a budget, journals a
-successful row, and keeps its curated position forever. The one case the ordering
-term was built for — the model that answers *nothing* in time — is not the case that
-actually hurts.
+**The miss bound erases itself against exactly this case.** A model's own success
+retires every miss older than it, on the live path through `_finish_ok` and again
+on a rebuild through `budget_bounds_from_calls`. That is deliberate and correct
+for what the bound is: a record of *not answering in time*. But a slow model
+answers successfully every time — that is the entire complaint against it — so
+evidence derived from successful rows would be wiped by the rows it was derived
+from. Widening the existing bound is therefore not available; this needs a second
+number beside it.
 
-**Roughly how.** `Learner.relearn()` already reads the journal tail once and derives
-the quality windows and the budget bounds from it; a successful row already carries
-its own latency. Derive an observed latency per `(model, operation)` from that same
-read, and let it raise the same bound the expiries raise. Nothing else moves: still
-ordering-only, still budget-relative, still soft, still node-local, still one tail
-read. A caller offering no budget is unaffected; when every candidate is over the
-budget the term is equal for all and curated order stands.
+**Host ratings cannot do the job, and no threshold makes them.** A demotion
+verdict needs `quality_min_count` ratings in one `(model, operation)` bucket, and
+the curated weight keeps its majority until a window of comparable size fills.
+But a fallback is only picked when the primary is unavailable, which at the paced
+single-user load this library names as its own scale never happened once in 20
+requests. A model never picked is never rated, its window stays empty,
+`is_demoted` is permanently False and its priority is permanently the curated
+weight. With zero ratings in the bucket no threshold is low enough. The library
+already names this trap for the miss bound — "a model kept out of first place
+produces no successful rows either" — and the quality window has the same shape
+with no such compensation. Invariant 5 is what keeps it that way, and it should
+stay: the alternative is synthetic scores, which it exists to forbid.
 
-**Recorded decisions this touches — and where it contradicts one.**
+## Roughly how
+
+**Two numbers, one comparison.** Keep the miss bound exactly as it is, semantics
+included. Add an observed latency per model, living on its own clock — a success
+does not retire it, because a success is what produces it. At slot acquisition
+the existing term compares the caller's remaining budget against the **larger of
+the two**. Still ordering-only, still budget-relative, still never a withdrawal,
+still one read of the journal tail.
+
+**Keyed by model name, not by `(model, operation)`.** The bound it feeds is keyed
+by model alone, and splitting the latency per operation would make the two
+diverge for no gain. Coarse is the default here.
+
+**The number a stream contributes must not be the consumer's.** `latency_ms` is
+taken when the journal row is written, and for a stream that is after the
+consumer finished pulling — or abandoned the generator. So it measures the
+consumer as much as the model, which is precisely the coupling `_stream_deltas`
+deliberately broke when it stopped bounding anything past the first delta. Worse,
+an abandoned slow stream journals a *short* latency and would teach the pool that
+the model is fast — the exact opposite of the truth.
+
+So record **time to the first delta** as its own journal field, and take the
+observed latency from it on the streaming path and from the full time on the
+non-streaming path, where no consumer can inflate it. This introduces no new
+concept: `call-path.md` already states that for a stream `wait` bounds the wait
+for the first delta, and the same split is already the settled semantics for
+misses. One field on `Call` and in the three schemas is what invariant 13 exists
+to permit.
+
+**`_finish_ok` stops clearing what it should not.** Clearing the *miss* bound on
+success stays. What must not happen is the same success erasing the observed
+latency, and an abandonment must not be recorded as if the model had delivered.
+
+## Recorded decisions and rules this touches
 
 - [`budget-expiry-teaches-ordering`](../reference/decisions.md#budget-expiry-teaches-ordering)
-  is the mechanism being widened, not replaced, and its reasoning holds verbatim.
-  Its premise is narrower than the problem, though: "a model that never answers
-  produces no successful rows, so this is the only obtainable latency evidence"
-  leaves out the model that answers slowly, which produces successful rows *and*
-  the latency on them.
+  keeps its mechanism and its reasoning. Its premise is narrower than the
+  problem: "a model that never answers produces no successful rows, so this is
+  the only obtainable latency evidence" leaves out the model that answers slowly,
+  which produces successful rows *and* the latency on them.
+- **[`selection.md`](../reference/rules/selection.md) states that same premise in
+  its own words** ("the only evidence obtainable... its latency cannot be measured
+  any other way"). It becomes false with this change and is corrected in the same
+  batch, not only the decision entry.
 - [`no-bandit-machinery`](../reference/decisions.md#no-bandit-machinery) blocks
-  "latency ranking" outright, on the grounds that *a chronically failing model is
-  already effectively disabled by exponential cooldown*. **That reason does not
-  reach this case, and the measurements are what show it:** nemotron never failed.
-  It answered, successfully, every time, taking 35–57 s about it. Cooldown disables
-  failure; nothing in the library today notices slowness that succeeds. The entry's
-  other blocks — ε-exploration, usable-rate floors, auto-retirement — stay blocked,
-  and this proposal introduces none of them: no global ranking, no exploration, no
-  withdrawal, one number derived from a read that already happens.
-- Invariant 5 is the fence this must not cross: observed latency may **never** enter
-  the quality window, which takes host ratings only. It feeds the budget-bound term
-  and nothing else.
+  "latency ranking", on the grounds that a chronically failing model is already
+  disabled by exponential cooldown. That reason does not reach this case:
+  nemotron never failed — it answered every time and took 36-57 s doing it.
+  Cooldown disables failure; nothing notices slowness that succeeds. The entry is
+  **narrowed, not opened**: a global speed ranking independent of the caller's
+  budget stays blocked, as do e-exploration, usable-rate floors and
+  auto-retirement. Leaving it unnarrowed would read as removed.
+- Invariant 5 is the fence: observed latency may **never** enter the quality
+  window. It feeds the ordering term and nothing else.
 - Invariant 7 and
-  [`latency-budget-per-call`](../reference/decisions.md#latency-budget-per-call) stay
-  intact: no per-model timeout knob appears anywhere.
+  [`latency-budget-per-call`](../reference/decisions.md#latency-budget-per-call)
+  stay intact — no per-model timeout knob appears anywhere.
+- The bound is **not** node-local, and this plan must not describe it as if it
+  were: it is derived from the journal and so takes other processes' rows, which
+  is a deliberate difference from a cooldown (invariant 11).
 
-**For detailed planning.** Which statistic (a median is the coarse default, and
+## The cost of the first-delta choice, and what it forces
+
+Time to the first delta catches z.ai — 31 seconds before a token — and does
+**not** catch nemotron, which opens promptly and then dribbles for a hundred
+seconds. Nemotron is the headline row of the table above, so either this plan
+also needs an "the answer reached its end" marker in the journal, or that case
+belongs to Plan 2. **Plan 2 is the better answer**, because past the first delta
+nothing else stops a trickle anyway; the marker is the fallback if detailed
+planning finds Plan 2 too large. Either way the two ship together.
+
+## For detailed planning
+
+Which statistic over the observed latencies (a median is the coarse default, and
 [`size-is-part-of-the-mission`](../reference/decisions.md#size-is-part-of-the-mission)
-argues for the coarse one); whether an observed latency and an expiry write the same
-bound or two that combine; how the existing ten-minute window applies to evidence
-that arrives from a much longer tail; and whether either entry above is amended or a
-new one is written.
+argues for the coarse one); how long an observed latency lives, given that the
+ten-minute miss window exists to let a *single* observation expire and this one
+accumulates; whether the two numbers combine as a maximum or as one derived
+bound; and the wording of the amendments to the two entries and to
+`selection.md`.
 
 ---
 
-## 2. A rate-limit streak never ages
+# Plan 2 — a stall timeout on a stream
 
-**What.** Give the consecutive-429 streak a time-based decay, or bound its exponent
-for providers that send no `Retry-After`.
+**Ships with Plan 1.** It stops being optional the moment latency is learned from
+first-delta timing, because that timing is blind to the trickle.
 
-**Why.** The streak resets on success and on nothing else. A model is not tried while
-it is cooling, so it cannot succeed, so the streak only grows — and the cooldown grows
-with it, doubling to the cap. A provider whose free tier flaps on a seconds timescale
-gets parked for far longer than it was ever unavailable.
+**What.** Let a caller bound the gap *between* deltas, so a stream that opens
+promptly and then dribbles can be abandoned — and, per Plan 1, abandoned in a way
+the pool learns from rather than one it mislearns from.
 
-**This one is narrow, and the measurements are what bound it.** Across a burst that
-cooled the highest-weighted model 16 times in seven minutes, *every* cooldown stayed
-at the flat 60-second base: the exponent never grows while a model keeps answering
-between rate-limit hits, because each success resets the streak. The missing decay
-therefore does not bite a model under ordinary load. It bites a model that rarely
-succeeds: the pool's z.ai endpoint answered 2 attempts out of 6 in one
-minute, refused 26 consecutively twenty minutes later, then answered again, all on
-HTTP 429 carrying **no `Retry-After`**. There, six consecutive misses are enough to
-park an endpoint for an hour that was never unavailable for more than seconds.
-
-Driving that endpoint alone through the pool demonstrates it directly: 8 requests,
-1 answered, and the cooldown climbing 60 → 120 → 240 → 480 seconds with the streak
-reaching 4. Worth noting what the same run shows working correctly — a failed
-attempt made *while* the model was already cooling did not advance the exponent,
-which is the documented rule holding.
-
-The library already recognises this exact trap elsewhere and solves it:
-`budget_bounds_from_calls` ages its evidence by a window precisely because "a model
-never picked never succeeds, so nothing else would clear it". The streak is the same
-shape of state with none of that protection.
-
-**Roughly how.** Either age the streak by wall-clock — a streak whose last failure is
-older than some multiple of the base is spent — or cap the exponent when the provider
-gave no `Retry-After`, on the grounds that without one the library is guessing anyway.
-Both are small and local to the optimizer's counter.
-
-**Recorded decisions this touches.** None blocks it.
-[`no-rate-limits`](../reference/decisions.md#no-rate-limits) blocks *tracked caps*,
-which this is not — the streak already exists. The cooldown rules in
-[`selection.md`](../reference/rules/selection.md) state the current behaviour and
-would be updated with it.
-
----
-
-## 2a. Giving up on a slow model erases the evidence that it was slow
-
-**What.** Decide what a consumer-side abandonment means, because today it means
-"the model did fine" — and it wipes the ordering evidence with it.
-
-**Why.** A caller with a whole-answer budget has exactly one defence against a
-model that opens promptly and then dribbles: stop pulling and go elsewhere. When it
-does, the attempt lands in `_finish_ok`, which is right in intent — a consumer that
-stops early because it has read enough must not punish the model — but it currently
-does three things at once: journals `CallStatus.OK`, which resets the model's
-failure streak through the learner; clears its cooldown; and **clears its budget
-bound**, the one piece of state that existed to sort it after its faster siblings.
-
-So the caller that most needs the pool to remember "this one is too slow for me"
-is the caller that deletes that memory. And the two situations are genuinely
-indistinguishable from inside the library: "I have enough text" and "you took too
-long" both arrive as a closed generator.
-
-The measurements make this concrete rather than theoretical: the model this
-happens to answered in 36–57 seconds against the primary's 1.6, and a downstream
-application has now specified exactly this abandon-and-step-up behaviour, so the
-erasure will happen on every slow answer it meets.
-
-**Roughly how.** Either let the caller say which kind of abandonment it was — one
-optional argument on the close path, defaulting to today's meaning — or stop
-`_finish_ok` from clearing the budget bound when the answer had not finished, since
-an unfinished answer is not evidence that the model met anybody's budget. The
-second needs no API change and is the smaller move.
-
-**Recorded decisions this touches.** None directly.
-[`budget-expiry-teaches-ordering`](../reference/decisions.md#budget-expiry-teaches-ordering)
-argues that latency evidence must be kept rather than discarded as pure loss, which
-is the same argument one step further along. Invariant 5 still forbids any of this
-reaching the quality window.
-
----
-
-## 2b. The quality window has no input for the models whose order is wrong
-
-**What.** Recognise that host ratings cannot reorder the fallbacks, and stop
-treating them as the answer to fallback ordering.
-
-**Why.** This is arithmetic on the optimizer's own constants, not a measurement, and
-it is the reason item 1 cannot be waved away with "just rate your calls". A
-demotion verdict needs `quality_min_count` ratings in one `(model, operation)`
-bucket, and the curated weight keeps its majority until a window of comparable
-size fills. But a fallback is only ever picked when the primary is unavailable —
-which, at the paced single-user load this library names as its own scale, never
-happened once in 20 requests. A model that is never picked is never rated, so its
-window stays empty, so `is_demoted` is permanently False and its priority is
-permanently the curated weight.
-
-The ordering among fallbacks is therefore frozen at whatever the curated list said,
-and no amount of host diligence unfreezes it. Note this is not a tuning problem:
-with zero ratings in the bucket, no threshold is low enough.
-
-The library already names this exact trap for a different mechanism —
-`budget_bounds_from_calls` ages its evidence by a window because "a model never
-picked never succeeds, so nothing else would clear it". The quality window has the
-same shape and no such compensation.
-
-**Roughly how.** Nothing to change inside the optimizer: the constants are
-consistent with each other and the mechanism is right for what it is for, which is
-demoting a model that gives bad answers *while it is being used*. What follows is
-that the fallback order has to be improved by evidence obtainable without traffic —
-which is item 1, latency read off rows a model produced whenever it last answered.
-What is worth changing is the documentation: the ordering rules should say plainly
-that quality learning is a mechanism for the models that get traffic, so a host
-does not plan around ratings fixing an order they cannot reach.
-
-**Recorded decisions this touches.** Invariant 5 (nothing but a host rating enters
-the quality window) is what makes this structural rather than fixable in place, and
-it should stay — the alternative is synthetic scores, which it exists to forbid.
-
----
-
-## 3. There is no way to ask "what actually works here?"
-
-**What.** A diagnostic command — `llmbroker doctor` or similar — that tries one tiny
-request per configured model and reports, per row: no key / key refused / model
-refused / answered, and how long it took.
-
-**Why.** `list` prints the curated lists and `env` prints the key names; neither
-answers whether a key works, and `snapshot()` cannot answer it either, because the
-question is only settled by making a request. The downstream project wrote exactly
-this by hand before it could start, and the result was not cosmetic: it showed that
-one provider's "insufficient balance" error came only from its *paid* models while
-the free one was reachable, which is the opposite of the conclusion the error text
-invites. Without it, an operator debugging a quiet pool has log lines and guesswork.
-
-**Roughly how.** Walk the configured entries, resolve each `api_key_ref` through the
-secrets port, issue one minimal completion per model, classify the outcome by the
-same rules the router already uses, print a table. Read-only: it writes no registry
-row, no journal row, and feeds no routing state.
-
-**Recorded decisions this touches.** Two are adjacent and neither blocks it, but the
-detailed plan should say so out loud:
-[`no-alerts-api`](../reference/decisions.md#no-alerts-api) rejects a *runtime* events
-API, where this is a command a human runs; and the rejected
-["proving a model dead before removing it"](../reference/decisions.md#rejected) rejects
-probing that *decides* something, where this only reports to a person.
-
----
-
-## 4. The paid catalog has no fast tier
-
-**What.** Add `gpt-5.6-luna` to the curated paid catalog, and consider whether the
-catalog should distinguish models by speed the way it distinguishes them by strength.
-
-**Why.** The catalog offers OpenAI as `gpt` (5.6-sol) and `gpt-mini` (5.6-terra). On
-45 items across three languages, `gpt-5.6-luna` — absent from the catalog — reached
-first delta in 5.5–6.3 s against sol's 12–20 s, and a whole answer in 8.6–9.7 s
-against 19–27 s, at 100% contract compliance and within 0.1–0.3 of sol on a 1–5
-quality rubric (level with it on the one axis that decided anything downstream). Sol
-misses a 3–5 s first-content budget on every single call; luna nearly meets it.
-
-The general point outlives the one model: the catalog's axis is strength
-(`opus`/`sonnet`, `gpt`/`gpt-mini`), and a caller streaming into a UI chooses on
-speed. Today it cannot express that choice through an alias at all.
-
-**Recorded decisions this touches.**
-[`the-paid-catalog-is-curated-too`](../reference/decisions.md#the-paid-catalog-is-curated-too)
-is the reason the catalog exists and argues for keeping it complete. The refresh
-prompt beside the catalog is the existing route for adding a model.
-
-**Also worth a look while there:** the free-tier list carries `glm-4.7-flash`, whose
-entry is correct — the model exists and the key reaches it — but whose measured
-availability was near zero (see item 2). Whether an endpoint that rarely answers
-should hold a place in a five-model pool is a curation question, not a code one.
-
----
-
-## 5. Optional: a stall timeout on a stream
-
-**What.** Let a caller bound the gap *between* deltas, so a stream that opens and then
-trickles can be abandoned.
-
-**Why.** A budget stops binding at the first delta — deliberately, so that a slow
-consumer cannot trip it — which is why a 45 s budget returned a 101 s answer. This is
-the weakest item on the list: a consumer can wrap its own timeout around the
-iteration, and llmbroker already treats consumer-side abandonment correctly, as a
-completed call rather than a model failure. If item 1 lands, the pool learns from
-slowness without this.
+**Why.** A budget stops binding at the first delta, deliberately, so that a slow
+consumer cannot trip it. Measured consequence: a 45-second budget returned a
+101-second answer. A consumer can wrap its own timeout around the iteration, and
+llmbroker already treats consumer-side abandonment as a completed call rather
+than a model failure — but on its own that is exactly the mislearning Plan 1
+describes.
 
 **Recorded decisions this touches.** Invariant 7 and
-[`latency-budget-per-call`](../reference/decisions.md#latency-budget-per-call) permit
-it only in one shape: the value belongs to the *call*, never to the model or the
-entry. An inter-delta gap rather than an absolute deadline is what keeps the original
-reason for dropping the deadline intact.
+[`latency-budget-per-call`](../reference/decisions.md#latency-budget-per-call)
+permit this in one shape only: the value belongs to the **call**, never to the
+model or the entry. An inter-delta gap rather than an absolute deadline is what
+keeps the original reason for dropping the deadline intact — a consumer that
+stops reading for a while is not a model that stopped answering.
 
 ---
 
-## What detailed planning must settle across all of them
+# Plan 3 — a rate-limit streak ages
 
-Which of these ship together and which stand alone — 1, 2a and 2b in particular
-argue for being weighed as one change to how the pool learns about latency; for each
-contested call, the
-[`decisions.md`](../reference/decisions.md) entry that lands in the same batch as the
-behavior; the spec moves (items 1, 2, 2a and 2b all change or add to what
-[`selection.md`](../reference/rules/selection.md) states today); and the tests. The
-gate is unchanged: `invoke pre` and `python -m pytest`, both green.
+**What.** Give the consecutive-429 streak a decay on the wall clock: a streak
+whose last failure is older than some multiple of the base is spent.
+
+**Why.** The streak resets on success and on nothing else, and a model is not
+tried while it is cooling, so it cannot succeed, so the streak only grows — and
+the cooldown grows with it, doubling to the cap.
+
+**This is narrow, and the measurements bound it.** Across a burst that cooled the
+highest-weighted model 16 times in seven minutes, *every* cooldown stayed at the
+flat 60-second base: the exponent never grows while a model keeps answering
+between rate-limit hits, because each success resets the streak. The missing
+decay does not bite a model under ordinary load. It bites a model that rarely
+succeeds — the pool's z.ai endpoint answered 2 attempts of 6 in one minute,
+refused 26 consecutively twenty minutes later, then answered again, all on HTTP
+429 carrying **no `Retry-After`**. Driving that endpoint alone through the pool
+shows it directly: 8 requests, 1 answered, the cooldown climbing 60 -> 120 -> 240
+-> 480 seconds with the streak reaching 4. The same run shows the documented rule
+holding correctly — a failed attempt made *while* the model was already cooling
+did not advance the exponent.
+
+**Only the clock-decay option is worth planning.** Capping the exponent when the
+provider sent no `Retry-After` sounds equally local and is not: the absence of
+the header does not survive to the decision point, because `retry_after_seconds`
+substitutes a default and everything downstream sees a plain number. That would
+mean threading a new signal through classification and disposal. The decay, by
+contrast, is local to the optimizer's counter and heals by itself, as a cooldown
+does.
+
+**Recorded decisions this touches.** None blocks it.
+[`no-rate-limits`](../reference/decisions.md#no-rate-limits) blocks *tracked
+caps*, which this is not. The cooldown rules in
+[`selection.md`](../reference/rules/selection.md) state the current behaviour and
+are updated with it.
+
+---
+
+# Plan 4 — a reachability check
+
+**Settle the shape before planning it.** The plan cannot be written against
+"walk the configured entries": the CLI reads presets and knows nothing of a
+registry, a store or a connection string — that configuration surface does not
+exist there. So the check is either a command over a preset plus environment
+secrets, exactly as `env <preset>` already is, or a call on a broker that already
+holds its registry and secrets.
+
+**Recommended shape:** one checking function taking model configs and a key
+resolver, with two thin wrappers — the CLI passing a preset with env-backed
+secrets, a host passing its own. Deciding this first is what keeps the detailed
+plan from being written against access that is not there.
+
+**What it reports,** per row: no key / key refused / model refused / answered, and
+how long it took. Read-only — it writes no registry row, no journal row, and
+feeds no routing state.
+
+**Why.** Neither `list` nor `env` answers whether a key works, and `snapshot()`
+cannot either, because only a request settles it. The downstream project wrote
+this by hand before it could start, and the result was not cosmetic: it showed
+that one provider's "insufficient balance" error came only from its *paid* models
+while the free one was reachable — the opposite of what the error text invites,
+and a diagnosis nothing in the library would have corrected.
+
+**Recorded decisions this touches.** Two are adjacent and neither blocks it; the
+detailed plan should say so out loud.
+[`no-alerts-api`](../reference/decisions.md#no-alerts-api) rejects a *runtime*
+events API, where this is a command a human runs. The rejected
+["proving a model dead before removing it"](../reference/decisions.md#rejected)
+rejects probing that *decides* something, where this only reports to a person.
+
+---
+
+# Out of band — one line in the paid catalog
+
+`gpt-5.6-luna` is absent from the curated paid catalog while OpenAI offers it. On
+45 items across three languages it reached first delta in 5.5-6.3 s against
+`gpt`'s 12-20 s, and a whole answer in 8.6-9.7 s against 19-27 s, at 100%
+contract compliance and within 0.1-0.3 of `gpt` on a 1-5 quality rubric — level
+with it on the one axis that decided anything downstream.
+
+This is a catalog edit, not a plan, and it needs no second axis in the catalog:
+an alias is a provider's model name, and the labels already speak about speed
+where speed is what a model is for. The refresh prompt beside the catalog is the
+route.
+
+**Worth a look while there:** the free-tier list carries `glm-4.7-flash`, whose
+entry is correct — the model exists, the key reaches it, and it answers through
+the pool. Whether an endpoint that answers one request in eight, and takes 31
+seconds to its first token when it does, should hold a place in a five-model pool
+is a curation question, not a code one.

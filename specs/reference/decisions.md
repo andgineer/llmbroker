@@ -554,6 +554,24 @@ curation rides the same configuration path as the free model list — unreachabl
 changes nothing, wrong cannot destroy a working config — so it adds no runtime
 dependency, only code.
 
+### speed-is-a-catalog-tier
+
+The catalog carries one line per distinct tier a provider has, and a model level
+with its stronger sibling on quality but several times quicker to the first token
+is a distinct tier.
+
+**Blocks:** curating the catalog on capability alone; a fixed cap on models per
+provider; a tier field, or any second axis, in the file.
+**Why:** an alias is the only way an application can ask for "the fast one", so a
+tier left out of the catalog is one no host reaches without pinning a version by
+hand — the exact failure the catalog exists to prevent
+([`the-paid-catalog-is-curated-too`](#the-paid-catalog-is-curated-too)). A count
+is only a proxy for not dumping every snapshot, and the runbook states that
+exclusion in words instead; as a rule it shuts out a provider's fast tier the
+moment its strength tiers fill the count. No second axis is needed to express
+any of this: an alias is a name, and the label beside it already says what a
+model is for.
+
 ### a-model-reached-by-name-is-declared-in-code
 
 A model an application calls by name is stated where that application is

@@ -38,6 +38,18 @@ occur — that is the one bit the merge partitions on
 entry raises `PoolModelError`. The pool is anonymous by design: its members are
 reached through the routing methods, which route and learn.
 
+## What the catalog carries
+
+**One line per distinct tier a provider genuinely has, and speed is one of the
+axes a tier is distinct on.** A model level with its stronger sibling on quality
+and several times quicker to the first token is its own tier, not a redundancy:
+an alias is the only way an application can say "the fast one", so a tier the
+catalog leaves out is one no host reaches without pinning a version by hand —
+which is the failure the catalog exists to prevent
+([`../decisions.md`](../decisions.md#speed-is-a-catalog-tier)). How that curation
+is carried out is a runbook shipped beside the catalog, not a rule of the
+library.
+
 ## The alias contract
 
 **A declared model carries two identifiers with disjoint roles.**

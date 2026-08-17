@@ -2,8 +2,9 @@
 
 Standalone runbook. Hand this whole file to an LLM agent with repo access and
 **web access**, or follow it by hand. It regenerates `src/llmbroker/presets/paid-catalog.toml`
-— the curated catalog of paid providers and their current flagship models that
-`llmbroker list` prints and `direct=` resolves an alias against.
+— the curated catalog of paid providers and the current models worth calling by
+name, one line per tier, that `llmbroker list` prints and `direct=` resolves an
+alias against.
 
 Run it in the same pass as `freetier-refresh-prompt.md`: the free pool and the
 paid catalog are refreshed together, from the providers' own current pages.
@@ -31,6 +32,11 @@ config depends on, so it is governed by a permanence contract:
 - **No version substring in an alias.** `opus`, `gpt-mini`, `flash` are aliases;
   `opus-4-8`, `gpt-5`, `flash-2-5` are not. The alias outlives the version by
   construction, so a version inside it is a contradiction.
+- **The fast tier's handle follows one convention**, because a word coined for it
+  here is permanent: `<provider handle>-fast`, unless the provider's own product
+  name already supplies a non-version word for it (Google's `flash`). This binds
+  aliases you are minting now — a published one never renames, so spellings
+  already in the file stay exactly as they are.
 - **Aliases are unique across the whole catalog**, not per provider. A duplicate
   makes the catalog invalid and `llmbroker` refuses it with an error.
 - **A model a shipped preset already pools does not belong here.** An alias
@@ -101,13 +107,22 @@ provider's well-known OpenAI-compatible host and flag it in the diff for the
 human to confirm — never invent a novel host. Never carry an id or base_url over
 from memory or from this file without re-reading it live this pass.
 
-## 2. Curate the flagship model(s)
+## 2. Curate the tiers the provider actually has
 
-Per provider, pick **one to three** models a user would pay for on quality, as
-distinct tiers — the top-capability flagship, the provider's recommended default
-if different, and at most one cheaper-but-strong sibling. Skip a tier that is not
-meaningfully distinct. This is a curation, not a dump: do not list every
-snapshot, dated alias, or legacy id.
+Per provider, write **one line per distinct tier** — not a fixed number of lines:
+
+- the **top-capability** flagship;
+- the provider's own **recommended default**, where it differs from the flagship;
+- a **cheaper-but-strong** sibling;
+- the **fast** tier — the one a caller streaming into a UI would choose. Include
+  it *even when a stronger sibling exists*: it wins on an axis the others are not
+  ranked by, and an alias is the only way an application can ask for the fast one.
+  A model level with its stronger sibling on quality and several times quicker to
+  the first token is a tier, not a duplicate.
+
+Skip a tier the provider does not meaningfully have. This is a curation, not a
+dump: do not list every snapshot, dated alias, or legacy id — that, and not a
+count, is what keeps the file from accumulating.
 
 Prefer the **stable/latest** id the provider recommends for production over a
 dated snapshot, unless only dated snapshots exist.
@@ -118,7 +133,7 @@ Exact schema (one `[[provider]]` block per provider, one `[[provider.models]]`
 per curated model):
 
 ```toml
-# Curated paid providers and their current flagship models.
+# Curated paid providers and the current models worth calling by name, one per tier.
 # Read by `llmbroker list` and by `direct=`. Refreshed via paid-catalog-refresh-prompt.md.
 # refreshed = "YYYY-MM-DD"
 
@@ -161,6 +176,12 @@ Rules:
 - Spot-check: for at least one provider whose key you hold, confirm each `model`
   id is accepted (a real request, or the provider's models-list endpoint). This
   is an optional cross-check, not a substitute for §0–§1.
+- **Report the tier-by-tier decision, not only the diff.** Per provider, list the
+  tiers you found on its models page and what you did with each: included (with
+  the alias) or skipped (with the reason). A model that falls outside the curation
+  axis otherwise leaves no trace at all in a diff of what changed, which is how a
+  provider's fast tier can stay missing for a whole refresh cycle without anyone
+  having a line to notice.
 - Present a diff summary — providers/models added, removed, changed, each with
   its `verified` source — for human review. **Do not commit yourself.**
 
@@ -174,5 +195,7 @@ Rules:
 - **Fail closed.** Unverifiable id → omit the model.
 - **OpenAI-compatible only.** No OpenAI-compatible `/chat/completions` endpoint →
   the provider is out of scope for this catalog.
-- **Curation, not accumulation.** One to three distinct tiers per provider.
+- **Curation, not accumulation.** One line per distinct tier the provider has,
+  its fast tier included; no snapshots, dated aliases or legacy ids. There is no
+  cap on the count — the exclusions are what bound the file.
 - **Human-in-the-loop.** Output a reviewed diff, never an unattended commit.
