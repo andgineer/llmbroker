@@ -33,6 +33,16 @@ caller's budget.
 `burst-152` and `burst-152-w25` are a controlled pair: same prompts, same
 concurrency, same afternoon, one variable changed.
 
+**A run lives here while a recorded claim rests on it, and a superseded run is
+deleted.** Not every run is committed — only one that some sentence in `specs/`
+or a plan now depends on. Otherwise this directory grows by a few hundred
+kilobytes per run and stops saying which rows justify which claim, which is the
+only thing it is for.
+
+Answer text is stripped before a run lands here: it is the application's, it
+carries no routing information, and it is most of the bytes. Secrets are the
+`gitleaks` hook's job, not a step anyone performs by hand.
+
 ## Files
 
 - **`runs/profiles.jsonl`** — one row per request the application made. Fields:

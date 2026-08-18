@@ -21,17 +21,20 @@ Both are the same failure mode, and it is the one to check a new plan against: a
 mechanism sized for a problem this pool does not have
 ([`../reference/mission.md`](../reference/mission.md#the-size-of-the-problem)).
 
-[`latency-aware-fallback.md`](latency-aware-fallback.md) is a draft, not a queued plan.
-What is still live in it is the rate-limit streak decay, and the reason the queue does not
-carry it is now known to be conditional. Every cooldown of a model under ordinary load
-staying at the flat base — the exponent growing only on an endpoint that refuses most
-requests, where growing is the defence working rather than a defect — holds at a loose
-caller budget and fails at a tight one: on the same prompts and the same concurrency, with
-only the budget moved from 45 s to 25 s, the highest-weighted model climbed the ladder to
-480 s and two others reached 1920 s and the 3600 s cap
-([`../../bench/runs/cooldowns.md`](../../bench/runs/cooldowns.md)). A tight budget is what
-an interactive caller is told to set. Whether that changes the verdict needs the pair run
-again deliberately, which is what plan 1 above is for.
+The rate-limit streak decay — a streak whose last failure is old enough to count as
+spent — is weighed and not queued, and the reason it is not queued is now known to be
+conditional. Every cooldown of a model under ordinary load staying at the flat base —
+the exponent growing only on an endpoint that refuses most requests, where growing is
+the defence working rather than a defect — holds at a loose caller budget and fails at
+a tight one: on the same prompts and the same concurrency, with only the budget moved
+from 45 s to 25 s, the highest-weighted model climbed the ladder to 480 s and two
+others reached 1920 s and the 3600 s cap
+([`../../bench/runs/cooldowns.md`](../../bench/runs/cooldowns.md)). A tight budget is
+what an interactive caller is told to set. Whether that changes the verdict needs the
+pair run again deliberately, which is what plan 1 above is for. If it does, the shape
+is a decay on the streak counter rather than a cap on the exponent: a provider's
+silence about `Retry-After` does not survive to the decision point, where a default
+number has already replaced it.
 
 A queued plan is a row in this file and a file beside it. How one is executed lives in `CLAUDE.md`
 under "Executing a plan", and the rules binding on every plan live in
