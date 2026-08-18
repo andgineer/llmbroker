@@ -1,6 +1,10 @@
 # Implementation plans
 
-**The queue is empty.** Nothing is waiting to be implemented.
+## Queue
+
+| # | plan | what it is |
+|---|---|---|
+| 1 | [`load-harness.md`](load-harness.md) | a script beside the library that drives real traffic through the pool or a direct client and reduces it per model — no `src/` change, outside CI |
 
 Two plans were dropped rather than implemented, and the reasoning is worth keeping
 because both will be re-proposed otherwise. A *reachability check* — a read-only,
@@ -18,11 +22,16 @@ mechanism sized for a problem this pool does not have
 ([`../reference/mission.md`](../reference/mission.md#the-size-of-the-problem)).
 
 [`latency-aware-fallback.md`](latency-aware-fallback.md) is a draft, not a queued plan.
-What is still live in it is the rate-limit streak decay, which the queue deliberately
-does not carry: the measurements in that same file show every cooldown of a model under
-ordinary load staying at the flat base, and the exponent growing only on an endpoint that
-refuses most requests — where growing is the defence working, not a defect. That endpoint
-is answered by the floor weight it now carries in the curated list, at no runtime cost.
+What is still live in it is the rate-limit streak decay, and the reason the queue does not
+carry it is now known to be conditional. Every cooldown of a model under ordinary load
+staying at the flat base — the exponent growing only on an endpoint that refuses most
+requests, where growing is the defence working rather than a defect — holds at a loose
+caller budget and fails at a tight one: on the same prompts and the same concurrency, with
+only the budget moved from 45 s to 25 s, the highest-weighted model climbed the ladder to
+480 s and two others reached 1920 s and the 3600 s cap
+([`../../bench/runs/cooldowns.md`](../../bench/runs/cooldowns.md)). A tight budget is what
+an interactive caller is told to set. Whether that changes the verdict needs the pair run
+again deliberately, which is what plan 1 above is for.
 
 A queued plan is a row in this file and a file beside it. How one is executed lives in `CLAUDE.md`
 under "Executing a plan", and the rules binding on every plan live in
