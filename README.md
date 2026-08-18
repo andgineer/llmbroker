@@ -25,7 +25,7 @@
 | src/llmbroker/broker/refresher.py         |      147 |        3 |     98% |106, 212-213 |
 | src/llmbroker/broker/report.py            |       19 |        0 |    100% |           |
 | src/llmbroker/broker/result.py            |       80 |        0 |    100% |           |
-| src/llmbroker/broker/router.py            |      283 |       16 |     94% |267, 382-383, 496-497, 594-595, 599-600, 640-644, 732-733 |
+| src/llmbroker/broker/router.py            |      283 |       16 |     94% |267, 382-383, 496-497, 594-595, 599-600, 640-644, 734-735 |
 | src/llmbroker/broker/source.py            |       48 |        2 |     96% |     29-30 |
 | src/llmbroker/broker/stamps.py            |       35 |        3 |     91% | 42, 56-57 |
 | src/llmbroker/broker/stats.py             |       15 |        0 |    100% |           |
