@@ -106,7 +106,12 @@ silent curation failure.
 | < 0.4 | niche or weak |
 
 It is a judgement informed by benchmarks, not equal to any of them: benchmarks
-measure a task, the weight predicts how a host will rate an ordinary answer. The
+measure a task, the weight predicts how a host will rate an ordinary answer. One
+thing outranks that prediction: an endpoint that refuses most requests is carried
+at the floor however well it answers when it does, because a candidate that is
+usually not there costs every caller a wasted attempt before the pool moves on.
+Slowness is not that fact and does not lower a weight — how slow is too slow is
+the caller's `wait` to state, not curation's. The
 shipped values live in the preset and rest on the evidence recorded under
 "Curated providers" below; a refresh that changes one restates its evidence
 there rather than here.
@@ -252,8 +257,9 @@ under-provisioned throughout. What makes it unusable is the other number: when i
 did answer, **the first token arrived after 31 seconds**. `glm-4.7-flash` is a
 reasoning model, and it thinks for half a minute before it says anything. So even
 a perfectly available Z.AI would miss a first-content budget of a few seconds by
-sixfold, and a caller that streams into a UI can never route to it — a property
-the weight axis, which is about answer quality, does not express.
+sixfold. What carries the entry at the floor weight is the availability, not the
+latency: one answer in eight makes it the last candidate wherever another key
+exists, and it stays in the list because where no other key exists it is the pool.
 
 **Z.AI's free tier is oversubscribed enough to be unreliable.** Its 429 carries
 code 1305, "the service may be temporarily overloaded", and no `Retry-After`;

@@ -40,7 +40,9 @@ name        = "zai-glm-4.7-flash"
 base_url    = "https://api.z.ai/api/paas/v4"
 model       = "glm-4.7-flash"
 api_key_ref = "ZAI_API_KEY"
-weight      = 0.55
+# Floor: it answered 1 request in 8 when measured. Kept, because a pool holding
+# only this key is still a pool. See specs/reference/freetier-providers.md.
+weight      = 0.1
 
 # Per-provider onboarding: how to get the key, how hard it is (effort), and how
 # good the model it unlocks is (value). See specs/reference/freetier-providers.md
