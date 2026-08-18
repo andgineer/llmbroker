@@ -620,7 +620,7 @@ class Router:
                 async for delta in deltas:
                     yield delta
         except _BudgetExhaustedError:
-            await self._exhausted(attempt)
+            await self._exhausted(attempt, timeout)
         except _FAILOVER_ERRORS as exc:
             await self._fail_stream(
                 attempt,
@@ -675,7 +675,7 @@ class Router:
         progress.settle()
         outcome.answered = True
 
-    async def _exhausted(self, attempt: _Attempt) -> NoReturn:
+    async def _exhausted(self, attempt: _Attempt, timeout: float) -> NoReturn:
         """Settle a stream that outlived the caller's budget: the model answered and did
         nothing wrong, so it is journaled as a budget it did not finish within rather than
         cooled, and the call ends by raising — nothing is retried past the first delta."""
@@ -688,7 +688,9 @@ class Router:
                 outcome=_BudgetExpired(),
             ),
             backoff=self._backoff(attempt.config.name),
-            timeout=elapsed,
+            # The bound this teaches is provider time, which the wall clock overstates
+            # by whatever the consumer held between deltas.
+            timeout=timeout,
         )
         raise LLMTimeoutError(
             f"{attempt.config.name}: the answer was still arriving {elapsed:.1f}s in, past"

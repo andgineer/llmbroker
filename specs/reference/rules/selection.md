@@ -161,10 +161,11 @@ Four properties keep this from becoming a penalty in disguise:
   resolver, which makes another node's miss weaker evidence than this node's own;
   it is admitted anyway, because partitioning it would put a node identity in the
   journal that nothing else needs.
-- **It is one signal for both routing paths, deliberately approximate.** A
-  stream contributes the budget it missed reaching the first delta, a completion
-  the budget it missed answering in full, and neither is scaled. Ordering is all
-  it can affect, so a second signal with its own window would cost more on the
+- **It is one signal for both routing paths, deliberately approximate, and it is
+  measured in provider time.** Both contribute the budget they did not answer
+  within — never the wall clock a stream spent, which whatever the consumer held
+  between deltas would inflate — and neither is scaled. Ordering is all it can
+  affect, so a second signal with its own window would cost more on the
   acquisition path than the sharper bound is worth.
 
 An expiry that fired before the attempt reached the provider teaches nothing:

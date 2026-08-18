@@ -208,7 +208,9 @@ def test_an_exhausted_budget_journals_the_time_it_did_not_finish_within():
 
     (row,) = asyncio.run(run())
     assert row.status is CallStatus.ERROR
-    assert row.budget_ms >= 300  # noqa: PLR2004
+    # Not the caller's `wait` to the millisecond: routing runs inside the budget, so
+    # what the attempt was given is what it missed.
+    assert row.budget_ms == pytest.approx(300, abs=50)  # noqa: PLR2004
 
 
 def test_an_exhausted_budget_is_not_a_stream_death():
@@ -243,3 +245,19 @@ def test_the_next_caller_is_handed_a_sibling():
         return receipt.llm_name
 
     assert asyncio.run(run()) == "b"
+
+
+def test_a_slow_consumer_does_not_inflate_the_journaled_budget():
+    """The miss is evidence about the model, so it is the provider-time budget that
+    is journaled — a reader that dawdled must not enlarge the bound it teaches."""
+
+    async def run():
+        router, _, store = await _router("a")
+        _mount(router, _responder(_dribbles))
+        with pytest.raises(LLMTimeoutError):
+            async for _ in _stream(router, wait=0.3):
+                await asyncio.sleep(0.2)
+        return store.rows
+
+    (row,) = asyncio.run(run())
+    assert row.budget_ms == pytest.approx(300, abs=50)  # noqa: PLR2004
