@@ -390,7 +390,6 @@ _FIELD_SAMPLES = {
     "scope": "tenant-a",
     "cooldown_until": _BASE + timedelta(minutes=30),
     "budget_ms": 1500,
-    "first_delta_ms": 420,
 }
 
 

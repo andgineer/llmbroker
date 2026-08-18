@@ -99,7 +99,6 @@ def _call_to_row(call: Call) -> Row:
         "scope": call.scope,
         "cooldown_until": call.cooldown_until,
         "budget_ms": call.budget_ms,
-        "first_delta_ms": call.first_delta_ms,
     }
     row.update(_usage_columns(call.usage))
     return row
@@ -132,7 +131,6 @@ def _row_to_call(row: Row) -> Call:
         scope=row.get("scope"),  # type: ignore[arg-type]
         cooldown_until=row.get("cooldown_until"),  # type: ignore[arg-type]
         budget_ms=row.get("budget_ms"),  # type: ignore[arg-type]
-        first_delta_ms=row.get("first_delta_ms"),  # type: ignore[arg-type]
     )
 
 

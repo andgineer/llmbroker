@@ -91,14 +91,16 @@ never leaves a half-recorded attempt behind it.
   no validation of its own — `0` is the boundary that carries the special
   meaning.
 
-**For a stream, `wait` bounds the wait for the first delta.** A stream has no
-single "the attempt finished" moment, so the budget covers the one stretch still
-the broker's to rescue: acquiring a slot and reaching the first delta. Past it
-the pace is the consumer's as much as the model's — a caller that processes
-deltas slowly suspends the stream between them — so blaming the model for the
-wall clock there would be blaming it for its reader. Every read after the first
-delta still runs under the global ceiling, so an endpoint that goes quiet
-mid-answer dies rather than hanging.
+**For a stream, `wait` bounds the whole answer, measured in provider time.** The
+budget covers acquiring a slot, reaching the first delta and everything after it,
+so an answer is inside it or not however it was chunked — a model that opens at
+once and then takes a minute is no more inside a ten-second budget than one that
+says nothing for a minute. What the budget never counts is the consumer: the clock
+is disarmed whenever a delta is handed over and pushed on by however long the
+reader held it, so processing slowly can no more spend the budget than it can be
+blamed for the model. This is the same meaning the budget has for a completion,
+which is the point: a caller asks for an answer within a time, not for a first
+token within a time.
 
 **A spent budget is never a model's fault.** The model is not cooled, its
 failure streak does not advance, the call raises
@@ -137,22 +139,13 @@ journaled**, and a stream reaches that point only when its answer ends — closi
 an abandoned stream is what ends it. Offering it sooner would let a rating be
 appended before the row it names, which invariant 1 forbids.
 
-**A caller may bound the gap between deltas.** `wait` stops binding at the first
-one, so without it nothing between the caller and the provider limits an answer
-that has started; the gap is what bounds the trickle, and it is the call's, never
-the model's (invariant 7). Unset is off, and a non-positive value is refused: a
-zero gap aborts every stream instantly and can never be meant. The clock runs only
-while the library waits on the provider and never while the consumer holds the
-generator, so a consumer that dawdles between deltas can no more trip this than it
-can trip `wait`. A chunk carrying no text does not restart it, so a provider
-emitting keepalives and nothing else stalls — which is the point.
-
-**A stall is a miss, not a failure.** The model answered, so it is not cooled and
-its streak does not advance; what it did not do is finish, which is recorded as a
-budget it did not finish within — the same evidence a `wait` expiry leaves, and it
-reaches ordering the same way ([`selection.md`](selection.md)). The call ends by
-raising an exception of its own, distinct from a mid-stream death (invariant 20);
-the deltas already yielded stand, and no failover follows (invariant 18).
+**A budget exhausted mid-answer is a miss, not a failure.** The model answered, so
+it is not cooled and its streak does not advance; what it did not do is finish,
+which is recorded as a budget it did not finish within — the same evidence a
+pre-delta expiry leaves, and it reaches ordering the same way
+([`selection.md`](selection.md)). The call ends by raising the timeout error,
+distinct from a mid-stream death (invariant 20); the deltas already yielded stand,
+and no failover follows (invariant 18).
 
 Every failure before the first delta — 429, 5xx, transport, malformed response —
 cools the model and moves to the next candidate through the same

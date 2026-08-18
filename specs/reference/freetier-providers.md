@@ -228,6 +228,15 @@ answers get an order of magnitude slower, while the fastest alternative sorts
 last. Anyone pooling for an interactive workload should read the weights as
 what they are, a quality prior, and expect no help with latency.
 
+**The slow models spend that time before the first token, not between tokens.**
+For the slowest entry the median wait to the first token was 23 s paced and 42 s
+under burst, and the worst single answer spent 88 of its 101 seconds there; once
+text starts it arrives steadily, about 0.05 s per token, and no streaming phase
+in any run exceeded 32 s. The fast entries open in well under a second. So a
+first-token budget separates this pool almost as well as a whole-answer budget
+would, while a bound on the *gap between* tokens separates nothing: no gap
+observed anywhere in the run came close to a second.
+
 **An empty completion is not hypothetical.** One model returned a well-shaped
 answer carrying no text at all on 3 of 14 requests for one language, in under a
 second each. Hosts that treat "no error" as "usable answer" will ship those

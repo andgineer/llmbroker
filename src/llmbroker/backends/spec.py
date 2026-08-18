@@ -69,14 +69,13 @@ TABLES: dict[str, TableSpec] = {
             "scope": "text",
             "cooldown_until": "timestamp",
             "budget_ms": "int",
-            "first_delta_ms": "int",
         },
         indexes=(("llm_name",), ("called_at",), ("trace_id",), ("call_id",)),
     ),
 }
 
 # Gates the current TABLES shape; ensure_schema creates it fresh or raises on mismatch.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 7
 
 # The columns every driver's journal fold names directly in its query.
 JOURNAL_FOLD_COLUMNS = ("id", "called_at", "kind", "call_id", "quality_score")

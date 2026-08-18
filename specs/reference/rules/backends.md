@@ -258,9 +258,9 @@ limit is the tuning knob.
 
 Persistence is the store by default; an explicit in-memory opt-out degrades to
 session-scoped learning. That degradation is what the forward fold of invariant 8
-carries: a store with no read path never contributes a tail, so a rating, a
-missed budget and an observed latency reach the live state only as the row is
-written, and nothing survives the process. The journal forgets via retention — every backend
+carries: a store with no read path never contributes a tail, so a rating and a
+missed budget reach the live state only as the row is written, and nothing
+survives the process. The journal forgets via retention — every backend
 self-purges records older than its retention horizon — and there is no public
 purge operation.
 

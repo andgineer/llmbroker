@@ -220,8 +220,6 @@ class Call:
     # Set only where the caller's own budget ran out mid-attempt: the bound the
     # model failed to answer within, which is the only latency evidence it left.
     budget_ms: int | None = None
-    # Streams only, and only once one opened: the wait no consumer can move.
-    first_delta_ms: int | None = None
 
 
 def to_utc(value: datetime, field: str) -> datetime:

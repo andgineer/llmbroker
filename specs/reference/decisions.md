@@ -141,13 +141,9 @@ judge call spends the scarce quota the pool exists to conserve.
 
 ### no-bandit-machinery
 
-**Blocks:** ε-exploration, usable-rate floors, auto-retirement, and a global speed
-ranking independent of the caller's budget.
-**Why:** a chronically failing model is already effectively disabled by exponential
-cooldown; the only thing auto-removed is a dead key. Slowness that *succeeds* is
-not reached by that reason — cooldown disables failure, and a model answering in 40
-seconds never fails — so it is ordered against the caller's own budget instead
-([`observed-latency-is-its-own-number`](#observed-latency-is-its-own-number)).
+**Blocks:** ε-exploration, usable-rate floors, latency ranking, auto-retirement.
+**Why:** a chronically failing model is already effectively disabled by
+exponential cooldown; the only thing auto-removed is a dead key.
 
 ### budget-expiry-teaches-ordering
 
@@ -158,34 +154,13 @@ quality windows, reordering the pool for equally tight budgets.
 **Blocks:** discarding the expiry as pure loss; counting it as a failure or a
 cooldown; holding the bound as pool-local state no journal read produces;
 recovering it by matching the error text of a row.
-**Why:** a model that never answers produces no successful rows, so the expiry is
-the only latency evidence it leaves — but blaming a model for the caller's clock
+**Why:** a model that never answers produces no successful rows, so this is the
+only obtainable latency evidence — but blaming a model for the caller's clock
 would teach the broker that healthy models are failing. Ordering only,
-budget-relative, and never a withdrawal. Latency from the answers a model *does*
-give is a separate number
-([`observed-latency-is-its-own-number`](#observed-latency-is-its-own-number)).
-Keeping the evidence on the row makes the bound one more thing the single tail
-read derives, rather than a second state subsystem beside it; keeping it as its
-own field rather than as prose in the error detail keeps a message the library
-formats out of a routing decision.
-
-### observed-latency-is-its-own-number
-
-Latency read off successful rows is a second number beside the miss bound, not a
-widening of it. Ordering compares the caller's remaining budget against the larger
-of the two.
-
-**Blocks:** widening the miss bound to take successful rows; a stream contributing
-its whole-answer time; observed latency in the quality window (invariant 5).
-**Why:** a model's own success retires every miss older than it, deliberately — so
-evidence derived from successful rows would be erased by the rows that produce it,
-and a slow model answers successfully every time. The whole-answer time on a stream
-is taken when the row is written, which is after the consumer finished pulling or
-abandoned the generator, so it measures the consumer as much as the model; an
-abandoned slow stream would journal a short time and teach the pool that the model
-is fast. What a stream contributes is the wait for its first delta, which no
-consumer can move — the same split between the two paths that the miss bound
-already makes.
+budget-relative, and never a withdrawal. Keeping the evidence on the row makes
+the bound one more thing the single tail read derives, rather than a second
+state subsystem beside it; keeping it as its own field rather than as prose in
+the error detail keeps a message the library formats out of a routing decision.
 
 ---
 
@@ -225,22 +200,24 @@ configured yet" when the store is unusable.
 **Why:** a budget is the caller's, and a per-model number could not compose with
 failover once a call spans several models.
 
-### a-stall-is-a-gap-not-a-deadline
+### a-budget-is-provider-time-not-wall-clock
 
-A streaming caller may bound the gap between deltas. It is journaled as a budget the
-model did not finish within, it never cools the model, and it raises its own
-exception.
+For a stream `wait` bounds the whole answer, exactly as it does for a completion,
+and it counts only the time the library spent waiting on the provider: the clock is
+disarmed across every hand-over and pushed on by what the consumer held.
 
-**Blocks:** an absolute deadline on the whole answer; a stall belonging to the model
-or the entry rather than to the call; reusing the mid-stream-death exception for it;
-cooling a model because a caller's gap expired.
-**Why:** an absolute deadline is what was dropped so a slow consumer could not trip
-it, and a gap keeps that intact — the clock is armed only while the library waits on
-the provider, never while the consumer holds the generator. The model did answer, so
-cooling it would take it from every other caller over one caller's knob; what it did
-not do is finish, which is what the miss bound already records. And a host must tell
-"the stream died" from "my own gap fired" (invariant 20), so the two are different
-types.
+**Blocks:** a budget that stops binding at the first delta; a separate knob for the
+gap between deltas; a wall-clock deadline that counts the reader's own time;
+cooling a model because a caller's budget ran out.
+**Why:** what a caller asks for is an answer within a time, and chunking is not an
+answer — a model that emits one token at once and the rest over a minute has met a
+first-token budget while missing everything the caller wanted from it. The reason
+the budget once stopped at the first delta was that a slow reader would otherwise
+be charged to the model; disarming across the hand-over settles that without
+giving up the rest of the answer, and a gap between deltas measures neither the
+reader nor the answer. The model did answer, so cooling it would take it from every
+other caller over one caller's clock; what it did not do is finish, which is what
+the miss bound already records.
 
 ### identity-rides-the-object-a-call-returns
 
@@ -854,3 +831,15 @@ Mechanisms weighed and dropped that do not attach to a decision above.
   — a key kept for paid direct calls — is served by the unused-key report line.
 - **A queue-plus-timer scheduling model** — a slot table with a condition
   variable, and no loop-bound timer state.
+- **Latency read off answered rows as a second ordering number** — implemented and
+  withdrawn unreleased. Over the miss bound already there it bought one saved
+  request per model per window, and it timed a stream by its first delta, which is
+  the number a model that starts fast and finishes slowly looks best on. The pool
+  it was written for waits 23-42 s before the first token of its slow entry and
+  then streams steadily, so the budget covering the whole answer
+  ([`a-budget-is-provider-time-not-wall-clock`](#a-budget-is-provider-time-not-wall-clock))
+  is what that evidence actually asked for.
+- **A caller's bound on the gap between deltas** — same release, same withdrawal.
+  A gap measures neither the reader nor the answer, and no gap in the workload
+  that motivated it came near a second; what a caller wants bounded is the
+  answer, however it arrives.

@@ -5,10 +5,8 @@ The pool holds no key: which refs a caller can pay for arrives per acquisition."
 import asyncio
 import logging
 import time
-from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from statistics import median
 
 from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig, LLMState
@@ -23,11 +21,6 @@ _BUDGET_SLACK_SEC = 1.0
 # How long one observed miss keeps ordering weight; both the router's own miss and
 # the rebuild's derivation age by it, so neither outlives the other.
 BUDGET_BOUND_WINDOW_SEC = 600.0
-
-# Answers kept per model, and the floor below which their median is not read. The
-# floor is what stops one slow answer from reordering the pool.
-LATENCY_SAMPLES = 10
-LATENCY_MIN_SAMPLES = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +52,6 @@ class LLMPool:
         self._next_order = 0
         self._optimizer = optimizer
         self._budget_bounds: dict[str, _Bound] = {}
-        self._latency: dict[str, deque[float]] = {}
 
     # ------------------------------------------------------------------
     # Membership / lookup
@@ -102,7 +94,6 @@ class LLMPool:
         async with self._cond:
             self._slots.pop(name, None)
             self._budget_bounds.pop(name, None)
-            self._latency.pop(name, None)
             self._cond.notify_all()
 
     # ------------------------------------------------------------------
@@ -165,38 +156,13 @@ class LLMPool:
     def clear_budget_bound(self, name: str) -> None:
         self._budget_bounds.pop(name, None)
 
-    async def apply_latencies(self, observed: dict[str, list[float]]) -> None:
-        """Replace the map of observed answer latencies, oldest-first per model.
-        Wholesale like the quality windows: a rebuild derives afresh."""
-        async with self._cond:
-            self._latency = {
-                name: deque(samples[-LATENCY_SAMPLES:], maxlen=LATENCY_SAMPLES)
-                for name, samples in observed.items()
-            }
-
-    def observe_latency(self, name: str, seconds: float) -> None:
-        """Record what one answer took, so the next caller offering no more than that
-        is handed a sibling first."""
-        self._latency.setdefault(name, deque(maxlen=LATENCY_SAMPLES)).append(seconds)
-
-    def _observed_latency(self, name: str) -> float:
-        """The median answer time, or ``0.0`` until enough answers to have one."""
-        samples = self._latency.get(name)
-        if samples is None or len(samples) < LATENCY_MIN_SAMPLES:
-            return 0.0
-        return median(samples)
-
     def _over_budget(self, slot: _Slot, remaining: float | None, now: datetime) -> bool:
-        """Whether this LLM has recently taken, or failed to answer within, a budget as
-        small as the one on offer — a reason to prefer a sibling, never to exclude it."""
-        if remaining is None:
-            return False
+        """Whether this LLM has recently failed to answer within a budget as small as
+        the one on offer — a reason to prefer a sibling, never to exclude it."""
         bound = self._budget_bounds.get(slot.config.name)
-        missed = bound.seconds if bound is not None and bound.until > now else 0.0
-        largest = max(missed, self._observed_latency(slot.config.name))
-        if not largest:
+        if remaining is None or bound is None or bound.until <= now:
             return False
-        return remaining < largest + _BUDGET_SLACK_SEC
+        return remaining < bound.seconds + _BUDGET_SLACK_SEC
 
     def demoted_operations(self, name: str) -> frozenset[str | None]:
         return (
