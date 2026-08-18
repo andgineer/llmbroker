@@ -114,3 +114,67 @@ to one pooled model. Judging *whether there is text* is not judging what the tex
 says, so nothing here wraps the reply or rates it; and an unusable 200 already has
 a surface, which is the one this uses rather than inventing a third.
 ```
+
+## Handover
+
+**Done:** the whole work order — pooled completions, pooled streams, the direct
+client, and the spec/doc moves in the same batches as the behavior. All seven named
+tests exist in `tests/test_empty_answer.py`, plus one more (an empty stream as the
+last candidate raises).
+
+**Done differently from the plan:**
+
+- **The completion check lives in the shared completion reader, not in the router.**
+  The plan put it "where an attempt's answer is settled". Both pooled `chat` and both
+  direct `ask`s decode through the same reader, and the repo already commits to one
+  reader deciding what an unusable 200 is — the pooled and direct paths are pinned to
+  each other by a test in `test_router_stream.py`. So work-order step 1 and the
+  non-streaming half of step 3 are one edit, and the two paths cannot drift.
+- **The streaming verdict goes through the same classifier as a malformed body**
+  rather than being spelled out at the raise site, so the cooldown base is stated once.
+  `_stream_attempt` crossed ruff's complexity cap with the extra branch, so the
+  end-of-stream settlement moved into a helper of its own.
+- **`invariants.md` #17 said the opposite** ("An empty answer is an answer") and the
+  plan's spec moves did not name it. Inverted in place — no entry added, none
+  displaced.
+- **The journal detail for an empty completion names the fact before the body**, so a
+  row reads as "no text and no tool calls: {…}" rather than only as a body a reader
+  has to judge. The stream's row carries the same fact for a stream.
+
+**Neighbour tests: the plan's prediction did not hold, which it asked to be told.**
+Three existing tests asserted the old rule, not zero:
+`test_empty_completion_is_a_success_not_a_garbage_200` (removed — its subject is now
+the inverse, and the new file covers the replacement),
+`test_stream_handle_names_an_answer_that_carried_no_delta` (rewritten: the handle
+must now name nothing and the row must not be `OK`), and, in `test_direct.py`,
+`test_async_stream_empty_completion_is_not_garbage` (rewritten to expect the raise,
+still asserting the diagnosis differs from "not a stream at all"). `test_broker.py`
+needed nothing.
+
+**Decided during implementation:**
+
+- An empty answer is journaled with the same status and cooldown as any malformed
+  body; only `error_detail` tells them apart. Nothing reads the journal for the
+  distinction, and a status of its own would be the third disposal the plan blocks.
+- A stream is judged empty on text deltas alone. The pooled streaming path sends no
+  tools, so there are no tool calls to weigh; a reply carrying only tool calls stays
+  an answer on the completion path, which is where tools are asked for.
+- **Empty means empty, not blank.** The test is on the string itself, with no
+  trimming: a reply of `"\n"` is an answer. Trimming would be the first step from
+  judging *whether there is text* into judging what the text says, which is the line
+  the decision rests on — and what the measurement met was no text at all.
+
+**Worth knowing, not changed:** on a single-model pool with the default `wait=None`,
+a model that answers empty every time is now retried after each cooldown instead of
+returning an empty string — the pool waits for the only candidate that can come back.
+That is what every cooling failure class already does there (a 5xx, a garbage body);
+the empty answer joins them rather than introducing it. The wait does not escalate:
+the row is a plain `ERROR`, and only a rate limit or an unavailability advances the
+failure streak the backoff exponent is read from, so the cooldown stays at its flat
+base rather than doubling. Tests therefore use `wait=0` or a second candidate.
+
+**Not done:** the version bump (the maintainer's, per `CLAUDE.md`).
+
+**Gate:** `invoke pre` — all hooks passed, 0 ruff and 0 pyrefly errors.
+`python -m pytest` — **1415 passed**, zero failures, zero skips (Docker up, so the
+testcontainer suites ran).

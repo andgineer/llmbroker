@@ -598,31 +598,6 @@ def test_stream_reraises_the_provider_error_when_every_candidate_rejects_the_req
     assert pool.state("b").phase is LifecyclePhase.AVAILABLE
 
 
-def test_empty_completion_is_a_success_not_a_garbage_200():
-    """A model that answers with nothing said nothing wrong: chunks carrying
-    `choices` make it a real completion, however empty."""
-    store = _RecordingStore()
-
-    async def run():
-        pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
-        router = Router(pool, store)
-        _mount(
-            router,
-            lambda _r: httpx.Response(
-                200,
-                content=b'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}\n\n'
-                b"data: [DONE]\n\n",
-                headers={"content-type": "text/event-stream"},
-            ),
-        )
-        return await _drain(router), pool
-
-    deltas, pool = asyncio.run(run())
-    assert deltas == []
-    assert [(c.llm_name, c.status) for c in store.calls] == [("a", CallStatus.OK)]
-    assert pool.state("a").phase is LifecyclePhase.AVAILABLE
-
-
 def test_abandoned_stream_releases_the_slot():
     """A consumer that breaks out must not cost the model a unit of `parallel`."""
     store = _RecordingStore()
@@ -735,6 +710,18 @@ async def _streaming_broker(tmp_path, handler, *names: str) -> AsyncBroker:
         timeout=5.0,
     )
     return broker
+
+
+def _empty_sse(_request: httpx.Request) -> httpx.Response:
+    """A well-formed completion carrying no text at all — the shape the free tier
+    really answers with, not a garbage body."""
+    return httpx.Response(
+        200,
+        content=b'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}\n\n'
+        b'data: {"choices": [], "usage": {"total_tokens": 4}}\n\n'
+        b"data: [DONE]\n\n",
+        headers={"content-type": "text/event-stream"},
+    )
 
 
 def _ok_sse(*deltas: str):
@@ -957,32 +944,23 @@ def test_stream_handle_rating_survives_a_broken_off_stream(tmp_path):
     assert (row.status, row.score) == (CallStatus.OK, 0.0)
 
 
-def test_stream_handle_names_an_answer_that_carried_no_delta(tmp_path):
-    """An empty answer is an answer: it is journaled OK, so the handle must name it
-    like any other routed call — there is no first delta to learn it from."""
+def test_a_stream_handle_never_names_an_answer_that_carried_no_delta(tmp_path):
+    """An answer with no delta is no answer: the last candidate leaves the caller an
+    exception, and nothing to rate — no model named, no OK row, no score."""
 
     async def run():
-        broker = await _streaming_broker(
-            tmp_path,
-            lambda _r: httpx.Response(
-                200,
-                content=b'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}\n\n'
-                b'data: {"choices": [], "usage": {"total_tokens": 4}}\n\n'
-                b"data: [DONE]\n\n",
-                headers={"content-type": "text/event-stream"},
-            ),
-            "a",
-        )
+        broker = await _streaming_broker(tmp_path, _empty_sse, "a")
         async with broker:
-            handle = broker.stream("hi", operation="write")
-            deltas = [d async for d in handle]
-            await handle.record_quality(1.0)
+            handle = broker.stream("hi", operation="write", wait=0)
+            with pytest.raises(NoLLMAvailableError):
+                async for _delta in handle:
+                    pass
+            with pytest.raises(ValueError, match="not in the journal"):
+                await handle.record_quality(1.0)
             (row,) = await broker.calls(limit=10)
-            return deltas, handle.llm_name, handle.call_id, handle.usage, row
+            return handle.llm_name, row
 
-    deltas, llm_name, call_id, usage, row = asyncio.run(run())
-    assert deltas == []
-    assert row.status is CallStatus.OK
-    assert (llm_name, call_id) == (row.llm_name, row.id)
-    assert usage.total_tokens == 4  # noqa: PLR2004
-    assert row.score == 1.0
+    llm_name, row = asyncio.run(run())
+    assert llm_name is None
+    assert row.status is CallStatus.ERROR
+    assert row.score is None

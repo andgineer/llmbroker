@@ -30,10 +30,12 @@ await stream.record_quality(0.9)       # rate it without naming the call yoursel
 model that answered and, once the answer is over, what it cost.
 
 Failover works normally right up to the **first delta** — a rate-limited or
-broken model is cooled down and the next one takes over, invisibly. Once text
-has started arriving there is nothing left to fail over to, so a stream that
-dies mid-answer raises `StreamInterruptedError`; the deltas you already received
-stand.
+broken model is cooled down and the next one takes over, invisibly. A model whose
+answer ends without ever producing a delta is broken in that same sense: nothing
+reached you, so it is failed over too rather than handed to you as an empty
+stream. Once text has started arriving there is nothing left to fail over to, so a
+stream that dies mid-answer raises `StreamInterruptedError`; the deltas you
+already received stand.
 
 ### The budget covers the whole answer {#budget}
 

@@ -7,9 +7,11 @@ from dataclasses import dataclass
 import httpx
 
 from llmbroker.chat import (
+    NO_DELTA,
     aiter_chat_chunks,
     build_chat_request,
     completion_from_response,
+    empty_answer_error,
     make_client,
     parse_stream_chunk,
     provider_error,
@@ -39,7 +41,8 @@ def _messages(prompt: str | None, messages: list[dict] | None) -> list[dict]:
 
 
 def _result(resp: httpx.Response, model: str) -> DirectResult:
-    """Build a ``DirectResult`` from a completed response, raising on error status."""
+    """Build a ``DirectResult`` from a completed response, raising on an error status
+    and on a 200 that carried no answer."""
     if resp.status_code >= ERROR_FLOOR:
         raise provider_error(resp.status_code, resp.text[:DETAIL_SNIPPET], resp.headers)
     text, _tool_calls, usage = completion_from_response(resp, model)
@@ -125,10 +128,14 @@ class AsyncDirectClient:
                 if resp.status_code >= ERROR_FLOOR:
                     detail = (await resp.aread()).decode(errors="replace")[:DETAIL_SNIPPET]
                     raise provider_error(resp.status_code, detail, resp.headers)
+                produced = False
                 async for chunk in aiter_chat_chunks(resp, self._model):
                     delta, _ = parse_stream_chunk(chunk, self._model)
                     if delta:
+                        produced = True
                         yield delta
+                if not produced:
+                    raise empty_answer_error(self._model, NO_DELTA)
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError("direct stream timed out") from exc
 

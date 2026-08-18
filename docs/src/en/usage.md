@@ -228,9 +228,11 @@ answer.
 
 ### When nobody can answer {#errors}
 
-The pool works through the models until one answers. If none did, the call raises
-`NoLLMAvailableError`, and you do not have to read the message: the reason is in
-the fields.
+The pool works through the models until one answers. A model that returns HTTP 200
+carrying neither text nor tool calls has not answered — it is failed over like any
+other broken reply, so a reply that says nothing at all never reaches you as a
+success. If nobody answered, the call raises `NoLLMAvailableError`, and you do not
+have to read the message: the reason is in the fields.
 
 ```python
 try:

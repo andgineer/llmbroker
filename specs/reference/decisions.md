@@ -219,6 +219,21 @@ reader nor the answer. The model did answer, so cooling it would take it from ev
 other caller over one caller's clock; what it did not do is finish, which is what
 the miss bound already records.
 
+### an-empty-answer-is-a-failure
+
+A 200 carrying a well-formed completion with no text and no tool calls is not an
+answer: pooled, it fails over like any malformed response; direct, it raises.
+
+**Blocks:** returning an empty string as a successful answer; leaving the check to
+the host; a disposal of its own that fails over without cooling; treating a
+tool-call-only reply as empty.
+**Why:** the host cannot defend against this without re-implementing failover — by
+the time it sees the empty string the call is settled and the pool has moved on,
+with candidates that were never tried. One real workload met it on 3 of 14 requests
+to one pooled model. Judging *whether there is text* is not judging what the text
+says, so nothing here wraps the reply or rates it; and an unusable 200 already has
+a surface, which is the one this uses rather than inventing a third.
+
 ### identity-rides-the-object-a-call-returns
 
 Every routed call returns an object naming the model that answered; a stream names

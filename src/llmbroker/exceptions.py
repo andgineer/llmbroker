@@ -107,9 +107,9 @@ class ProviderError(LLMRequestError):
 
 
 class InvalidProviderResponseError(LLMRequestError):
-    """The provider answered 200 with a body that is not a chat completion — a
-    provider-side failure like a 5xx, so the router cools the model and fails
-    over."""
+    """The provider answered 200 with a body that is not a chat completion, or with one
+    carrying no text and no tool calls — a provider-side failure like a 5xx, so the
+    router cools the model and fails over."""
 
     def __init__(self, message: str, *, model: str, detail: str | None = None) -> None:
         super().__init__(message)

@@ -20,9 +20,11 @@ from llmbroker.broker.learning import Learner
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.result import AsyncResult, CallReceipt
 from llmbroker.chat import (
+    NO_DELTA,
     aiter_chat_chunks,
     build_chat_request,
     call_provider,
+    empty_answer_error,
     parse_stream_chunk,
     provider_error,
     retry_after_seconds,
@@ -129,8 +131,9 @@ class _StreamProgress:
         self.receipt.call_id = self.call_id
 
     def settle(self) -> None:
-        """Called once this attempt's journal row is written: an answer carrying no
-        delta never reached ``opened``, and a rating may not precede the row it names."""
+        """Called once this attempt's journal row is written: a consumer that stopped
+        before the first delta never reached ``opened``, and a rating may not precede the
+        row it names."""
         self.receipt.llm_name = self.llm_name
         self.receipt.call_id = self.call_id
         self.receipt.usage = self.usage
@@ -640,9 +643,37 @@ class Router:
                 await self._record(attempt, CallStatus.ERROR, error_detail=type(exc).__name__)
             raise
         else:
-            await self._finish_ok(attempt, progress.usage)
-            progress.settle()
-            outcome.answered = True
+            await self._settle_stream(
+                attempt,
+                progress,
+                outcome,
+                backoff=backoff,
+                timeout=timeout,
+            )
+
+    async def _settle_stream(
+        self,
+        attempt: _Attempt,
+        progress: _StreamProgress,
+        outcome: _Outcome,
+        *,
+        backoff: float,
+        timeout: float,
+    ) -> None:
+        """Settle a streaming attempt whose deltas ran out. One that never produced a
+        delta answered nothing, so it fails over through the same surface a malformed
+        body does — classified there, so there is one reading of an unusable 200."""
+        if not progress.started:
+            verdict = _classify(
+                empty_answer_error(attempt.config.name, NO_DELTA),
+                budget_bound=False,
+            )
+            await self._dispose(attempt, verdict, backoff=backoff, timeout=timeout)
+            outcome.verdict = verdict.outcome
+            return
+        await self._finish_ok(attempt, progress.usage)
+        progress.settle()
+        outcome.answered = True
 
     async def _exhausted(self, attempt: _Attempt) -> NoReturn:
         """Settle a stream that outlived the caller's budget: the model answered and did

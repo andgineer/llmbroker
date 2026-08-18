@@ -112,9 +112,10 @@ rather than what the running system must never do.
     secret refs and journal attribution only: no backend interprets it, and
     nothing — registry, pool, quality — is partitioned per user. → `backends.md`
 
-17. **An empty answer is an answer.** A well-shaped completion carrying no text
-    and no tool calls returns an empty string; it is never a provider failure
-    and never cools a model. → `call-path.md`
+17. **An empty answer is not an answer.** A well-shaped completion carrying no
+    text and no tool calls is the malformed response it is: pooled, the next
+    candidate is tried; direct, it raises. Nothing hands a caller an empty result
+    as a success. → `call-path.md`
 
 18. **Failover ends at the first delta.** Past it the answer is already partly
     the caller's, and retrying elsewhere could only duplicate or splice.

@@ -41,6 +41,13 @@ snippet. An endpoint answering 200 with garbage misbehaves no less than one
 answering 503, so a caller never receives a raw transport or parsing error from
 a pool call while another model could still answer.
 
+**A 200 that parses and says nothing lands there too.** A completion with no text
+and no tool calls is the same type on the same surface, because it is the same
+fact — a candidate produced nothing usable while others were untried
+([`decisions.md`](../decisions.md#an-empty-answer-is-a-failure)). One reading of
+an unusable 200 serves both call paths, so the direct client raises on it where
+the pool fails over. A reply carrying tool calls and no prose is an answer.
+
 An unexpected exception is a bug and does reach the caller; a cancelled call
 propagates untouched.
 
@@ -129,10 +136,10 @@ journal read — which a non-queryable store would not allow at all
 ([`decisions.md`](../decisions.md#identity-rides-the-object-a-call-returns)).
 
 The naming is unset until the call settles on a model, and fixed from then on.
-That is the first delta; an answer that carried no delta settles when it ends,
-which is why an empty answer is named too rather than left anonymous on a row
-journaled `OK`. Earlier it must stay unset: failover may still move, so any value
-before that point would name a model that did not answer.
+That is the first delta; a stream the consumer walked away from before one arrived
+settles when it is closed, which is why the `OK` row that ends it is named too
+rather than left anonymous. Earlier it must stay unset: failover may still move,
+so any value before that point would name a model that did not answer.
 
 **Rating through what the call handed back is refused until the call is
 journaled**, and a stream reaches that point only when its answer ends — closing
@@ -147,9 +154,12 @@ pre-delta expiry leaves, and it reaches ordering the same way
 distinct from a mid-stream death (invariant 20); the deltas already yielded stand,
 and no failover follows (invariant 18).
 
-Every failure before the first delta — 429, 5xx, transport, malformed response —
-cools the model and moves to the next candidate through the same
-classification above; there is no second failure surface for streams. After the
+Every failure before the first delta — 429, 5xx, transport, malformed response,
+and an attempt that ended without ever producing a delta — cools the model and
+moves to the next candidate through the same classification above; there is no
+second failure surface for streams. Nothing reached the caller in any of those, so
+failover is still open and invariant 18 is untouched: it binds only *past* the
+first delta. After the
 first delta a mid-stream death cools the model (it misbehaved no less than one
 failing earlier) and raises, carrying the model name and the underlying cause;
 the deltas already yielded stand.

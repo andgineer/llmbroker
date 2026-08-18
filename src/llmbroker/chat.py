@@ -165,6 +165,21 @@ def _invalid_stream(model: str, detail: str) -> InvalidProviderResponseError:
     )
 
 
+NO_DELTA = "the stream ended without a text delta"
+_NO_ANSWER = "no text and no tool calls"
+
+
+def empty_answer_error(model: str, detail: str) -> InvalidProviderResponseError:
+    """A 200 that parses as a chat completion and carries no answer at all. The same
+    type an unusable body raises, because the disposal is the same: fail over, or
+    raise where there is nothing to fail over to."""
+    return InvalidProviderResponseError(
+        f"{model}: HTTP 200 chat completion carried no text and no tool calls",
+        model=model,
+        detail=detail[:_BODY_SNIPPET],
+    )
+
+
 def _parse_completion(data: Any, model: str) -> tuple[str, list[dict] | None, Usage | None]:
     """Pull (content, tool_calls, usage) out of a decoded chat-completion body. The
     caught set is deliberately broad: an escape here reaches the caller raw and skips
@@ -172,9 +187,13 @@ def _parse_completion(data: Any, model: str) -> tuple[str, list[dict] | None, Us
     try:
         message = message_from_response(data)
         content = str(message.get("content") or "")
-        return content, parse_tool_calls(message), parse_usage(data)
+        tool_calls = parse_tool_calls(message)
+        usage = parse_usage(data)
     except (ArithmeticError, AttributeError, KeyError, IndexError, TypeError, ValueError) as exc:
         raise _invalid_body(model, str(data)) from exc
+    if not content and not tool_calls:
+        raise empty_answer_error(model, f"{_NO_ANSWER}: {data}")
+    return content, tool_calls, usage
 
 
 def completion_from_response(
@@ -248,8 +267,8 @@ async def aiter_sse_chunks(response: httpx.Response) -> AsyncIterator[dict]:
 
 async def aiter_chat_chunks(resp: httpx.Response, model: str) -> AsyncIterator[dict]:
     """Yield the decoded chunks of a chat-completion SSE body. ``choices`` is what
-    makes a chunk one, so a body decoding none raises on exhaustion; counting
-    *deltas* instead would reject a legitimately empty answer."""
+    makes a chunk one, so a body decoding none raises on exhaustion; an answer with no
+    delta is a separate verdict its consumer reaches, not a body that is not a stream."""
     completions = 0
     async for chunk in aiter_sse_chunks(resp):
         completions += "choices" in chunk
