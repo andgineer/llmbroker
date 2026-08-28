@@ -5,6 +5,7 @@
 | # | plan | what it is |
 |---|---|---|
 | 1 | [`load-harness.md`](load-harness.md) | a script beside the library that drives real traffic through the pool or a direct client and reduces it per model — no `src/` change, outside CI |
+| 2 | [`structured-output.md`](structured-output.md) | a caller asks for schema-constrained output and the pool routes to a model that accepts it; refusal becomes a learned per-model fact. Opens with a probe of the current pool which may end the plan |
 
 Two plans were dropped rather than implemented, and the reasoning is worth keeping
 because both will be re-proposed otherwise. A *reachability check* — a read-only,
