@@ -35,7 +35,7 @@ what that costs when it is missing.
 `../../bench/runs/` holds the rows. Two runs there are a controlled pair: the
 same 120 prompts, four in flight, the same afternoon, one variable changed.
 
-[`README.md`](README.md) states why the rate-limit streak decay is not queued:
+The rate-limit streak decay was held out of the queue on this reading of them:
 
 > the measurements in that same file show every cooldown of a model under
 > ordinary load staying at the flat base, and the exponent growing only on an
@@ -162,9 +162,9 @@ broker whose `stream()` yields scripted deltas and whose handle names a model:
 Nothing, on this plan alone. It adds no rule and changes no behaviour.
 
 The cooldown finding above is a different matter and is **not** part of this
-plan's scope: it says a recorded premise is conditional on a caller-side
-setting, which is an argument about the streak decay, to be made where that
-decision lives once someone re-runs the pair.
+plan's scope: it says a recorded premise is conditional on a caller-side setting,
+and [`README.md`](README.md) carries that as the standing reason the streak decay
+is weighed and unqueued.
 
 ## Gate
 

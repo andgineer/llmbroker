@@ -4,10 +4,14 @@
 
 | # | plan | what it is |
 |---|---|---|
-| 1 | [`load-harness.md`](load-harness.md) | a script beside the library that drives real traffic through the pool or a direct client and reduces it per model — no `src/` change, outside CI |
-| 2 | [`structured-output.md`](structured-output.md) | a caller asks for schema-constrained output and the pool routes to a model that accepts it; refusal becomes a learned per-model fact. Opens with a probe of the current pool which may end the plan |
+| 1 | [`pool-tight-budget.md`](pool-tight-budget.md) | a model that produces no delta for the caller's whole budget is cooled like any other failed attempt, so one silent endpoint stops emptying the pool for every request after it |
+| 2 | [`caller-surface.md`](caller-surface.md) | what a caller can send and which models it can name: request parameters on a model reached by name, programmatic catalog access, and schema-constrained output routed through the pool behind its own probe |
+| 3 | [`load-harness.md`](load-harness.md) | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of inside one host's private script |
+| 4 | [`caller-visibility.md`](caller-visibility.md) | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
 
-Two plans were dropped rather than implemented, and the reasoning is worth keeping
+## Rejected proposals
+
+Two proposals were rejected rather than implemented, and the reasoning is worth keeping
 because both will be re-proposed otherwise. A *reachability check* — a read-only,
 human-run command reporting whether each key reaches its model — was a module, a CLI
 verb and a permanent public function for a one-time onboarding act on a handful of
@@ -22,20 +26,15 @@ Both are the same failure mode, and it is the one to check a new plan against: a
 mechanism sized for a problem this pool does not have
 ([`../reference/mission.md`](../reference/mission.md#the-size-of-the-problem)).
 
-The rate-limit streak decay — a streak whose last failure is old enough to count as
-spent — is weighed and not queued, and the reason it is not queued is now known to be
-conditional. Every cooldown of a model under ordinary load staying at the flat base —
-the exponent growing only on an endpoint that refuses most requests, where growing is
-the defence working rather than a defect — holds at a loose caller budget and fails at
-a tight one: on the same prompts and the same concurrency, with only the budget moved
-from 45 s to 25 s, the highest-weighted model climbed the ladder to 480 s and two
-others reached 1920 s and the 3600 s cap
-([`../../bench/runs/cooldowns.md`](../../bench/runs/cooldowns.md)). A tight budget is
-what an interactive caller is told to set. Whether that changes the verdict needs the
-pair run again deliberately, which is what plan 1 above is for. If it does, the shape
-is a decay on the streak counter rather than a cap on the exponent: a provider's
-silence about `Retry-After` does not survive to the decision point, where a default
-number has already replaced it.
+The rate-limit streak decay stays weighed and unqueued, and the reason has moved.
+A tight caller budget does drive the backoff exponent — the pair in
+[`../../bench/runs/cooldowns.md`](../../bench/runs/cooldowns.md) shows 60 → 480 s at
+a 25 s budget where 45 s stayed flat, and a host in ordinary interactive use recorded
+59 → 1919 s across one day. But a model leaving the pool for half an hour only empties
+the pool when the models left behind cannot be reached, and that is queue row 1.
+Revisit after it lands, on whether a caller still misses answers the pool could have
+given — and that question needs a controlled pair, which is queue row 3. A second
+mechanism aimed at the same symptom before either is the failure mode above.
 
 A queued plan is a row in this file and a file beside it. How one is executed lives in `CLAUDE.md`
 under "Executing a plan", and the rules binding on every plan live in
