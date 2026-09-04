@@ -2,12 +2,38 @@
 
 ## Queue
 
-| # | plan | what it is |
-|---|---|---|
-| 1 | [`pool-tight-budget.md`](pool-tight-budget.md) | a model that produces no delta for the caller's whole budget is cooled like any other failed attempt, so one silent endpoint stops emptying the pool for every request after it |
-| 2 | [`caller-surface.md`](caller-surface.md) | what a caller can send and which models it can name: request parameters on a model reached by name, programmatic catalog access, and schema-constrained output routed through the pool behind its own probe |
-| 3 | [`load-harness.md`](load-harness.md) | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of inside one host's private script |
-| 4 | [`caller-visibility.md`](caller-visibility.md) | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
+| # | plan | readiness | what it is |
+|---|---|---|---|
+| 1 | [`pool-tight-budget.md`](pool-tight-budget.md) | source-bound; hand off now | a model that produces no delta for the caller's whole budget is cooled like any other failed attempt, so one silent endpoint stops emptying the pool for every request after it |
+| 2 | [`caller-surface.md`](caller-surface.md) | functional; concretize after row 1 | what a caller can send and which models it can name: request parameters on a model reached by name, programmatic catalog access, and schema-constrained output routed through the pool behind its own probe |
+| 3 | [`load-harness.md`](load-harness.md) | source-bound; revalidate after row 2 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of inside one host's private script |
+| 4 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 3 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
+
+## Detail horizon
+
+The queue is ordered work, not four implementation briefs that may be handed to
+four executors at once. Only a **source-bound** row is executable. A **functional**
+row preserves the problem, boundary and evidence, but deliberately leaves names,
+signatures and test placement open until every earlier handover has landed.
+
+Concretization is rolling:
+
+1. Before handing off the first row, bind it to the current modules, call paths,
+   tests and spec edits. That binding lives in the plan itself.
+2. After its implementation and review, read its `Handover`, inspect the new source
+   and re-evaluate the rest of the queue. Remove work the code already did, split or
+   combine items whose seams moved, and only then make the next row source-bound.
+3. A later row that is already source-bound is still revalidated, not rewritten in
+   advance. If its named surface still exists and the preceding diff did not change
+   its assumptions, the revalidation is a small check rather than a new planning
+   pass.
+4. Hand off one source-bound row at a time. Do not ask an executor to fill in a
+   functional row while implementing it: the unresolved public shape is planning
+   work, and discovering it inside the implementation diff makes review impossible.
+
+This keeps durable detail now — dependencies, outcome, exclusions and acceptance
+evidence — while postponing volatile detail: private helper names, exact signatures
+and test locations beyond the next implementation boundary.
 
 ## Rejected proposals
 

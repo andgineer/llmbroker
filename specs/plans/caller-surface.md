@@ -5,6 +5,12 @@ what the evidence is, and the binding to a module, a signature and a test is the
 next step, before which no `src/` line is written. Item 7 arrives with a probe of
 its own, which may end it.
 
+**Queue gate:** do that binding only after `pool-tight-budget.md` has an
+implementation handover. Re-read the request path then; do not hand this file to
+an implementation executor in its present state. The first executable action is
+item 7's probe, because its result decides whether the shared request seam is
+opened for direct calls only or for both direct and routed calls.
+
 ## Goal
 
 Three ways a caller reaches a particular model and tells it how to answer, all on

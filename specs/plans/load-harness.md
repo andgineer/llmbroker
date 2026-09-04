@@ -1,5 +1,11 @@
 # Plan — a load harness
 
+**Status: source-bound, pending revalidation after `caller-surface.md`.** Its
+repository location, callable shapes, work order and tests are fixed below. Before
+handoff, compare them with the preceding plan's `Handover`: if that plan changed
+the stream/result surface or exposed a catalog reader the harness should consume,
+update this file first; otherwise mark the check complete and execute it as written.
+
 ## Goal
 
 A runnable way to produce the measurements this repository already reasons from.
