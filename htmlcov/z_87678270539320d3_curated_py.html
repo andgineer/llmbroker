@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_87678270539320d3_keyring_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-05 14:04 +0000
+            created at 2026-09-05 17:19 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -91,7 +91,7 @@
     <p class="run"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t"><span class="key">from</span> <span class="nam">pathlib</span> <span class="key">import</span> <span class="nam">Path</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t11" href="#t11">11</a></span><span class="t"><span class="key">from</span> <span class="nam">llmbroker</span><span class="op">.</span><span class="nam">broker</span><span class="op">.</span><span class="nam">presets</span> <span class="key">import</span> <span class="nam">PAID_CATALOG</span><span class="op">,</span> <span class="nam">POOL_PRESET</span><span class="op">,</span> <span class="nam">PresetSource</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t12" href="#t12">12</a></span><span class="t"><span class="key">from</span> <span class="nam">llmbroker</span><span class="op">.</span><span class="nam">home</span> <span class="key">import</span> <span class="nam">home_dir</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t12" href="#t12">12</a></span><span class="t"><span class="key">from</span> <span class="nam">llmbroker</span><span class="op">.</span><span class="nam">home</span> <span class="key">import</span> <span class="nam">home_dir_for_read</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t13" href="#t13">13</a></span><span class="t"><span class="key">from</span> <span class="nam">llmbroker</span><span class="op">.</span><span class="nam">models</span> <span class="key">import</span> <span class="nam">LLMConfig</span><span class="op">,</span> <span class="nam">ModelList</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t14" href="#t14">14</a></span><span class="t"><span class="key">from</span> <span class="nam">llmbroker</span><span class="op">.</span><span class="nam">standalone</span><span class="op">.</span><span class="nam">registry</span> <span class="key">import</span> <span class="nam">parse_model_list</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -187,7 +187,7 @@
     <p class="run"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t"><span class="key">def</span> <span class="nam">_catalog_text</span><span class="op">(</span><span class="nam">name</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">home</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="nam">Path</span> <span class="op">|</span> <span class="key">None</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t">    <span class="str">&quot;&quot;&quot;The curated text already on this machine, the wheel&#x27;s copy under it. Never the</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t"><span class="str">    network: an enumeration must not put a fetch behind an innocuous-looking read.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t">    <span class="key">return</span> <span class="nam">PresetSource</span><span class="op">(</span><span class="nam">home_dir</span><span class="op">(</span><span class="nam">home</span><span class="op">)</span><span class="op">)</span><span class="op">.</span><span class="nam">text</span><span class="op">(</span><span class="nam">name</span><span class="op">,</span> <span class="nam">prefer_cache</span><span class="op">=</span><span class="key">True</span><span class="op">,</span> <span class="nam">fetch</span><span class="op">=</span><span class="key">False</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t">    <span class="key">return</span> <span class="nam">PresetSource</span><span class="op">(</span><span class="nam">home_dir_for_read</span><span class="op">(</span><span class="nam">home</span><span class="op">)</span><span class="op">)</span><span class="op">.</span><span class="nam">text</span><span class="op">(</span><span class="nam">name</span><span class="op">,</span> <span class="nam">prefer_cache</span><span class="op">=</span><span class="key">True</span><span class="op">,</span> <span class="nam">fetch</span><span class="op">=</span><span class="key">False</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t109" href="#t109">109</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t"><span class="key">def</span> <span class="nam">curated_providers</span><span class="op">(</span><span class="op">*</span><span class="op">,</span> <span class="nam">home</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="nam">Path</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">tuple</span><span class="op">[</span><span class="nam">CuratedProvider</span><span class="op">,</span> <span class="op">...</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -213,7 +213,7 @@
             <a class="nav" href="z_87678270539320d3_keyring_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-05 14:04 +0000
+            created at 2026-09-05 17:19 +0000
         </p>
     </div>
 </footer>

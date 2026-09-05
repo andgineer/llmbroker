@@ -23,7 +23,7 @@
 | src/llmbroker/broker/pool.py              |      202 |        0 |    100% |           |
 | src/llmbroker/broker/pool\_view.py        |       24 |        0 |    100% |           |
 | src/llmbroker/broker/presets.py           |      105 |        2 |     98% |   186-187 |
-| src/llmbroker/broker/refresher.py         |      147 |        4 |     97% |97, 106, 212-213 |
+| src/llmbroker/broker/refresher.py         |      147 |        3 |     98% |106, 212-213 |
 | src/llmbroker/broker/report.py            |       19 |        0 |    100% |           |
 | src/llmbroker/broker/result.py            |       80 |        0 |    100% |           |
 | src/llmbroker/broker/router.py            |      436 |       22 |     95% |356, 524-526, 535, 554-558, 583, 637-638, 760-761, 877-878, 882-884, 1049-1050 |
@@ -34,7 +34,7 @@
 | src/llmbroker/cli.py                      |       75 |        0 |    100% |           |
 | src/llmbroker/direct.py                   |       96 |        8 |     92% |75, 144, 148-149, 152, 155, 212-213 |
 | src/llmbroker/exceptions.py               |       44 |        0 |    100% |           |
-| src/llmbroker/home.py                     |       58 |        7 |     88% |24-25, 28-29, 31, 41-42 |
+| src/llmbroker/home.py                     |       60 |        7 |     88% |24-25, 28-29, 31, 41-42 |
 | src/llmbroker/http\_status.py             |       15 |        0 |    100% |           |
 | src/llmbroker/integrations/alembic.py     |        2 |        0 |    100% |           |
 | src/llmbroker/journal\_policy.py          |       18 |        0 |    100% |           |
@@ -62,7 +62,7 @@
 | src/llmbroker/tool\_loop.py               |       48 |        1 |     98% |        32 |
 | src/llmbroker/util/atomic.py              |       17 |        3 |     82% |     29-31 |
 | src/llmbroker/vault/secrets.py            |       29 |        3 |     90% | 26, 61-62 |
-| **TOTAL**                                 | **3963** |  **108** | **97%** |           |
+| **TOTAL**                                 | **3965** |  **107** | **97%** |           |
 
 
 ## Setup coverage badge
