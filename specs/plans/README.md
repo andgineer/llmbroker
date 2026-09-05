@@ -4,8 +4,9 @@
 
 | # | plan | readiness | what it is |
 |---|---|---|---|
-| 1 | [`load-harness.md`](load-harness.md) | source-bound; revalidate before handoff | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of inside one host's private script |
+| 1 | [`load-harness.md`](load-harness.md) | source-bound; revalidated on v1.7.0 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of inside one host's private script |
 | 2 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 1 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
+| 3 | [`in-flight-budget-protection.md`](in-flight-budget-protection.md) | problem statement; discuss later | protect one interactive call when its preferred model consumes the answer budget, without assuming an unconditional fastest-answer race |
 
 ## Detail horizon
 
