@@ -179,15 +179,43 @@ from the pool in any lasting sense, and must not be made so by lengthening this.
 
 **What it does not buy is the calls already running.** Two issued together both
 meet the same silence, because neither has learned anything when either chose; what
-is bought is every call after them. Rescuing the one in flight takes a share of the
-budget per attempt, which hands each attempt less time than the caller asked for to
-reach a symptom this already removes for every later call — the counter-proposal to
-expect, and to refuse.
+is bought is every call after them. The counter-proposal to expect is dividing the
+budget into per-attempt shares so the call in flight is retried inside it, and that
+one is refused: it hands each attempt less time than the caller asked for, to reach
+a symptom this already removes for every later call. Covering a call in flight by
+running a second model beside it is a different mechanism with a different price,
+and it is
+[`parallelism-is-explicit-or-recovery-owned`](#parallelism-is-explicit-or-recovery-owned).
 
 The evidence rides the journal row rather than pool-local state, so the bound is
 one more thing the single tail read derives instead of a second state subsystem
 beside it, and it is its own field rather than prose in the error detail, so a
 message the library formats stays out of a routing decision.
+
+### parallelism-is-explicit-or-recovery-owned
+
+A routed caller may explicitly request the fastest of several distinct models.
+Independently, the pool protects its first post-cooldown recovery attempt with a
+parallel ordinary candidate by default. The former spends quota on every call; the
+latter spends it only when the pool is rechecking its own negative availability
+state. A caller may disable recovery parallelism to conserve quota.
+
+An atomic call commits to the first complete answer; a stream commits to the first
+useful delta, after which no other model may replace it.
+
+**Blocks:** racing by issuing several ordinary pool calls; selecting model names at
+the host; making every healthy call parallel by default; putting post-cooldown
+uncertainty on the caller's critical path by default; treating a superseded lane as
+a success or failure; waiting for a complete answer before yielding a parallel
+stream; removing budget-aware ordering because parallel routing exists.
+**Why:** several ordinary calls may all select the same first model and independently
+multiply its cooldown streak. Pool-owned parallelism reserves distinct candidates
+and settles every attempt once. A real failure is still availability evidence, while
+cancellation only because a sibling answered first proves neither success nor
+failure. First-delta commitment preserves streaming and the existing no-splice
+boundary. Explicit fastest-answer routing and recovery protection share machinery
+but serve different purposes; budget-bound ordering continues to save quota for
+sequential healthy calls.
 
 ---
 

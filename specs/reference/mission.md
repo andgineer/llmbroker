@@ -159,6 +159,14 @@ installation stated itself. A curated preset is the only shape a list arrives in
 an installation that must not follow ours states its whole pool itself, and gets
 no second configuration form for us to keep in step.
 
+**One answer costs one request, unless someone decides otherwise.** The quota
+being pooled is the scarce thing, so a healthy call goes to one model and waits.
+Two things spend more, and both are deliberate: a caller may buy latency with
+quota by asking for the fastest of several models, and the pool covers its own
+recovery, so the first call made after a withdrawn model's pause has elapsed is
+not left to gamble the caller's latency on it alone. A caller that would rather
+keep the request can decline that cover.
+
 **Availability and quality are separate axes.** Cooldown is provider-driven,
 self-healing, and withdraws a model; quality demotion is host-driven, sticky,
 and only reorders. Keeping them apart is what allows demotion to have no

@@ -53,6 +53,22 @@ about availability survives a restart either, and nothing needs to: a cooldown
 carries the instant it expires, so a fresh process is at worst optimistic for
 one call.
 
+### Coming back from a cooldown
+
+The first attempt on an entry after its cooldown instant has passed is the pool
+rechecking its own negative state, and it is treated as one until it settles. The
+claim is exclusive: while it is in flight the entry is not handed to a second
+caller, whatever its `parallel` capacity allows, so concurrent callers cannot each
+make the unprotected call the recheck exists to cover. What clears the state is a
+success and only a success. A fresh failure cools the entry again and arms a new
+recheck for the new cooldown, while anything that settles neither — the request
+rejected, a lane a sibling answered past — leaves the entry still due one.
+
+Whether that attempt runs beside an ordinary candidate is the call path's to say
+([`call-path.md`](call-path.md)); what belongs here is that it is one attempt,
+claimed once, and that the entry it is made on is chosen by the ordering below
+like any other.
+
 ## Quality demotion
 
 Per `(model, operation)`, a window of the most recently rated calls is kept — one
@@ -113,6 +129,10 @@ window fills, monotonically, and a full window leaves it contributing nothing.
 So ratings reorder the pool freely against the curated order: no curated
 position is beyond overturning, and a model rated badly enough measures down to
 the bottom of the scale however high it was placed.
+
+One key orders every acquisition, so a call reserving several distinct models at
+once takes the best of them in the same order a sequential call would have walked:
+being able to run in parallel changes how many are picked, never which.
 
 Demotion is soft. A demoted slot with no alternative is still acquired, and so
 is a slot whose priority has collapsed: priority orders the pool, it never

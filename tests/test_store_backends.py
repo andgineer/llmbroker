@@ -416,3 +416,12 @@ async def test_every_journal_field_survives_the_store(queryable_store):
     await queryable_store.record(original)
     (restored,) = await queryable_store.calls(limit=10)
     assert restored == original
+
+
+@pytest.mark.parametrize("status", list(CallStatus))
+async def test_every_call_status_survives_the_store(queryable_store, status):
+    """Every status is stored generically, so a new one needs no schema object — but a
+    backend that narrowed the column would only surface on the value it dropped."""
+    await queryable_store.record(_call("c1", status=status))
+    (restored,) = await queryable_store.calls(limit=10)
+    assert restored.status is status

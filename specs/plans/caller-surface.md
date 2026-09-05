@@ -5,11 +5,10 @@ what the evidence is, and the binding to a module, a signature and a test is the
 next step, before which no `src/` line is written. Item 7 arrives with a probe of
 its own, which may end it.
 
-**Queue gate:** concretize only after `race.md` has an implementation handover, then
-re-read the request path because that plan opens every routed call surface. Do not hand
-this file to an implementation executor in its present state. The first executable
-action after binding is item 7's probe, because its result decides whether the shared
-request seam is opened for direct calls only or for both direct and routed calls.
+**Queue gate:** concretize against the current request path before handing this file to
+an implementation executor. The first executable action after binding is item 7's
+probe, because its result decides whether the shared request seam is opened for direct
+calls only or for both direct and routed calls.
 
 ## Goal
 

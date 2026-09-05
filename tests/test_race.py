@@ -15,16 +15,12 @@ from llmbroker.broker.llms import AsyncLLMs
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.result import CallReceipt
 from llmbroker.broker.router import Router
-from llmbroker.exceptions import StreamInterruptedError
+from llmbroker.exceptions import NoLLMAvailableError, StreamInterruptedError
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
 from llmbroker.sync import Broker, LLMs
 
 from support import make_ring
-
-pytestmark = pytest.mark.skip(
-    reason="executable contract for queued parallel routing; remove before implementation",
-)
 
 _PATCH = "llmbroker.broker.router.call_provider"
 
@@ -38,6 +34,20 @@ class _RecordingStore:
 
     async def record_quality(self, call_id, score, *, scope=None):
         pass
+
+
+class _GatedStore(_RecordingStore):
+    """A store whose superseded write hangs until released, standing in for a backend
+    slow enough to be felt on the call path."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = asyncio.Event()
+
+    async def record(self, call):
+        if call.status is CallStatus.SUPERSEDED:
+            await self.release.wait()
+        await super().record(call)
 
 
 def _cfg(name: str, *, parallel: int | None = None) -> LLMConfig:
@@ -57,11 +67,15 @@ async def _pool(*names: str, optimizer: Optimizer | None = None) -> LLMPool:
     return pool
 
 
+async def _due_for_recovery(pool: LLMPool, name: str) -> None:
+    await pool.cool_down(pool.config(name), 60)
+    pool._slots[name].cooldown_until = datetime.now(UTC) - timedelta(seconds=1)  # noqa: SLF001
+
+
 async def _expire_cooldown(pool: LLMPool, name: str) -> None:
     acquired = await pool.acquire(None, payable=frozenset({"K"}))
     assert acquired.name == name
-    await pool.cool_down(acquired, 60)
-    pool._slots[name].cooldown_until = datetime.now(UTC) - timedelta(seconds=1)  # noqa: SLF001
+    await _due_for_recovery(pool, name)
 
 
 def _sse(*deltas: str) -> bytes:
@@ -635,3 +649,297 @@ def test_invalid_parallel_recovery_opens_no_provider_request(parallel_recovery):
         return called
 
     assert asyncio.run(run()) is False
+
+
+def test_fastest_of_over_the_eligible_pool_simply_runs_fewer_lanes():
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.host or "")
+        return httpx.Response(
+            200,
+            content=_sse("only"),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async def run():
+        router = Router(await _pool("a"), _RecordingStore())
+        _mount(router, handler)
+        return await _drain(router, fastest_of=3, parallel_recovery=False)
+
+    assert asyncio.run(run()) == ["only"]
+    assert requested == ["a"]
+
+
+def test_recovery_never_waits_to_find_an_insurance_candidate():
+    """The protection is opportunistic: a busy pool must not hold the recovery attempt
+    back until a second lane frees up."""
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.host or "")
+        return httpx.Response(
+            200,
+            content=_sse(request.url.host or ""),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async def run():
+        pool = LLMPool()
+        await pool.add(_cfg("a"), 0)
+        await pool.add(_cfg("b", parallel=1), 1)
+        await _expire_cooldown(pool, "a")
+        busy = await pool.acquire(None, payable=frozenset({"K"}), exclude=frozenset({"a"}))
+        assert busy.name == "b"
+        router = Router(pool, _RecordingStore())
+        _mount(router, handler)
+        return await asyncio.wait_for(_drain(router), timeout=1.0)
+
+    assert asyncio.run(run()) == ["a"]
+    assert requested == ["a"]
+
+
+def test_racing_lanes_share_one_wait_budget():
+    async def run():
+        never = asyncio.Event()
+
+        async def silent_body():
+            await never.wait()
+            yield b""  # pragma: no cover
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                content=silent_body(),
+                headers={"content-type": "text/event-stream"},
+            )
+
+        pool = await _pool("a", "b")
+        store = _RecordingStore()
+        router = Router(pool, store)
+        _mount(router, handler)
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(NoLLMAvailableError) as raised:
+            await asyncio.wait_for(
+                _drain(router, fastest_of=2, parallel_recovery=False, wait=0.15),
+                timeout=2.0,
+            )
+        return raised.value, asyncio.get_running_loop().time() - started, store
+
+    error, elapsed, store = asyncio.run(run())
+    assert error.reason == "timeout"
+    assert elapsed < 1.0
+    assert {row.llm_name for row in store.calls} == {"a", "b"}
+    assert all(row.budget_ms is not None and 0 < row.budget_ms <= 150 for row in store.calls)
+
+
+def test_the_first_delta_does_not_wait_for_a_losing_lane_journal_write():
+    """A store slow enough to matter may not hold the answer up: the loser's neutral
+    row is written beside the delta the caller is already reading, not in front of it."""
+
+    async def run():
+        never = asyncio.Event()
+
+        async def loser_body():
+            await never.wait()
+            yield b""  # pragma: no cover
+
+        async def winner_body():
+            yield _sse("a-first", "a-rest")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = winner_body() if request.url.host == "a" else loser_body()
+            return httpx.Response(
+                200,
+                content=body,
+                headers={"content-type": "text/event-stream"},
+            )
+
+        store = _GatedStore()
+        router = Router(await _pool("a", "b"), store)
+        _mount(router, handler)
+        seen: list[str] = []
+        async with aclosing(_stream(router, fastest_of=2, parallel_recovery=False)) as deltas:
+            seen.append(await asyncio.wait_for(anext(deltas), timeout=1.0))
+            written_by_then = list(store.calls)
+            store.release.set()
+            async for delta in deltas:
+                seen.append(delta)
+        return seen, written_by_then, store.calls
+
+    seen, written_by_then, calls = asyncio.run(run())
+    assert seen == ["a-first", "a-rest"]
+    assert written_by_then == []
+    assert {row.llm_name: row.status for row in calls} == {
+        "a": CallStatus.OK,
+        "b": CallStatus.SUPERSEDED,
+    }
+
+
+def test_a_lane_already_journaling_its_failure_keeps_it_when_a_sibling_wins():
+    """Losing the race cancels a lane that is still on the provider, never one already
+    settling: a cooldown the journal never heard about is silently lost evidence."""
+
+    async def run():
+        journaling = asyncio.Event()
+        release = asyncio.Event()
+
+        class _HeldFailure(_RecordingStore):
+            async def record(self, call):
+                if call.llm_name == "a":
+                    journaling.set()
+                    await release.wait()
+                await super().record(call)
+
+        async def winner_body():
+            await journaling.wait()
+            yield _sse("b-wins")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == "a":
+                return httpx.Response(503, text="down")
+            return httpx.Response(
+                200,
+                content=winner_body(),
+                headers={"content-type": "text/event-stream"},
+            )
+
+        optimizer = Optimizer()
+        pool = await _pool("a", "b", optimizer=optimizer)
+        store = _HeldFailure()
+        router = Router(pool, store, optimizer=optimizer, learner=Learner(optimizer, store, pool))
+        _mount(router, handler)
+        seen: list[str] = []
+        async with aclosing(_stream(router, fastest_of=2, parallel_recovery=False)) as deltas:
+            seen.append(await asyncio.wait_for(anext(deltas), timeout=1.0))
+            release.set()
+            async for delta in deltas:
+                seen.append(delta)
+        return seen, pool, optimizer, store
+
+    seen, pool, optimizer, store = asyncio.run(run())
+    assert seen == ["b-wins"]
+    rows = {row.llm_name: row for row in store.calls}
+    assert [row.status for row in store.calls if row.llm_name == "a"] == [CallStatus.UNAVAILABLE]
+    assert rows["a"].cooldown_until is not None
+    assert pool.state("a").phase is LifecyclePhase.COOLING
+    assert optimizer.rl_fail_count("a") == 1
+    assert rows["b"].status is CallStatus.OK
+
+
+def test_a_recovery_is_covered_by_an_ordinary_candidate_not_a_second_recheck():
+    """Two entries off cooldown at once do not cover each other: the protection exists
+    to keep the pool's own uncertainty off the caller's path, not to double it."""
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host or ""
+        requested.append(host)
+        return httpx.Response(
+            200,
+            content=_sse(host),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async def run():
+        pool = await _pool("a", "b", "c")
+        await _due_for_recovery(pool, "a")
+        await _due_for_recovery(pool, "b")
+        router = Router(pool, _RecordingStore())
+        _mount(router, handler)
+        await asyncio.wait_for(_drain(router), timeout=1.0)
+        return pool
+
+    pool = asyncio.run(run())
+    assert set(requested) == {"a", "c"}
+    assert pool._slots["b"].recovery_due  # noqa: SLF001
+
+
+def test_a_lane_a_bug_hit_keeps_its_error_row_when_a_sibling_wins():
+    """An attempt leaves its provider by any route, not only a classified failure: a lane
+    journaling an unexpected exception is waited for, or it vanishes with its row."""
+
+    async def run():
+        class _SlowError(_RecordingStore):
+            async def record(self, call):
+                if call.llm_name == "a":
+                    await asyncio.sleep(0.2)
+                await super().record(call)
+
+        async def provider(config, *_args, **_kwargs):
+            if config.name == "a":
+                raise ValueError("adapter bug")
+            return "fast", None, None
+
+        pool = await _pool("a", "b")
+        store = _SlowError()
+        router = Router(pool, store)
+        with patch(_PATCH, new=provider):
+            answer = await asyncio.wait_for(
+                router.chat(
+                    make_ring(),
+                    [{"role": "user", "content": "hi"}],
+                    fastest_of=2,
+                    parallel_recovery=False,
+                ),
+                timeout=1.0,
+            )
+        return answer, store, pool
+
+    answer, store, pool = asyncio.run(run())
+    assert (answer.text, answer.llm_name) == ("fast", "b")
+    assert {row.llm_name: row.status for row in store.calls} == {
+        "a": CallStatus.ERROR,
+        "b": CallStatus.OK,
+    }
+    assert pool.state("a").phase is LifecyclePhase.AVAILABLE
+    assert pool._slots["a"].in_flight == 0
+
+
+def test_a_streaming_lane_a_bug_hit_keeps_its_error_row_when_a_sibling_wins():
+    """The same on the streaming side, where the abort path settles the attempt."""
+
+    async def run():
+        journaling = asyncio.Event()
+        release = asyncio.Event()
+
+        class _HeldError(_RecordingStore):
+            async def record(self, call):
+                if call.llm_name == "a":
+                    journaling.set()
+                    await release.wait()
+                await super().record(call)
+
+        async def winner_body():
+            await journaling.wait()
+            yield _sse("b-wins")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == "a":
+                raise ValueError("adapter bug")
+            return httpx.Response(
+                200,
+                content=winner_body(),
+                headers={"content-type": "text/event-stream"},
+            )
+
+        pool = await _pool("a", "b")
+        store = _HeldError()
+        router = Router(pool, store)
+        _mount(router, handler)
+        seen: list[str] = []
+        async with aclosing(_stream(router, fastest_of=2, parallel_recovery=False)) as deltas:
+            seen.append(await asyncio.wait_for(anext(deltas), timeout=1.0))
+            release.set()
+            async for delta in deltas:
+                seen.append(delta)
+        return seen, store, pool
+
+    seen, store, pool = asyncio.run(run())
+    assert seen == ["b-wins"]
+    assert {row.llm_name: row.status for row in store.calls} == {
+        "a": CallStatus.ERROR,
+        "b": CallStatus.OK,
+    }
+    assert pool.state("a").phase is LifecyclePhase.AVAILABLE
+    assert pool._slots["a"].in_flight == 0

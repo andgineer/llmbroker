@@ -107,20 +107,31 @@ class LLMs:
     def scope(self) -> str | None:
         return self._async.scope
 
-    def ask(
+    def ask(  # noqa: PLR0913 - the call knobs, one keyword each
         self,
         prompt: str,
         *,
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
+        fastest_of: int | None = None,
+        parallel_recovery: bool = True,
     ) -> Result:
         return Result(
             self._run,
-            self._run(self._async.ask(prompt, operation=operation, trace_id=trace_id, wait=wait)),
+            self._run(
+                self._async.ask(
+                    prompt,
+                    operation=operation,
+                    trace_id=trace_id,
+                    wait=wait,
+                    fastest_of=fastest_of,
+                    parallel_recovery=parallel_recovery,
+                ),
+            ),
         )
 
-    def chat(
+    def chat(  # noqa: PLR0913 - what to send, and the call knobs
         self,
         messages: list[dict],
         *,
@@ -128,6 +139,8 @@ class LLMs:
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
+        fastest_of: int | None = None,
+        parallel_recovery: bool = True,
     ) -> Result:
         return Result(
             self._run,
@@ -138,6 +151,8 @@ class LLMs:
                     operation=operation,
                     trace_id=trace_id,
                     wait=wait,
+                    fastest_of=fastest_of,
+                    parallel_recovery=parallel_recovery,
                 ),
             ),
         )
@@ -251,17 +266,26 @@ class Broker:
     def count(self) -> int:
         return self.llms.count()
 
-    def ask(
+    def ask(  # noqa: PLR0913 - the call knobs, one keyword each
         self,
         prompt: str,
         *,
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
+        fastest_of: int | None = None,
+        parallel_recovery: bool = True,
     ) -> Result:
-        return self.llms.ask(prompt, operation=operation, trace_id=trace_id, wait=wait)
+        return self.llms.ask(
+            prompt,
+            operation=operation,
+            trace_id=trace_id,
+            wait=wait,
+            fastest_of=fastest_of,
+            parallel_recovery=parallel_recovery,
+        )
 
-    def chat(
+    def chat(  # noqa: PLR0913 - what to send, and the call knobs
         self,
         messages: list[dict],
         *,
@@ -269,6 +293,8 @@ class Broker:
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
+        fastest_of: int | None = None,
+        parallel_recovery: bool = True,
     ) -> Result:
         return self.llms.chat(
             messages,
@@ -276,6 +302,8 @@ class Broker:
             operation=operation,
             trace_id=trace_id,
             wait=wait,
+            fastest_of=fastest_of,
+            parallel_recovery=parallel_recovery,
         )
 
     def direct(self, alias: str | None = None, *, name: str | None = None) -> DirectClient:

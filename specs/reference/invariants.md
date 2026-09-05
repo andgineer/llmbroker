@@ -117,8 +117,10 @@ rather than what the running system must never do.
     candidate is tried; direct, it raises. Nothing hands a caller an empty result
     as a success. → `call-path.md`
 
-18. **Failover ends at the first delta.** Past it the answer is already partly
-    the caller's, and retrying elsewhere could only duplicate or splice.
+18. **Failover ends at the first delta the caller is given.** Past it the answer
+    is already partly the caller's, and retrying elsewhere could only duplicate
+    or splice. A delta a competing lane produced privately is not that boundary —
+    it is what commits the call to that lane, and the others are dropped unread.
     → `call-path.md`
 
 19. **The acquired slot is released on every exit path**, including an

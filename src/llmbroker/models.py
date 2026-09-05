@@ -182,10 +182,14 @@ class SyncReport:
 
 
 class CallStatus(Enum):
+    """How one attempt ended. ``SUPERSEDED`` is neutral: a sibling answered first, so
+    it proves neither success nor failure and feeds no routing signal."""
+
     OK = "ok"
     RATE_LIMITED = "rate_limited"
     UNAVAILABLE = "unavailable"
     ERROR = "error"
+    SUPERSEDED = "superseded"
 
 
 @dataclass(frozen=True, slots=True)

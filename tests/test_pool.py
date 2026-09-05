@@ -459,3 +459,99 @@ async def test_cooldown_from_one_of_two_parallel_calls_blocks_a_third():
     # The second call completes independently and records normally.
     await pool.release(second)
     assert pool.state("p1").phase is LifecyclePhase.COOLING
+
+
+# ---------------------------------------------------------------------------
+# acquire_many(): distinct slots, and the recovery claim
+# ---------------------------------------------------------------------------
+
+
+async def _expired(pool: LLMPool, name: str) -> None:
+    cfg = pool.config(name)
+    await pool.cool_down(cfg, 60)
+    pool._slots[name].cooldown_until = datetime.now(UTC) - timedelta(seconds=1)
+
+
+async def test_acquire_many_takes_distinct_slots_in_curated_order():
+    pool = LLMPool()
+    for order, name in enumerate(("a", "b", "c")):
+        await pool.add(_cfg(name), order)
+    taken = await pool.acquire_many(time.monotonic(), payable=_PAYABLE, width=2)
+    assert [cfg.name for cfg in taken] == ["a", "b"]
+
+
+async def test_acquire_many_returns_fewer_than_asked_rather_than_waiting():
+    pool = LLMPool()
+    await pool.add(_cfg("a"))
+    taken = await pool.acquire_many(time.monotonic(), payable=_PAYABLE, width=3)
+    assert [cfg.name for cfg in taken] == ["a"]
+
+
+async def test_recovery_width_only_widens_a_post_cooldown_claim():
+    pool = LLMPool()
+    for order, name in enumerate(("a", "b")):
+        await pool.add(_cfg(name), order)
+    healthy = await pool.acquire_many(time.monotonic(), payable=_PAYABLE, recovery_width=2)
+    assert [cfg.name for cfg in healthy] == ["a"]
+    await pool.release(healthy[0])
+
+    await _expired(pool, "a")
+    recovering = await pool.acquire_many(time.monotonic(), payable=_PAYABLE, recovery_width=2)
+    assert [cfg.name for cfg in recovering] == ["a", "b"]
+
+
+async def test_a_claimed_recovery_is_exclusive_whatever_its_capacity():
+    """``parallel`` is provider capacity: it may not let a second caller make the
+    unprotected post-cooldown call the claim exists to cover."""
+    pool = LLMPool()
+    await pool.add(_cfg("a"), 0)  # parallel=None — unlimited
+    await pool.add(_cfg("b"), 1)
+    await _expired(pool, "a")
+
+    first = await pool.acquire(time.monotonic(), payable=_PAYABLE)
+    assert first.name == "a"
+    second = await pool.acquire(time.monotonic(), payable=_PAYABLE)
+    assert second.name == "b"
+
+
+async def test_a_recovery_released_unsettled_is_due_again():
+    pool = LLMPool()
+    await pool.add(_cfg("a"))
+    await _expired(pool, "a")
+    claimed = await pool.acquire(time.monotonic(), payable=_PAYABLE)
+    await pool.release(claimed)
+    again = await pool.acquire_many(time.monotonic(), payable=_PAYABLE, recovery_width=2)
+    assert pool._slots["a"].recovery_claimed
+    assert [cfg.name for cfg in again] == ["a"]
+
+
+async def test_a_recovery_that_answered_owes_no_second_one():
+    pool = LLMPool()
+    for order, name in enumerate(("a", "b")):
+        await pool.add(_cfg(name), order)
+    await _expired(pool, "a")
+    claimed = await pool.acquire(time.monotonic(), payable=_PAYABLE)
+    await pool.release(claimed)
+    pool.clear_cooling("a")
+    assert [
+        cfg.name
+        for cfg in await pool.acquire_many(time.monotonic(), payable=_PAYABLE, recovery_width=2)
+    ] == ["a"]
+
+
+async def test_a_recovery_that_failed_again_is_due_on_the_new_cooldown():
+    pool = LLMPool()
+    await pool.add(_cfg("a"))
+    await _expired(pool, "a")
+    claimed = await pool.acquire(time.monotonic(), payable=_PAYABLE)
+    await pool.cool_down(claimed, 60)
+    slot = pool._slots["a"]
+    assert (slot.recovery_due, slot.recovery_claimed) == (True, False)
+
+
+async def test_take_free_never_waits_and_never_raises():
+    pool = LLMPool()
+    await pool.add(_cfg("a", parallel=1))
+    assert await pool.take_free(payable=_PAYABLE, width=2)
+    assert await pool.take_free(payable=_PAYABLE, width=2) == []
+    assert await pool.take_free(payable=frozenset(), width=1) == []

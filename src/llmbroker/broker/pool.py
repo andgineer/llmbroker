@@ -41,6 +41,10 @@ class _Slot:
     fail_count: int = 0
     disabled: bool = False  # manual admin verdict
     order: int = 0  # tiebreaker only: registry/preset position, lower is better
+    # Whether the next attempt on this entry is the pool rechecking its own negative
+    # availability state, and whether one caller is already making it.
+    recovery_due: bool = False
+    recovery_claimed: bool = False
 
 
 class LLMPool:
@@ -219,8 +223,12 @@ class LLMPool:
 
     @staticmethod
     def _is_free(slot: _Slot, now: datetime) -> bool:
-        return (slot.config.parallel is None or slot.in_flight < slot.config.parallel) and (
-            slot.cooldown_until is None or slot.cooldown_until <= now
+        """A recovery already being made is not free whatever the slot's capacity: a
+        second caller would make the same unprotected call the claim exists to cover."""
+        return (
+            not slot.recovery_claimed
+            and (slot.config.parallel is None or slot.in_flight < slot.config.parallel)
+            and (slot.cooldown_until is None or slot.cooldown_until <= now)
         )
 
     @staticmethod
@@ -247,7 +255,57 @@ class LLMPool:
             return None
         return self._earliest_return(candidates, now)
 
-    async def acquire(
+    def _rank(
+        self,
+        slot: _Slot,
+        remaining: float | None,
+        now: datetime,
+        operation: str | None,
+    ) -> tuple[bool, bool, float, int]:
+        """The one ordering key every acquisition sorts on, so a parallel call cannot
+        pick differently from a sequential one."""
+        return (
+            self._over_budget(slot, remaining, now),
+            self._is_demoted(slot.config.name, operation),
+            -self._priority(slot, operation),
+            slot.order,
+        )
+
+    def _reserve(  # noqa: PLR0913 - one selection: from what, how many, and against what
+        self,
+        candidates: list[_Slot],
+        *,
+        width: int,
+        recovery_width: int,
+        remaining: float | None,
+        now: datetime,
+        operation: str | None,
+    ) -> list[LLMConfig]:
+        """Take the best free candidates, marked in flight before the condition is
+        released so no two callers reserve one slot. Where the best of them is a
+        recovery attempt, ``recovery_width`` applies and an ordinary entry covers it."""
+        ranked = sorted(
+            (s for s in candidates if self._is_free(s, now)),
+            key=lambda s: self._rank(s, remaining, now, operation),
+        )
+        best = ranked[:width]
+        if best and best[0].recovery_due:
+            best += self._cover(ranked[width:], recovery_width - width)
+        for slot in best:
+            slot.in_flight += 1
+            slot.recovery_claimed = slot.recovery_due
+        return [slot.config for slot in best]
+
+    @staticmethod
+    def _cover(rest: list[_Slot], count: int) -> list[_Slot]:
+        """What runs beside a recovery attempt: an entry the pool has no open question
+        about, so one recheck is not covered by another where an ordinary one is free."""
+        if count <= 0:
+            return []
+        ordinary = [s for s in rest if not s.recovery_due]
+        return (ordinary + [s for s in rest if s.recovery_due])[:count]
+
+    async def acquire(  # noqa: PLR0913 - one attempt's whole context, all optional
         self,
         queue_deadline: float | None,
         *,
@@ -258,6 +316,29 @@ class LLMPool:
     ) -> LLMConfig:
         """Take a slot for one attempt. ``payable`` names the refs the calling caller
         holds a key for — a model it cannot pay for is not a candidate."""
+        taken = await self.acquire_many(
+            queue_deadline,
+            payable=payable,
+            operation=operation,
+            exclude=exclude,
+            answer_deadline=answer_deadline,
+        )
+        return taken[0]
+
+    async def acquire_many(  # noqa: PLR0913 - one call's whole context: who, how many, how long
+        self,
+        queue_deadline: float | None,
+        *,
+        payable: frozenset[str],
+        width: int = 1,
+        recovery_width: int = 1,
+        operation: str | None = None,
+        exclude: frozenset[str] = frozenset(),
+        answer_deadline: float | None = None,
+    ) -> list[LLMConfig]:
+        """Take up to ``width`` distinct slots for one call, waiting as ``wait`` allows
+        for the first of them and taking whatever else is free by then — never fewer
+        than one, and never waiting for a second."""
         async with self._cond:
             while True:
                 now = datetime.now(UTC)
@@ -265,19 +346,16 @@ class LLMPool:
                 # left for the answer, and the stricter the choice below becomes.
                 remaining = None if answer_deadline is None else answer_deadline - time.monotonic()
                 candidates = self._candidates(payable, exclude)
-                avail = [s for s in candidates if self._is_free(s, now)]
-                if avail:
-                    slot = min(
-                        avail,
-                        key=lambda s: (
-                            self._over_budget(s, remaining, now),
-                            self._is_demoted(s.config.name, operation),
-                            -self._priority(s, operation),
-                            s.order,
-                        ),
-                    )
-                    slot.in_flight += 1
-                    return slot.config
+                taken = self._reserve(
+                    candidates,
+                    width=width,
+                    recovery_width=recovery_width,
+                    remaining=remaining,
+                    now=now,
+                    operation=operation,
+                )
+                if taken:
+                    return taken
                 if not candidates:
                     self._raise_exhausted(exclude, payable)
                 if queue_deadline is not None and time.monotonic() >= queue_deadline:
@@ -293,12 +371,38 @@ class LLMPool:
                     # Re-check: a cooldown may have expired, or the deadline hit (next loop raises).
                     continue
 
+    async def take_free(
+        self,
+        *,
+        payable: frozenset[str],
+        width: int,
+        operation: str | None = None,
+        exclude: frozenset[str] = frozenset(),
+        answer_deadline: float | None = None,
+    ) -> list[LLMConfig]:
+        """Whatever is free this instant, up to ``width``, or nothing: it never waits
+        and never raises, because the lanes it tops up are already racing."""
+        async with self._cond:
+            now = datetime.now(UTC)
+            remaining = None if answer_deadline is None else answer_deadline - time.monotonic()
+            return self._reserve(
+                self._candidates(payable, exclude),
+                width=width,
+                recovery_width=1,
+                remaining=remaining,
+                now=now,
+                operation=operation,
+            )
+
     async def release(self, config: LLMConfig) -> None:
-        """A missing name is legal (removed mid-flight) — no-op."""
+        """Hand the slot back. A missing name is legal (removed mid-flight) — no-op.
+        An unsettled recovery stays due: neither a rejected request nor a lane a
+        sibling answered past proves the entry is back."""
         async with self._cond:
             slot = self._slots.get(config.name)
             if slot is not None:
                 slot.in_flight = max(0, slot.in_flight - 1)
+                slot.recovery_claimed = False
             self._cond.notify_all()
 
     # ------------------------------------------------------------------
@@ -306,9 +410,12 @@ class LLMPool:
     # ------------------------------------------------------------------
 
     def clear_cooling(self, name: str) -> None:
+        """The entry answered: it is available again and owes no recovery attempt."""
         slot = self._slots.get(name)
         if slot is not None:
             slot.cooldown_until = None
+            slot.recovery_due = False
+            slot.recovery_claimed = False
 
     async def cool_down(self, config: LLMConfig, delay: float) -> None:
         """Withdraw the slot for ``delay`` seconds."""
@@ -319,6 +426,10 @@ class LLMPool:
                 slot.cooldown_until = cooldown_until
                 slot.fail_count += 1
                 slot.in_flight = max(0, slot.in_flight - 1)
+                # A new cooldown is new negative state, so the first attempt past it
+                # is a recovery again whatever the last one settled.
+                slot.recovery_due = True
+                slot.recovery_claimed = False
             self._cond.notify_all()
         logger.warning("LLM %s cooling for %ds", config.name, delay)
 

@@ -134,6 +134,58 @@ and cools like a 5xx.
 An expiry that reached the provider also teaches ordering; how, and under what
 limits, is in [`selection.md`](selection.md).
 
+## More than one model at a time
+
+A routed call may run over several distinct models at once, for two unrelated
+reasons, and both are options on the routed surfaces only — a model reached by
+name is not a pool ([`direct-by-name.md`](direct-by-name.md)).
+
+**The caller may ask for the fastest of N models.** It reserves up to that many
+currently-available entries, in the ordinary order of acquisition
+([`selection.md`](selection.md)); a smaller eligible pool simply runs fewer. It
+never multiplies the budget: every lane runs against the caller's one deadline,
+and invariant 7 still holds — there is no per-model timeout underneath it.
+
+**Separately, the pool covers its own recovery work.** The first attempt on a
+model whose cooldown has passed runs beside an ordinary candidate by default, so
+uncertainty the pool itself created is not paid for out of the caller's latency.
+That protection is opportunistic — it never waits for a second candidate to come
+free — and a caller may switch it off where provider quota matters more than
+latency ([`decisions.md`](../decisions.md#parallelism-is-explicit-or-recovery-owned)).
+Both together add no third lane: whichever is wider is the width, and the
+combination says so once in the log.
+
+**What commits the call is the first thing a model produces.** For a completion
+that is the first complete valid answer; for a stream it is the first delta, which
+reaches the consumer immediately and fixes what answered — a lane still opening is
+never waited for, and after that point no other model may replace the one
+answering (invariant 18).
+
+**Every other lane is then cancelled and journaled as superseded, which teaches
+nothing.** It never cools a model, never advances or resets a failure streak,
+never raises or clears a budget bound, and never enters a quality window: losing a
+race proves only that a sibling was quicker by that instant. It is still an
+observation a host can read, naming the model, the operation, the trace and the
+elapsed time, and carrying usage where the provider reported any before the
+cancellation. A lane that had already reached a real failure keeps that failure and
+everything the pool learned from it — supersession is not applied after the fact.
+
+**A stream's settlement never stands between a delta and the consumer.** A lane still
+waiting on its provider is cancelled at once; one that has already left it — by a
+classified failure, by an answer, or by an unexpected exception — is settling itself and
+is waited for instead, because a verdict applied in memory whose row never lands is
+evidence silently lost (invariant 8), and a release cut in half loses the slot
+(invariant 19). Those rows and slots are handed back beside the deltas the consumer is
+already reading. A completion has no such *beside*: it reaches the caller when the call
+ends, and a call that raced ends only once every attempt it made is journaled.
+
+**Failures inside a race are disposed exactly as they are alone**, through the
+classification above, and the lane they empty is refilled from a model this call
+has not tried, while both the budget and the candidates last.
+
+Racing spends provider quota on answers nobody reads, which is why an ordinary
+healthy call stays on one lane.
+
 ## Streaming
 
 The routed pool streams as well as it answers: deltas arrive as the provider

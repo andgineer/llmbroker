@@ -75,22 +75,26 @@ class AsyncLLMs:
     # Routing
     # ------------------------------------------------------------------
 
-    async def ask(
+    async def ask(  # noqa: PLR0913 - the call knobs, one keyword each
         self,
         prompt: str,
         *,
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
+        fastest_of: int | None = None,
+        parallel_recovery: bool = True,
     ) -> AsyncResult:
         return await self.chat(
             [{"role": "user", "content": prompt}],
             operation=operation,
             trace_id=trace_id,
             wait=wait,
+            fastest_of=fastest_of,
+            parallel_recovery=parallel_recovery,
         )
 
-    async def chat(
+    async def chat(  # noqa: PLR0913 - what to send, and the call knobs
         self,
         messages: list[dict],
         *,
@@ -98,6 +102,8 @@ class AsyncLLMs:
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
+        fastest_of: int | None = None,
+        parallel_recovery: bool = True,
     ) -> AsyncResult:
         await self._ensure_pool()
         try:
@@ -108,6 +114,8 @@ class AsyncLLMs:
                 operation=operation,
                 trace_id=trace_id,
                 wait=wait,
+                fastest_of=fastest_of,
+                parallel_recovery=parallel_recovery,
             )
         except NoLLMAvailableError as exc:
             if not await self._on_exhausted(exc, self._ring):
@@ -121,15 +129,19 @@ class AsyncLLMs:
             operation=operation,
             trace_id=trace_id,
             wait=0,
+            fastest_of=fastest_of,
+            parallel_recovery=parallel_recovery,
         )
 
-    def stream(
+    def stream(  # noqa: PLR0913 - the call knobs, one keyword each
         self,
         prompt: str,
         *,
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
+        fastest_of: int | None = None,
+        parallel_recovery: bool = True,
     ) -> StreamHandle:
         """Route a completion over the pool as a handle yielding text deltas and naming
         what answered them. ``wait`` bounds the whole answer in provider time; past the
@@ -142,6 +154,8 @@ class AsyncLLMs:
                 operation=operation,
                 trace_id=trace_id,
                 wait=wait,
+                fastest_of=fastest_of,
+                parallel_recovery=parallel_recovery,
             ),
             receipt,
             operation=operation,
@@ -152,7 +166,7 @@ class AsyncLLMs:
             ),
         )
 
-    async def _deltas(
+    async def _deltas(  # noqa: PLR0913 - the call knobs, one keyword each
         self,
         receipt: CallReceipt,
         prompt: str,
@@ -160,6 +174,8 @@ class AsyncLLMs:
         operation: str | None,
         trace_id: str | None,
         wait: float | None,
+        fastest_of: int | None,
+        parallel_recovery: bool,
     ) -> AsyncGenerator[str, None]:
         await self._ensure_pool()
         messages = [{"role": "user", "content": prompt}]
@@ -173,6 +189,8 @@ class AsyncLLMs:
                     operation=operation,
                     trace_id=trace_id,
                     wait=wait,
+                    fastest_of=fastest_of,
+                    parallel_recovery=parallel_recovery,
                 ),
             ) as deltas:
                 async for delta in deltas:
@@ -192,6 +210,8 @@ class AsyncLLMs:
                 operation=operation,
                 trace_id=trace_id,
                 wait=0,
+                fastest_of=fastest_of,
+                parallel_recovery=parallel_recovery,
             ),
         ) as deltas:
             async for delta in deltas:

@@ -350,17 +350,26 @@ class AsyncBroker:
     # Routing — delegated to the unscoped caller
     # ------------------------------------------------------------------
 
-    async def ask(
+    async def ask(  # noqa: PLR0913 - the call knobs, one keyword each
         self,
         prompt: str,
         *,
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
+        fastest_of: int | None = None,
+        parallel_recovery: bool = True,
     ) -> AsyncResult:
-        return await self.llms.ask(prompt, operation=operation, trace_id=trace_id, wait=wait)
+        return await self.llms.ask(
+            prompt,
+            operation=operation,
+            trace_id=trace_id,
+            wait=wait,
+            fastest_of=fastest_of,
+            parallel_recovery=parallel_recovery,
+        )
 
-    async def chat(
+    async def chat(  # noqa: PLR0913 - what to send, and the call knobs
         self,
         messages: list[dict],
         *,
@@ -368,6 +377,8 @@ class AsyncBroker:
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
+        fastest_of: int | None = None,
+        parallel_recovery: bool = True,
     ) -> AsyncResult:
         return await self.llms.chat(
             messages,
@@ -375,20 +386,31 @@ class AsyncBroker:
             operation=operation,
             trace_id=trace_id,
             wait=wait,
+            fastest_of=fastest_of,
+            parallel_recovery=parallel_recovery,
         )
 
-    def stream(
+    def stream(  # noqa: PLR0913 - the call knobs, one keyword each
         self,
         prompt: str,
         *,
         operation: str | None = None,
         trace_id: str | None = None,
         wait: float | None = None,
+        fastest_of: int | None = None,
+        parallel_recovery: bool = True,
     ) -> StreamHandle:
         """Route a completion over the pool as a handle yielding text deltas and naming
         what answered them. ``wait`` bounds the whole answer in provider time; past the
         first delta a death raises ``StreamInterruptedError``. Async-only."""
-        return self.llms.stream(prompt, operation=operation, trace_id=trace_id, wait=wait)
+        return self.llms.stream(
+            prompt,
+            operation=operation,
+            trace_id=trace_id,
+            wait=wait,
+            fastest_of=fastest_of,
+            parallel_recovery=parallel_recovery,
+        )
 
     async def direct(
         self,

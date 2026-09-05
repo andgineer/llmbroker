@@ -229,6 +229,39 @@ successful answer clears the mark.
 every model that is free right now is tried, with no deadline of yours on the
 answer.
 
+### Asking several models at once {#parallel}
+
+```python
+reply = broker.ask("Question", fastest_of=2)   # two models start, the first answer wins
+```
+
+`fastest_of=N` starts up to `N` *different* models on one call and keeps whichever
+answers first; the rest are dropped. It is a trade of provider quota for latency —
+the answers you throw away were still paid for — so it is off by default and worth
+setting only where a slow answer costs you more than a spent request. `N` is a
+maximum: with fewer models free right now, fewer lanes run. Your `wait` is not
+multiplied by it — every lane runs against the same one budget.
+
+There is a second, narrower case the broker handles for you. When a model has been
+set aside after a failure and its pause has just elapsed, the call that tries it
+again is a gamble: nobody knows yet whether it is back. That one call runs beside
+an ordinary model, so you are not the one paying for the recheck, and the first of
+the two to answer is the answer you get. Nothing else is parallel: a pool of healthy
+models still answers one call with one request.
+
+```python
+reply = broker.ask("Question", parallel_recovery=False)  # never spend a second request
+```
+
+Turn it off where requests are scarcer than seconds. The recheck then happens on
+your call path, exactly as an ordinary attempt does, and if the model is still down
+the call fails over to the next one.
+
+A stream commits to whichever model produces the first piece of text, and stays
+with it to the end — you never receive two answers spliced together. Both options
+are for the routed pool only; a model you reach by name with `direct()` is one
+model, so neither applies.
+
 ### When nobody can answer {#errors}
 
 The pool works through the models until one answers. A model that returns HTTP 200

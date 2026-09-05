@@ -180,8 +180,10 @@ Fields — in [`LLMStats`](reference.md#llmbroker.models.LLMStats).
 
 `by_status` holds only the statuses actually seen in the window, so count the
 failures by subtracting from `total` rather than by adding up the other statuses.
-Rating a call does not add a row, so it cannot inflate the counts. Pass
-`operation=` to count one operation only.
+One status is neither: `SUPERSEDED` is a model that was answering when a faster
+sibling answered first — it says nothing about that model, so subtract it too if
+you are after a failure count. Rating a call does not add a row, so it cannot
+inflate the counts. Pass `operation=` to count one operation only.
 
 What counts as a failure, how long the window should be, and how a model with no
 calls in the window should read are yours to decide; llmbroker returns the counts
