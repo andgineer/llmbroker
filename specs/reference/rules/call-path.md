@@ -153,7 +153,7 @@ That protection is opportunistic — it never waits for a second candidate to co
 free — and a caller may switch it off where provider quota matters more than
 latency ([`decisions.md`](../decisions.md#parallelism-is-explicit-or-recovery-owned)).
 Both together add no third lane: whichever is wider is the width, and the
-combination says so once in the log.
+caller does not need to coordinate the two options.
 
 **What commits the call is the first thing a model produces.** For a completion
 that is the first complete valid answer; for a stream it is the first delta, which

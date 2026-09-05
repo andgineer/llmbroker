@@ -245,9 +245,9 @@ multiplied by it — every lane runs against the same one budget.
 There is a second, narrower case the broker handles for you. When a model has been
 set aside after a failure and its pause has just elapsed, the call that tries it
 again is a gamble: nobody knows yet whether it is back. That one call runs beside
-an ordinary model, so you are not the one paying for the recheck, and the first of
-the two to answer is the answer you get. Nothing else is parallel: a pool of healthy
-models still answers one call with one request.
+another available model when there is one, so the recheck does not sit alone on
+your latency path; the first of the two to answer is the answer you get. Nothing
+else is parallel: a pool of healthy models still answers one call with one request.
 
 ```python
 reply = broker.ask("Question", parallel_recovery=False)  # never spend a second request

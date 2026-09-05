@@ -25,7 +25,7 @@ tasks. Set it up once, never administer it.
 
 | | |
 |---|---|
-| **Automatic failover** | `broker.ask(...)` — next model answers when one is down |
+| **Fast, resilient answers** | Automatic failover by default; `fastest_of=2` races models when latency matters |
 | **Chat, tools & agents** | `broker.chat(messages, tools=...)`, `run_tool_loop(...)` |
 | **Async & streaming** | `AsyncBroker` — same engine for FastAPI / agents / workers, token by token |
 | **A paid model by name** | `Broker(direct=["opus"])` — an eternal alias, called past the pool |

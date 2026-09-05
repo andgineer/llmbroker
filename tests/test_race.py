@@ -386,7 +386,7 @@ def test_fastest_of_starts_distinct_models_and_first_delta_wins():
     assert set(requested) == {"a", "b"}
 
 
-def test_fastest_of_with_parallel_recovery_warns_but_does_not_add_a_lane(caplog):
+def test_fastest_of_with_default_recovery_adds_no_lane_and_logs_no_warning(caplog):
     requested: list[str] = []
 
     async def run():
@@ -416,6 +416,7 @@ def test_fastest_of_with_parallel_recovery_warns_but_does_not_add_a_lane(caplog)
         await _expire_cooldown(pool, "a")
         router = Router(pool, _RecordingStore())
         _mount(router, handler)
+        caplog.clear()
         with caplog.at_level("WARNING", logger="llmbroker.broker"):
             return await asyncio.wait_for(
                 _drain(router, fastest_of=2, parallel_recovery=True),
@@ -424,8 +425,7 @@ def test_fastest_of_with_parallel_recovery_warns_but_does_not_add_a_lane(caplog)
 
     assert asyncio.run(run()) == ["b-wins"]
     assert set(requested) == {"a", "b"}
-    assert "fastest_of" in caplog.text
-    assert "parallel_recovery" in caplog.text
+    assert caplog.records == []
 
 
 def test_stream_commits_to_the_first_delta_and_never_splices_the_loser():

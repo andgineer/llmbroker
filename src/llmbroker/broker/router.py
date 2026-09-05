@@ -176,20 +176,13 @@ class _Call:
 
 
 def _check_lanes(fastest_of: int | None, parallel_recovery: bool) -> None:
-    """Refuse both parallel options before any provider request opens, and say once
-    where one of them can add nothing to the other."""
+    """Refuse both parallel options before any provider request opens."""
     if isinstance(fastest_of, bool) or (
         fastest_of is not None and (not isinstance(fastest_of, int) or fastest_of < 1)
     ):
         raise ValueError(f"fastest_of must be None or a positive int, got {fastest_of!r}")
     if parallel_recovery is not True and parallel_recovery is not False:
         raise ValueError(f"parallel_recovery must be True or False, got {parallel_recovery!r}")
-    if parallel_recovery and fastest_of is not None and fastest_of > 1:
-        logger.warning(
-            "fastest_of=%d already races distinct models, so parallel_recovery adds no"
-            " lane to this call — pass parallel_recovery=False to silence this",
-            fastest_of,
-        )
 
 
 @dataclass(slots=True)
