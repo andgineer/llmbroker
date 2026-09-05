@@ -4,15 +4,14 @@
 
 | # | plan | readiness | what it is |
 |---|---|---|---|
-| 1 | [`pool-tight-budget.md`](pool-tight-budget.md) | source-bound; hand off now | a model that produces no delta for the caller's whole budget is cooled like any other failed attempt, so one silent endpoint stops emptying the pool for every request after it |
-| 2 | [`caller-surface.md`](caller-surface.md) | functional; concretize after row 1 | what a caller can send and which models it can name: request parameters on a model reached by name, programmatic catalog access, and schema-constrained output routed through the pool behind its own probe |
-| 3 | [`load-harness.md`](load-harness.md) | source-bound; revalidate after row 2 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of inside one host's private script |
-| 4 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 3 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
+| 1 | [`caller-surface.md`](caller-surface.md) | functional; concretize now | what a caller can send and which models it can name: request parameters on a model reached by name, programmatic catalog access, and schema-constrained output routed through the pool behind its own probe |
+| 2 | [`load-harness.md`](load-harness.md) | source-bound; revalidate after row 1 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of inside one host's private script |
+| 3 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 2 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
 
 ## Detail horizon
 
-The queue is ordered work, not four implementation briefs that may be handed to
-four executors at once. Only a **source-bound** row is executable. A **functional**
+The queue is ordered work, not three implementation briefs that may be handed to
+three executors at once. Only a **source-bound** row is executable. A **functional**
 row preserves the problem, boundary and evidence, but deliberately leaves names,
 signatures and test placement open until every earlier handover has landed.
 
@@ -57,10 +56,13 @@ A tight caller budget does drive the backoff exponent — the pair in
 [`../../bench/runs/cooldowns.md`](../../bench/runs/cooldowns.md) shows 60 → 480 s at
 a 25 s budget where 45 s stayed flat, and a host in ordinary interactive use recorded
 59 → 1919 s across one day. But a model leaving the pool for half an hour only empties
-the pool when the models left behind cannot be reached, and that is queue row 1.
-Revisit after it lands, on whether a caller still misses answers the pool could have
-given — and that question needs a controlled pair, which is queue row 3. A second
-mechanism aimed at the same symptom before either is the failure mode above.
+the pool when the models left behind cannot be reached, and that half is answered:
+silence for a whole budget now cools the endpoint that produced it, so the models
+behind it are reached
+([`../reference/decisions.md`](../reference/decisions.md#silence-cools-and-teaches-ordering)).
+What is left is whether a caller still misses answers the pool could have given, and
+that question needs a controlled pair, which is queue row 2. A second mechanism aimed
+at the same symptom before it is the failure mode above.
 
 A queued plan is a row in this file and a file beside it. How one is executed lives in `CLAUDE.md`
 under "Executing a plan", and the rules binding on every plan live in

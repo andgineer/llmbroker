@@ -72,8 +72,9 @@ class _BudgetExhaustedError(Exception):
 
 @dataclass(frozen=True)
 class _BudgetExpired:
-    """The caller's own ``wait`` ran out mid-attempt — nobody's fault but the
-    clock's, so the model is neither cooled nor counted as failing."""
+    """The caller's own ``wait`` ran out mid-attempt: the budget is journaled and
+    teaches ordering, and the call ends on the caller's timeout. Whether the model is
+    also cooled is ``cool_base``'s to say, independently of this."""
 
 
 @dataclass(frozen=True)
@@ -225,6 +226,7 @@ def _classify(exc: Exception, *, budget_bound: bool) -> _Verdict:
         return _Verdict(
             CallStatus.ERROR,
             f"wait budget exhausted: {type(exc).__name__}",
+            cool_base=_DEFAULT_RATE_LIMIT_SEC,
             outcome=_BudgetExpired(),
         )
     return _Verdict(CallStatus.ERROR, type(exc).__name__, cool_base=_DEFAULT_RATE_LIMIT_SEC)
@@ -313,10 +315,11 @@ class Router:
         client_failed: set[str] = set()
         last_client_error: ProviderError | None = None
         while True:
+            payable = await ring.payable(c.api_key_ref for c in self._pool.configs.values())
             try:
                 config = await self._pool.acquire(
                     queue_deadline,
-                    payable=await ring.payable(c.api_key_ref for c in self._pool.configs.values()),
+                    payable=payable,
                     operation=operation,
                     exclude=frozenset(client_failed),
                     answer_deadline=answer_deadline,
@@ -346,7 +349,11 @@ class Router:
                 # more useful answer than "the clock ran out" — the caller can act on it.
                 if last_client_error is not None:
                     raise last_client_error from None
-                raise NoLLMAvailableError(timeout_message, reason="timeout")
+                raise NoLLMAvailableError(
+                    timeout_message,
+                    reason="timeout",
+                    retry_at=self._pool.retry_at(payable, exclude=frozenset(client_failed)),
+                )
             if isinstance(outcome.verdict, _Failed):
                 client_failed.add(config.name)
                 if outcome.verdict.error is not None:
@@ -446,18 +453,19 @@ class Router:
         timeout: float,
     ) -> None:
         """Settle one failed attempt: cool the model down or just hand the slot
-        back, then journal it. The single failure surface both routing paths use."""
+        back, then journal it. The single failure surface both routing paths use.
+        The two facts are independent — a missed budget may also be a cooldown."""
         delay: float | None = None
         budget_ms: int | None = None
         if verdict.http_status is not None and is_auth_failure(verdict.http_status):
             attempt.ring.forget(attempt.config.api_key_ref)
+        if isinstance(verdict.outcome, _BudgetExpired):
+            # Applied as well as journaled: the next caller on this node must not
+            # wait on a rebuild, nor on learning being switched on.
+            budget_ms = int(timeout * 1000)
+            self._pool.raise_budget_bound(attempt.config.name, timeout, datetime.now(UTC))
         if verdict.cool_base is None:
             await self._pool.release(attempt.config)
-            if isinstance(verdict.outcome, _BudgetExpired):
-                # Applied as well as journaled: the next caller on this node must not
-                # wait on a rebuild, nor on learning being switched on.
-                budget_ms = int(timeout * 1000)
-                self._pool.raise_budget_bound(attempt.config.name, timeout, datetime.now(UTC))
         else:
             delay = self._capped_wait(verdict.cool_base, backoff)
             await self._pool.cool_down(attempt.config, delay)

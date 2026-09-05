@@ -142,8 +142,8 @@ def test_a_slow_consumer_never_spends_the_budget():
 
 
 def test_a_budget_still_bounds_the_wait_for_the_first_delta():
-    """Unchanged: before any delta the same budget ends the call, blaming the caller's
-    clock rather than the model."""
+    """The other side of the boundary: nothing arrived at all, which is silence and is
+    cooled — the caller's own timeout still ends the call."""
 
     async def slow_to_open():
         await asyncio.sleep(5)
@@ -158,7 +158,7 @@ def test_a_budget_still_bounds_the_wait_for_the_first_delta():
                 await _drain(router, wait=0.3)
         return pool.state("a").phase, pool.state("a").fail_count
 
-    assert asyncio.run(run()) == (LifecyclePhase.AVAILABLE, 0)
+    assert asyncio.run(run()) == (LifecyclePhase.COOLING, 1)
 
 
 def test_no_budget_leaves_streaming_unbounded():
@@ -183,7 +183,7 @@ def test_no_budget_leaves_streaming_unbounded():
 
 def test_an_exhausted_budget_does_not_cool_the_model():
     """The model answered and did nothing wrong; cooling it would take it from every
-    other caller over one caller's clock."""
+    other caller over one caller's clock. Only silence for the whole budget cools."""
 
     async def run():
         router, pool, store = await _router("a")

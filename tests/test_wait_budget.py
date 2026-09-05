@@ -1,5 +1,6 @@
-"""`wait` bounds the in-flight attempt, not only slot acquisition — and a spent
-budget is the caller's own clock running out, never a verdict on the model.
+"""`wait` bounds the in-flight attempt, not only slot acquisition — and a model that
+produces nothing for the whole of it is cooled like any other failed attempt, while the
+caller still gets its own expired budget back.
 """
 
 import asyncio
@@ -10,10 +11,12 @@ import httpx
 import pytest
 
 from llmbroker import chat
+from llmbroker.broker.learning import Learner
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.router import Router
 from llmbroker.exceptions import NoLLMAvailableError, ProviderError
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
+from llmbroker.optimizer import Optimizer
 
 from support import make_ring
 
@@ -117,11 +120,14 @@ def test_wait_zero_means_do_not_queue_not_answer_instantly():
 
 
 # ---------------------------------------------------------------------------
-# A deadline-bound timeout never cools the model
+# Silence for the whole budget cools the model
 # ---------------------------------------------------------------------------
 
 
-def test_budget_expiry_does_not_cool_the_model():
+def test_silence_for_the_whole_budget_cools_the_model():
+    """To the caller an endpoint that produces nothing for the whole budget is a dead
+    one: it is cooled and counted, while the caller still gets its own expired wait."""
+
     async def run():
         pool = await _pool(_cfg())
         store = _RecordingStore()
@@ -131,14 +137,68 @@ def test_budget_expiry_does_not_cool_the_model():
                 await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=5.0)
 
         assert exc_info.value.reason == "timeout"
-        assert exc_info.value.retry_at is None  # nothing is cooling: no better moment
-        assert pool.state("p1").phase is LifecyclePhase.AVAILABLE
-        assert pool.state("p1").fail_count == 0
+        # Nobody is left to serve now, so the caller is told when the pool is back.
+        assert exc_info.value.retry_at == pool.state("p1").cooldown_until
+        assert pool.state("p1").phase is LifecyclePhase.COOLING
+        assert pool.state("p1").fail_count == 1
         assert pool._slots["p1"].in_flight == 0
-        assert [c.cooldown_until for c in store.calls] == [None]
-        assert [c.status for c in store.calls] == [CallStatus.ERROR]  # unclassified by design
+        (row,) = store.calls
+        assert row.status is CallStatus.ERROR  # unclassified by design
+        assert row.cooldown_until is not None
+        assert row.budget_ms is not None  # availability did not erase the ordering evidence
 
     asyncio.run(run())
+
+
+def test_a_sibling_that_can_serve_now_leaves_retry_at_unset():
+    """`retry_at` answers "when is the pool back", not "when is that model back": with
+    another model free right now there is no better moment than this one."""
+
+    async def run():
+        pool = await _pool(_cfg("a"), _cfg("b"))
+        router = Router(pool, _RecordingStore())
+        with patch(_PATCH, new=_fake_provider([], raises=httpx.ReadTimeout("hung"))):
+            with pytest.raises(NoLLMAvailableError) as exc_info:
+                await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=5.0)
+
+        assert exc_info.value.reason == "timeout"
+        assert exc_info.value.retry_at is None
+        assert pool.state("a").phase is LifecyclePhase.COOLING
+
+    asyncio.run(run())
+
+
+def test_silence_costs_the_ordinary_base_and_escalates_only_on_the_streak():
+    """No duration of its own: the first silence costs exactly what a transport failure
+    costs, and a repeat climbs the same ladder every other cooled failure climbs."""
+
+    async def run():
+        pool = await _pool(_cfg("silent"), _cfg("broken"))
+        store = _RecordingStore()
+        optimizer = Optimizer()
+        router = Router(
+            pool,
+            store,
+            optimizer=optimizer,
+            learner=Learner(optimizer, store, pool),
+        )
+        with patch(_PATCH, new=_fake_provider([], raises=httpx.ReadTimeout("hung"))):
+            with pytest.raises(NoLLMAvailableError):  # silence inside the budget
+                await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=5.0)
+            with pytest.raises(NoLLMAvailableError):  # a transport failure, no budget
+                await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=0)
+            pool.clear_cooling("silent")
+            with pytest.raises(NoLLMAvailableError):  # silent again, one streak deeper
+                await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=5.0)
+        return store.calls
+
+    rows = asyncio.run(run())
+    assert [c.llm_name for c in rows] == ["silent", "broken", "silent"]
+    first_silence, transport, second_silence = (
+        (c.cooldown_until - c.ts).total_seconds() for c in rows
+    )
+    assert first_silence == pytest.approx(transport, abs=0.5)
+    assert second_silence == pytest.approx(2 * first_silence, abs=0.5)
 
 
 def test_budget_expiry_does_not_try_the_next_model_either():
@@ -220,7 +280,7 @@ def test_a_hung_provider_cannot_outlive_the_budget():
         assert exc_info.value.reason == "timeout"
         assert time.monotonic() - started < 5.0
         assert pool._slots["p1"].in_flight == 0
-        assert pool.state("p1").phase is LifecyclePhase.AVAILABLE
+        assert pool.state("p1").phase is LifecyclePhase.COOLING
 
     asyncio.run(run())
 

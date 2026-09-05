@@ -212,15 +212,18 @@ except llmbroker.NoLLMAvailableError:
 ```
 
 `wait` covers both halves of the call: waiting for a free model *and* the answer
-itself. A provider still thinking when the budget runs out is abandoned — and is
-not penalised for it, because the deadline was yours, not its fault. Without
-`wait` a single attempt is bounded only by an internal 60-second ceiling.
+itself. A provider that has said nothing at all by the time the budget runs out is
+abandoned and set aside for a short while: to you it was indistinguishable from a
+dead endpoint, and the next call should not spend the same budget finding that out
+again. Without `wait` a single attempt is bounded only by an internal 60-second
+ceiling.
 
-A model that misses your budget does stop being the first choice for equally
-tight budgets, so the next caller is handed a sibling instead of the same trap —
-one call pays for the discovery, not all of them. Nothing is switched off:
-callers with a roomier budget still get that model first, it is still used when
-it is the only one left, and its next successful answer clears the mark.
+A model that misses your budget also stops being the first choice for equally
+tight budgets, and that outlives the short pause: the next caller is handed a
+sibling instead of the same trap — one call pays for the discovery, not all of
+them. Nothing is switched off for good: callers with a roomier budget still get
+that model first, it is still used when it is the only one left, and its next
+successful answer clears the mark.
 
 `wait=0` is the one exception: it means "do not queue", not "answer instantly" —
 every model that is free right now is tried, with no deadline of yours on the
@@ -257,10 +260,12 @@ except llmbroker.NoLLMAvailableError as exc:
 The first three mean "this installation is not configured", and a human fixes
 them, not a retry. The last two are about one request, and the next one may pass.
 
-`retry_at` is filled only where a model is known to come back by itself: it is the
-moment the nearest cooling model's cooldown expires. `empty_pool`, `no_keys` and
-`all_disabled` carry none — there is nothing to wait for; nor does `timeout` when
-nothing is cooling, where retrying in a second is no better than retrying now.
+`retry_at` is filled only where a model is known to come back by itself, and only
+where nobody can serve you now: it is the moment the nearest cooling model's
+cooldown expires. `empty_pool`, `no_keys` and `all_disabled` carry none — there is
+nothing to wait for. A `timeout` carries one when the whole pool is cooling, and
+none when some model is free right now: what expired was your clock, not the pool,
+so retrying at once beats waiting.
 
 **An error in the request itself is not a `NoLLMAvailableError`.** If every model
 tried answered "this request is wrong" (a 4xx other than 401/403/429 — a 400 on a

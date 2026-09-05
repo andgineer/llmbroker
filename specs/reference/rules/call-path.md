@@ -109,19 +109,30 @@ blamed for the model. This is the same meaning the budget has for a completion,
 which is the point: a caller asks for an answer within a time, not for a first
 token within a time.
 
-**A spent budget is never a model's fault.** The model is not cooled, its
-failure streak does not advance, the call raises
-`NoLLMAvailableError` with a timeout reason, and the journal row records no
-cooldown. Only the global ceiling firing means the model is genuinely
-too slow, and that cools it like a 5xx. Without the distinction a tight `wait`
-would teach the broker that healthy models are failing. The row is a plain
-`ERROR` one — an expiry is journaled for visibility, not classified, so there is
-no status of its own to read it back by. Nothing is cooling either, so the
-raised error carries no `retry_at`: there is no moment at which retrying would
-be better than now.
+**What a spent budget says about the model depends on what the model had produced
+when it ran out**
+([`decisions.md`](../decisions.md#silence-cools-and-teaches-ordering)). Nothing at
+all is silence: to that caller the endpoint is indistinguishable from a dead one,
+so it is cooled and its streak advances like any other failed attempt. An answer
+already arriving is not: the model answered and the caller merely stopped waiting
+for the rest, so it is neither cooled nor counted, and cooling it would withdraw a
+working model over one caller's setting. A budget already gone before the provider
+was opened teaches neither — the model never got its chance.
 
-An expiry still teaches ordering; how, and under what limits, is in
-[`selection.md`](selection.md).
+Every one of them journals a plain `ERROR` row: an expiry is journaled for
+visibility, not classified, so there is no status of its own to read it back by.
+The two that happened before any output raise `NoLLMAvailableError` with a timeout
+reason, and `retry_at` follows the same rule there as everywhere else: it names a
+moment only when nothing can serve that caller right now. What ran out is the
+caller's clock and not the pool, so while a sibling is free there is no better
+moment than this one — but where the silence cooled the last candidate standing,
+when it comes back is known and is reported. An expiry mid-answer ends the stream on its own
+timeout instead, under *Streaming* below. The global ceiling firing is a different
+thing again: no budget was set, so a model that outlives it is genuinely too slow
+and cools like a 5xx.
+
+An expiry that reached the provider also teaches ordering; how, and under what
+limits, is in [`selection.md`](selection.md).
 
 ## Streaming
 

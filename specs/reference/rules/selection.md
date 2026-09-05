@@ -126,12 +126,14 @@ demotion** — the two answer different questions
 
 ## A budget expiry teaches ordering
 
-An expired `wait` never cools a model (see [`call-path.md`](call-path.md)), but
-it is evidence, and the only evidence obtainable: a model that never answers
-produces no successful rows, so its latency cannot be measured any other way.
-What the expiry proves is a lower bound — "this one did not answer within X
-seconds" — and that is enough to stop handing it to the next caller whose budget
-is no larger, so a hung endpoint costs one caller rather than all of them.
+An expired `wait` is evidence, and the only evidence obtainable: a model that
+never answers produces no successful rows, so its latency cannot be measured any
+other way. What the expiry proves is a lower bound — "this one did not answer
+within X seconds" — and that is enough to stop handing it to the next caller whose
+budget is no larger, so a hung endpoint costs one caller rather than all of them.
+Whether that same expiry also withdraws the model for a while is a separate
+question, answered in [`call-path.md`](call-path.md); the bound outlives any such
+cooldown, and it is the half of the answer that is budget-aware.
 
 The expiry is journaled as the budget it missed, and the bound is derived from
 the journal tail with everything else llmbroker learns. A fresh expiry may raise

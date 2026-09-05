@@ -104,8 +104,8 @@ class Learner:
                     ref,
                 )
             elif call.cooldown_until is not None:
-                # Only a failure that actually cooled the model feeds its streak:
-                # a client-side 4xx and a spent wait budget are not its fault.
+                # Only a failure that actually cooled the model feeds its streak: a
+                # client-side 4xx and a budget spent mid-answer are not its fault.
                 self._opt.on_rate_limited(name)
 
     async def relearn(self) -> None:

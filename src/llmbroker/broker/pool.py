@@ -210,6 +210,43 @@ class LLMPool:
         }[reason]
         raise NoLLMAvailableError(message, reason=reason)
 
+    def _candidates(self, payable: frozenset[str], exclude: frozenset[str]) -> list[_Slot]:
+        return [
+            s
+            for s in self._slots.values()
+            if s.config.api_key_ref in payable and not s.disabled and s.config.name not in exclude
+        ]
+
+    @staticmethod
+    def _is_free(slot: _Slot, now: datetime) -> bool:
+        return (slot.config.parallel is None or slot.in_flight < slot.config.parallel) and (
+            slot.cooldown_until is None or slot.cooldown_until <= now
+        )
+
+    @staticmethod
+    def _earliest_return(candidates: list[_Slot], now: datetime) -> datetime | None:
+        cooling = [
+            s.cooldown_until
+            for s in candidates
+            if s.cooldown_until is not None and s.cooldown_until > now
+        ]
+        return min(cooling) if cooling else None
+
+    def retry_at(
+        self,
+        payable: frozenset[str],
+        *,
+        exclude: frozenset[str] = frozenset(),
+    ) -> datetime | None:
+        """When a candidate comes back on its own, or ``None`` where one can serve
+        right now — the same answer a queue that timed out is given, for a caller whose
+        own clock ran out instead."""
+        now = datetime.now(UTC)
+        candidates = self._candidates(payable, exclude)
+        if any(self._is_free(s, now) for s in candidates):
+            return None
+        return self._earliest_return(candidates, now)
+
     async def acquire(
         self,
         queue_deadline: float | None,
@@ -227,19 +264,8 @@ class LLMPool:
                 # Recomputed per iteration: the longer the queue wait, the less budget is
                 # left for the answer, and the stricter the choice below becomes.
                 remaining = None if answer_deadline is None else answer_deadline - time.monotonic()
-                candidates = [
-                    s
-                    for s in self._slots.values()
-                    if s.config.api_key_ref in payable
-                    and not s.disabled
-                    and s.config.name not in exclude
-                ]
-                avail = [
-                    s
-                    for s in candidates
-                    if (s.config.parallel is None or s.in_flight < s.config.parallel)
-                    and (s.cooldown_until is None or s.cooldown_until <= now)
-                ]
+                candidates = self._candidates(payable, exclude)
+                avail = [s for s in candidates if self._is_free(s, now)]
                 if avail:
                     slot = min(
                         avail,
@@ -255,12 +281,10 @@ class LLMPool:
                 if not candidates:
                     self._raise_exhausted(exclude, payable)
                 if queue_deadline is not None and time.monotonic() >= queue_deadline:
-                    cooling = [s.cooldown_until for s in candidates if s.cooldown_until is not None]
-                    retry_at = min(cooling) if cooling else None
                     raise NoLLMAvailableError(
                         "no LLM slot came free within wait",
                         reason="timeout",
-                        retry_at=retry_at,
+                        retry_at=self._earliest_return(candidates, now),
                     )
                 timeout = self._wake_timeout(now, queue_deadline, candidates)
                 try:

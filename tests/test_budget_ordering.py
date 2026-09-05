@@ -1,10 +1,11 @@
-"""A budget expiry teaches ordering, not availability: the model that ate one
-caller's whole budget stops being the first choice for equally tight ones, without
-being cooled, penalised, or excluded.
+"""A budget expiry teaches ordering as well as availability: the model that ate one
+caller's whole budget is cooled like any other failed attempt, and the miss outlives
+that cooldown as the reason it stops being the first choice for equally tight callers.
 
 The evidence is a journal row — the expiry is recorded on the row the attempt
 already writes, applied to this node's pool at once, and re-derived from the tail
-on every rebuild so a peer's miss reaches here too.
+on every rebuild so a peer's miss reaches here too. The ordering cases below lift the
+cooldown, so what they select on is the bound alone.
 """
 
 import asyncio
@@ -96,6 +97,13 @@ def _learner_of(router: Router) -> Learner:
 
 def _bounds(store: _RecordingStore) -> dict[str, tuple[float, datetime]]:
     return budget_bounds_from_calls(store.rows[::-1], since=_LONG_AGO)
+
+
+def _uncool(pool: LLMPool, *names: str) -> None:
+    """Silence cools as well as teaching, and a cooled model is not selected at all —
+    lifted here so these cases select on the bound and nothing else."""
+    for name in names:
+        pool.clear_cooling(name)
 
 
 # ── the journal row is what carries the evidence ─────────────────────────────
@@ -263,10 +271,11 @@ def test_the_next_caller_does_not_walk_into_the_same_hang():
 
         assert result.llm_name == "b"
         assert time.monotonic() - started < 0.2  # not queued behind the hang again
-        # nothing was held against `a`: no cooldown, no streak, still selectable
-        assert pool.state("a").phase is LifecyclePhase.AVAILABLE
-        assert pool.state("a").fail_count == 0
-        assert [c.cooldown_until for c in store.rows if c.llm_name == "a"] == [None]
+        # `a` said nothing for a whole budget, so it is cooling like any other failure
+        assert pool.state("a").phase is LifecyclePhase.COOLING
+        assert pool.state("a").fail_count == 1
+        # and the row it wrote still derives a bound: availability did not erase ordering
+        assert _bounds(store)["a"][0] == pytest.approx(0.2, abs=0.05)
 
     asyncio.run(run())
 
@@ -282,6 +291,7 @@ def test_a_caller_without_a_budget_ignores_the_bound():
             with pytest.raises(NoLLMAvailableError):
                 await _ask(router, wait=0.2)
             assert "a" in pool._budget_bounds
+            _uncool(pool, "a")
 
             hangs.clear()
             result = await _ask(router)
@@ -300,6 +310,7 @@ def test_a_comfortably_larger_budget_ignores_the_bound():
                 await _ask(router, wait=0.2)
             # the bound is on record — a large budget simply does not find it binding
             assert "a" in pool._budget_bounds
+            _uncool(pool, "a")
             hangs.clear()
             result = await _ask(router, wait=30.0)
 
@@ -313,11 +324,12 @@ def test_wait_zero_ignores_the_bound():
     could miss — the bound is meaningless there."""
 
     async def run():
-        router, _, _ = await _router("a", "b")
+        router, pool, _ = await _router("a", "b")
         hangs = {"a"}
         with patch(_PATCH, new=_provider(hangs)):
             with pytest.raises(NoLLMAvailableError):
                 await _ask(router, wait=0.2)
+            _uncool(pool, "a")
             hangs.clear()
             result = await _ask(router, wait=0)
 
@@ -333,6 +345,7 @@ def test_a_success_clears_the_bound():
         with patch(_PATCH, new=_provider(hangs)):
             with pytest.raises(NoLLMAvailableError):
                 await _ask(router, wait=0.2)
+            _uncool(pool, "a")
             hangs.clear()
             await _ask(router, wait=30.0)  # `a` answers, which clears its bound
             assert "a" not in pool._budget_bounds
@@ -353,9 +366,11 @@ def test_when_nobody_can_meet_the_budget_curated_order_stands():
         with patch(_PATCH, new=_provider(hangs)):
             with pytest.raises(NoLLMAvailableError):
                 await _ask(router, wait=0.2)
+            _uncool(pool, "a")
             with pytest.raises(NoLLMAvailableError):
                 await _ask(router, wait=0.2)
             assert pool._budget_bounds.keys() == {"a", "b"}
+            _uncool(pool, "a", "b")
 
             hangs.clear()
             result = await _ask(router, wait=0.2)
@@ -407,7 +422,7 @@ def test_a_dropped_slot_does_not_carry_its_bound_into_a_re_add():
 
 def test_the_window_lapses():
     async def run():
-        router, _, _ = await _router("a", "b")
+        router, pool, _ = await _router("a", "b")
         hangs = {"a"}
         with (
             patch.object(pool_module, "BUDGET_BOUND_WINDOW_SEC", 0.05),
@@ -415,6 +430,7 @@ def test_the_window_lapses():
         ):
             with pytest.raises(NoLLMAvailableError):
                 await _ask(router, wait=0.2)
+            _uncool(pool, "a")
             hangs.clear()
             await asyncio.sleep(0.06)
             result = await _ask(router, wait=0.2)
@@ -438,11 +454,13 @@ def test_a_lapsed_window_retires_the_bound_it_recorded():
             with patch.object(pool_module, "BUDGET_BOUND_WINDOW_SEC", 0.05):
                 with pytest.raises(NoLLMAvailableError):
                     await _ask(router, wait=0.5)
+                _uncool(pool, "a")
                 await asyncio.sleep(0.06)  # the big miss goes stale, never answered
 
             with pytest.raises(NoLLMAvailableError):
                 await _ask(router, wait=0.1)
             assert pool._budget_bounds["a"].seconds < 0.2  # noqa: PLR2004
+            _uncool(pool, "a")
 
             hangs.clear()
             result = await _ask(router, wait=0.3)
@@ -471,6 +489,7 @@ def test_a_model_never_picked_again_still_loses_its_bound_on_the_clock():
         ):
             with pytest.raises(NoLLMAvailableError):
                 await _ask(router, wait=0.2)
+            _uncool(pool, "a")
             hangs.clear()  # `a` is healthy from here on
 
             first = await _ask(router, wait=0.2)
@@ -508,6 +527,7 @@ def test_the_bound_applies_with_no_optimizer_and_no_learner():
         with patch(_PATCH, new=_provider(hangs)):
             with pytest.raises(NoLLMAvailableError):
                 await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=0.2)
+            _uncool(pool, "a")
             hangs.clear()
             result = await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=0.2)
 

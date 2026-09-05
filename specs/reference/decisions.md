@@ -145,22 +145,49 @@ judge call spends the scarce quota the pool exists to conserve.
 **Why:** a chronically failing model is already effectively disabled by
 exponential cooldown; the only thing auto-removed is a dead key.
 
-### budget-expiry-teaches-ordering
+### silence-cools-and-teaches-ordering
 
-An expired caller budget is journaled as the budget the model failed to answer
-within, and a latency lower bound is derived from the journal alongside the
-quality windows, reordering the pool for equally tight budgets.
+A caller budget expiring before a model produces an answer is two facts: the
+model was unavailable to that caller, so it is cooled like another failed
+attempt; and it failed to answer within that budget, so the budget is journaled
+and teaches ordering. An expiry after the first streamed delta teaches only the
+latter. An expiry before the provider was reached teaches neither.
 
-**Blocks:** discarding the expiry as pure loss; counting it as a failure or a
-cooldown; holding the bound as pool-local state no journal read produces;
-recovering it by matching the error text of a row.
-**Why:** a model that never answers produces no successful rows, so this is the
-only obtainable latency evidence — but blaming a model for the caller's clock
-would teach the broker that healthy models are failing. Ordering only,
-budget-relative, and never a withdrawal. Keeping the evidence on the row makes
-the bound one more thing the single tail read derives, rather than a second
-state subsystem beside it; keeping it as its own field rather than as prose in
-the error detail keeps a message the library formats out of a routing decision.
+**Blocks:** treating every expiry as only the caller's fault; treating every
+expiry as a model failure; making cooldown and latency evidence mutually
+exclusive; discarding the latency bound once silence also cools; reading this as
+"a slow start is a dead endpoint"; dividing a caller's budget into per-attempt
+shares so the call in flight is rescued.
+**Why:** to a caller, a model that produces nothing for the whole budget is
+indistinguishable from a dead endpoint, and without cooldown the next request
+pays the same whole budget. Once output has arrived, the opposite is known: the
+model answered and the caller merely stopped waiting for the rest, so cooling it
+would withdraw a working model. The recorded bound remains useful after the
+short cooldown and on another process, while cooldown protects the immediate
+next calls in this process; neither replaces the other.
+
+**The measurement is one caller's and the withdrawal is everyone's.** Silence is
+measured against the budget of the caller that met it, while the cooldown removes
+the model from the whole process — including a caller whose budget is twice as
+long and for whom that model answers well. Two things keep that proportionate,
+and both are part of this entry rather than incidental to it: the duration is the
+ordinary base, with no timeout-specific value, so a model that merely starts
+slowly for a tight budget is back within it; and ordering by the learned bound
+continues to hold afterwards, which is the mechanism that is actually budget-aware.
+A model whose first delta is simply later than one caller's budget is not withdrawn
+from the pool in any lasting sense, and must not be made so by lengthening this.
+
+**What it does not buy is the calls already running.** Two issued together both
+meet the same silence, because neither has learned anything when either chose; what
+is bought is every call after them. Rescuing the one in flight takes a share of the
+budget per attempt, which hands each attempt less time than the caller asked for to
+reach a symptom this already removes for every later call — the counter-proposal to
+expect, and to refuse.
+
+The evidence rides the journal row rather than pool-local state, so the bound is
+one more thing the single tail read derives instead of a second state subsystem
+beside it, and it is its own field rather than prose in the error detail, so a
+message the library formats stays out of a routing decision.
 
 ---
 

@@ -184,9 +184,9 @@ def test_stream_raises_when_every_candidate_fails():
     asyncio.run(run())
 
 
-def test_wait_bounds_time_to_first_delta_without_blaming_the_model():
-    """A budget spent waiting for the first delta is the caller's clock, not a fault:
-    timeout error, no cooldown, and the row carries no cooldown_until."""
+def test_a_stream_that_says_nothing_for_the_whole_budget_is_cooled():
+    """No delta for the whole budget is silence, not slowness: the caller still gets its
+    own expired wait, and the model is cooled like any other failed attempt."""
     store = _RecordingStore()
 
     async def body():
@@ -208,9 +208,12 @@ def test_wait_bounds_time_to_first_delta_without_blaming_the_model():
 
     exc, pool = asyncio.run(run())
     assert exc.reason == "timeout"
-    assert pool.state("a").phase is LifecyclePhase.AVAILABLE  # not cooled
+    assert pool.state("a").phase is LifecyclePhase.COOLING
+    assert pool.state("a").fail_count == 1
     (row,) = store.calls
-    assert (row.status, row.cooldown_until) == (CallStatus.ERROR, None)
+    assert row.status is CallStatus.ERROR
+    assert row.cooldown_until is not None
+    assert row.budget_ms is not None  # the miss still teaches ordering
 
 
 def test_wait_does_not_bound_a_slow_consumer():

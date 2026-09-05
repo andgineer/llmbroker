@@ -167,7 +167,7 @@ the first fallback for an interactive caller answers 20–60 times slower — 36
 against 1.6 s, worst case 101 s. The library's answer to this is already
 implemented: an expired budget teaches a per-model latency lower bound that reorders
 the pool for equally tight budgets
-([`decisions.md#budget-expiry-teaches-ordering`](../reference/decisions.md)). It is
+([`decisions.md#silence-cools-and-teaches-ordering`](../reference/decisions.md)). It is
 the right answer. **But nothing reports it** — a snapshot shows a model's cooldown
 and its demoted operations, and not the bound — so no host can tell whether it ever
 fired, and the one host that would have measured it could not.

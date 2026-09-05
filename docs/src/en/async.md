@@ -59,10 +59,13 @@ the whole point of bounding the answer rather than its opening.
 
 Unset means unbounded, which is the default. Before the first delta an exhausted
 budget ends the call with `NoLLMAvailableError`; after it, with `LLMTimeoutError`,
-and the deltas already delivered stand. Either way the model is not cooled and not
-penalised — but the pool remembers the budget it did not finish within, so equally
-tight callers are handed a sibling first. A call cut short this way cannot be
-rated: it never settled, so `record_quality` on its handle raises.
+and the deltas already delivered stand. Where the difference shows is what it costs
+the model: nothing at all by the deadline is silence, and the model is set aside
+briefly like any other that failed you, while a model already writing when your
+clock ran out is left alone — it answered, you simply stopped waiting. Both ways
+the pool remembers the budget it did not finish within, so equally tight callers
+are handed a sibling first. A call cut short this way cannot be rated: it never
+settled, so `record_quality` on its handle raises.
 
 That is also why the handle says nothing before the first delta: `llm_name` and
 `call_id` are `None` until then, because the call may still move to another
