@@ -44,7 +44,9 @@ class _OverlapWatch:
         self._in_flight = 0
         self._lock = threading.Lock()
 
-    async def __call__(self, config, api_key, messages, tools, *, client=None, timeout=None):
+    async def __call__(
+        self, config, api_key, messages, tools, *, client=None, timeout=None, params=None
+    ):
         with self._lock:
             self._in_flight += 1
             self.max_in_flight = max(self.max_in_flight, self._in_flight)

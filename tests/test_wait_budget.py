@@ -49,7 +49,7 @@ def _fake_provider(captured: list, *, raises=None, results=None):
     """Record the per-attempt timeout the router hands down; then answer or fail."""
     outcomes = list(results or [])
 
-    async def fake(config, api_key, messages, tools, *, client=None, timeout=None):  # noqa: ARG001
+    async def fake(config, api_key, messages, tools, *, client=None, timeout=None, params=None):  # noqa: ARG001
         captured.append(timeout)
         if outcomes:
             outcome = outcomes.pop(0)

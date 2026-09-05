@@ -272,6 +272,54 @@ problem and is not one.
 
 ---
 
+## Schema-constrained output, measured (2026-09-05)
+
+Every curated entry was asked the same question twice over: once with
+`response_format` in the strict `json_schema` shape carrying a two-field schema,
+once with the weaker `json_object` shape. Four answers per model per shape, one
+key per provider, retried past a busy endpoint so a 429 never counts as an
+opinion about the parameter.
+
+| model | shape | conforms | wrong shape | not JSON | refused | unavailable |
+|---|---|---|---|---|---|---|
+| groq-gpt-oss-120b | json_schema | 4 | 0 | 0 | 0 | 0 |
+| groq-gpt-oss-120b | json_object | 0 | 4 | 0 | 0 | 0 |
+| openrouter-nemotron-3-ultra | json_schema | 4 | 0 | 0 | 0 | 0 |
+| openrouter-nemotron-3-ultra | json_object | 0 | 4 | 0 | 0 | 0 |
+| openrouter-laguna-s-2.1 | json_schema | 0 | 1 | 3 | 0 | 0 |
+| openrouter-laguna-s-2.1 | json_object | 0 | 0 | 4 | 0 | 0 |
+| google-gemini-3.5-flash-lite | json_schema | 4 | 0 | 0 | 0 | 0 |
+| google-gemini-3.5-flash-lite | json_object | 0 | 4 | 0 | 0 | 0 |
+| zai-glm-4.7-flash | json_schema | 0 | 0 | 3 | 0 | 1 |
+| zai-glm-4.7-flash | json_object | 0 | 2 | 0 | 0 | 2 |
+
+**Nothing refuses the parameter.** Not one of the 40 calls came back as a client
+error naming `response_format`. Every endpoint takes it, answers HTTP 200, and
+looks from the outside exactly like an endpoint that honored it.
+
+**Three of the five honor the strict shape, and they are the three a pool would
+route to first.** Groq, the Nvidia-backed OpenRouter entry and Gemini returned the
+schema's own field names, the right types, and no decoration, on every attempt.
+
+**Two accept it and ignore it completely.** The Poolside OpenRouter entry and the
+Z.AI entry answer with field names of their own invention, usually wrapped in a
+markdown code fence, whether the strict shape was asked for or the weaker one. The
+fence is the tell that no server-side constraint was applied at all.
+
+**The weaker shape constrains nothing worth having.** Every model that answered
+under `json_object` produced JSON, and every one of them chose its own field
+names, so it says only "this is JSON" — which the prompt could have asked for.
+
+**What follows for routing.** A model that ignores a schema is indistinguishable
+from one that honors it without validating the answer against the caller's own
+schema, and only the caller holds its meaning. So there is no error for a router
+to learn from here, and a schema-constrained request routed over this pool lands
+on a model that ignores it two times in five. The signal that does exist is the
+host's: it validates, and a failed validation is exactly the quality rating the
+pool already learns from, per (model, operation).
+
+---
+
 ## Curation rules for adding and removing entries
 
 **A removal here reaches every installation that follows the list.** A sync

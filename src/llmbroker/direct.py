@@ -1,7 +1,7 @@
 """Direct single-model client: no pool, no failover, no journal. Reuses the
 request/response primitives in ``chat.py``."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 
 import httpx
@@ -81,6 +81,7 @@ class AsyncDirectClient:
         messages: list[dict] | None,
         *,
         stream: bool = False,
+        params: Mapping[str, object] | None = None,
     ) -> tuple[str, dict[str, str], dict]:
         return build_chat_request(
             self._base_url,
@@ -88,6 +89,7 @@ class AsyncDirectClient:
             self._api_key,
             _messages(prompt, messages),
             stream=stream,
+            params=params,
         )
 
     async def ask(
@@ -96,8 +98,9 @@ class AsyncDirectClient:
         *,
         messages: list[dict] | None = None,
         timeout: float | None = None,
+        params: Mapping[str, object] | None = None,
     ) -> DirectResult:
-        url, headers, body = self._request(prompt, messages)
+        url, headers, body = self._request(prompt, messages, params=params)
         try:
             resp = await self._ensure_http().post(
                 url,
@@ -115,8 +118,9 @@ class AsyncDirectClient:
         *,
         messages: list[dict] | None = None,
         timeout: float | None = None,
+        params: Mapping[str, object] | None = None,
     ) -> AsyncIterator[str]:
-        url, headers, body = self._request(prompt, messages, stream=True)
+        url, headers, body = self._request(prompt, messages, stream=True, params=params)
         try:
             async with self._ensure_http().stream(
                 "POST",
@@ -183,12 +187,14 @@ class DirectClient:
         *,
         messages: list[dict] | None = None,
         timeout: float | None = None,
+        params: Mapping[str, object] | None = None,
     ) -> DirectResult:
         url, headers, body = build_chat_request(
             self._base_url,
             self._model,
             self._api_key,
             _messages(prompt, messages),
+            params=params,
         )
         try:
             resp = self._ensure_http().post(

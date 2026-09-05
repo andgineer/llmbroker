@@ -83,6 +83,43 @@ direct opus anthropic claude-opus-5 https://api.anthropic.com/v1 ANTHROPIC_API_K
 direct sonnet anthropic claude-sonnet-5 https://api.anthropic.com/v1 ANTHROPIC_API_KEY
 ```
 
+## Чтение каталога из программы {#curated}
+
+`llmbroker list` — для человека. Те же два курируемых файла читаются и как
+данные: без брокера и без сети — берётся копия, уже лежащая на этой машине, а под
+ней копия из колеса:
+
+```python
+from llmbroker import curated_paid, curated_pool, curated_providers
+
+for row in curated_paid():
+    print(row.alias or "-", row.name, row.label)
+
+for provider in curated_providers():
+    print(provider.id, provider.base_url, provider.api_key_ref)
+
+print(len(curated_pool().configs), "бесплатных моделей в курируемом списке")
+```
+
+Отсюда же берётся **модель, которой в каталоге нет** — свежий релиз или та,
+которую хочется замерить до того, как её кто-то закурирует. Попросите у
+провайдера объявление и передайте его в `direct=`:
+
+```python
+anthropic = next(p for p in curated_providers() if p.id == "anthropic")
+broker = llmbroker.Broker(direct=[anthropic.declare("claude-opus-9-preview")])
+broker.direct(name="anthropic-claude-opus-9-preview").ask("...")
+```
+
+`declare()` подставит base url и ссылку на ключ; всё остальное — тот же полностью
+описанный конфиг, что и в разделе выше, поэтому его никто и никогда не
+переназначит. У курируемой строки тоже есть `.declare()`, и она фиксирует именно
+её id модели — передайте строку-алиас, если хотите, чтобы модель продолжала
+следовать за каталогом.
+
+Ничто здесь ничего не обновляет: эти функции читают, пишет `sync`. Что бросается
+при отсутствующем ключе — в разделе [Ошибки](#errors).
+
 ## `alias` и `name` — раздельные пространства имён
 
 Место вызова само говорит, что имеется в виду. Это делает `direct(name=...)` ещё
@@ -139,6 +176,33 @@ with llmbroker.Broker(direct=["opus"]) as broker:
     result = broker.direct("opus").ask("...")
     print(result.text)
 ```
+
+## Параметры запроса {#params}
+
+Модель названа вами, значит ей можно отправить всё, что она документирует, —
+бюджет рассуждения, температуру, лимит токенов, seed. `params` — это словарь,
+который дословно подмешивается в тело запроса: оба клиента принимают его
+в `ask()`, а асинхронный клиент — ещё и в `stream()`:
+
+```python
+client = broker.direct("opus")
+client.ask("...", params={"reasoning_effort": "low", "temperature": 0})
+```
+
+llmbroker не читает, не проверяет, не переписывает и не подставляет ничего из
+`params` и не обещает, что провайдер это учтёт: неподдерживаемый параметр — ваша
+ошибка, и сообщение самого провайдера и есть отчёт о ней. Внутри `params` —
+словарь провайдера, рядом с ним (`messages=`, `timeout=`) — словарь llmbroker.
+
+Пять ключей, которые llmbroker строит сам, — `model`, `messages`, `stream`,
+`stream_options`, `tools` — вместо подмешивания бросают `ValueError` с именем
+ключа: подменённый `model` ответил бы моделью, которую никто не называл, а
+переключённый флаг стриминга отдал бы тело не тому читателю. `tool_choice` в
+этот список не входит, поэтому `params={"tool_choice": "required"}` перекрывает
+`"auto"`, выставленный вместе с `tools`.
+
+Это только прямой путь. Пул несёт параметр лишь там, где он взвешен для всего
+пула по одному — см. [вывод по схеме](usage.md#response-format).
 
 ## Ошибки {#errors}
 

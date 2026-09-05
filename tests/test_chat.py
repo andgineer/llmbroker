@@ -8,6 +8,7 @@ import pytest
 
 from llmbroker.chat import (
     _BODY_SNIPPET,
+    RESERVED_BODY_KEYS,
     _parse_completion,
     build_chat_request,
     message_from_response,
@@ -73,6 +74,60 @@ def test_build_chat_request_stream_flag():
     _, _, body = build_chat_request(_CONFIG.base_url, _CONFIG.model, "k", [], stream=True)
     assert body["stream"] is True
     assert body["stream_options"] == {"include_usage": True}
+
+
+def test_build_chat_request_params_land_in_body_verbatim():
+    _, _, body = build_chat_request(
+        _CONFIG.base_url,
+        _CONFIG.model,
+        "k",
+        [{"role": "user", "content": "hi"}],
+        params={"temperature": 0, "reasoning_effort": "low", "nested": {"a": [1]}},
+    )
+    assert body["temperature"] == 0
+    assert body["reasoning_effort"] == "low"
+    assert body["nested"] == {"a": [1]}
+    assert body["model"] == "gpt-4o"
+    assert body["messages"] == [{"role": "user", "content": "hi"}]
+
+
+@pytest.mark.parametrize("key", sorted(RESERVED_BODY_KEYS))
+@pytest.mark.parametrize("stream", [False, True])
+def test_build_chat_request_reserved_key_raises_naming_it(key, stream):
+    with pytest.raises(ValueError, match=repr(key)):
+        build_chat_request(
+            _CONFIG.base_url,
+            _CONFIG.model,
+            "k",
+            [],
+            tools=[{"type": "function", "function": {"name": "f"}}],
+            stream=stream,
+            params={key: "whatever"},
+        )
+
+
+def test_build_chat_request_tool_choice_is_not_reserved():
+    tools = [{"type": "function", "function": {"name": "f"}}]
+    _, _, body = build_chat_request(
+        _CONFIG.base_url,
+        _CONFIG.model,
+        "k",
+        [],
+        tools=tools,
+        params={"tool_choice": "required"},
+    )
+    assert body["tool_choice"] == "required"
+    assert body["tools"] == tools
+
+
+@pytest.mark.parametrize("params", [None, {}])
+def test_build_chat_request_without_params_is_unchanged(params):
+    tools = [{"type": "function", "function": {"name": "f"}}]
+    plain = build_chat_request(_CONFIG.base_url, _CONFIG.model, "k", [], tools=tools, stream=True)
+    with_params = build_chat_request(
+        _CONFIG.base_url, _CONFIG.model, "k", [], tools=tools, stream=True, params=params
+    )
+    assert with_params == plain
 
 
 def test_message_from_response():

@@ -185,6 +185,12 @@ def _check_lanes(fastest_of: int | None, parallel_recovery: bool) -> None:
         raise ValueError(f"parallel_recovery must be True or False, got {parallel_recovery!r}")
 
 
+def _request_params(response_format: dict | None) -> dict[str, object] | None:
+    """The routed body's extra keys. A caller that asked for nothing sends the body it
+    sent before, byte for byte."""
+    return None if response_format is None else {"response_format": response_format}
+
+
 @dataclass(slots=True)
 class _StreamProgress:
     """What one streaming attempt has produced so far — what its failure handling
@@ -345,6 +351,7 @@ class Router:
         wait: float | None = None,
         fastest_of: int | None = None,
         parallel_recovery: bool = True,
+        response_format: dict | None = None,
     ) -> AsyncResult:
         return await self.chat(
             ring,
@@ -354,6 +361,7 @@ class Router:
             wait=wait,
             fastest_of=fastest_of,
             parallel_recovery=parallel_recovery,
+            response_format=response_format,
         )
 
     async def chat(  # noqa: PLR0913 - who calls, what, and the call knobs
@@ -367,10 +375,16 @@ class Router:
         wait: float | None = None,
         fastest_of: int | None = None,
         parallel_recovery: bool = True,
+        response_format: dict | None = None,
     ) -> AsyncResult:
         _check_lanes(fastest_of, parallel_recovery)
         routed = self._route(
-            partial(self._attempt, messages=messages, tools=tools),
+            partial(
+                self._attempt,
+                messages=messages,
+                tools=tools,
+                response_format=response_format,
+            ),
             ring=ring,
             operation=operation,
             trace_id=trace_id,
@@ -737,6 +751,7 @@ class Router:
         tools: list[dict] | None,
         operation: str | None,
         trace_id: str | None,
+        response_format: dict | None = None,
     ) -> AsyncIterator[AsyncResult]:
         """Run one LLM and yield its single result, or leave on ``outcome`` the verdict
         the driver fails over on."""
@@ -763,6 +778,7 @@ class Router:
                     tools,
                     client=self.http,
                     timeout=timeout,
+                    params=_request_params(response_format),
                 )
         except _FAILOVER_ERRORS as exc:
             outcome.settling = True
@@ -817,13 +833,18 @@ class Router:
         wait: float | None = None,
         fastest_of: int | None = None,
         parallel_recovery: bool = True,
+        response_format: dict | None = None,
     ) -> AsyncIterator[str]:
         """Route a streaming completion over the pool, yielding text deltas and naming
         what answered on ``receipt``. Fails over exactly like ``chat`` up to the first
         delta; past it a death raises ``StreamInterruptedError`` instead."""
         _check_lanes(fastest_of, parallel_recovery)
         routed = self._route(
-            partial(self._stream_attempt, messages=messages),
+            partial(
+                self._stream_attempt,
+                messages=messages,
+                response_format=response_format,
+            ),
             ring=ring,
             operation=operation,
             trace_id=trace_id,
@@ -847,6 +868,7 @@ class Router:
         messages: list[dict],
         operation: str | None,
         trace_id: str | None,
+        response_format: dict | None = None,
     ) -> AsyncIterator[str]:
         """Stream one LLM, yielding its deltas. Leaves a verdict on ``outcome`` when it
         died before the first delta; the slot is settled and journaled by then."""
@@ -867,6 +889,7 @@ class Router:
             attempt.resolved_key,
             messages,
             stream=True,
+            params=_request_params(response_format),
         )
         progress = _StreamProgress(outcome.receipt, config.name, attempt.call_id)
         try:

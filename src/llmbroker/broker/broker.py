@@ -359,6 +359,7 @@ class AsyncBroker:
         wait: float | None = None,
         fastest_of: int | None = None,
         parallel_recovery: bool = True,
+        response_format: dict | None = None,
     ) -> AsyncResult:
         return await self.llms.ask(
             prompt,
@@ -367,6 +368,7 @@ class AsyncBroker:
             wait=wait,
             fastest_of=fastest_of,
             parallel_recovery=parallel_recovery,
+            response_format=response_format,
         )
 
     async def chat(  # noqa: PLR0913 - what to send, and the call knobs
@@ -379,6 +381,7 @@ class AsyncBroker:
         wait: float | None = None,
         fastest_of: int | None = None,
         parallel_recovery: bool = True,
+        response_format: dict | None = None,
     ) -> AsyncResult:
         return await self.llms.chat(
             messages,
@@ -388,6 +391,7 @@ class AsyncBroker:
             wait=wait,
             fastest_of=fastest_of,
             parallel_recovery=parallel_recovery,
+            response_format=response_format,
         )
 
     def stream(  # noqa: PLR0913 - the call knobs, one keyword each
@@ -399,6 +403,7 @@ class AsyncBroker:
         wait: float | None = None,
         fastest_of: int | None = None,
         parallel_recovery: bool = True,
+        response_format: dict | None = None,
     ) -> StreamHandle:
         """Route a completion over the pool as a handle yielding text deltas and naming
         what answered them. ``wait`` bounds the whole answer in provider time; past the
@@ -410,6 +415,7 @@ class AsyncBroker:
             wait=wait,
             fastest_of=fastest_of,
             parallel_recovery=parallel_recovery,
+            response_format=response_format,
         )
 
     async def direct(

@@ -1,6 +1,7 @@
 """Tests for the direct single-model client — mocked httpx transport, no network."""
 
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -402,3 +403,81 @@ def test_external_client_not_closed_on_aclose():
         return closed
 
     assert asyncio.run(run()) is False
+
+
+# --------------------------------------------------------------------------- #
+# request parameters
+# --------------------------------------------------------------------------- #
+
+
+def test_async_ask_forwards_params():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_ok_body())
+
+    async def run():
+        client = _async_client(handler)
+        await client.ask("hi", params={"temperature": 0, "reasoning_effort": "low"})
+        await client.aclose()
+
+    asyncio.run(run())
+    assert seen["body"]["temperature"] == 0
+    assert seen["body"]["reasoning_effort"] == "low"
+
+
+def test_async_stream_forwards_params_and_keeps_streaming_keys():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, content=_SSE, headers={"content-type": "text/event-stream"})
+
+    async def run():
+        client = _async_client(handler)
+        _ = [d async for d in client.stream("hi", params={"temperature": 0.5})]
+        await client.aclose()
+
+    asyncio.run(run())
+    assert seen["body"]["temperature"] == 0.5
+    assert seen["body"]["stream"] is True
+    assert seen["body"]["stream_options"] == {"include_usage": True}
+
+
+def test_sync_ask_forwards_params():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_ok_body())
+
+    client = _sync_client(handler)
+    client.ask("hi", params={"max_tokens": 16})
+    client.close()
+    assert seen["body"]["max_tokens"] == 16
+
+
+def test_reserved_param_raises_before_any_request():
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(200, json=_ok_body())
+
+    async def run():
+        client = _async_client(handler)
+        with pytest.raises(ValueError, match="'model'"):
+            await client.ask("hi", params={"model": "someone-elses"})
+        with pytest.raises(ValueError, match="'stream'"):
+            _ = [d async for d in client.stream("hi", params={"stream": False})]
+        await client.aclose()
+
+    asyncio.run(run())
+
+    sync = _sync_client(handler)
+    with pytest.raises(ValueError, match="'messages'"):
+        sync.ask("hi", params={"messages": []})
+    sync.close()
+
+    assert calls == []

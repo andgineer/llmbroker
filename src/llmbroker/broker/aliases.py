@@ -7,24 +7,14 @@ is in ``specs/reference/rules/direct-by-name.md``.
 import asyncio
 import tomllib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from types import MappingProxyType
 
+from llmbroker.broker.curated import CuratedModel, models_from
 from llmbroker.broker.presets import PAID_CATALOG, PresetSource
 from llmbroker.exceptions import UnknownModelError
 from llmbroker.models import DeclaredModels, LLMConfig
-
-
-@dataclass(frozen=True, slots=True)
-class AliasTarget:
-    """What the paid catalog currently recommends for one alias."""
-
-    name: str
-    model: str
-    base_url: str
-    api_key_ref: str
-    key_help: str = ""
 
 
 class AliasChange(Enum):
@@ -45,34 +35,21 @@ class AliasFact:
     now: str = ""
 
 
-_NO_TARGETS: Mapping[str, AliasTarget] = MappingProxyType({})
+_NO_TARGETS: Mapping[str, CuratedModel] = MappingProxyType({})
 
 
-def catalog_alias_targets(catalog: dict) -> dict[str, AliasTarget]:
-    """Map every catalog alias to the entry fields it now recommends.
-
-    Raises when the catalog is invalid: an alias names exactly one model, so a
-    duplicate makes the whole file unusable.
-    """
-    targets: dict[str, AliasTarget] = {}
-    for prov in catalog.get("provider", []):
-        if not isinstance(prov, dict) or not (
-            prov.get("id") and prov.get("base_url") and prov.get("api_key_ref")
-        ):
+def catalog_alias_targets(catalog: dict) -> dict[str, CuratedModel]:
+    """Map every catalog alias to the row it now recommends; a row whose provider has
+    no endpoint or no key ref could not be called, so it recommends nothing. An alias
+    names exactly one model, so a duplicate makes the whole file unusable and raises."""
+    targets: dict[str, CuratedModel] = {}
+    for row in models_from(catalog):
+        provider = row.provider
+        if row.alias is None or not (provider.id and provider.base_url and provider.api_key_ref):
             continue
-        for model in prov.get("models", []):
-            if not isinstance(model, dict) or not (model.get("alias") and model.get("model")):
-                continue
-            alias = str(model["alias"])
-            if alias in targets:
-                raise ValueError(f"paid catalog is invalid — alias '{alias}' is used twice")
-            targets[alias] = AliasTarget(
-                name=f"{prov['id']}-{model['model']}",
-                model=str(model["model"]),
-                base_url=str(prov["base_url"]),
-                api_key_ref=str(prov["api_key_ref"]),
-                key_help=str(prov["key_help"]) if prov.get("key_help") else "",
-            )
+        if row.alias in targets:
+            raise ValueError(f"paid catalog is invalid — alias '{row.alias}' is used twice")
+        targets[row.alias] = row
     return targets
 
 
@@ -88,7 +65,7 @@ async def resolve_declared(
     help is available. ``previous`` marks a re-resolution and is what the facts diff."""
     if not declared:
         return DeclaredModels(), ()
-    targets: Mapping[str, AliasTarget] = _NO_TARGETS
+    targets: Mapping[str, CuratedModel] = _NO_TARGETS
     if any(isinstance(item, str) for item in declared):
         text = await asyncio.to_thread(
             presets.text,
@@ -106,9 +83,9 @@ async def resolve_declared(
     resolved = DeclaredModels(
         configs=configs,
         key_help={
-            t.api_key_ref: t.key_help
+            t.provider.api_key_ref: t.provider.key_help
             for t in targets.values()
-            if t.key_help and t.api_key_ref in wanted
+            if t.provider.key_help and t.provider.api_key_ref in wanted
         },
     )
     return resolved, _moved(previous, resolved)
@@ -129,7 +106,7 @@ def _moved(previous: DeclaredModels | None, current: DeclaredModels) -> tuple[Al
     return tuple(facts)
 
 
-def _entry_for_alias(alias: str, targets: Mapping[str, AliasTarget]) -> LLMConfig:
+def _entry_for_alias(alias: str, targets: Mapping[str, CuratedModel]) -> LLMConfig:
     target = targets.get(alias)
     if target is None:
         # A typo is the expected failure and the fix is one word, so the message
@@ -139,13 +116,7 @@ def _entry_for_alias(alias: str, targets: Mapping[str, AliasTarget]) -> LLMConfi
             f"direct= names {alias!r}, which the paid catalog does not carry"
             f" — available aliases: {have}",
         )
-    return LLMConfig(
-        name=target.name,
-        base_url=target.base_url,
-        model=target.model,
-        api_key_ref=target.api_key_ref,
-        alias=alias,
-    )
+    return replace(target.declare(), alias=alias)
 
 
 def _alias_facts(was: LLMConfig, now: LLMConfig) -> list[AliasFact]:

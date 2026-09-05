@@ -25,6 +25,8 @@ HTTP_TIMEOUT = 60.0
 _BODY_SNIPPET = 300
 _MAX_INT64 = 2**63 - 1
 
+RESERVED_BODY_KEYS = frozenset({"model", "messages", "stream", "stream_options", "tools"})
+
 
 def retry_after_seconds(headers: Mapping[str, str], default_sec: int) -> int:
     """Parse ``Retry-After`` as either delay-seconds or an HTTP-date, per RFC 9110."""
@@ -71,14 +73,21 @@ def build_chat_request(  # noqa: PLR0913
     tools: list[dict] | None = None,
     *,
     stream: bool = False,
+    params: Mapping[str, object] | None = None,
 ) -> tuple[str, dict[str, str], dict[str, Any]]:
     """Return (url, headers, json_body) for an OpenAI-compatible chat completion.
+
+    ``params`` is the caller's own provider parameters, merged in last and never
+    inspected; a key this builder owns is refused rather than overwritten.
 
     >>> url, headers, body = build_chat_request("https://x/v1", "m", "k", [], stream=True)
     >>> url
     'https://x/v1/chat/completions'
     >>> body["stream"], body["stream_options"]
     (True, {'include_usage': True})
+    >>> build_chat_request("https://x/v1", "m", "k", [], params={"model": "other"})
+    Traceback (most recent call last):
+    ValueError: request parameter 'model' is built by llmbroker and cannot be passed
     """
     body: dict[str, Any] = {"model": model, "messages": messages}
     if tools:
@@ -87,6 +96,12 @@ def build_chat_request(  # noqa: PLR0913
     if stream:
         body["stream"] = True
         body["stream_options"] = {"include_usage": True}
+    for key, value in (params or {}).items():
+        if key in RESERVED_BODY_KEYS:
+            raise ValueError(
+                f"request parameter {key!r} is built by llmbroker and cannot be passed",
+            )
+        body[key] = value
     return (
         f"{base_url}{_CHAT_PATH}",
         {"Authorization": f"Bearer {api_key}"},
@@ -218,11 +233,19 @@ async def call_provider(  # noqa: PLR0913
     *,
     client: httpx.AsyncClient | None = None,
     timeout: float | None = None,
+    params: Mapping[str, object] | None = None,
 ) -> tuple[str, list[dict] | None, Usage | None]:
     """POST an OpenAI-compatible completion and return (content, tool_calls, usage).
     A passed ``client`` is reused and never closed here; ``timeout`` bounds this one
     request, overriding the client's own."""
-    url, headers, body = build_chat_request(config.base_url, config.model, api_key, messages, tools)
+    url, headers, body = build_chat_request(
+        config.base_url,
+        config.model,
+        api_key,
+        messages,
+        tools,
+        params=params,
+    )
     async with _resolve_client(client) as active:
         if timeout is None:
             resp = await active.post(url, headers=headers, json=body)

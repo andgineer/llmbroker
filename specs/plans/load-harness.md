@@ -1,10 +1,10 @@
 # Plan — a load harness
 
-**Status: source-bound, pending revalidation after `caller-surface.md`.** Its
+**Status: source-bound, pending revalidation before handoff.** Its
 repository location, callable shapes, work order and tests are fixed below. Before
-handoff, compare them with the preceding plan's `Handover`: if that plan changed
-the stream/result surface or exposed a catalog reader the harness should consume,
-update this file first; otherwise mark the check complete and execute it as written.
+handoff, compare them with the current stream/result surface and the curated catalog
+readers now exposed by the package; update this file where the harness should consume
+those surfaces, then mark the check complete and execute it as written.
 
 ## Goal
 

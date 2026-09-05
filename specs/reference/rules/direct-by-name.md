@@ -38,6 +38,19 @@ occur — that is the one bit the merge partitions on
 entry raises `PoolModelError`. The pool is anonymous by design: its members are
 reached through the routing methods, which route and learn.
 
+## What a direct call may carry
+
+**A direct call forwards the caller's own request parameters untouched.** The
+caller named the model, so its parameters are the provider's vocabulary and not
+llmbroker's: nothing here interprets, validates, rewrites or defaults one, and no
+promise is made that a provider honors it — an unsupported parameter is the
+caller's error and the provider's own message is the report of it
+([`../decisions.md`](../decisions.md#request-parameters-are-a-mapping)). The
+request keys the broker builds itself are the exception: passing one is refused,
+never merged, because each silently breaks something the caller cannot see. This
+is a property of naming the model; what a routed request may carry is
+[`call-path.md`](call-path.md)'s.
+
 ## What the catalog carries
 
 **One line per distinct tier a provider genuinely has, and speed is one of the
@@ -49,6 +62,16 @@ which is the failure the catalog exists to prevent
 ([`../decisions.md`](../decisions.md#speed-is-a-catalog-tier)). How that curation
 is carried out is a runbook shipped beside the catalog, not a rule of the
 library.
+
+**The curated files are readable by a program, as data**
+([`../decisions.md`](../decisions.md#the-curated-catalog-is-readable-without-a-broker)):
+a provider's endpoint and key ref are what a declaration for a model the catalog
+never listed is built from, and a survey is exactly where such a model must be
+reachable. That read is not a registry, is not a second source of pool members —
+what it returns is only ever passed back in as a declaration — and never goes to
+the network: it takes the copy already on the machine, the wheel's under it, and
+moving that copy on stays the sync's job
+([`model-list.md`](model-list.md)).
 
 ## The alias contract
 
@@ -65,6 +88,17 @@ library.
 catalog-managed and a re-resolution rewrites its provider fields. A fully stated
 config is entirely the caller's and nothing moves it — a pin needs no syntax of
 its own.
+
+**A fully stated config may still carry an alias, and the alias is then a handle,
+not a promise of currency.** A declaration built out of a curated catalog row keeps
+that row's alias, so the application reaches it by the short name it already uses,
+and it is a pin all the same: what follows the catalog is the alias *string* passed
+to `direct=`, never a config. The switch stays at the declaration, which is where
+the application states it and where a reader of its own configuration sees it — the
+call site names a model, it does not decide how that model is kept current
+([`../decisions.md`](../decisions.md#an-alias-on-a-pin-is-a-handle)). Uniqueness
+holds across both forms, so one string still never means two things in one
+installation.
 
 **Declared models are overlaid, never stored**
 ([`../decisions.md`](../decisions.md#declared-models-are-not-stored)). They are

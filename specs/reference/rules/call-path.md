@@ -72,6 +72,23 @@ unusable accounting field would trade a good answer for none — and the discard
 is not cosmetic: a count the journal cannot store loses the whole row, and with
 it the call the pool needs to learn from.
 
+## What a routed request may carry
+
+**A routed parameter is admitted one at a time, by name, and admitting one means
+measuring what the curated pool does with it**
+([`../decisions.md`](../decisions.md#the-pool-takes-named-parameters-one-at-a-time)) —
+the pool's members are interchangeable only because each is sent the same
+request, and the arbitrary mapping a model reached by name accepts
+([`direct-by-name.md`](direct-by-name.md)) is therefore not offered here.
+
+**A constrained request is one request like any other.** Every candidate is asked
+the same thing, failover included, and what comes back is judged exactly as any
+other answer: a reply that ignores the constraint is a successful call, not a
+failure to fail over from. Nothing here reads the caller's schema, so there is
+nothing else it could be — and the host's own validation, fed back as a quality
+rating, is the signal that already orders the pool
+([`selection.md`](selection.md)).
+
 ## `wait` — the caller's budget for the routing path
 
 It bounds both halves of a call: how long the broker may queue for a slot, and

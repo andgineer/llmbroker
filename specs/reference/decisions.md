@@ -421,13 +421,21 @@ value and the header handed back.
 
 ### no-wal-management
 
-**Blocks:** a `PRAGMA journal_mode=WAL` or a configurable `busy_timeout` in the
-SQLite driver.
+**Blocks:** the SQLite driver choosing a journal mode or a busy timeout of its
+own — a `PRAGMA journal_mode=WAL` at schema setup, or a timeout it picks.
 **Why:** journal mode is a persistent, file-level property belonging to whoever
-owns the file. The driver receives only a path and cannot tell a shared file
-from a broker-only one, so enabling WAL during schema setup would silently flip
-a shared file's mode. Cross-process schema DDL already serializes under the
-default busy timeout. **Future edits must not add either.**
+owns the file, and the driver receives only a path: it cannot tell a shared file
+from a broker-only one, so setting the mode would silently flip a mode that is
+not its to choose. Cross-process schema DDL already serializes under the default
+busy timeout. **The driver never decides this, and future edits must not make
+it.**
+
+The explicit form is a different question and is not decided here: a journal mode
+and a busy timeout stated by the host that owns the file are the owner saying so,
+not a driver guessing, and the argument above says nothing against them. They are
+unbuilt for want of demand — one host has wanted them once and had a working
+alternative in separate homes. A second host meeting the same wall is what builds
+them.
 
 ### scope-is-an-opaque-string
 
@@ -623,6 +631,21 @@ year later would silently lose the refresh.
 the preset name once in the factory it already has. The connection-string form —
 what the docs use for that case — is unaffected.
 
+### an-alias-on-a-pin-is-a-handle
+
+**Blocks:** stripping the alias from a declaration built out of a curated catalog
+row, so that a pinned model is reachable only by its generated name.
+**Why:** the alias would then be the one thing a host cannot keep when it pins a
+curated tier — and pinning one is the ordinary act of benchmarking a version or
+holding it through a generation change. It trades a short, stable call site for a
+generated provider-and-model string, to remove an ambiguity that was never there:
+nothing in the alias keyspace promises currency on its own. What follows the
+catalog is the string passed to `direct=`, and the declaration is where a host
+states that and where a reader of its configuration sees it
+([`rules/direct-by-name.md`](rules/direct-by-name.md#the-alias-contract)). A host
+handing over a fully stated config has pinned on purpose; expecting llmbroker to
+move it would be the surprising reading, not the natural one.
+
 ### declared-models-are-not-stored
 
 **Blocks:** persisting a declared model to the registry.
@@ -660,6 +683,20 @@ exclusion in words instead; as a rule it shuts out a provider's fast tier the
 moment its strength tiers fill the count. No second axis is needed to express
 any of this: an alias is a name, and the label beside it already says what a
 model is for.
+
+### the-curated-catalog-is-readable-without-a-broker
+
+**Blocks:** exposing the curated lists as a broker method, and letting that read
+fetch.
+**Why:** the reader's first caller is building a declaration to *pass into* a
+broker, and a survey harness has no broker at the point it needs a provider's base
+url — a method would make the data reachable only after the object it configures
+exists. It reads what is already on the machine, and the wheel's copy under that,
+for the reason every other read on a program's own path does: nothing goes to the
+network on the library's own initiative
+([`no-automatic-fetch-means-none-at-start-either`](#no-automatic-fetch-means-none-at-start-either)),
+and a read that fetched would put a network call behind an innocuous-looking
+enumeration.
 
 ### a-model-reached-by-name-is-declared-in-code
 
@@ -863,6 +900,37 @@ background loop gives N threads honest parallelism.
 **Why:** nothing tracks them anywhere. The per-LLM concurrency cap is the only
 knob, and it serializes calls to one model rather than throttling by rate.
 
+### request-parameters-are-a-mapping
+
+**Blocks:** `**kwargs` on a direct call, and letting a caller's parameter
+overwrite a request key the broker builds.
+**Why:** the direct client already takes `messages=` and `timeout=` of its own, so
+`**kwargs` turns a misspelled one into a silently forwarded provider parameter and
+leaves no word free for a keyword added later. A mapping keeps the two
+vocabularies apart: what is inside it is the provider's, what is beside it is
+llmbroker's. The keys the broker builds are refused rather than merged because
+each breaks something the caller cannot see — a moved `model` answers as a model
+nobody named and reports failures under the wrong one, and a flipped streaming
+switch hands the body to the wrong reader. Everything else passes through
+untouched: the broker does not know which parameters a provider has, and finding
+out would be the per-provider translation layer the mission excludes.
+
+### the-pool-takes-named-parameters-one-at-a-time
+
+**Blocks:** the mapping of arbitrary request parameters a direct call takes
+([`request-parameters-are-a-mapping`](#request-parameters-are-a-mapping)) being
+offered on the routed path as well.
+**Why:** a direct call names its model, so an unsupported parameter is the
+caller's own error against a provider it chose. The pool's members are
+interchangeable only because each is sent the same request, and a mapping makes
+the caller the one deciding whether that stays true across a set of endpoints it
+never named — a parameter one member takes and another rejects costs a wasted call
+per member on every call, and failover cannot absorb what it meets on every
+candidate. So a routed parameter is admitted one at a time, by name, and admitting
+one means measuring what the curated pool does with it. That measurement is the
+price, and it is what the first one paid
+([`freetier-providers.md`](freetier-providers.md#schema-constrained-output-measured-2026-09-05)).
+
 ---
 
 ## Rejected
@@ -913,3 +981,18 @@ Mechanisms weighed and dropped that do not attach to a decision above.
   A gap measures neither the reader nor the answer, and no gap in the workload
   that motivated it came near a second; what a caller wants bounded is the
   answer, however it arrives.
+- **Default request parameters per catalog alias** — an alias would then name a
+  mode as well as a model, but the values are provider-specific and move faster
+  than a model id, so the catalog would rot faster than its refresh runbook
+  carries it, and a default nobody asked for would change every answer a host has
+  already measured at the model's own default. What is worth keeping is the
+  measurement, and that is prose beside the models.
+- **A learned per-model "refuses this request" fact**, beside the disabled map —
+  measured and unbuildable, not merely unbuilt. No curated endpoint refuses a
+  constrained request; those that will not serve one answer HTTP 200 with an
+  ordinary completion, so there is no error to learn from, and telling that answer
+  apart from a conforming one needs the caller's schema, which llmbroker never
+  reads. The host's own validation feeding a quality rating is the signal that
+  does exist, and it is already the pool's ordering mechanism.
+- **Sorting models known to accept a schema first** — it rests on the fact above
+  and falls with it.

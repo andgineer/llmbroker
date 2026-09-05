@@ -10,12 +10,14 @@ from llmbroker import models
 HOST_FACING = {
     "Call",
     "CallStatus",
+    "KeyInfo",
     "LifecyclePhase",
     "LLMConfig",
     "LLMMetrics",
     "LLMSnapshot",
     "LLMState",
     "LLMStats",
+    "ModelList",
     "PendingKey",
     "PoolSnapshot",
     "SyncReport",
@@ -25,8 +27,6 @@ HOST_FACING = {
 INTERNAL = {
     "AsyncResourceProtocol",
     "DeclaredModels",
-    "KeyInfo",
-    "ModelList",
     "PoolHealth",
 }
 

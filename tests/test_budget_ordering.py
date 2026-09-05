@@ -76,7 +76,7 @@ async def _router(*names: str) -> tuple[Router, LLMPool, _RecordingStore]:
 def _provider(hangs: set[str]):
     """Answer at once, unless this model is in ``hangs`` — then never."""
 
-    async def fake(config, api_key, messages, tools, *, client=None, timeout=None):  # noqa: ARG001
+    async def fake(config, api_key, messages, tools, *, client=None, timeout=None, params=None):  # noqa: ARG001
         if config.name in hangs:
             await asyncio.sleep(_HANG_SEC)
         return f"{config.name} answered", None, None

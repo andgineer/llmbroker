@@ -1,6 +1,7 @@
 """Pool streaming: failover before the first delta, no failover after it."""
 
 import asyncio
+import json
 from contextlib import aclosing
 
 import httpx
@@ -967,3 +968,83 @@ def test_a_stream_handle_never_names_an_answer_that_carried_no_delta(tmp_path):
     assert llm_name is None
     assert row.status is CallStatus.ERROR
     assert row.score is None
+
+
+# --------------------------------------------------------------------------- #
+# response_format on the streaming path
+# --------------------------------------------------------------------------- #
+
+_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {"name": "card", "schema": {"type": "object"}, "strict": True},
+}
+
+
+def _stream_bodies(responder, **kwargs) -> tuple[list[dict], list[str]]:
+    """Drain one routed stream over a mock transport, returning every body posted."""
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return responder(len(bodies))
+
+    async def run():
+        router = Router(await _pool(_cfg("a", "a"), _cfg("b", "b")), _RecordingStore())
+        _mount(router, handler)
+        return await _drain(router, **kwargs)
+
+    return bodies, asyncio.run(run())
+
+
+def _sse_ok(_n: int) -> httpx.Response:
+    return httpx.Response(
+        200,
+        content=_sse("hi"),
+        headers={"content-type": "text/event-stream"},
+    )
+
+
+def test_stream_response_format_reaches_the_body_and_keeps_the_streaming_keys():
+    bodies, deltas = _stream_bodies(_sse_ok, response_format=_SCHEMA)
+    assert deltas == ["hi"]
+    assert bodies[0]["response_format"] == _SCHEMA
+    assert bodies[0]["stream"] is True
+    assert bodies[0]["stream_options"] == {"include_usage": True}
+
+
+def test_stream_response_format_survives_a_failover_unchanged():
+    def responder(n: int) -> httpx.Response:
+        return httpx.Response(500, text="nope") if n == 1 else _sse_ok(n)
+
+    bodies, deltas = _stream_bodies(responder, response_format=_SCHEMA)
+    assert deltas == ["hi"]
+    assert len(bodies) == 2
+    assert bodies[0]["response_format"] == bodies[1]["response_format"] == _SCHEMA
+
+
+def test_omitting_response_format_streams_the_body_it_streamed_before():
+    bodies, _deltas = _stream_bodies(_sse_ok)
+    assert bodies[0] == {
+        "model": "m",
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+
+
+def test_broker_stream_carries_response_format_through_every_hop(tmp_path):
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return _ok_sse("hi")(request)
+
+    async def run():
+        broker = await _streaming_broker(tmp_path, handler, "a")
+        async with broker:
+            assert [d async for d in broker.stream("hi", response_format=_SCHEMA)] == ["hi"]
+            assert [d async for d in broker.llms.stream("hi", response_format=_SCHEMA)] == ["hi"]
+            assert [d async for d in broker.stream("hi")] == ["hi"]
+
+    asyncio.run(run())
+    assert [body.get("response_format") for body in bodies] == [_SCHEMA, _SCHEMA, None]

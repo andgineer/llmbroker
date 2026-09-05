@@ -116,6 +116,7 @@ class LLMs:
         wait: float | None = None,
         fastest_of: int | None = None,
         parallel_recovery: bool = True,
+        response_format: dict | None = None,
     ) -> Result:
         return Result(
             self._run,
@@ -127,6 +128,7 @@ class LLMs:
                     wait=wait,
                     fastest_of=fastest_of,
                     parallel_recovery=parallel_recovery,
+                    response_format=response_format,
                 ),
             ),
         )
@@ -141,6 +143,7 @@ class LLMs:
         wait: float | None = None,
         fastest_of: int | None = None,
         parallel_recovery: bool = True,
+        response_format: dict | None = None,
     ) -> Result:
         return Result(
             self._run,
@@ -153,6 +156,7 @@ class LLMs:
                     wait=wait,
                     fastest_of=fastest_of,
                     parallel_recovery=parallel_recovery,
+                    response_format=response_format,
                 ),
             ),
         )
@@ -275,6 +279,7 @@ class Broker:
         wait: float | None = None,
         fastest_of: int | None = None,
         parallel_recovery: bool = True,
+        response_format: dict | None = None,
     ) -> Result:
         return self.llms.ask(
             prompt,
@@ -283,6 +288,7 @@ class Broker:
             wait=wait,
             fastest_of=fastest_of,
             parallel_recovery=parallel_recovery,
+            response_format=response_format,
         )
 
     def chat(  # noqa: PLR0913 - what to send, and the call knobs
@@ -295,6 +301,7 @@ class Broker:
         wait: float | None = None,
         fastest_of: int | None = None,
         parallel_recovery: bool = True,
+        response_format: dict | None = None,
     ) -> Result:
         return self.llms.chat(
             messages,
@@ -304,6 +311,7 @@ class Broker:
             wait=wait,
             fastest_of=fastest_of,
             parallel_recovery=parallel_recovery,
+            response_format=response_format,
         )
 
     def direct(self, alias: str | None = None, *, name: str | None = None) -> DirectClient:

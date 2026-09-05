@@ -21,6 +21,7 @@ from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import FileStore, InMemoryStore
+from llmbroker.sync import Broker as SyncBroker
 
 
 def _registry(tmp_path, entries=None, filename="llms.toml"):
@@ -938,3 +939,67 @@ def test_sqlite_source_default_store_is_sqlite_store(tmp_path):
             assert isinstance(broker._store, DriverStore)
 
     asyncio.run(run())
+
+
+# --------------------------------------------------------------------------- #
+# response_format: the keyword survives every delegation hop
+# --------------------------------------------------------------------------- #
+
+_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {"name": "card", "schema": {"type": "object"}, "strict": True},
+}
+
+
+def _posted_formats(http) -> list:
+    return [call.kwargs["json"].get("response_format") for call in http.post.await_args_list]
+
+
+def test_async_broker_ask_and_chat_carry_response_format_to_the_provider(tmp_path):
+    http = _http_ok("yes")
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore(), sync=None
+        ) as broker:
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=http):
+                await broker.ask("prompt", response_format=_SCHEMA)
+                await broker.chat([{"role": "user", "content": "hi"}], response_format=_SCHEMA)
+                await broker.llms.ask("prompt", response_format=_SCHEMA)
+                await broker.llms.chat(
+                    [{"role": "user", "content": "hi"}],
+                    response_format=_SCHEMA,
+                )
+
+    asyncio.run(run())
+    assert _posted_formats(http) == [_SCHEMA] * 4
+
+
+def test_a_call_without_response_format_posts_no_such_key(tmp_path):
+    http = _http_ok("yes")
+
+    async def run():
+        async with AsyncBroker(
+            registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore(), sync=None
+        ) as broker:
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=http):
+                await broker.ask("prompt")
+
+    asyncio.run(run())
+    assert "response_format" not in http.post.await_args.kwargs["json"]
+
+
+def test_sync_broker_ask_and_chat_carry_response_format_to_the_provider(tmp_path):
+    http = _http_ok("yes")
+    broker = SyncBroker(
+        registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore(), sync=None
+    )
+    try:
+        with patch("llmbroker.chat.httpx.AsyncClient", return_value=http):
+            broker.ask("prompt", response_format=_SCHEMA)
+            broker.chat([{"role": "user", "content": "hi"}], response_format=_SCHEMA)
+            broker.llms.ask("prompt", response_format=_SCHEMA)
+            broker.llms.chat([{"role": "user", "content": "hi"}], response_format=_SCHEMA)
+    finally:
+        broker.close()
+    assert _posted_formats(http) == [_SCHEMA] * 4

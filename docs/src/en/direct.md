@@ -83,6 +83,42 @@ direct opus anthropic claude-opus-5 https://api.anthropic.com/v1 ANTHROPIC_API_K
 direct sonnet anthropic claude-sonnet-5 https://api.anthropic.com/v1 ANTHROPIC_API_KEY
 ```
 
+## Reading the catalog from a program {#curated}
+
+`llmbroker list` is for a human. The same two curated files are readable as data,
+with no broker and no network — they come from the copy already on this machine,
+the wheel's copy under it:
+
+```python
+from llmbroker import curated_paid, curated_pool, curated_providers
+
+for row in curated_paid():
+    print(row.alias or "-", row.name, row.label)
+
+for provider in curated_providers():
+    print(provider.id, provider.base_url, provider.api_key_ref)
+
+print(len(curated_pool().configs), "free models curated")
+```
+
+This is where a **model the catalog does not carry** comes from — a new release,
+or one you want to benchmark before anyone curates it. Ask the provider for a
+declaration and pass it to `direct=`:
+
+```python
+anthropic = next(p for p in curated_providers() if p.id == "anthropic")
+broker = llmbroker.Broker(direct=[anthropic.declare("claude-opus-9-preview")])
+broker.direct(name="anthropic-claude-opus-9-preview").ask("...")
+```
+
+`declare()` fills in the base url and key reference for you; the rest is the same
+fully stated config as the section above, so nothing ever re-points it. A curated
+row has `.declare()` too, which pins that row's exact model id — pass the alias
+string instead if you want it to keep following the catalog.
+
+Nothing here refreshes anything: these functions read, `sync` writes. See
+[Errors](#errors) for what a missing key raises.
+
 ## `alias` and `name` are separate keyspaces
 
 A call site says which one it means. That makes `direct(name=...)` a **version
@@ -137,6 +173,34 @@ with llmbroker.Broker(direct=["opus"]) as broker:
     result = broker.direct("opus").ask("...")
     print(result.text)
 ```
+
+## Request parameters {#params}
+
+You named the model, so you may send it whatever it documents — a reasoning
+budget, a temperature, a token cap, a seed. `params` is a mapping merged into the
+request body verbatim: both clients accept it on `ask()`, and the async client
+accepts it on `stream()` too:
+
+```python
+client = broker.direct("opus")
+client.ask("...", params={"reasoning_effort": "low", "temperature": 0})
+```
+
+llmbroker does not read, validate, rewrite or default what is in there, and does
+not promise the provider honors it: an unsupported parameter is your error, and
+the provider's own message is the report of it. What is inside `params` is the
+provider's vocabulary, what is beside it (`messages=`, `timeout=`) is llmbroker's.
+
+The five keys llmbroker builds itself — `model`, `messages`, `stream`,
+`stream_options`, `tools` — raise `ValueError` naming the key instead of being
+merged: a moved `model` would answer as a model nobody named, and a flipped
+streaming switch would hand the body to the wrong reader. `tool_choice` is not on
+that list, so `params={"tool_choice": "required"}` overrides the `"auto"` set
+alongside `tools`.
+
+This is the direct path only. Pooled calls carry a parameter only where it has
+been weighed for the whole pool one at a time — see
+[schema-constrained output](usage.md#response-format).
 
 ## Errors {#errors}
 

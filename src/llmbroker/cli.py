@@ -8,6 +8,7 @@ import tempfile
 import tomllib
 from pathlib import Path
 
+from llmbroker.broker.curated import models_from
 from llmbroker.broker.presets import PAID_CATALOG, POOL_PRESET, PRESET_NAME_RE, PresetSource
 from llmbroker.home import home_dir
 from llmbroker.models import KeyInfo, LLMConfig
@@ -84,18 +85,11 @@ def _pool_lines(data: dict) -> list[str]:
 def _direct_lines(data: dict) -> list[str]:
     """One line per paid model: the alias ``direct=`` takes, then the four fields a
     version-pinned declaration states for itself. ``-`` where the catalog has no alias."""
-    lines: list[str] = []
-    for prov in data.get("provider", []):
-        if not isinstance(prov, dict):
-            continue
-        for model in prov.get("models", []):
-            if not isinstance(model, dict) or not model.get("model"):
-                continue
-            lines.append(
-                f"direct {model.get('alias') or '-'} {prov.get('id', '')} {model['model']}"
-                f" {prov.get('base_url', '')} {prov.get('api_key_ref', '')}",
-            )
-    return lines
+    return [
+        f"direct {row.alias or '-'} {row.provider.id} {row.model}"
+        f" {row.provider.base_url} {row.provider.api_key_ref}"
+        for row in models_from(data)
+    ]
 
 
 def _cmd_list(_args: argparse.Namespace) -> int:

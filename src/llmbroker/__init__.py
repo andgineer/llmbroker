@@ -1,6 +1,13 @@
 """llmbroker — a standalone, host-agnostic LLM-provider broker."""
 
 from llmbroker.broker.broker import AsyncBroker
+from llmbroker.broker.curated import (
+    CuratedModel,
+    CuratedProvider,
+    curated_paid,
+    curated_pool,
+    curated_providers,
+)
 from llmbroker.broker.llms import AsyncLLMs
 from llmbroker.broker.report import format_report
 from llmbroker.broker.result import AsyncLLM, AsyncResult, StreamHandle
@@ -27,12 +34,14 @@ from llmbroker.exceptions import (
 from llmbroker.models import (
     Call,
     CallStatus,
+    KeyInfo,
     LifecyclePhase,
     LLMConfig,
     LLMMetrics,
     LLMSnapshot,
     LLMState,
     LLMStats,
+    ModelList,
     PendingKey,
     PoolSnapshot,
     SyncReport,
@@ -54,6 +63,8 @@ __all__ = [
     "Broker",
     "Call",
     "CallStatus",
+    "CuratedModel",
+    "CuratedProvider",
     "DictSecrets",
     "DirectClient",
     "DirectResult",
@@ -61,6 +72,7 @@ __all__ = [
     "FileStore",
     "InMemoryStore",
     "InvalidProviderResponseError",
+    "KeyInfo",
     "LLM",
     "LLMs",
     "LifecyclePhase",
@@ -73,6 +85,7 @@ __all__ = [
     "LLMStats",
     "LLMTimeoutError",
     "MissingKeyError",
+    "ModelList",
     "NoLLMAvailableError",
     "Optimizer",
     "PendingKey",
@@ -92,6 +105,9 @@ __all__ = [
     "Secrets",
     "Usage",
     "arun_tool_loop",
+    "curated_paid",
+    "curated_pool",
+    "curated_providers",
     "format_report",
     "run_tool_loop",
 ]

@@ -76,7 +76,11 @@ mission rather than extending it.
 - **Nothing wraps what is asked.** No prompt templates, no embeddings, no
   retrieval, no opinion about the content of a request or a reply. The tool loop
   is the one thing above a single call that ships, and all it does is repeat
-  `chat` and hand each requested tool to the application's own dispatch.
+  `chat` and hand each requested tool to the application's own dispatch. A
+  request for constrained output is forwarded on the same terms and never
+  guaranteed: llmbroker does not read the caller's schema, so it cannot tell an
+  answer that obeyed one from an answer that did not, and the host holding the
+  schema is the only party that can.
 - **Free tiers are the provider's terms, not ours.** The keys are the caller's
   own, and so is the agreement each provider issued them under; llmbroker
   neither multiplies a quota nor conceals whose it is.

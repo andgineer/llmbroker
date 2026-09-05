@@ -11,6 +11,7 @@ import pytest
 
 from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
+from llmbroker.broker.curated import curated_providers
 from llmbroker.broker.presets import PresetSource
 from llmbroker.exceptions import MissingKeyError, UnknownModelError
 from llmbroker.models import LLMConfig
@@ -423,3 +424,22 @@ async def test_resolution_reads_the_cached_catalog_rather_than_the_network(tmp_p
         mp.setattr(presets, "fetch_preset_text", _boom)
         async with _broker(tmp_path, direct=["opus"], sync=None) as second:
             assert (await _resolved(second, "opus")).model == "claude-opus-4-8"
+
+
+async def test_a_curated_provider_declares_a_model_the_catalog_does_not_carry(tmp_path, served):
+    """The whole path the curated reader exists for: read the catalog as data with no
+    broker, build a declaration for a model it never listed, and reach it by name."""
+    home = tmp_path / "home"
+    (home / "presets").mkdir(parents=True)
+    (home / "presets" / "paid-catalog.toml").write_text(_CATALOG, encoding="utf-8")
+
+    provider = curated_providers(home=home)[0]
+    declared = provider.declare("claude-unreleased-9")
+    assert declared.name == "anthropic-claude-unreleased-9"
+
+    async with _broker(tmp_path, direct=[declared]) as broker:
+        cfg, key = await broker.llms.resolve_direct(name="anthropic-claude-unreleased-9")
+        assert cfg.model == "claude-unreleased-9"
+        assert cfg.base_url == "https://api.anthropic.com/v1"
+        assert key == "sk-ant"
+        assert await broker.count() == 1  # the pool holds the synced entry only

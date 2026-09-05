@@ -29,7 +29,7 @@ def _rate_limited() -> httpx.HTTPStatusError:
 
 
 async def _first_provider_is_rate_limited(
-    config, api_key, messages, tools, *, client=None, timeout=None
+    config, api_key, messages, tools, *, client=None, timeout=None, params=None
 ):  # noqa: ARG001
     """p1 always refuses; p2 answers and says which key paid for it."""
     if config.name == "p1":

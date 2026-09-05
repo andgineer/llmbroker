@@ -1,6 +1,7 @@
 """Unit tests for Router: routing logic, backoff/cooldown formula, and failover."""
 
 import asyncio
+import json
 import time
 from contextlib import aclosing
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -542,3 +543,102 @@ def test_a_store_that_cannot_record_still_drives_the_learner():
         assert await ring.resolve("K") is None  # the dead key still left the ring
 
     asyncio.run(run())
+
+
+# --------------------------------------------------------------------------- #
+# response_format: forwarded to whichever model answers, and nothing more
+# --------------------------------------------------------------------------- #
+
+_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {"name": "card", "schema": {"type": "object"}, "strict": True},
+}
+
+
+def _mock_client(handler) -> httpx.AsyncClient:
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=1.0)
+
+
+def _model_cfg(name: str) -> LLMConfig:
+    return LLMConfig(name=name, base_url="https://x/v1", model=f"{name}-model", api_key_ref="K")
+
+
+def _bodies_of(handler_result, **kwargs) -> tuple[list[dict], object]:
+    """Run one routed chat over a mock transport and return every body posted."""
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return handler_result(len(bodies))
+
+    async def run():
+        pool = await _pool(_model_cfg("a"), _model_cfg("b"))
+        router = Router(pool, _NoStore())
+        router._http_client = _mock_client(handler)
+        try:
+            return await router.chat(make_ring(), [{"role": "user", "content": "hi"}], **kwargs)
+        finally:
+            await router.aclose()
+
+    result = asyncio.run(run())
+    return bodies, result
+
+
+def _ok(_n: int) -> httpx.Response:
+    return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+
+def _fail_then_ok(n: int) -> httpx.Response:
+    return httpx.Response(500, text="nope") if n == 1 else _ok(n)
+
+
+def test_response_format_reaches_the_body_verbatim():
+    bodies, result = _bodies_of(_ok, response_format=_SCHEMA)
+    assert result.text == "ok"
+    assert bodies[0]["response_format"] == _SCHEMA
+
+
+def test_response_format_survives_a_failover_unchanged():
+    """The second candidate must be asked the same question as the first."""
+    bodies, result = _bodies_of(_fail_then_ok, response_format=_SCHEMA)
+    assert result.text == "ok"
+    assert len(bodies) == 2
+    assert bodies[0]["model"] != bodies[1]["model"]
+    assert bodies[0]["response_format"] == bodies[1]["response_format"] == _SCHEMA
+
+
+def test_omitting_response_format_posts_the_body_it_posted_before():
+    bodies, _result = _bodies_of(_ok)
+    assert bodies[0] == {"model": "a-model", "messages": [{"role": "user", "content": "hi"}]}
+
+
+def test_an_answer_that_ignores_the_schema_is_an_ordinary_successful_call():
+    """The broker never reads the caller's schema, so a non-conforming answer is a
+    success — no cooldown, no exclusion, and one OK row."""
+    store = _RecordingStore()
+
+    async def run():
+        pool = await _pool(_model_cfg("a"), _model_cfg("b"))
+        router = Router(pool, store)
+        router._http_client = _mock_client(
+            lambda _r: httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": '```json\n{"other": 1}\n```'}}]},
+            ),
+        )
+        try:
+            result = await router.chat(
+                make_ring(),
+                [{"role": "user", "content": "hi"}],
+                response_format=_SCHEMA,
+            )
+        finally:
+            await router.aclose()
+        return result, pool
+
+    result, pool = asyncio.run(run())
+    assert result.text.startswith("```json")
+    (row,) = store.calls
+    assert row.status.value == "ok"
+    assert row.cooldown_until is None
+    assert pool.state("a").phase is LifecyclePhase.AVAILABLE

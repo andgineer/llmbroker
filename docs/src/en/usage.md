@@ -262,6 +262,45 @@ with it to the end — you never receive two answers spliced together. Both opti
 are for the routed pool only; a model you reach by name with `direct()` is one
 model, so neither applies.
 
+### Asking for JSON that matches a schema {#response-format}
+
+```python
+reply = broker.ask(
+    "Give me the card for the word 'tenacious'",
+    operation="card",
+    response_format={
+        "type": "json_schema",
+        "json_schema": {"name": "card", "schema": MY_SCHEMA, "strict": True},
+    },
+)
+```
+
+`response_format` is passed to whichever model answers, unchanged. Both sync and
+async callers accept it on `ask` and `chat`; the async caller accepts it on
+`stream` too. It is the provider's own OpenAI-style value; llmbroker never reads
+it.
+
+**The broker routes it, it does not guarantee it.** The pool is heterogeneous:
+some members honor a strict schema on every attempt, and some accept the parameter
+and then answer in a shape of their own. llmbroker cannot tell the two apart —
+telling them apart means reading the answer against your schema, and your schema's
+meaning is yours. So keep validating what you get.
+
+That validation is also the fix. Feed it back as a
+[quality rating](#quality) with an `operation=` for this task, and the members that
+ignore your schema sort last for it — the ordering the pool already has, no new
+machinery. Against prompting for JSON, which is what you would do otherwise, the
+parameter strictly wins: the same answer from the members that ignore it, and an
+exactly conforming one from those that do not.
+
+A model that answers off-schema has not failed: it is an ordinary successful call,
+so nothing is cooled down and no failover follows. Measured behaviour of the
+curated free pool is recorded in `specs/reference/freetier-providers.md`.
+
+This is the routed pool. A model you reach by
+[`direct()`](direct.md#params) takes arbitrary request parameters instead, because
+you named it.
+
 ### When nobody can answer {#errors}
 
 The pool works through the models until one answers. A model that returns HTTP 200
