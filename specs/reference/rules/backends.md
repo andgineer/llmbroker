@@ -90,6 +90,9 @@ machine, falling back to the platform cache directory and then to a per-user
 temp directory. Resolution never raises: each candidate that cannot be written
 falls through to the next, and nowhere writable is a supported outcome. Nothing
 kept there is authoritative, which is what makes that degradation acceptable.
+That fallthrough decides where state is *put*: a read of what is already there
+takes the directory it was pointed at, unprobed, so a catalog on a read-only
+mount is read rather than skipped for a writable one holding something else.
 
 ## Lifecycle
 

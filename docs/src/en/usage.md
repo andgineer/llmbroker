@@ -150,6 +150,11 @@ So `$XDG_CACHE_HOME` overrides the platform cache, and `home=` and
 `$LLMBROKER_HOME` override that in turn: which is how two projects on one machine
 keep entirely separate state.
 
+That order decides where state is *written*. Reading a copy that is already there
+is not gated on it: point `home=` at a read-only directory — a catalog mounted
+into a container — and what it holds is what you get, never a writable directory
+holding something else.
+
 Whatever happens to that directory, the broker will not break: delete it, or run
 where nothing is writable, and it still works. It re-fetches, and where no
 candidate directory is writable — the temporary one included — the state lives in

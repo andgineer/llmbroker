@@ -1,42 +1,46 @@
 # Plan — protect one in-flight call from a silent first choice
 
-**Status: problem statement only.** The need and its evidence are concrete; no
-runtime shape, public surface, ownership boundary or test placement is settled.
-Do not hand this file to an implementation executor until those questions have
-been discussed and the plan has been concretized against the then-current call
-path.
+**Status: functional direction and public setting chosen; runtime design and test
+placement remain open.** This document records the behavior agreed during design
+discussion. It is not yet an implementation plan and must not be handed to an
+implementation executor until the remaining questions and alternatives have been
+examined.
 
 ## Need
 
-An interactive caller may prefer the pool's highest-ranked available model and
-still need protection when that model consumes nearly all of the caller's answer
-budget without completing. The desired outcome is an answer materially sooner
-than the caller's overall timeout — 25 seconds in the observed host — when another
-eligible model could answer, without defining the product as an unconditional
-race for the first response on every healthy call.
+An interactive caller has one complete-answer budget and wants several eligible
+models to work on the same request in parallel. The answer must still be selected
+by speed, as `fastest_of` promises, but a streaming call must not confuse "first
+model to emit one delta" with "first model to finish an answer".
 
-The need is not yet a timing rule. In particular, it does not say that a reserve
-must start beside the preferred model immediately, nor that its answer must replace
-the preferred answer as soon as it is available. Whether either event should happen
-at once, after evidence of silence, or at some other point is deliberately open.
+The caller also prefers to begin by showing the pool's highest-ranked candidate
+when that candidate starts within a small caller-chosen interval. That preference
+is only about which provisional answer is shown while the race is unresolved. It
+does not change the final `fastest_of` verdict: the first complete valid answer is
+authoritative.
 
-## Why the existing two forms of parallelism do not state this need
+This protects the call in flight in both observed failure modes:
 
-Explicit fastest-answer routing asks several ordinary candidates to race on every
-call. That is a latency preference and spends provider quota even when the first
-choice is healthy. For a stream it commits at the first delta, which can select a
-model that starts quickly but finishes slowly or answers below the host's semantic
-bar.
+- a highest-ranked candidate may remain silent for the caller's whole budget while
+  another candidate could answer;
+- a lower-ranked candidate may emit a first delta immediately and then generate a
+  poor or very slow answer, while the higher-ranked candidate finishes first.
 
-Recovery protection covers a different uncertainty: the pool is rechecking a
-model after its own cooldown expires. An ordinary highest-ranked model can instead
-be healthy by every stored signal and still spend most or all of one caller's
-budget before this call learns that it will not finish in time.
+## Why current streaming `fastest_of` is insufficient
 
-Budget-aware ordering protects later calls after such a miss is observed. It does
-not recover the call that supplied the evidence, so the reader of that call may
-wait for the full budget and receive nothing despite another pool member being
-able to answer.
+All `fastest_of` candidates already start in parallel and share the caller's one
+answer budget. The missing behavior is not delayed scheduling or a division of the
+budget between models. It is settlement of a streaming race.
+
+An atomic call naturally races complete valid answers. The current stream instead
+commits permanently at the first useful delta and cancels every other lane. That
+makes time to first token the final selection criterion, even though `wait` means
+time to a complete answer. It also discards the only lane that could replace a
+stream which later stalls or exceeds the budget.
+
+Recovery protection remains a separate concern: it decides when the pool must
+cover its own first post-cooldown recheck. The behavior here belongs to an explicit
+`fastest_of` call and retains its ordinary quota cost.
 
 ## Evidence from an interactive host
 
@@ -57,41 +61,158 @@ parallelism: a top choice can remain silent for the caller's whole budget, leavi
 no time inside that call for a sequential fallback. The library learns from the
 miss and improves later ordering, but that reader has already waited in vain.
 
-Together these observations define the gap. Always racing from time zero is too
-eager for this caller; learning only after the full miss is too late for the call
-that needs protection.
+Together these observations define the gap. The parallel work is useful; settling
+a streaming race permanently on its first delta is the behavior that loses the
+value of that work.
 
-## Questions deliberately left open
+## Chosen functional behavior
 
-- What observation, if any, should make another candidate eligible while the
-  preferred attempt is still in flight?
-- When may another attempt start, given that the one complete-answer budget remains
-  the caller's and requests consume finite provider quota?
-- If more than one attempt produces output, what makes one answer authoritative,
-  and can that differ between a completion and a stream?
-- How should the call behave when the preferred answer begins before the reserve
-  starts, begins after it starts, or finishes after another answer is available?
-- What evidence belongs to the current call only, and what may teach later routing
-  without confusing slowness, availability and host-rated quality?
-- How can the host express the need without selecting model names or recreating the
-  pool's routing policy outside llmbroker?
+### Every lane starts together
 
-These questions interact with the no-splice stream boundary, the single caller
-budget, provider quotas, cancellation and journaling. They are not answered here.
+`fastest_of=N` reserves the ordinary top `N` distinct eligible candidates and
+starts all of them at once, as it does today. They retain one shared caller budget;
+there is no per-attempt slice and no delayed fallback request.
 
-## Out of scope at this stage
+The pool's highest-ranked lane is the preferred lane. The other lanes are reserves
+only in the sense that their output may initially be hidden; they are doing the
+same provider work from the beginning.
 
-- A proposed scheduling algorithm or delay.
-- A new argument, result type, exception or configuration field.
-- A rule that every call runs more than one ordinary provider request.
-- A promise that a reserve answer is acceptable merely because it is available.
-- Changes to cooldown, quality demotion, priority or budget-aware ordering.
-- Implementation work, tests or spec edits.
+### Selecting the provisional stream
+
+`stream_selection_window`, expressed in seconds and defaulting to `1.5`, gives the
+preferred lane a bounded opportunity to supply the stream's first useful delta.
+It is meaningful only for a streaming call with more than one `fastest_of` lane.
+
+- If the preferred lane produces a useful delta within that duration, it is
+  streamed immediately. There is no reason to wait for a reserve once the lane
+  which already has priority has begun.
+- A reserve that produces deltas first is consumed and buffered internally. Its
+  output is not yet shown while the preferred lane's interval remains.
+- If the preferred lane begins within the interval, its output becomes the
+  provisional stream and the reserve remains alive in the background.
+- If the interval expires while the preferred lane is still silent, the earliest
+  reserve output already buffered becomes the provisional stream.
+- If every lane is still silent at expiry, the next lane to produce a useful delta
+  becomes the provisional stream.
+
+With more than two lanes, the bounded preference belongs only to the highest-ranked
+lane. Reserves continue to compete by speed; this setting is not a second ranking
+algorithm.
+
+Expiry of the interval is neither an attempt timeout nor evidence about model
+availability or answer latency. It does not cancel, cool, demote or teach anything
+about the preferred lane. It only ends its privilege in selecting provisional
+output.
+
+The default comes from echo-words' interactive paced measurements of the pool's
+highest-ranked workhorse. It produced its first delta within 1.0 seconds on 43 of
+51 calls, within 1.25 seconds on 46, within 1.5 seconds on 49 and within 2.0
+seconds on 50. The extra half-second from 1.0 to 1.5 therefore avoids six likely
+provisional replacements; the next half-second avoids only one while delaying an
+already-answering reserve by that same additional amount whenever the preferred
+lane is silent. The larger one-note sample shows the same knee: among 1,026
+recorded under-five-second starts, 90.0% were within 1.0 seconds and 97.9% within
+1.5. The existing two-lane run retained only the winning lane's timings, so it
+cannot replay exact replacement rates for candidate window values; that direct
+measurement remains part of the implementation gate.
+
+### Selecting the authoritative answer
+
+Choosing a provisional stream does not settle the race. Every viable lane keeps
+running until one produces a complete valid answer or the caller's budget expires.
+
+- If the provisional lane completes first, its answer is authoritative. The call
+  ends normally and the remaining lanes are cancelled.
+- If another lane completes first after provisional deltas have reached the caller,
+  that complete answer is authoritative. The provisional stream terminates with a
+  distinct exception carrying the complete replacement result.
+- The caller handles that exception by discarding every provisional delta and
+  replacing it with the supplied complete answer. No output from different models
+  is ever spliced together.
+- If a lane completes before any delta has been exposed, no replacement signal is
+  necessary: its buffered answer can be delivered as the call's ordinary output.
+- A real failure in a background lane is settled normally and does not interrupt a
+  still-viable provisional lane.
+- A failure or expiry in the provisional lane does not end the call while another
+  lane can still complete within the shared budget. A later complete answer from
+  that lane is delivered through the replacement path.
+- If no lane completes inside the caller's budget, the call ends on the appropriate
+  timeout or failure. Partial provisional output remains non-authoritative.
+
+The replacement result must carry everything an ordinary completed routed result
+does, including its model, call id, text, usage where available, operation context
+and ability to receive the host's quality rating. After replacement, final call
+identity and rating must name the model whose complete answer became authoritative,
+not the model whose provisional deltas were discarded.
+
+### What `fastest_of` means after this change
+
+The final winner is still selected exclusively by speed: it is the first complete
+valid answer. The bounded preference setting does not give the first pool model
+extra time to win the completed race. It only reduces the probability that the
+application begins rendering one model and later has to replace it with another.
+
+In particular, if a reserve completes and the preferred model would also have
+completed later but still within `wait`, the reserve remains the winner. Waiting
+until the whole budget expires merely to discover whether the preferred answer
+would eventually finish would defeat `fastest_of` and add latency after a complete
+answer is already available.
+
+## Consequences
+
+- Streaming consumers opting into this behavior must implement whole-answer
+  replacement. This is more work than consuming `AsyncIterator[str]` alone.
+- An exception is intentionally loud for a consumer that has not implemented the
+  new contract: it must not silently treat discarded provisional text as a
+  successful final answer.
+- Reserve output must be buffered up to a complete answer, so memory is spent in
+  addition to the provider quota already implied by `fastest_of`.
+- A model can be shown provisionally and still lose. "Produced output" therefore
+  no longer implies "answered the routed call" under this mode.
+- The existing no-splice boundary remains intact: replacement is whole-answer
+  substitution performed by the host, never continuation of one model's text by
+  another.
+
+## Still open before implementation
+
+- Exact validation for `stream_selection_window`, including the treatment of zero,
+  negative values and calls without multiple `fastest_of` lanes.
+- The exception/result names and whether the replacement is an `AsyncResult` or a
+  narrower immutable value with equivalent rating capability.
+- Whether this behavior is activated by the new setting alone or by a separate
+  explicit switch, and what a zero or omitted duration means for compatibility.
+- The precise precedence when a buffered reserve completes during the preferred
+  lane's initial interval. The general first-complete rule suggests settling at
+  once, but the interaction should be stated explicitly.
+- How a provisional lane's replacement appears in the journal: existing
+  `SUPERSEDED`, a more specific outcome, or additional structured detail. It must
+  not become availability, budget-bound or quality evidence merely because another
+  lane completed first.
+- How recovery-owned parallelism composes with this `fastest_of` behavior without
+  creating an unintended extra lane or changing recovery semantics.
+- How the single provider-time budget is paused consistently across every lane
+  while the external consumer is holding a yielded delta.
+- Failure precedence when all lanes fail differently, especially after provisional
+  output has already reached the caller.
+- Buffer limits and cancellation/settlement ordering.
+- Controlled measurements against alternative semantics. At minimum compare full
+  completion rate inside the host budget, authoritative-model distribution,
+  host-rated quality, visible first-delta latency, replacement frequency, full
+  latency and duplicate provider usage.
+
+## Out of scope for this functional decision
+
+- Implementation and tests.
+- Concrete source ownership or scheduler structure.
+- API details other than the chosen `stream_selection_window=1.5` surface.
+- Changes to cooldown, quality demotion, pool priority or budget-aware ordering.
+- A promise that the fastest complete reserve answer satisfies the host's semantic
+  quality bar; host ratings and pool ordering remain the available quality signals.
 
 ## Gate to concretization
 
-Before this becomes executable, compare candidate semantics against the standing
-call-path decisions, design a controlled measurement that separates protection of
-the in-flight call from unconditional fastest-answer routing, and settle the
-questions above. Only then bind the need to current source, public behavior and
-tests.
+Continue the brainstorm by comparing this behavior with alternatives, especially
+ones that reduce replacement frequency or provider cost without turning stream
+settlement back into a first-token race. Once the remaining semantics are settled,
+bind them to the current call path, public surface, journaling and tests in a
+separate implementation-ready revision.

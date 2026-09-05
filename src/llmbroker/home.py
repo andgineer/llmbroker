@@ -81,3 +81,10 @@ def home_dir(override: str | Path | None = None) -> Path | None:
         if _is_writable(candidate):
             return candidate
     return None
+
+
+def home_dir_for_read(override: str | Path | None = None) -> Path | None:
+    """The directory a read of already-cached state takes: the one named, unprobed.
+    A read writes nothing, so a read-only directory is a perfectly good answer; with
+    nothing named it is ``home_dir()``, where a write would have put the copy."""
+    return Path(override).expanduser() if override is not None else home_dir()

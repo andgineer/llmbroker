@@ -8,7 +8,7 @@ import pytest
 
 from llmbroker import home
 from llmbroker.broker.broker import AsyncBroker
-from llmbroker.home import HOME_ENV_VAR, home_dir
+from llmbroker.home import HOME_ENV_VAR, home_dir, home_dir_for_read
 from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import InMemoryStore
@@ -70,6 +70,16 @@ def test_the_platform_directory_is_used_when_no_env_var_is_set(tmp_path, monkeyp
     monkeypatch.delenv(HOME_ENV_VAR, raising=False)
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
     assert home_dir() == tmp_path / "xdg" / "llmbroker"
+
+
+def test_a_read_takes_the_named_directory_unprobed(tmp_path, monkeypatch):
+    monkeypatch.setattr(home, "_is_writable", lambda _path: False)
+    assert home_dir_for_read(tmp_path / "mounted") == tmp_path / "mounted"
+
+
+def test_a_read_with_nothing_named_takes_the_home_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv(HOME_ENV_VAR, str(tmp_path / "env-home"))
+    assert home_dir_for_read() == tmp_path / "env-home"
 
 
 def _broker(tmp_path, **kwargs) -> AsyncBroker:

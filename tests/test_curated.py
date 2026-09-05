@@ -2,6 +2,7 @@
 
 import pytest
 
+from llmbroker import home
 from llmbroker.broker import presets
 from llmbroker.broker.curated import (
     CuratedProvider,
@@ -35,6 +36,11 @@ _CATALOG = {
         "not a table",
     ],
 }
+
+_MOUNTED_CATALOG = (
+    '[[provider]]\nid="mounted"\nbase_url="https://mounted/v1"\napi_key_ref="MOUNTED_KEY"\n'
+    '  [[provider.models]]\n  model="mounted-1"\n'
+)
 
 _CACHED_CATALOG = (
     '[[provider]]\nid="cached"\nbase_url="https://cached/v1"\napi_key_ref="CACHED_KEY"\n'
@@ -116,6 +122,25 @@ def test_home_points_the_read_at_another_machine_copy(tmp_path, bundled_presets)
     (cache / "paid-catalog.toml").write_text(_CACHED_CATALOG, encoding="utf-8")
     assert [row.model for row in curated_paid(home=tmp_path)] == ["cached-1"]
     assert [p.id for p in curated_providers(home=tmp_path)] == ["cached"]
+
+
+def test_home_is_read_where_it_cannot_be_written(tmp_path, monkeypatch, llmbroker_home):
+    """A catalog on a read-only mount is a perfectly good read: falling through to
+    another machine directory would answer with a different provider's endpoints."""
+    monkeypatch.setattr(home, "_is_writable", lambda path: path != tmp_path)
+    cache = llmbroker_home / "presets"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "paid-catalog.toml").write_text(_CACHED_CATALOG, encoding="utf-8")
+    (tmp_path / "presets").mkdir()
+    (tmp_path / "presets" / "paid-catalog.toml").write_text(_MOUNTED_CATALOG, encoding="utf-8")
+    assert [row.model for row in curated_paid(home=tmp_path)] == ["mounted-1"]
+    assert [p.id for p in curated_providers(home=tmp_path)] == ["mounted"]
+
+
+def test_a_read_creates_nothing(tmp_path, bundled_presets):
+    absent = tmp_path / "absent"
+    assert curated_paid(home=absent)
+    assert not absent.exists()
 
 
 def test_a_declared_provider_is_a_plain_dataclass():

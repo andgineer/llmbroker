@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from llmbroker.broker.presets import PAID_CATALOG, POOL_PRESET, PresetSource
-from llmbroker.home import home_dir
+from llmbroker.home import home_dir_for_read
 from llmbroker.models import LLMConfig, ModelList
 from llmbroker.standalone.registry import parse_model_list
 
@@ -105,7 +105,7 @@ def models_from(catalog: dict) -> tuple[CuratedModel, ...]:
 def _catalog_text(name: str, home: str | Path | None) -> str:
     """The curated text already on this machine, the wheel's copy under it. Never the
     network: an enumeration must not put a fetch behind an innocuous-looking read."""
-    return PresetSource(home_dir(home)).text(name, prefer_cache=True, fetch=False)
+    return PresetSource(home_dir_for_read(home)).text(name, prefer_cache=True, fetch=False)
 
 
 def curated_providers(*, home: str | Path | None = None) -> tuple[CuratedProvider, ...]:
