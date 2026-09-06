@@ -1,6 +1,6 @@
 # Disabling models
 
-Take a model out of routing manually — completely, until you enable it back:
+You can remove a model from the pool manually and enable it again later:
 
 ```python
 broker.disable_llm("groq-llama")
@@ -8,15 +8,16 @@ broker.disable_llm("groq-llama")
 broker.enable_llm("groq-llama")
 ```
 
-The verdict survives a preset `sync` and does not touch the model's accumulated
-quality history.
+The setting remains in effect after `sync` and does not change the model's
+accumulated quality history.
 
-A pool state snapshot shows who is disabled — one entry per model:
+Use `snapshot()` to inspect the current state of every model:
 
 ```python
 for name, entry in broker.snapshot().items():
     print(name, entry.disabled, entry.has_key, entry.cooldown_until, entry.demoted_operations)
 ```
 
-Fields — in [`LLMSnapshot`](reference.md#llmbroker.models.LLMSnapshot); the
-pool-wide picture is in [Monitoring and the journal](monitoring.md#pool-health).
+The fields are documented in
+[`LLMSnapshot`](reference.md#llmbroker.models.LLMSnapshot). See
+[Monitoring and the journal](monitoring.md#pool-health) for the pool-wide state.

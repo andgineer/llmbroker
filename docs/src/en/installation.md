@@ -10,14 +10,14 @@
 uv pip install llmbroker
 ```
 
-That is enough: `Broker()` works with no extra at all.
+That is enough to use `Broker()` without optional dependencies.
 
-### Storing in a DB
+### Database storage
 
-llmbroker keeps a model list, keys and a call journal — by default in its own
-directory on the machine. To put that in a DB instead — including one shared
-across instances — install that DB's extra (see
-[Servers & clusters](server.md)):
+By default, llmbroker keeps the model list, keys, and call journal in a local
+directory. To use a database, including one shared by several application
+instances, install the matching optional dependency. See
+[Servers & clusters](server.md).
 
 ```bash
 uv pip install "llmbroker[sqlite]"
@@ -27,9 +27,9 @@ uv pip install "llmbroker[mongodb]"
 
 ### Keys in a secrets store
 
-llmbroker reads keys from the environment and `.env`, or from the DB where you
-named one. To keep them in a secrets store of their own (see
-[API keys](secrets.md)):
+By default, llmbroker reads keys from environment variables and `.env`. When a
+database is configured, keys can be stored there. Install the matching optional
+dependency to use a dedicated secrets store. See [API keys](secrets.md).
 
 ```bash
 uv pip install "llmbroker[aws]"    # AWS Secrets Manager

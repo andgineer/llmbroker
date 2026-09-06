@@ -1,19 +1,19 @@
 # llmbroker
 
-Combine many free, rate-limited LLMs into one reliable model — with no premium
-subscription and no single point of failure. No heavyweight dependencies like
-LangChain.
+llmbroker presents several free language models through one interface. If one
+model is unavailable or rate-limited, the broker tries another. It requires no
+paid subscription or large dependency such as LangChain.
 
 ## Quick start
 
-[Install llmbroker](installation.md). Free models are called with the providers'
-API keys — which keys you need and where to get them, llmbroker tells you itself:
+[Install llmbroker](installation.md). Free models require provider API keys. This
+command creates a `.env` template and tells you where to obtain each key:
 
 ```bash
-llmbroker env freetier > .env   # a .env skeleton: each key, and above it where to get it
+llmbroker env freetier > .env
 ```
 
-Fill in whichever are easy to get — one is enough — and call:
+Add at least one key, then create a broker and send a request:
 
 ```python
 import llmbroker
@@ -22,35 +22,33 @@ broker = llmbroker.Broker()
 print(broker.ask("Hello, how are you?").text)
 ```
 
-That is the whole setup — no config file. `Broker()` brings up a curated pool of
-free models, reads keys from the environment (and from a `.env` in the working
-directory) and keeps the model list current by itself.
+No separate configuration file is required. `Broker()` loads the maintained list
+of free models, reads keys from environment variables and `.env` in the working
+directory, and updates the list automatically.
 
-A key you never got breaks nothing: a model without one simply stays inactive.
-And when a model hits its rate limit, the broker cools it down and moves to the
-next — you get an answer rather than an error, for as long as one model is alive.
+A model without a key is simply not used. If a provider rate-limits a request,
+the broker tries the next available model. It returns an error only when no model
+can answer.
 
 ## What it can do
 
-- **No configuration** — `Broker()` takes no arguments at all: the curated pool
-  arrives on its own and [keeps itself fresh](usage.md#sync).
-- **Automatic failover** — the broker works through the models until one answers;
-  when nobody can, `NoLLMAvailableError` [says why](usage.md#errors).
-- **Chat, tools and agents** — `ask`, multi-turn `chat`, [the whole tool loop in
-  one function](tools.md).
-- **Async and streaming** — [the same API with `await`](async.md), and the answer
-  can be printed as the model writes it.
-- **A paid model by name** — [`direct("opus")`](direct.md) alongside the free
-  pool: an eternal alias instead of a version number, called directly, past the
-  pool.
-- **A pool that learns** — [rate the answers](usage.md#quality) and weak models
-  drop to the back of the queue.
+- **No required configuration** — `Broker()` takes no arguments, and the free
+  model list [updates automatically](usage.md#sync).
+- **Automatic model fallback** — the broker tries models until one answers. If
+  none can, the `reason` field on
+  [`NoLLMAvailableError`](usage.md#errors) explains why.
+- **Chat, tools, and agents** — `ask`, multi-turn `chat`, and a
+  [complete tool-call loop](tools.md).
+- **Async calls and streaming** — [an API based on `await`](async.md), with
+  incremental output as the model generates it.
+- **Direct paid-model calls** — [`direct("opus")`](direct.md) calls a model by a
+  stable alias, independently of the pool.
+- **Quality-based selection** — [reply ratings](usage.md#quality) affect the
+  order used for later requests.
 - **Keys anywhere** — the environment, `.env`, a DB, [AWS, Vault](secrets.md) or
   storage of your own; a key per user.
-- **Scaling without code changes** — [a shared DB](server.md) across processes
-  and hosts, [an endpoint of your own in the same
-  routing](server.md#own-entry).
-- **You can see what happens** — [pool snapshot, call journal and
-  statistics](monitoring.md), tracing by your own `trace_id`, an alarm on
-  degradation.
+- **Scaling without code changes** — [a shared database](server.md) for multiple
+  processes or hosts, plus [your own models in the pool](server.md#own-entry).
+- **Operational visibility** — [pool state, a call journal, and
+  statistics](monitoring.md), lookup by `trace_id`, and availability alerts.
 - **[Disabling models](disable.md)** by hand.
