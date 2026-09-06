@@ -123,8 +123,8 @@ class AsyncResult(RoutedCall):
 
 class StreamHandle(RoutedCall):
     """Returned by ``stream()``: an async iterator of text deltas that also names the
-    model answering them, from the first delta on — or, for an answer that had none,
-    once it ends. Closing it is the consumer's move, exactly as for the raw iterator."""
+    model answering them. Closing it is the consumer's move; under an explicit race that
+    name is provisional and unrateable until a complete answer settles the call."""
 
     def __init__(  # noqa: PLR0913
         self,

@@ -31,3 +31,12 @@ def test_the_lifecycle_errors_a_host_catches_at_startup():
     for name in ("EmptyRegistryError", "SyncRefusedError", "SchemaVersionError"):
         assert issubclass(getattr(llmbroker, name), llmbroker.LLMBrokerError)
     assert issubclass(llmbroker.LLMBrokerError, RuntimeError)
+
+
+def test_the_stream_replacement_error_is_a_request_error_carrying_the_winner():
+    """A caller catching ``LLMRequestError`` broadly must be able to catch this one
+    first, and what it carries is the whole answer plus the text to discard."""
+    assert issubclass(llmbroker.StreamReplacementError, llmbroker.LLMRequestError)
+    assert not issubclass(llmbroker.StreamReplacementError, llmbroker.StreamInterruptedError)
+    fields = inspect.signature(llmbroker.StreamReplacementError.__init__).parameters
+    assert set(fields) == {"self", "message", "replacement", "streamed_llm_name"}

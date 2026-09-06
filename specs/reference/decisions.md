@@ -200,22 +200,55 @@ parallel ordinary candidate by default. The former spends quota on every call; t
 latter spends it only when the pool is rechecking its own negative availability
 state. A caller may disable recovery parallelism to conserve quota.
 
-An atomic call commits to the first complete answer; a stream commits to the first
-useful delta, after which no other model may replace it.
+Three settlements follow, and they are not interchangeable. An atomic call settles
+on the first complete answer. A stream the pool is racing for its own recovery
+settles on the first useful delta, after which no other model may replace it. A
+stream the caller explicitly raced settles on the first complete answer as well: its
+deltas are exposed as they arrive so the reader is not made to wait, but they are
+provisional until a lane finishes, and a lane finishing first elsewhere withdraws
+them whole through a typed replacement rather than continuing them.
 
 **Blocks:** racing by issuing several ordinary pool calls; selecting model names at
 the host; making every healthy call parallel by default; putting post-cooldown
 uncertainty on the caller's critical path by default; treating a superseded lane as
 a success or failure; waiting for a complete answer before yielding a parallel
-stream; removing budget-aware ordering because parallel routing exists.
+stream; splicing one model's output onto another's; rewriting a lane's own answered
+row because a sibling settled the call; removing budget-aware ordering
+because parallel routing exists.
 **Why:** several ordinary calls may all select the same first model and independently
 multiply its cooldown streak. Pool-owned parallelism reserves distinct candidates
 and settles every attempt once. A real failure is still availability evidence, while
 cancellation only because a sibling answered first proves neither success nor
-failure. First-delta commitment preserves streaming and the existing no-splice
-boundary. Explicit fastest-answer routing and recovery protection share machinery
+failure. Explicit fastest-answer routing and recovery protection share machinery
 but serve different purposes; budget-bound ordering continues to save quota for
 sequential healthy calls.
+
+**Why an explicit stream race does not stop at the first delta.** What the caller
+asked for is the fastest *answer*, and time to first token is not that: a lane may
+open in a fraction of a second and then stall past the budget, while the lane that
+would have finished was cancelled unread the moment the first one spoke. Committing
+at the first delta throws away the only work that could still rescue the call, and
+the cost of not committing is bounded and visible — a typed replacement the host
+must handle, buffering per lane, and quota the caller already agreed to spend.
+
+**The bounded preference for the pool's first choice decides what is shown, never
+who wins.** A stream may hold the highest-ranked lane's place for a short interval
+so the common case does not begin rendering one model and then swap it. The
+alternative to name is *extending that preference to the completed race* — waiting
+out the interval, or the whole budget, to see whether the preferred model would also
+have finished. It is refused: it adds latency after a complete answer is already in
+hand, which is the one thing this option exists to remove. Expiry of the interval is
+therefore not a timeout and not evidence: it cools nothing, demotes nothing, and is
+journaled nowhere.
+
+**Two answered rows under one trace are the price of that, and the handle is what
+pays it.** Where both lanes finish, both rows are honest and neither may be
+rewritten, so a rating reached by trace resolves to whichever finished last — the
+lane that lost. The alternatives to name are *writing the slower finished lane as
+superseded*, which would have the journal claim a model was cancelled when it
+answered, and *marking authority on the row*, a second truth stored beside the
+answer for one lookup's benefit. Neither is worth it: the call already hands back a
+handle naming the winner, so that is where a race is rated.
 
 ---
 

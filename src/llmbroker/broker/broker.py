@@ -404,10 +404,11 @@ class AsyncBroker:
         fastest_of: int | None = None,
         parallel_recovery: bool = True,
         response_format: dict | None = None,
+        stream_selection_window: float = 1.0,
     ) -> StreamHandle:
         """Route a completion over the pool as a handle yielding text deltas and naming
-        what answered them. ``wait`` bounds the whole answer in provider time; past the
-        first delta a death raises ``StreamInterruptedError``. Async-only."""
+        what answered them. ``wait`` bounds the whole answer in provider time; an explicit
+        ``fastest_of`` above one may end in ``StreamReplacementError``. Async-only."""
         return self.llms.stream(
             prompt,
             operation=operation,
@@ -416,6 +417,7 @@ class AsyncBroker:
             fastest_of=fastest_of,
             parallel_recovery=parallel_recovery,
             response_format=response_format,
+            stream_selection_window=stream_selection_window,
         )
 
     async def direct(

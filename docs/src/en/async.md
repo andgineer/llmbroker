@@ -35,7 +35,65 @@ answer ends without ever producing a delta is broken in that same sense: nothing
 reached you, so it is failed over too rather than handed to you as an empty
 stream. Once text has started arriving there is nothing left to fail over to, so a
 stream that dies mid-answer raises `StreamInterruptedError`; the deltas you
-already received stand.
+already received stand. That last part is what changes when you race a stream with
+`fastest_of` — see [Racing a stream](#racing-a-stream).
+
+### Racing a stream {#racing-a-stream}
+
+`fastest_of` on a stream does more than start two models: it keeps both running until
+one has a *whole* answer. That is deliberate. The model that says its first word
+soonest is often not the model that finishes soonest, and committing to it throws away
+the only lane that could still rescue the call when it stalls or answers badly.
+
+So the deltas you receive are provisional. If another model finishes first, the stream
+stops and raises `StreamReplacementError` carrying that complete answer — you throw
+away everything you have shown and use it instead. Nothing is ever spliced.
+
+```python
+stream = broker.stream("Write a haiku", fastest_of=2, stream_selection_window=1.0)
+parts = []
+try:
+    async for delta in stream:
+        parts.append(delta)
+        show(delta)
+except llmbroker.StreamReplacementError as exc:
+    replace_everything_with(exc.replacement.text)   # exc.streamed_llm_name is discarded
+else:
+    text = "".join(parts)
+
+print(stream.llm_name)             # whichever model's answer you ended up with
+await stream.record_quality(0.9)   # rates that one, never the discarded lane
+```
+
+That handle — or `exc.replacement` — is also the only safe way to rate a race
+later. `fastest_of` on `chat` or `ask` can leave two answered calls under one trace —
+both models finished, and only one of them is the answer you got — so
+`record_quality(..., trace_id=...)` has no way to tell which. Rate any race through
+what it handed you, or keep the `call_id` off it.
+
+The exception is terminal for that iterator: after it, no more deltas belong to the
+stream. Catch it *before* a broad `LLMRequestError`, or a completed answer will be
+handled as a failure.
+
+`stream_selection_window` is what chooses which lane you see first, and nothing else.
+For that many seconds — one by default — the pool's highest-ranked lane keeps the
+right to be the visible one; if it starts inside that time you see it, otherwise you
+see whatever a sibling has already produced. A lane that fails gives the right up
+immediately rather than holding the interval out. `0` removes the preference: the
+first text to arrive is the text you see. Expiry is not a timeout and teaches the pool
+nothing — no model is cooled, set aside or ranked differently for missing it, and the
+race itself is still decided purely on who finishes first.
+
+The costs are worth stating plainly. Every lane is read to its end whatever your
+reader is doing, so each live answer is held in memory until the race settles, and the
+losers still spend their provider quota. In exchange, a model that goes quiet mid-answer
+or dribbles past your budget no longer takes the call down with it: a sibling that
+finished inside the budget replaces it. Only when no lane can finish does the failure
+belonging to the text you saw — `StreamInterruptedError` or `LLMTimeoutError` — reach
+you.
+
+Without `fastest_of`, or with `fastest_of=1`, none of this applies: an ordinary stream
+still commits at its first delta and the keyword changes nothing.
 
 ### The budget covers the whole answer {#budget}
 

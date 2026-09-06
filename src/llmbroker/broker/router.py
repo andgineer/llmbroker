@@ -3,14 +3,15 @@ every attempt. How each failure is disposed of is the contract in call-path.md."
 
 import asyncio
 import logging
+import math
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
-from contextlib import AsyncExitStack, aclosing
+from contextlib import AsyncExitStack, aclosing, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import partial
-from typing import Any, NoReturn, TypeVar
+from typing import Any, NoReturn, TypeVar, cast
 
 import httpx
 
@@ -35,6 +36,7 @@ from llmbroker.exceptions import (
     NoLLMAvailableError,
     ProviderError,
     StreamInterruptedError,
+    StreamReplacementError,
 )
 from llmbroker.http_status import (
     DETAIL_SNIPPET,
@@ -113,9 +115,23 @@ class _Outcome:
     answered: bool = False
     verdict: "_Failed | _BudgetExpired | None" = None
     superseded: bool = False
+    # The host stopped the lane it was reading: an answered attempt, not a failure.
+    stopped: bool = False
+    # Taken at provider completion, before the row is written: a slow store may not
+    # turn the second provider to finish into the first.
+    completed_at: float | None = None
+    # Run where that instant is taken, before the row is written: a driver suspended on
+    # a yield cannot act on it, and what it owes the losing lanes may not wait for a read.
+    completed: "Callable[[], None] | None" = None
     # Set once the attempt is off the provider and settling itself: cancelling it there
     # would strand the row and the slot it still owes, whatever verdict it reached.
     settling: bool = False
+    # Whether the attempt took charge of the slot acquired for it. A lane cancelled
+    # before that ran none of its own code, so the driver hands the slot back for it.
+    holds_slot: bool = False
+    # A bug, which no verdict covers and nothing was learned from: retrying the same
+    # candidate would only repeat it, so it leaves through the caller instead.
+    crashed: Exception | None = None
 
 
 @dataclass(slots=True)
@@ -163,7 +179,7 @@ class _Call:
     expired: bool = False
     losers: list["asyncio.Task[None]"] = field(default_factory=list)
 
-    def absorb(self, lane: _Lane) -> None:
+    def absorb(self, lane: "_Lane | _StreamLane") -> None:
         """Fold one failed attempt's verdict in, so every later candidate of this call
         is chosen against everything it has learned."""
         verdict = lane.outcome.verdict
@@ -175,6 +191,85 @@ class _Call:
                 self.last_client_error = verdict.error
 
 
+@dataclass(slots=True)
+class _StreamLane:
+    """One model's streaming attempt inside an explicit race: everything it has produced,
+    how much of that the caller has been given, and when it opened."""
+
+    config: LLMConfig
+    outcome: _Outcome
+    produced: AsyncIterator[str]
+    task: "asyncio.Task[None] | None" = None
+    deltas: list[str] = field(default_factory=list)
+    sent: int = 0
+    first_delta_at: float | None = None
+    failure: BaseException | None = None
+    finished: bool = False
+    absorbed: bool = False
+    retired: bool = False
+
+
+@dataclass(slots=True)
+class _StreamRace:
+    """One explicit streaming race: its lanes, which of them the caller is reading, and
+    how long the pool's own first choice keeps its claim on being that one."""
+
+    lanes: list[_StreamLane]
+    width: int
+    deadline: float = 0.0
+    wake: asyncio.Event = field(default_factory=asyncio.Event)
+    exposed: _StreamLane | None = None
+    done: bool = False
+
+    @property
+    def preferred(self) -> _StreamLane:
+        return self.lanes[0]
+
+    def live(self) -> list[_StreamLane]:
+        return [lane for lane in self.lanes if not lane.finished]
+
+    def winner(self) -> _StreamLane | None:
+        """The lane whose provider completed a valid answer first."""
+        best: _StreamLane | None = None
+        best_at = 0.0
+        for lane in self.lanes:
+            at = lane.outcome.completed_at
+            if at is not None and (best is None or at < best_at):
+                best, best_at = lane, at
+        return best
+
+    def crashed(self) -> Exception | None:
+        """A bug a lane hit. It is not a failure this call may fail over from: nothing
+        classified it, so the same candidates stay eligible and would be picked again."""
+        return next((lane.outcome.crashed for lane in self.lanes if lane.outcome.crashed), None)
+
+    def select(self) -> _StreamLane | None:
+        """Whose deltas become the provisional stream, or ``None`` while the pool's first
+        choice still holds its window and may yet begin."""
+        preferred = self.preferred
+        # Against the delta's own instant, never against now: the coordinator may reach
+        # this a scheduling tick late, and a claim would not outlive its window for that.
+        if preferred.first_delta_at is not None and preferred.first_delta_at <= self.deadline:
+            return preferred
+        if not preferred.finished and time.monotonic() < self.deadline:
+            return None
+        best: _StreamLane | None = None
+        best_at = 0.0
+        for lane in self.lanes:
+            at = lane.first_delta_at
+            if at is not None and (best is None or at < best_at):
+                best, best_at = lane, at
+        return best
+
+    def timeout(self) -> float | None:
+        """How long the coordinator may sleep — ``None`` where the window no longer
+        decides anything and only a lane reporting can move the race on."""
+        if self.exposed is not None or self.preferred.finished:
+            return None
+        remaining = self.deadline - time.monotonic()
+        return remaining if remaining > 0 else None
+
+
 def _check_lanes(fastest_of: int | None, parallel_recovery: bool) -> None:
     """Refuse both parallel options before any provider request opens."""
     if isinstance(fastest_of, bool) or (
@@ -183,6 +278,20 @@ def _check_lanes(fastest_of: int | None, parallel_recovery: bool) -> None:
         raise ValueError(f"fastest_of must be None or a positive int, got {fastest_of!r}")
     if parallel_recovery is not True and parallel_recovery is not False:
         raise ValueError(f"parallel_recovery must be True or False, got {parallel_recovery!r}")
+
+
+def _check_window(stream_selection_window: float) -> None:
+    """Refuse an unusable selection window before any provider request opens."""
+    value = stream_selection_window
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0
+    ):
+        raise ValueError(
+            f"stream_selection_window must be a finite non-negative number, got {value!r}",
+        )
 
 
 def _request_params(response_format: dict | None) -> dict[str, object] | None:
@@ -426,22 +535,8 @@ class Router:
             recovery_width=2 if parallel_recovery else 1,
         )
         while True:
-            payable = await ring.payable(c.api_key_ref for c in self._pool.configs.values())
-            try:
-                configs = await self._pool.acquire_many(
-                    queue_deadline,
-                    payable=payable,
-                    width=call.width,
-                    recovery_width=call.recovery_width,
-                    operation=operation,
-                    exclude=frozenset(call.client_failed),
-                    answer_deadline=answer_deadline,
-                )
-            except NoLLMAvailableError as exc:
-                if exc.reason == "excluded" and call.last_client_error is not None:
-                    raise call.last_client_error from None
-                raise
-
+            payable = await self._payable(ring)
+            configs = await self._acquire(call, queue_deadline, payable)
             lanes = [self._open(call, config) for config in configs]
             winner = await (
                 self._alone(call, lanes[0]) if len(lanes) == 1 else self._race(call, lanes)
@@ -458,32 +553,59 @@ class Router:
                     await self._settled(call)
                 return
             if call.expired:
-                # A request an earlier LLM already rejected as malformed stays the
-                # more useful answer than "the clock ran out" — the caller can act on it.
-                if call.last_client_error is not None:
-                    raise call.last_client_error from None
-                raise NoLLMAvailableError(
-                    timeout_message,
-                    reason="timeout",
-                    retry_at=self._pool.retry_at(payable, exclude=frozenset(call.client_failed)),
-                )
+                self._expired(call, payable, timeout_message)
             # Every lane failed without answering ⇒ loop to the next free LLM.
+
+    async def _payable(self, ring: KeyRing) -> frozenset[str]:
+        return await ring.payable(c.api_key_ref for c in self._pool.configs.values())
+
+    async def _acquire(
+        self,
+        call: _Call,
+        queue_deadline: float | None,
+        payable: frozenset[str],
+    ) -> list[LLMConfig]:
+        """Reserve this call's next candidates, or raise what the caller can act on."""
+        try:
+            return await self._pool.acquire_many(
+                queue_deadline,
+                payable=payable,
+                width=call.width,
+                recovery_width=call.recovery_width,
+                operation=call.operation,
+                exclude=frozenset(call.client_failed),
+                answer_deadline=call.answer_deadline,
+            )
+        except NoLLMAvailableError as exc:
+            if exc.reason == "excluded" and call.last_client_error is not None:
+                raise call.last_client_error from None
+            raise
+
+    def _expired(self, call: _Call, payable: frozenset[str], message: str) -> NoReturn:
+        """The budget ran out with nothing answered. A request an earlier LLM already
+        rejected as malformed stays the more useful answer than "the clock ran out"."""
+        if call.last_client_error is not None:
+            raise call.last_client_error from None
+        raise NoLLMAvailableError(
+            message,
+            reason="timeout",
+            retry_at=self._pool.retry_at(payable, exclude=frozenset(call.client_failed)),
+        )
+
+    def _produce(self, call: _Call, config: LLMConfig, outcome: _Outcome) -> AsyncIterator[Any]:
+        return call.attempt(
+            config,
+            outcome,
+            call.answer_deadline,
+            ring=call.ring,
+            operation=call.operation,
+            trace_id=call.trace_id,
+        )
 
     def _open(self, call: _Call, config: LLMConfig) -> _Lane:
         """One candidate's lane, not started until something drives it."""
         outcome = _Outcome()
-        return _Lane(
-            config=config,
-            outcome=outcome,
-            produced=call.attempt(
-                config,
-                outcome,
-                call.answer_deadline,
-                ring=call.ring,
-                operation=call.operation,
-                trace_id=call.trace_id,
-            ),
-        )
+        return _Lane(config=config, outcome=outcome, produced=self._produce(call, config, outcome))
 
     async def _alone(self, call: _Call, lane: _Lane) -> _Lane | None:
         """One candidate on the call path, which is what an ordinary healthy call is:
@@ -528,18 +650,25 @@ class Router:
             self._supersede(call, lane)
         return winner
 
-    async def _refill(self, call: _Call, opened: list[_Lane], needed: int) -> list[_Lane]:
-        """Reopen an emptied lane on a model this call has not tried. Never waits: the
-        lanes still racing must not be stalled to widen the field."""
+    async def _untried(self, call: _Call, tried: frozenset[str], needed: int) -> list[LLMConfig]:
+        """Whatever is free this instant among the models this call has not tried. Never
+        waits: the lanes still racing must not be stalled to widen the field."""
         if needed <= 0:
             return []
-        payable = await call.ring.payable(c.api_key_ref for c in self._pool.configs.values())
-        configs = await self._pool.take_free(
-            payable=payable,
+        return await self._pool.take_free(
+            payable=await self._payable(call.ring),
             width=needed,
             operation=call.operation,
-            exclude=frozenset({lane.config.name for lane in opened}) | call.client_failed,
+            exclude=tried | call.client_failed,
             answer_deadline=call.answer_deadline,
+        )
+
+    async def _refill(self, call: _Call, opened: list[_Lane], needed: int) -> list[_Lane]:
+        """Reopen an emptied lane on a model this call has not tried."""
+        configs = await self._untried(
+            call,
+            frozenset(lane.config.name for lane in opened),
+            needed,
         )
         fresh = [self._open(call, config) for config in configs]
         for lane in fresh:
@@ -557,7 +686,7 @@ class Router:
             await self._stop(lane)
         await self._settled(call)
 
-    def _supersede(self, call: _Call, lane: _Lane) -> None:
+    def _supersede(self, call: _Call, lane: "_Lane | _StreamLane") -> None:
         """Settle a lane another model has already answered past: cancelled at once, but
         journaled and released beside the answer rather than in front of it — what the
         caller is holding may not wait on a store write it will never read."""
@@ -566,7 +695,7 @@ class Router:
         call.losers.append(asyncio.create_task(self._stop(lane)))
 
     @staticmethod
-    def _cancel(lane: _Lane) -> None:
+    def _cancel(lane: "_Lane | _StreamLane") -> None:
         """Take a lane off the provider. One already settling is left to finish: it has
         applied its own verdict to the pool and owes the journal the row for it."""
         if lane.task is not None and not lane.outcome.settling:
@@ -582,13 +711,17 @@ class Router:
             if isinstance(outcome, Exception):
                 logger.warning("llmbroker: settling a superseded attempt failed: %r", outcome)
 
-    async def _stop(self, lane: _Lane) -> None:
+    async def _stop(self, lane: "_Lane | _StreamLane") -> None:
         """Let a lane finish whatever it was doing and close it. Cancelling it is the
-        caller's to do first, so a lane already settling is never cut short."""
+        caller's to do first, so a lane already settling is never cut short; one cut
+        before its attempt began ran no code at all, so its slot is handed back here."""
         task = lane.task
         if task is not None:
             await asyncio.wait([task])
-            if not task.cancelled() and task.exception() is not None:
+            if task.cancelled():
+                if not lane.outcome.holds_slot:
+                    await self._pool.release(lane.config)
+            elif task.exception() is not None:
                 logger.warning(
                     "llmbroker: the cancelled attempt on %s failed: %r",
                     lane.config.name,
@@ -597,7 +730,7 @@ class Router:
         await lane.produced.aclose()
 
     @staticmethod
-    def _publish(receipt: CallReceipt | None, winner: _Lane) -> None:
+    def _publish(receipt: CallReceipt | None, winner: "_Lane | _StreamLane") -> None:
         """Name the winner on the handle the caller holds. Each lane names itself on
         its own until it has won, so a loser can never claim the answer."""
         if receipt is None:
@@ -626,6 +759,7 @@ class Router:
         self,
         config: LLMConfig,
         ring: KeyRing,
+        outcome: _Outcome,
         *,
         operation: str | None,
         trace_id: str | None,
@@ -636,6 +770,7 @@ class Router:
         if key is None:
             await self._pool.release(config)
             return None
+        outcome.holds_slot = True
         return _Attempt(
             config=config,
             call_id=str(uuid.uuid4()),
@@ -755,7 +890,13 @@ class Router:
     ) -> AsyncIterator[AsyncResult]:
         """Run one LLM and yield its single result, or leave on ``outcome`` the verdict
         the driver fails over on."""
-        attempt = await self._new_attempt(config, ring, operation=operation, trace_id=trace_id)
+        attempt = await self._new_attempt(
+            config,
+            ring,
+            outcome,
+            operation=operation,
+            trace_id=trace_id,
+        )
         if attempt is None:
             outcome.verdict = _Failed(error=None)
             return
@@ -834,29 +975,266 @@ class Router:
         fastest_of: int | None = None,
         parallel_recovery: bool = True,
         response_format: dict | None = None,
+        stream_selection_window: float = 1.0,
     ) -> AsyncIterator[str]:
         """Route a streaming completion over the pool, yielding text deltas and naming
-        what answered on ``receipt``. Fails over exactly like ``chat`` up to the first
-        delta; past it a death raises ``StreamInterruptedError`` instead."""
+        what answered on ``receipt``. An explicit ``fastest_of`` above one races complete
+        answers and may end in ``StreamReplacementError``; see call-path.md."""
         _check_lanes(fastest_of, parallel_recovery)
-        routed = self._route(
-            partial(
-                self._stream_attempt,
-                messages=messages,
-                response_format=response_format,
-            ),
-            ring=ring,
-            operation=operation,
-            trace_id=trace_id,
-            wait=wait,
-            timeout_message="the wait budget ran out before any LLM produced a delta",
-            fastest_of=fastest_of,
-            parallel_recovery=parallel_recovery,
-            receipt=receipt,
+        _check_window(stream_selection_window)
+        attempt = partial(
+            self._stream_attempt,
+            messages=messages,
+            response_format=response_format,
+        )
+        shared: dict[str, Any] = {
+            "ring": ring,
+            "operation": operation,
+            "trace_id": trace_id,
+            "wait": wait,
+            "timeout_message": "the wait budget ran out before any LLM produced a delta",
+            "parallel_recovery": parallel_recovery,
+            "receipt": receipt,
+        }
+        routed = (
+            self._stream_route(
+                attempt,
+                fastest_of=fastest_of,
+                window=stream_selection_window,
+                **shared,
+            )
+            if fastest_of is not None and fastest_of > 1
+            else self._route(attempt, fastest_of=fastest_of, **shared)
         )
         async with aclosing(routed) as deltas:
             async for delta in deltas:
                 yield delta
+
+    async def _stream_route(  # noqa: PLR0913 - one raced stream's whole context
+        self,
+        attempt: Callable[..., AsyncIterator[str]],
+        *,
+        ring: KeyRing,
+        operation: str | None,
+        trace_id: str | None,
+        wait: float | None,
+        timeout_message: str,
+        fastest_of: int,
+        parallel_recovery: bool,
+        receipt: CallReceipt,
+        window: float,
+    ) -> AsyncIterator[str]:
+        """Route a stream the caller asked to race: every lane runs on to a complete
+        answer, and the first complete answer is what the call settles on."""
+        queue_deadline = None if wait is None else time.monotonic() + wait
+        answer_deadline = queue_deadline if wait else None
+        call = _Call(
+            attempt=attempt,
+            ring=ring,
+            operation=operation,
+            trace_id=trace_id,
+            answer_deadline=answer_deadline,
+            width=fastest_of,
+            recovery_width=2 if parallel_recovery else 1,
+        )
+        while True:
+            payable = await self._payable(ring)
+            configs = await self._acquire(call, queue_deadline, payable)
+            race = self._start_race(call, configs, window)
+            async with aclosing(self._run_race(call, race, receipt)) as deltas:
+                async for delta in deltas:
+                    yield delta
+            if race.done:
+                return
+            if call.expired:
+                self._expired(call, payable, timeout_message)
+            # Every lane failed without answering ⇒ loop to the next free LLM.
+
+    def _start_race(self, call: _Call, configs: list[LLMConfig], window: float) -> _StreamRace:
+        """Open every lane at once and arm the selection window from that moment: it
+        measures the pool's first choice against its siblings, not against the queue."""
+        race = _StreamRace(lanes=[], width=len(configs))
+        for config in configs:
+            self._add_lane(race, call, config)
+        race.deadline = time.monotonic() + window
+        if call.answer_deadline is not None:
+            race.deadline = min(race.deadline, call.answer_deadline)
+        return race
+
+    def _add_lane(self, race: _StreamRace, call: _Call, config: LLMConfig) -> None:
+        outcome = _Outcome()
+        lane = _StreamLane(
+            config=config,
+            outcome=outcome,
+            produced=self._produce(call, config, outcome),
+        )
+        outcome.completed = partial(self._retire, call, race)
+        race.lanes.append(lane)
+        lane.task = asyncio.create_task(self._drain_lane(lane, race.wake))
+
+    @staticmethod
+    async def _drain_lane(lane: _StreamLane, wake: asyncio.Event) -> None:
+        """Read one lane to its end whatever the caller is doing, so how fast the
+        consumer pulls cannot decide which provider finished first."""
+        try:
+            async for delta in lane.produced:
+                if lane.first_delta_at is None:
+                    lane.first_delta_at = time.monotonic()
+                lane.deltas.append(delta)
+                wake.set()
+        except Exception as exc:  # noqa: BLE001 - the coordinator decides what it means
+            lane.failure = exc
+        finally:
+            lane.finished = True
+            wake.set()
+
+    async def _run_race(  # noqa: C901, PLR0912 - one loop is the coordinator
+        self,
+        call: _Call,
+        race: _StreamRace,
+        receipt: CallReceipt,
+    ) -> AsyncIterator[str]:
+        """Expose one lane's deltas provisionally while every lane runs on, and settle
+        the call on the first complete answer — replacing the provisional text when the
+        answer came from elsewhere."""
+        try:
+            while True:
+                race.wake.clear()
+                self._absorb_finished(call, race)
+                winner = race.winner()
+                if winner is not None:
+                    replaced = race.exposed if race.exposed is not winner else None
+                    if replaced is None:
+                        if race.exposed is None:
+                            race.exposed = winner
+                            self._name(receipt, winner)
+                        while winner.sent < len(winner.deltas):
+                            winner.sent += 1
+                            yield winner.deltas[winner.sent - 1]
+                    if not winner.finished:
+                        await self._pause(race)
+                        continue
+                    race.done = True
+                    self._publish(receipt, winner)
+                    if replaced is None:
+                        return
+                    raise StreamReplacementError(
+                        f"{replaced.config.name}: its provisional deltas lost the race to a"
+                        f" complete answer from {winner.config.name} — discard them and use"
+                        " the replacement",
+                        replacement=self._replacement(call, winner),
+                        streamed_llm_name=replaced.config.name,
+                    )
+                crashed = race.crashed()
+                if crashed is not None:
+                    raise crashed
+                if race.exposed is None:
+                    race.exposed = race.select()
+                    if race.exposed is not None:
+                        self._name(receipt, race.exposed)
+                exposed = race.exposed
+                if exposed is not None and exposed.sent < len(exposed.deltas):
+                    exposed.sent += 1
+                    yield exposed.deltas[exposed.sent - 1]
+                    continue
+                if not race.live():
+                    if exposed is not None and exposed.failure is not None:
+                        raise exposed.failure
+                    return
+                if await self._refill_race(call, race):
+                    continue
+                await self._pause(race)
+        finally:
+            await self._close_race(call, race, receipt)
+
+    @staticmethod
+    def _absorb_finished(call: _Call, race: _StreamRace) -> None:
+        """Fold each lane that ended without answering into the call, so every later
+        candidate is chosen against everything this call has learned."""
+        for lane in race.lanes:
+            if lane.finished and not lane.absorbed:
+                lane.absorbed = True
+                if lane.outcome.completed_at is None:
+                    call.absorb(lane)
+
+    @staticmethod
+    async def _pause(race: _StreamRace) -> None:
+        """Sleep until a lane reports, or until the pool's first choice runs out of
+        window — whichever comes first."""
+        with suppress(TimeoutError):
+            await asyncio.wait_for(race.wake.wait(), race.timeout())
+
+    async def _refill_race(self, call: _Call, race: _StreamRace) -> bool:
+        """Top the race back up from a model this call has not tried, exactly as an
+        atomic race does when a real failure empties a lane."""
+        if call.expired:
+            return False
+        configs = await self._untried(
+            call,
+            frozenset(lane.config.name for lane in race.lanes),
+            race.width - len(race.live()),
+        )
+        for config in configs:
+            self._add_lane(race, call, config)
+        return bool(configs)
+
+    def _retire(self, call: _Call, race: _StreamRace) -> None:
+        """Take every other lane off its provider the instant a complete answer exists —
+        a lane reporting is what does that, never the caller reading. Their rows and
+        slots settle beside that answer, never in front of it."""
+        winner = race.winner()
+        if winner is None:
+            return
+        for lane in race.lanes:
+            if lane is winner or lane.retired:
+                continue
+            lane.retired = True
+            if not lane.finished:
+                lane.outcome.superseded = True
+                self._cancel(lane)
+            call.losers.append(asyncio.create_task(self._stop(lane)))
+
+    async def _close_race(self, call: _Call, race: _StreamRace, receipt: CallReceipt) -> None:
+        """End every lane the race still owns. Where nothing completed, the lane the
+        caller was reading is the call the host chose to stop, so it settles as answered."""
+        for lane in race.lanes:
+            if lane.retired:
+                continue
+            lane.retired = True
+            if not lane.finished:
+                if not race.done and lane is race.exposed:
+                    lane.outcome.stopped = True
+                else:
+                    lane.outcome.superseded = True
+                self._cancel(lane)
+            call.losers.append(asyncio.create_task(self._stop(lane)))
+        await self._settled(call)
+        if not race.done and race.exposed is not None:
+            self._publish(receipt, race.exposed)
+
+    @staticmethod
+    def _name(receipt: CallReceipt, lane: _StreamLane) -> None:
+        """Name the lane the caller is reading without settling the handle: provisional
+        output may still be replaced, and a rating may not precede the answer."""
+        receipt.llm_name = lane.outcome.receipt.llm_name
+        receipt.call_id = lane.outcome.receipt.call_id
+
+    def _replacement(self, call: _Call, winner: _StreamLane) -> AsyncResult:
+        """The authoritative answer as a completed result — everything an ordinary routed
+        call hands back, naming the lane that actually won."""
+        return AsyncResult(
+            text="".join(winner.deltas),
+            tool_calls=None,
+            usage=winner.outcome.receipt.usage,
+            call_id=cast(str, winner.outcome.receipt.call_id),
+            llm_name=winner.config.name,
+            operation=call.operation,
+            store=self._store,
+            scope=call.ring.scope,
+            observe_quality=(
+                self._learner.record_quality_observed if self._learner is not None else None
+            ),
+        )
 
     async def _stream_attempt(  # noqa: PLR0913
         self,
@@ -872,7 +1250,13 @@ class Router:
     ) -> AsyncIterator[str]:
         """Stream one LLM, yielding its deltas. Leaves a verdict on ``outcome`` when it
         died before the first delta; the slot is settled and journaled by then."""
-        attempt = await self._new_attempt(config, ring, operation=operation, trace_id=trace_id)
+        attempt = await self._new_attempt(
+            config,
+            ring,
+            outcome,
+            operation=operation,
+            trace_id=trace_id,
+        )
         if attempt is None:
             outcome.verdict = _Failed(error=None)
             return
@@ -959,11 +1343,12 @@ class Router:
     ) -> None:
         """A bug, or a cancellation: the slot goes back whatever happened, and only what
         the attempt itself did is journaled."""
-        if outcome.superseded:
-            await self._settle_superseded(attempt, progress.usage)
+        if outcome.superseded or outcome.stopped:
+            await self._stream_stopped(attempt, progress, outcome)
             return
         await self._pool.release(attempt.config)
         if isinstance(exc, Exception):
+            outcome.crashed = exc
             await self._record(attempt, CallStatus.ERROR, error_detail=type(exc).__name__)
 
     async def _settle_stream(
@@ -986,6 +1371,9 @@ class Router:
             await self._dispose(attempt, verdict, backoff=backoff, timeout=timeout)
             outcome.verdict = verdict.outcome
             return
+        outcome.completed_at = time.monotonic()
+        if outcome.completed is not None:
+            outcome.completed()
         await self._finish_ok(attempt, progress.usage)
         progress.settle()
         outcome.answered = True

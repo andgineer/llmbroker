@@ -172,20 +172,33 @@ latency ([`decisions.md`](../decisions.md#parallelism-is-explicit-or-recovery-ow
 Both together add no third lane: whichever is wider is the width, and the
 caller does not need to coordinate the two options.
 
-**What commits the call is the first thing a model produces.** For a completion
-that is the first complete valid answer; for a stream it is the first delta, which
-reaches the consumer immediately and fixes what answered — a lane still opening is
-never waited for, and after that point no other model may replace the one
-answering (invariant 18).
+**What settles the call is the first complete answer, except where a stream was
+raced by the pool itself.** For a completion that is the first complete valid
+answer. For a stream the pool is covering its own recovery with, it is the first
+delta, which reaches the consumer immediately and fixes what answered — a lane still
+opening is never waited for, and after that point no other model may replace the one
+answering. For a stream the caller explicitly raced, deltas still reach the consumer
+as they arrive, but they are provisional and the first complete answer settles the
+call however it arrived (invariant 18); *Racing a stream* below is where that lives
+([`decisions.md`](../decisions.md#parallelism-is-explicit-or-recovery-owned)).
 
-**Every other lane is then cancelled and journaled as superseded, which teaches
-nothing.** It never cools a model, never advances or resets a failure streak,
-never raises or clears a budget bound, and never enters a quality window: losing a
-race proves only that a sibling was quicker by that instant. It is still an
+**Every other lane is then cancelled at that same instant and journaled as superseded,
+which teaches nothing.** It never cools a model, never advances or resets a failure
+streak, never raises or clears a budget bound, and never enters a quality window: losing
+a race proves only that a sibling was quicker by that instant. It is still an
 observation a host can read, naming the model, the operation, the trace and the
 elapsed time, and carrying usage where the provider reported any before the
-cancellation. A lane that had already reached a real failure keeps that failure and
-everything the pool learned from it — supersession is not applied after the fact.
+cancellation — unless the lane had not reached its provider yet, and then there is no
+call to journal at all: the slot it never used goes back (invariant 19) and the pool is
+told nothing, because nothing was asked of anyone.
+
+**Supersession is never applied after the fact**, so a lane that had already settled
+keeps the row it settled on: a real failure keeps everything the pool learned from it,
+and an answer it had already completed keeps its answered row. A race of completions can
+therefore leave more than one answered row — its lanes finish independently, and the
+driver looks at them only once one of them has. Nothing on a row says which of the two
+the call returned, which is why a race is rated through what it hands back rather than
+by trace ([`selection.md`](selection.md)).
 
 **A stream's settlement never stands between a delta and the consumer.** A lane still
 waiting on its provider is cancelled at once; one that has already left it — by a
@@ -247,6 +260,69 @@ the deltas already yielded stand.
 Each attempt journals one row, as `chat` does. **A consumer that stops pulling
 ends a successful attempt** — the model answered and did nothing wrong, so the
 row is `OK`. Abandoning an iterator must never cost a model a *failure*.
+
+### Racing a stream
+
+A caller that asks for the fastest of several models on a stream gets a different
+settlement from the one above, and it is the only place in the library where output
+already handed over can be taken back. Every lane runs on to a complete answer under
+the caller's one budget; the deltas the consumer reads are provisional until one
+does. What the pool's own recovery protection does is unchanged — that stays
+committed at the first delta, and so does an unraced stream.
+
+**Which lane is shown is decided once, early, and never again.** The pool's
+highest-ranked lane holds a short caller-set interval in which to produce a useful
+delta of its own; if it does, its output becomes the provisional stream at once. A
+reserve that speaks first is consumed and held meanwhile, and becomes the stream
+either when the interval closes with the first choice still silent, or the moment
+that lane fails, since a lane that will never begin has nothing left to hold back.
+Where the interval closes with every lane silent, the next useful delta wins it.
+Beyond two lanes the preference belongs to the first choice alone: reserves compete
+on when they opened, and this is not a second ranking of the pool.
+
+**The interval is not a timeout and teaches nothing.** It does not bound the answer,
+does not cancel, cool, demote or bound a budget, and is journaled nowhere. All it
+ends is one lane's claim on being the visible one. It is capped by the answer
+deadline where the caller set one, and neither extends nor divides it — every lane
+runs against the same deadline, as it does for an atomic race.
+
+**The first complete answer wins, and its identity replaces the provisional one.**
+Completion is measured when the provider's stream ends normally with at least one
+useful delta, before the row is written, so a slow store cannot make the second
+provider to finish look like the first. Where the winner is the lane being read, its
+remaining buffered deltas are handed over and the call ends normally. Where it is
+another lane, the stream stops at once and raises the typed replacement carrying
+that lane's complete answer; the host discards every provisional delta and uses it
+instead. A lane that completes before anything was exposed simply becomes the
+stream — the caller has nothing to discard, so no replacement is needed.
+
+**A failure inside a raced stream is not the end of the call it would be alone.** A
+hidden lane's failure is disposed of exactly as any other, keeps whatever the pool
+learned from it, and the lane it emptied is refilled from a model this call has not
+tried. A failure or a spent budget in the lane being read no longer ends the call
+either: it is held, the viable reserves run on, and a later complete answer replaces
+the partial text. Only where no reserve can complete is that held failure raised,
+because it is the failure belonging to the text the caller saw.
+
+**Consumer speed decides nothing.** Every lane is drained to its end independently of
+how fast the reader pulls, so a provider may finish while the consumer is still
+holding an earlier delta and its completion time still counts — and the losers come off
+their providers at that same instant, not when the reader next pulls: a slow consumer
+may not be charged for provider work the race has already decided against. Once the
+winner has finished, replaying what is already in memory is under no deadline at all.
+The price is memory: each live lane's answer is held until the race settles.
+
+**What the journal records.** Exactly one lane writes an answered row — the winner is
+the only one still on a provider once it has completed. A lane cancelled by that
+completion is written as superseded, even where some of its deltas reached the caller,
+and one that had not reached its provider yet writes nothing; a lane that reached a real
+failure keeps that row and everything the pool learned from it. Only the authoritative
+call is nameable and rateable: while provisional output arrives the handle names the
+lane producing it but stays unrateable, and a replacement moves the handle to the
+winner before it is raised. A host that stops reading an unfinished race keeps the
+abandonment
+contract above — the lane it was reading is the call it chose to stop, so that lane
+is answered and rateable, and the hidden ones are superseded.
 
 **The slot goes back when the iterator is closed, and closing it is the
 consumer's move.** An async generator has no other signal: the broker cannot

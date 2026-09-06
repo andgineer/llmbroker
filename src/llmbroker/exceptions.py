@@ -1,8 +1,12 @@
 """All exceptions a caller of llmbroker may catch, in one place."""
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from llmbroker.models import SyncReport
+
+if TYPE_CHECKING:
+    from llmbroker.broker.result import AsyncResult
 
 
 class LLMBrokerError(RuntimeError):
@@ -125,6 +129,23 @@ class StreamInterruptedError(LLMRequestError):
     def __init__(self, message: str, *, llm_name: str) -> None:
         super().__init__(message)
         self.llm_name = llm_name
+
+
+class StreamReplacementError(LLMRequestError):
+    """A raced stream's provisional deltas lost to a complete answer from another lane:
+    discard every delta received and use ``replacement`` instead. Terminal for that
+    iterator — see ``docs/`` "Racing a stream"."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        replacement: "AsyncResult",
+        streamed_llm_name: str,
+    ) -> None:
+        super().__init__(message)
+        self.replacement = replacement
+        self.streamed_llm_name = streamed_llm_name
 
 
 class AuthError(ProviderError):

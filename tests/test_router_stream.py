@@ -13,11 +13,13 @@ from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.result import CallReceipt
 from llmbroker.broker.router import Router
 from llmbroker.direct import AsyncDirectClient
+from llmbroker.broker.llms import AsyncLLMs
 from llmbroker.exceptions import (
     InvalidProviderResponseError,
     NoLLMAvailableError,
     ProviderError,
     StreamInterruptedError,
+    StreamReplacementError,
 )
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.standalone.registry import Registry
@@ -1048,3 +1050,136 @@ def test_broker_stream_carries_response_format_through_every_hop(tmp_path):
 
     asyncio.run(run())
     assert [body.get("response_format") for body in bodies] == [_SCHEMA, _SCHEMA, None]
+
+
+# --------------------------------------------------------------------------- #
+# the handle under an explicit streaming race
+# --------------------------------------------------------------------------- #
+
+
+def test_a_raced_handle_names_the_provisional_model_and_then_the_winner(tmp_path):
+    """While provisional deltas arrive the handle names the lane producing them and
+    refuses a rating; after the replacement both it and the result name the winner."""
+    release = asyncio.Event()
+
+    async def preferred():
+        yield b'data: {"choices": [{"delta": {"content": "a-partial"}}]}\n\n'
+        await asyncio.Event().wait()
+        yield b"data: [DONE]\n\n"  # pragma: no cover
+
+    async def reserve():
+        await release.wait()
+        yield _sse("b-whole")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = preferred() if request.url.host == "a" else reserve()
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    async def run():
+        broker = await _streaming_broker(tmp_path, handler, "a", "b")
+        async with broker:
+            handle = broker.stream("hi", operation="write", fastest_of=2)
+            deltas = handle.__aiter__()
+            seen = [await asyncio.wait_for(anext(deltas), timeout=2.0)]
+            provisional = handle.llm_name
+            unrateable = False
+            try:
+                await handle.record_quality(0.5)
+            except ValueError:
+                unrateable = True
+            release.set()
+            raised = None
+            try:
+                async for delta in deltas:
+                    seen.append(delta)  # pragma: no cover
+            except StreamReplacementError as exc:
+                raised = exc
+            await handle.record_quality(0.75)
+            await raised.replacement.record_quality(0.75)
+            rows = await broker.calls(limit=10)
+            return seen, provisional, unrateable, handle, raised, rows
+
+    seen, provisional, unrateable, handle, raised, rows = asyncio.run(run())
+    assert (seen, provisional, unrateable) == (["a-partial"], "a", True)
+    assert raised.streamed_llm_name == "a"
+    assert raised.replacement.text == "b-whole"
+    assert (handle.llm_name, handle.call_id) == ("b", raised.replacement.call_id)
+    answered = [row for row in rows if row.status is CallStatus.OK]
+    assert [(row.llm_name, row.score) for row in answered] == [("b", 0.75)]
+
+
+def test_the_selection_window_reaches_the_router_through_the_broker(tmp_path):
+    """A window of zero drops the ranked preference all the way down the call path."""
+    release = asyncio.Event()
+
+    async def preferred():
+        await release.wait()
+        yield _sse("a-late")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "a":
+            body = preferred()
+        else:
+            release.set()
+            body = _reserve_first()
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    async def _reserve_first():
+        yield _sse("b-first")
+
+    async def run():
+        broker = await _streaming_broker(tmp_path, handler, "a", "b")
+        async with broker:
+            handle = broker.stream("hi", fastest_of=2, stream_selection_window=0)
+            deltas = [d async for d in handle]
+            return deltas, handle.llm_name
+
+    assert asyncio.run(run()) == (["b-first"], "b")
+
+
+def test_the_selection_window_survives_the_post_exhaustion_retry():
+    """The rebuild retry re-routes with every knob the first pass had, the window
+    included — and a completed answer is never mistaken for an exhausted pool."""
+
+    class _SpyRouter:
+        def __init__(self) -> None:
+            self.windows: list[float] = []
+            self.passes = 0
+
+        def stream(self, _ring, _messages, receipt, **kwargs):
+            self.passes += 1
+            self.windows.append(kwargs["stream_selection_window"])
+            first = self.passes == 1
+
+            async def deltas():
+                if first:
+                    raise NoLLMAvailableError("nothing yet", reason="empty_pool")
+                receipt.llm_name = "a"
+                receipt.settled = True
+                yield "after-rebuild"
+
+            return deltas()
+
+    async def run():
+        router = _SpyRouter()
+
+        async def ensure_pool() -> None:
+            return None
+
+        async def on_exhausted(_exc, _ring) -> bool:
+            return True
+
+        caller = AsyncLLMs(
+            make_ring(),
+            router=router,
+            catalog=None,
+            pool_view=None,
+            store=_RecordingStore(),
+            learner=None,
+            ensure_pool=ensure_pool,
+            on_exhausted=on_exhausted,
+        )
+        handle = caller.stream("hi", fastest_of=2, stream_selection_window=0.25)
+        return [d async for d in handle], router.windows
+
+    assert asyncio.run(run()) == (["after-rebuild"], [0.25, 0.25])

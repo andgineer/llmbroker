@@ -18,6 +18,7 @@ from llmbroker.exceptions import (
     LLMTimeoutError,
     NoLLMAvailableError,
     StreamInterruptedError,
+    StreamReplacementError,
 )
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
@@ -261,3 +262,149 @@ def test_a_slow_consumer_does_not_inflate_the_journaled_budget():
 
     (row,) = asyncio.run(run())
     assert row.budget_ms == pytest.approx(300, abs=50)  # noqa: PLR2004
+
+
+# ── one budget, several lanes ────────────────────────────────────────────────
+
+
+async def _silent():
+    await asyncio.Event().wait()
+    yield _DONE  # pragma: no cover - the lane is cancelled or times out first
+
+
+def _lanes(bodies: dict):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=bodies[request.url.host or ""](), headers=_SSE)
+
+    return handler
+
+
+def test_a_dribbling_provisional_lane_is_replaced_by_a_hidden_complete_answer():
+    """The budget ends the lane the caller was reading, but a sibling had already
+    finished inside it — so the call ends on that answer, not on the timeout."""
+
+    async def run():
+        async def dribbles():
+            yield _delta("a-partial")
+            for _ in range(50):
+                await asyncio.sleep(0.05)
+                yield _delta("more")
+            yield _DONE  # pragma: no cover
+
+        async def completes():
+            await asyncio.sleep(0.15)
+            yield _delta("b-whole")
+            yield _DONE
+
+        router, _, store = await _router("a", "b")
+        _mount(router, _lanes({"a": dribbles, "b": completes}))
+        receipt = CallReceipt()
+        seen: list[str] = []
+        raised = None
+        try:
+            async for delta in _stream(router, receipt, fastest_of=2, wait=0.5):
+                seen.append(delta)
+        except StreamReplacementError as exc:
+            raised = exc
+        return seen, raised, receipt, store
+
+    seen, raised, receipt, store = asyncio.run(run())
+    assert seen[0] == "a-partial"
+    assert set(seen) <= {"a-partial", "more"}
+    assert raised is not None
+    assert (raised.streamed_llm_name, raised.replacement.text) == ("a", "b-whole")
+    assert receipt.llm_name == "b"
+    assert {row.llm_name: row.status for row in store.rows}["b"] is CallStatus.OK
+
+
+def test_no_lane_complete_at_the_shared_deadline_leaves_nothing_to_replace():
+    """Partial provisional output stays non-authoritative: with nothing complete when the
+    budget runs out, the call ends on the failure belonging to the text the caller saw."""
+
+    async def run():
+        async def dribbles():
+            yield _delta("a-partial")
+            for _ in range(50):
+                await asyncio.sleep(0.05)
+                yield _delta("more")
+            yield _DONE  # pragma: no cover
+
+        router, _, _ = await _router("a", "b")
+        _mount(router, _lanes({"a": dribbles, "b": _silent}))
+        seen: list[str] = []
+        with pytest.raises(LLMTimeoutError):
+            async for delta in _stream(router, fastest_of=2, wait=0.4):
+                seen.append(delta)
+        return seen
+
+    assert asyncio.run(run())[0] == "a-partial"
+
+
+def test_every_racing_lane_is_given_the_one_budget_and_not_a_share_of_it():
+    async def run():
+        router, _, store = await _router("a", "b")
+        _mount(router, _lanes({"a": _silent, "b": _silent}))
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        with pytest.raises(NoLLMAvailableError) as raised:
+            await asyncio.wait_for(
+                _drain(router, fastest_of=2, parallel_recovery=False, wait=0.3),
+                timeout=3.0,
+            )
+        return raised.value, loop.time() - started, store
+
+    error, elapsed, store = asyncio.run(run())
+    assert error.reason == "timeout"
+    # Neither doubled by the second lane nor halved into per-lane shares.
+    assert 0.3 <= elapsed < 0.9  # noqa: PLR2004
+    assert {row.llm_name for row in store.rows} == {"a", "b"}
+    assert all(row.budget_ms is not None and 0 < row.budget_ms <= 300 for row in store.rows)  # noqa: PLR2004
+
+
+def test_a_slow_consumer_changes_neither_the_winner_nor_the_journaled_budget():
+    """The lanes are drained in the background, so the reader's own pace can neither
+    spend the budget nor decide which provider finished first."""
+
+    async def run():
+        async def prompt_lane():
+            yield _delta("a-one")
+            yield _delta("a-two")
+            yield _DONE
+
+        router, _, store = await _router("a", "b")
+        _mount(router, _lanes({"a": prompt_lane, "b": _silent}))
+        receipt = CallReceipt()
+        seen: list[str] = []
+        async for delta in _stream(router, receipt, fastest_of=2, wait=0.3):
+            seen.append(delta)
+            await asyncio.sleep(0.2)  # longer than the whole budget
+        return seen, receipt, store
+
+    seen, receipt, store = asyncio.run(run())
+    assert seen == ["a-one", "a-two"]
+    assert receipt.llm_name == "a"
+    rows = {row.llm_name: row for row in store.rows}
+    assert rows["a"].status is CallStatus.OK
+    assert rows["a"].budget_ms is None
+
+
+def test_buffered_replay_after_completion_is_not_timed_out_by_consumer_delay():
+    """Once the winner's provider has finished, what is left is memory: handing it over
+    is not placed under a new answer deadline."""
+
+    async def run():
+        async def whole_answer():
+            yield _delta("one")
+            yield _delta("two")
+            yield _delta("three")
+            yield _DONE
+
+        router, _, store = await _router("a", "b")
+        _mount(router, _lanes({"a": whole_answer, "b": _silent}))
+        seen: list[str] = []
+        async for delta in _stream(router, fastest_of=2, wait=0.3):
+            seen.append(delta)
+            await asyncio.sleep(0.25)
+        return seen, [row.status for row in store.rows if row.llm_name == "a"]
+
+    assert asyncio.run(run()) == (["one", "two", "three"], [CallStatus.OK])

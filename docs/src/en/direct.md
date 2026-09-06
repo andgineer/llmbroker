@@ -224,3 +224,6 @@ Direct calls raise from one hierarchy under `LLMRequestError`:
 - `LLMTimeoutError` — the call exceeded its timeout.
 - `StreamInterruptedError` — a **pool** stream died after deltas had already been
   emitted, with `.llm_name` and the cause attached.
+- `StreamReplacementError` — a **pool** stream you raced with `fastest_of` lost to
+  another lane's complete answer: `.replacement` is that answer and
+  `.streamed_llm_name` the model whose deltas you must discard.

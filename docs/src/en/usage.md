@@ -262,10 +262,28 @@ Turn it off where requests are scarcer than seconds. The recheck then happens on
 your call path, exactly as an ordinary attempt does, and if the model is still down
 the call fails over to the next one.
 
-A stream commits to whichever model produces the first piece of text, and stays
-with it to the end — you never receive two answers spliced together. Both options
-are for the routed pool only; a model you reach by name with `direct()` is one
-model, so neither applies.
+A stream you did not explicitly race commits to whichever model produces the first
+piece of text and stays with it to the end. A stream you *did* race keeps every lane
+running to a whole answer instead, because the fastest first token and the fastest
+answer are not the same model:
+
+```python
+stream = broker.stream("Question", fastest_of=2, stream_selection_window=1.0)
+```
+
+`stream_selection_window` is in seconds, defaults to `1.0`, and only means anything on
+a stream with more than one lane. It says how long the pool's own first choice may
+take to start before whatever a sibling has already produced is shown instead — it
+chooses what you *see* first, never who wins. `0` shows the first text that arrives,
+whoever produced it.
+
+Racing a stream costs more than racing a completion. Every lane's answer is held in
+memory until the race settles, and the text you were shown is provisional: when
+another model finishes first, it is withdrawn and replaced whole, as a
+`StreamReplacementError` your code has to handle. Nothing is ever spliced — see
+[Racing a stream](async.md#racing-a-stream) for the shape of that catch. Both options
+are for the routed pool only; a model you reach by name with `direct()` is one model,
+so neither applies.
 
 ### Asking for JSON that matches a schema {#response-format}
 
@@ -411,7 +429,11 @@ knowing in advance:
   names exactly one call, and that will be the newest one that answered under the
   trace. If the trace turns out to carry noticeably more rows than a single call
   does, llmbroker also warns about it in the log. To rate one specific call out of
-  several, keep its `call_id`: that is what it is for.
+  several, keep its `call_id`: that is what it is for. One call can do this to you
+  by itself — a `fastest_of` race can leave two answered calls under one trace when
+  both models finish, and nothing on them says which answer you were given. Rate a
+  race through the result or handle it hands back — for a stream,
+  [the one described here](async.md#racing-a-stream) — never by trace.
 - **The call is looked for among the last 7 days.** Rating an older one is
   pointless: the quality window is rebuilt from a recent journal tail, and such a
   verdict would not survive the next pool rebuild. So rather than working through a

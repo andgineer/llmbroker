@@ -97,6 +97,15 @@ live result carries what it needs and is bounded by nothing.
 that puts one on several calls is rating the newest of them that answered, and is
 told so. Rating a specific one is what a call id is for.
 
+**A race of completions can leave more than one answered row**, because its lanes
+finish independently and one that finished first has already journaled its answer by
+the time the driver looks. A raced stream cannot: there the first completion takes
+every other lane off its provider in that same instant
+([`call-path.md`](call-path.md#more-than-one-model-at-a-time)). Where there are two,
+nothing on either row says which one the call returned, and it is neither reliably the
+older nor the newer — so a race is rated through the result or handle it hands back,
+or through the replacement it raises, and never by trace.
+
 There is no global verdict — demotion is always per `(model, operation)`.
 Recovery is exactly: new ratings that push the window's bound back above the
 floor, or last-resort traffic when nothing else is available. There is no
