@@ -23,7 +23,7 @@ from llmbroker.exceptions import (
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
 
-from support import make_ring
+from support import CLOCK_SLACK, make_ring
 
 _SSE = {"content-type": "text/event-stream"}
 _DONE = b"data: [DONE]\n\n"
@@ -356,7 +356,7 @@ def test_every_racing_lane_is_given_the_one_budget_and_not_a_share_of_it():
     error, elapsed, store = asyncio.run(run())
     assert error.reason == "timeout"
     # Neither doubled by the second lane nor halved into per-lane shares.
-    assert 0.3 <= elapsed < 0.9  # noqa: PLR2004
+    assert 0.3 - CLOCK_SLACK <= elapsed < 0.9  # noqa: PLR2004
     assert {row.llm_name for row in store.rows} == {"a", "b"}
     assert all(row.budget_ms is not None and 0 < row.budget_ms <= 300 for row in store.rows)  # noqa: PLR2004
 

@@ -24,7 +24,7 @@ from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
 from llmbroker.sync import Broker, LLMs
 
-from support import make_ring
+from support import CLOCK_SLACK, make_ring
 
 _PATCH = "llmbroker.broker.router.call_provider"
 
@@ -1126,7 +1126,7 @@ def test_buffered_reserve_output_is_released_when_the_window_expires():
 
     first, named, elapsed = asyncio.run(run())
     assert (first, named) == ("b-first", "b")
-    assert elapsed >= 0.1  # noqa: PLR2004
+    assert elapsed >= 0.1 - CLOCK_SLACK  # noqa: PLR2004
 
 
 def test_with_every_lane_silent_at_expiry_the_next_delta_selects_the_stream():

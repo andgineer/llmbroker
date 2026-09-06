@@ -148,6 +148,7 @@ Any request to implement a plan — "выполни очередной план"
 - Tests are excluded from ruff linting (format-only); strict ruff rules apply only to `src/`.
 - Every new function needs tests in the same session. Never skip.
 - **Never use `pytest.skip()`, `pytest.importorskip()`, or `skipIf` to hide missing services or packages.** Tests must fail, not silently pass as skipped. Postgres and MongoDB are spun up automatically via testcontainers — no external services needed. A green run with skipped tests is a false green.
+- **Never assert that a measured wall-clock span reached its budget without `CLOCK_SLACK` (`tests/support.py`).** An asyncio timer fires up to one clock resolution early, and on Windows that clock ticks every 15.6 ms — a 0.3 s budget legitimately measures 0.297 s there. Lower bounds are written `budget - CLOCK_SLACK`; on Linux the slack is nanoseconds, so the test keeps its teeth. Upper bounds need no slack.
 
 ## Code style
 

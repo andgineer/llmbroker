@@ -18,7 +18,7 @@ from llmbroker.exceptions import NoLLMAvailableError, ProviderError
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
 
-from support import make_ring
+from support import CLOCK_SLACK, make_ring
 
 _PATCH = "llmbroker.broker.router.call_provider"
 
@@ -74,9 +74,7 @@ def test_attempt_timeout_is_the_remaining_budget_when_it_is_the_smaller_bound():
         captured: list = []
         with patch(_PATCH, new=_fake_provider(captured)):
             await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=10.0)
-        # Windows' monotonic clock can round the deadline subtraction a few
-        # femtoseconds above the original, exactly representable wait value.
-        assert 9.0 < captured[0] <= 10.0 + 1e-9
+        assert 9.0 < captured[0] <= 10.0 + CLOCK_SLACK
 
     asyncio.run(run())
 
