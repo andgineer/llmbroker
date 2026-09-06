@@ -209,8 +209,9 @@ answer is already available.
   one.
 - **Recovery-owned parallelism adds no lane.** Whichever of the two is wider is the
   width, exactly as it was before this change.
-- **The budget is provider time and is paused for every lane alike** while the consumer
-  holds a delta, which is the rule the whole-answer budget already had.
+- **The budget is provider time, and the consumer cannot stretch it.** Every lane is
+  drained to its end whatever the reader is doing, so a race has no consumer pause to
+  discount — which is what the whole-answer budget already meant.
 - **When no lane can complete, the failure raised is the one belonging to the text the
   caller saw**, held until the last reserve is gone rather than raised in front of a
   still-viable one.
@@ -263,6 +264,33 @@ of them may both finish and both keep an answered row. That duplicate is a genui
 not a delay, and removing it would need the same completion callback on the
 non-streaming attempt.
 
+### The two defects from the second review
+
+**A bug in a hidden lane killed a race the visible lane could still have won.** The
+coordinator raised any lane's bug ahead of both selecting the visible lane and handing
+over its deltas, so a race where the reader was already being served by a healthy lane
+ended on a `ValueError` from a lane it never saw — while the journal and the handle both
+named the healthy lane as the answer. A bug is now held exactly like any other lane
+failure: it empties its own lane, the race runs on, and it reaches the caller only once
+no lane is left that could answer, behind the failure belonging to the text that was
+shown. The eager raise existed to stop the same candidate being reopened and crashing
+again; nothing reopens it — the refill excludes every model already in the race, and the
+outer loop is now reachable only when no bug is being held.
+
+**An abandoned race handed back the wrong lane in one window.** Between a hidden lane
+winning and the coordinator noticing, a reader that took its delta and walked away
+closed the race on the provisional lane: the handle named a lane journaled as
+`superseded` and stayed unrateable, while the winner's answered row sat beside it. The
+close now settles on the winner where there is one, so the handle names the answered
+call and can take the host's rating.
+
+**The third finding was a wrong sentence in a spec, not a defect in the code.**
+`decisions.md` claimed a rating reached by trace on a race of completions resolves to
+"whichever finished last — the lane that lost". Both halves are wrong (the winner is
+chosen by pool rank among the lanes that have finished, so the later row is regularly
+the winner's), and the rule already lives in `selection.md`. The entry now points there
+instead of restating it; no code changed.
+
 ### Tests
 
 Four race tests changed because they had depended on a loser still being alive after
@@ -272,7 +300,11 @@ is no longer constructible. Two were added: retirement while the reader is pause
 the winner's row still unwritten, and the slot going back for a lane cancelled before
 its attempt began.
 
+The second round added two more, each of which fails on the code it was written against:
+a bug in the hidden lane while the visible one goes on to finish its answer, and a
+reader walking away after a hidden lane has already won.
+
 ### Gate
 
 `invoke pre` clean (ruff, ruff-format, docstring cap, pyrefly: 0 errors).
-`python -m pytest`: 1562 passed, 0 failed, 0 skipped.
+`python -m pytest`: 1564 passed, 0 failed, 0 skipped.

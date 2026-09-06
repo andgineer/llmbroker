@@ -239,8 +239,8 @@ class _StreamRace:
         return best
 
     def crashed(self) -> Exception | None:
-        """A bug a lane hit. It is not a failure this call may fail over from: nothing
-        classified it, so the same candidates stay eligible and would be picked again."""
+        """A bug a lane hit, held like any other lane failure: nothing classified it, so
+        it reaches the caller only once no lane is left that could answer."""
         return next((lane.outcome.crashed for lane in self.lanes if lane.outcome.crashed), None)
 
     def select(self) -> _StreamLane | None:
@@ -1125,9 +1125,6 @@ class Router:
                         replacement=self._replacement(call, winner),
                         streamed_llm_name=replaced.config.name,
                     )
-                crashed = race.crashed()
-                if crashed is not None:
-                    raise crashed
                 if race.exposed is None:
                     race.exposed = race.select()
                     if race.exposed is not None:
@@ -1138,8 +1135,11 @@ class Router:
                     yield exposed.deltas[exposed.sent - 1]
                     continue
                 if not race.live():
-                    if exposed is not None and exposed.failure is not None:
-                        raise exposed.failure
+                    held = exposed.failure if exposed is not None else None
+                    if held is None:
+                        held = race.crashed()
+                    if held is not None:
+                        raise held
                     return
                 if await self._refill_race(call, race):
                     continue
@@ -1195,22 +1195,24 @@ class Router:
             call.losers.append(asyncio.create_task(self._stop(lane)))
 
     async def _close_race(self, call: _Call, race: _StreamRace, receipt: CallReceipt) -> None:
-        """End every lane the race still owns. Where nothing completed, the lane the
-        caller was reading is the call the host chose to stop, so it settles as answered."""
+        """End every lane the race still owns. A lane that completed is the call whatever
+        the host did next; where none did, the lane being read is the one it chose to stop,
+        so that is what settles as answered."""
+        settled = race.winner() or race.exposed
         for lane in race.lanes:
             if lane.retired:
                 continue
             lane.retired = True
             if not lane.finished:
-                if not race.done and lane is race.exposed:
+                if not race.done and lane is settled:
                     lane.outcome.stopped = True
                 else:
                     lane.outcome.superseded = True
                 self._cancel(lane)
             call.losers.append(asyncio.create_task(self._stop(lane)))
         await self._settled(call)
-        if not race.done and race.exposed is not None:
-            self._publish(receipt, race.exposed)
+        if not race.done and settled is not None:
+            self._publish(receipt, settled)
 
     @staticmethod
     def _name(receipt: CallReceipt, lane: _StreamLane) -> None:

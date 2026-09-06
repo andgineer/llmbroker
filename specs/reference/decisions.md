@@ -243,12 +243,12 @@ journaled nowhere.
 
 **Two answered rows under one trace are the price of that, and the handle is what
 pays it.** Where both lanes finish, both rows are honest and neither may be
-rewritten, so a rating reached by trace resolves to whichever finished last — the
-lane that lost. The alternatives to name are *writing the slower finished lane as
-superseded*, which would have the journal claim a model was cancelled when it
-answered, and *marking authority on the row*, a second truth stored beside the
-answer for one lookup's benefit. Neither is worth it: the call already hands back a
-handle naming the winner, so that is where a race is rated.
+rewritten, so nothing on either says which one the call returned
+([`selection.md`](rules/selection.md)). The alternatives to name are *writing the
+slower finished lane as superseded*, which would have the journal claim a model was
+cancelled when it answered, and *marking authority on the row*, a second truth stored
+beside the answer for one lookup's benefit. Neither is worth it: the call already
+hands back a handle naming the winner, so that is where a race is rated.
 
 ---
 

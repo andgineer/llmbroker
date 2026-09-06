@@ -299,10 +299,12 @@ stream — the caller has nothing to discard, so no replacement is needed.
 **A failure inside a raced stream is not the end of the call it would be alone.** A
 hidden lane's failure is disposed of exactly as any other, keeps whatever the pool
 learned from it, and the lane it emptied is refilled from a model this call has not
-tried. A failure or a spent budget in the lane being read no longer ends the call
-either: it is held, the viable reserves run on, and a later complete answer replaces
-the partial text. Only where no reserve can complete is that held failure raised,
-because it is the failure belonging to the text the caller saw.
+tried. A bug is no exception: however loud it is on a call of its own, here it empties
+the lane it hit and nothing else. A failure or a spent budget in the lane being read no
+longer ends the call either: it is held, the viable reserves run on, and a later
+complete answer replaces the partial text. Only where no lane can complete is a held
+failure raised — the one belonging to the text the caller saw, and failing that a bug,
+which no change of candidate can route around.
 
 **Consumer speed decides nothing.** Every lane is drained to its end independently of
 how fast the reader pulls, so a provider may finish while the consumer is still
@@ -319,10 +321,11 @@ and one that had not reached its provider yet writes nothing; a lane that reache
 failure keeps that row and everything the pool learned from it. Only the authoritative
 call is nameable and rateable: while provisional output arrives the handle names the
 lane producing it but stays unrateable, and a replacement moves the handle to the
-winner before it is raised. A host that stops reading an unfinished race keeps the
-abandonment
+winner before it is raised. A host that stops reading a race keeps the abandonment
 contract above — the lane it was reading is the call it chose to stop, so that lane
-is answered and rateable, and the hidden ones are superseded.
+is answered and rateable, and the hidden ones are superseded. Where a lane had
+already completed, that answer is the call whichever way the reader went: the handle
+names the winner, and the lane being read is superseded like any other loser.
 
 **The slot goes back when the iterator is closed, and closing it is the
 consumer's move.** An async generator has no other signal: the broker cannot

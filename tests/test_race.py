@@ -1555,6 +1555,53 @@ def test_abandoning_a_raced_stream_settles_the_exposed_lane_as_answered():
     assert [pool._slots[name].in_flight for name in ("a", "b")] == [0, 0]  # noqa: SLF001
 
 
+def test_a_lane_that_already_won_is_what_an_abandoned_race_hands_back():
+    """A host that walks away once a lane has completed is handed that answer: the winner
+    is the call whichever way the reader went, and the provisional lane is superseded."""
+
+    async def run():
+        never = asyncio.Event()
+        exposed = asyncio.Event()
+        answered = asyncio.Event()
+
+        class _Watching(_RecordingStore):
+            async def record(self, call):
+                await super().record(call)
+                if call.llm_name == "b" and call.status is CallStatus.OK:
+                    answered.set()
+
+        async def preferred():
+            yield _delta("a-first")
+            await never.wait()
+            yield _DONE  # pragma: no cover
+
+        async def reserve():
+            await exposed.wait()
+            yield _delta("b-answer")
+            yield _DONE
+
+        pool = await _pool("a", "b")
+        store = _Watching()
+        router = Router(pool, store)
+        _mount(router, _race_handler({"a": preferred, "b": reserve}))
+        receipt = CallReceipt()
+        async with aclosing(_stream(router, receipt, fastest_of=2)) as deltas:
+            seen = [await asyncio.wait_for(anext(deltas), timeout=2.0)]
+            exposed.set()
+            # The hidden lane wins and retires the visible one while the reader holds.
+            await asyncio.wait_for(answered.wait(), timeout=2.0)
+        return seen, receipt, pool, store
+
+    seen, receipt, pool, store = asyncio.run(run())
+    assert seen == ["a-first"]
+    assert (receipt.llm_name, receipt.settled) == ("b", True)
+    assert {row.llm_name: row.status for row in store.calls} == {
+        "a": CallStatus.SUPERSEDED,
+        "b": CallStatus.OK,
+    }
+    assert [pool._slots[name].in_flight for name in ("a", "b")] == [0, 0]  # noqa: SLF001
+
+
 def test_a_raced_stream_cancelled_inside_the_window_leaves_nothing_behind():
     async def run():
         never = asyncio.Event()
@@ -1618,8 +1665,9 @@ def test_the_winner_is_the_first_provider_completion_not_the_first_row_written()
 
 
 def test_a_bug_in_every_lane_reaches_the_caller_instead_of_being_retried():
-    """A bug is not a failure this call may fail over from: nothing classified it, so the
-    same candidates stay eligible and reopening them would only repeat it forever."""
+    """A bug empties its own lane and is held exactly like any other lane failure. With
+    one in every lane there is nobody left to answer, so the held bug reaches the
+    caller."""
     requested: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1634,6 +1682,59 @@ def test_a_bug_in_every_lane_reaches_the_caller_instead_of_being_retried():
 
     asyncio.run(run())
     assert sorted(requested) == ["a", "b"]
+
+
+def test_a_bug_in_a_hidden_lane_leaves_the_lane_being_read_alone():
+    """A bug is held exactly as any other lane failure: it empties its own lane, and the
+    lane the caller is reading finishes the answer it was going to give."""
+
+    async def run():
+        reading = asyncio.Event()
+        crashed = asyncio.Event()
+        finish = asyncio.Event()
+
+        class _Watching(_RecordingStore):
+            async def record(self, call):
+                await super().record(call)
+                if call.status is CallStatus.ERROR:
+                    crashed.set()
+
+        async def visible():
+            yield _delta("a-one")
+            await finish.wait()
+            yield _delta("a-two")
+            yield _DONE
+
+        async def hidden():
+            await reading.wait()
+            raise ValueError("adapter bug")
+            yield b""  # pragma: no cover - the lane dies on the line above
+
+        pool = await _pool("a", "b")
+        store = _Watching()
+        router = Router(pool, store)
+        _mount(router, _race_handler({"a": visible, "b": hidden}))
+        receipt = CallReceipt()
+        seen: list[str] = []
+        async with aclosing(
+            _stream(router, receipt, fastest_of=2, parallel_recovery=False),
+        ) as deltas:
+            seen.append(await asyncio.wait_for(anext(deltas), timeout=2.0))
+            reading.set()
+            await asyncio.wait_for(crashed.wait(), timeout=2.0)
+            finish.set()
+            async for delta in deltas:
+                seen.append(delta)
+        return seen, receipt, pool, store
+
+    seen, receipt, pool, store = asyncio.run(run())
+    assert seen == ["a-one", "a-two"]
+    assert (receipt.llm_name, receipt.settled) == ("a", True)
+    assert {row.llm_name: row.status for row in store.calls} == {
+        "a": CallStatus.OK,
+        "b": CallStatus.ERROR,
+    }
+    assert [pool._slots[name].in_flight for name in ("a", "b")] == [0, 0]  # noqa: SLF001
 
 
 def test_a_losing_lane_leaves_its_provider_before_the_winners_row_lands():
