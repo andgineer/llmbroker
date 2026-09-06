@@ -1,0 +1,6 @@
+ERROR    llmbroker.broker:catalog.py:340 pool degraded, no failover left: 1 of 1 providers usable
+DEBUG    llmbroker.broker:presets.py:121 preset freetier: HTTP 429 fetching https://raw.githubusercontent.com/andgineer/llmbroker/main/src/llmbroker/presets/freetier.toml — falling back to the cached copy
+INFO     llmbroker.broker:refresher.py:231 sync freetier: applied — 1 -> 2 entries with a key
+  added: gemini, groq
+  removed: old
+INFO     llmbroker.broker:catalog.py:346 pool recovered: 2 of 2 providers usable

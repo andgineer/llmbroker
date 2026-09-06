@@ -1,0 +1,4 @@
+ERROR    llmbroker.broker:catalog.py:340 pool degraded, no failover left: 1 of 1 providers usable
+WARNING  llmbroker.broker:pool.py:434 LLM llm1 cooling for 60s
+WARNING  llmbroker.broker:pool.py:434 LLM llm2 cooling for 60s
+WARNING  llmbroker.broker:broker.py:556 pool under-provisioned: all LLMs are COOLING — add more LLMs to the registry

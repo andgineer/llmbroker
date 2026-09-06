@@ -1,0 +1,4 @@
+INFO     llmbroker.broker:refresher.py:231 sync freetier: applied — 0 -> 1 entries with a key
+  added: gemini
+ERROR    llmbroker.broker:catalog.py:340 pool degraded, no failover left: 1 of 1 providers usable
+INFO     llmbroker.broker:broker.py:296 direct=: opus: claude-opus-4-8 -> claude-opus-5

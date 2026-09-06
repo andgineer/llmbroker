@@ -1,0 +1,2 @@
+WARNING  llmbroker.broker:pool.py:434 LLM a cooling for 60s
+WARNING  llmbroker.broker:router.py:188 fastest_of=2 already races distinct models, so parallel_recovery adds no lane to this call — pass parallel_recovery=False to silence this

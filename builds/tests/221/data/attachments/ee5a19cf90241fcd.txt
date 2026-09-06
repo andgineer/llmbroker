@@ -1,0 +1,4 @@
+INFO     llmbroker.broker:refresher.py:231 sync freetier: applied — 0 -> 0 entries with a key
+  added: p1
+  pending key TEST_LLM_SYNC_API_KEY — holds back p1
+ERROR    llmbroker.broker:catalog.py:340 pool degraded, no failover left: 1 of 1 providers usable

@@ -1,0 +1,962 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+        <meta name="author" content="Andrey Sorokin">
+      
+      
+        <link rel="canonical" href="https://andgineer.github.io/llmbroker/monitoring/">
+      
+      
+        <link rel="prev" href="../server/">
+      
+      
+        <link rel="next" href="../disable/">
+      
+      
+        
+          <link rel="alternate" href="/llmbroker/" hreflang="en">
+        
+          <link rel="alternate" href="/llmbroker/ru/" hreflang="ru">
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.42">
+    
+    
+      
+        <title>Наблюдение и журнал - llmbroker</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.fba56155.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#_1" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="llmbroker" class="md-header__button md-logo" aria-label="llmbroker" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            llmbroker
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Наблюдение и журнал
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-languages" viewBox="0 0 24 24"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="/llmbroker/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="/llmbroker/ru/" hreflang="ru" class="md-select__link">
+              Русский
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/andgineer/llmbroker" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    llmbroker
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="llmbroker" class="md-nav__button md-logo" aria-label="llmbroker" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    llmbroker
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/andgineer/llmbroker" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    llmbroker
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  llmbroker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Установка
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Пул моделей и вызовы
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Инструменты и агенты
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../async/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Асинхронные вызовы и потоковая выдача
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../direct/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Прямые вызовы модели
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API-ключи
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Серверы и кластеры
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Наблюдение и журнал
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Наблюдение и журнал
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#pool-health" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Состояние пула
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Состояние пула">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#alerts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Предупреждения об изменении состояния
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#journal" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Журнал вызовов
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Журнал вызовов">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#trace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Поиск записей одного запроса
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stats" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Статистика за период
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../disable/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Отключение моделей
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#pool-health" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Состояние пула
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Состояние пула">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#alerts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Предупреждения об изменении состояния
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#journal" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Журнал вызовов
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Журнал вызовов">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#trace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Поиск записей одного запроса
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stats" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Статистика за период
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="_1">Наблюдение и журнал</h1>
+<p>Текущее состояние пула возвращает метод <code>snapshot()</code>, а сведения о предыдущих
+вызовах хранятся в журнале. Оба механизма работают как в обычном скрипте, так и
+в приложении из нескольких процессов.</p>
+<h2 id="pool-health">Состояние пула</h2>
+<p>Метод <code>snapshot()</code> возвращает общие показатели пула и состояние каждой модели:</p>
+<div class="highlight"><pre><span></span><code><span class="n">snap</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">snapshot</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">snap</span><span class="o">.</span><span class="n">providers_usable</span><span class="si">}</span><span class="s2"> of </span><span class="si">{</span><span class="n">snap</span><span class="o">.</span><span class="n">providers_total</span><span class="si">}</span><span class="s2"> providers usable&quot;</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">snap</span><span class="o">.</span><span class="n">degraded</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;переключаться некуда&quot;</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">snap</span><span class="o">.</span><span class="n">missing_keys</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">key</span><span class="o">.</span><span class="n">api_key_ref</span><span class="si">}</span><span class="s2"> нужен для </span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">key</span><span class="o">.</span><span class="n">entry_names</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">key</span><span class="o">.</span><span class="n">help</span><span class="p">)</span>                      <span class="c1"># где получить ключ</span>
+
+<span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">snap</span><span class="o">.</span><span class="n">direct_missing_keys</span><span class="p">:</span>     <span class="c1"># модели для прямого вызова</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">key</span><span class="o">.</span><span class="n">api_key_ref</span><span class="si">}</span><span class="s2"> — direct(</span><span class="si">{</span><span class="n">key</span><span class="o">.</span><span class="n">entry_names</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">!r}</span><span class="s2">) не сработает&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">key</span><span class="o">.</span><span class="n">help</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">llm</span> <span class="ow">in</span> <span class="n">snap</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>           <span class="c1"># отображение: имя -&gt; состояние модели</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">llm</span><span class="o">.</span><span class="n">has_key</span><span class="p">,</span> <span class="n">llm</span><span class="o">.</span><span class="n">cooldown_until</span><span class="p">)</span>
+</code></pre></div>
+<p>В асинхронном коде используйте <code>await broker.snapshot()</code>. Все данные возвращаются
+одним объектом, поэтому дополнительный запрос для списка моделей не нужен. Поля
+описаны в <a href="../reference/#llmbroker.models.PoolSnapshot"><code>PoolSnapshot</code></a>.</p>
+<p>Поле <code>direct_missing_keys</code> отделено от <code>missing_keys</code>, поскольку модели для
+прямого вызова не входят в пул. Отсутствующий у такой модели ключ не влияет на
+состояние пула, а доступность других моделей не может его заменить. Поле <code>help</code>
+в обоих случаях заполняется из пользовательского раздела <code>[keys]</code>, если он
+задан, или из поддерживаемого каталога.</p>
+<p>Доступность считается по провайдерам (<code>api_key_ref</code>), а не по моделям. Несколько
+моделей с одним ключом зависят от общего ограничения запросов и общей точки
+отказа, поэтому учитываются как один провайдер. Поле <code>degraded</code> равно <code>True</code>,
+если доступно меньше двух провайдеров. При одном провайдере пул ещё работает, но
+не сможет перейти к другому после ограничения запросов; при нуле запросы
+невозможны. Для реестра без моделей пула <code>degraded</code> равно <code>False</code>.</p>
+<p>Удалённый из хранилища ключ перестаёт учитываться после следующего обновления
+состояния пула. События, вызывающие такое обновление, перечислены в разделе
+<a href="../server/#coordination">Общие данные нескольких процессов</a>. Если модель
+<a href="../disable/">выключена вручную</a>, её провайдер по-прежнему считается доступным, а
+состояние самой модели видно в соответствующей записи.</p>
+<h3 id="alerts">Предупреждения об изменении состояния</h3>
+<p>Регулярно вызывать <code>snapshot()</code> не требуется. При изменении доступности пула
+llmbroker записывает сообщение через журнал <code>llmbroker.broker</code>. Система
+мониторинга может создавать предупреждения по следующим строкам.</p>
+<p><strong>Остался один доступный провайдер.</strong> Пул продолжает отвечать, но не сможет
+перейти к другому провайдеру при ограничении запросов. Уровень <code>ERROR</code>:</p>
+<div class="highlight"><pre><span></span><code>pool degraded, no failover left: 1 of 3 providers usable — no key for GEMINI_API_KEY
+</code></pre></div>
+<p><strong>Нет доступных провайдеров.</strong> Пул не может выполнить запрос. Уровень <code>ERROR</code>:</p>
+<div class="highlight"><pre><span></span><code>pool cannot serve any request: no provider has a key — no key for GROQ_API_KEY, GEMINI_API_KEY
+</code></pre></div>
+<p><strong>Все модели временно недоступны.</strong> Нужные ключи настроены, но все модели достигли
+ограничений провайдеров. Обычно это означает, что текущего числа моделей
+недостаточно для нагрузки. Уровень <code>WARNING</code>; сообщение записывается не чаще
+одного раза в минуту:</p>
+<div class="highlight"><pre><span></span><code>pool under-provisioned: all LLMs are COOLING — add more LLMs to the registry
+</code></pre></div>
+<p>В первых двух сообщениях перечислены отсутствующие ключи.</p>
+<p>Сообщение записывается только при изменении состояния, а не при каждом запросе.
+Переход к одному провайдеру и переход к нулю провайдеров считаются разными
+событиями, поэтому для каждого из них появится отдельная запись.</p>
+<p>Когда снова доступны хотя бы два провайдера, один раз записывается сообщение
+уровня <code>INFO</code>:</p>
+<div class="highlight"><pre><span></span><code>pool recovered: 3 of 3 providers usable
+</code></pre></div>
+<p>Появление третьего и последующих провайдеров не создаёт дополнительных сообщений.</p>
+<p>Само по себе отсутствие отдельного ключа не считается проблемой, если доступно
+не менее двух других провайдеров.</p>
+<h2 id="journal">Журнал вызовов</h2>
+<p>Старые записи удаляются автоматически. Срок хранения задаётся параметром
+<code>retention</code> хранилища журнала и по умолчанию составляет 90 дней. Подробнее см. в
+разделе <a href="../server/#journal">Серверы и кластеры</a>. Последние записи можно получить
+вызовом <code>broker.calls(limit=50)</code>.</p>
+<p>Каждая попытка обращения к модели создаёт отдельную запись. Поля описаны в
+<a href="../reference/#llmbroker.models.Call"><code>Call</code></a>; <code>score</code> содержит оценку качества
+или <code>None</code>. Записи можно отфильтровать по времени, операции и идентификатору
+вызова. См. также <a href="#trace">Поиск записей одного запроса</a>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">UTC</span><span class="p">,</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">timedelta</span>
+
+<span class="n">week_ago</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">UTC</span><span class="p">)</span> <span class="o">-</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">7</span><span class="p">)</span>
+<span class="n">broker</span><span class="o">.</span><span class="n">calls</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">since</span><span class="o">=</span><span class="n">week_ago</span><span class="p">,</span> <span class="n">operation</span><span class="o">=</span><span class="s2">&quot;summarize&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Фильтры применяются к вызовам, а не ко времени записи оценки. Если ответ оценили
+позже, оценка всё равно будет видна в записи исходного вызова. При повторной
+оценке отображается последняя.</p>
+<p>Значение <code>since</code> включается в диапазон. В MongoDB время хранится с точностью до
+миллисекунды, поэтому сохранённые отметки и граница диапазона округляются вниз до
+целых миллисекунд.</p>
+<h3 id="trace">Поиск записей одного запроса</h3>
+<p>Методы <code>ask</code>, <code>chat</code> и <code>stream</code> принимают <code>trace_id=</code> — идентификатор из вашей
+системы, например идентификатор запроса или задачи. llmbroker без изменений
+записывает его для каждой попытки. Благодаря этому записи можно сопоставить с
+журналами приложения.</p>
+<div class="highlight"><pre><span></span><code><span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">&quot;Перескажи этот пункт&quot;</span><span class="p">,</span> <span class="n">operation</span><span class="o">=</span><span class="s2">&quot;summarize&quot;</span><span class="p">,</span> <span class="n">trace_id</span><span class="o">=</span><span class="n">request_id</span><span class="p">)</span>
+</code></pre></div>
+<p>Один вызов может создать несколько записей, поскольку каждая попытка обращения к
+модели записывается отдельно. Все попытки получают одинаковый <code>trace_id</code>. По ним
+можно увидеть, например, что две модели достигли ограничений провайдера и только
+третья ответила. Успешная попытка имеет статус <code>CallStatus.OK</code>. Прерванная
+потоковая выдача не считается успешной, даже если часть текста уже была получена.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">llmbroker</span><span class="w"> </span><span class="kn">import</span> <span class="n">CallStatus</span>
+
+<span class="n">rows</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">calls</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span> <span class="n">trace_id</span><span class="o">=</span><span class="n">request_id</span><span class="p">)</span>
+<span class="n">answered</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">c</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">rows</span> <span class="k">if</span> <span class="n">c</span><span class="o">.</span><span class="n">status</span> <span class="ow">is</span> <span class="n">CallStatus</span><span class="o">.</span><span class="n">OK</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<p>Фильтр применяется внутри хранилища, поэтому <code>limit</code> ограничивает число
+<em>найденных</em> записей, а не число проверенных. Даже старый запрос можно получить
+целиком, если число его записей не превышает ограничение. В базах данных поле
+проиндексировано. Файловое хранилище индекса не имеет, поэтому фильтр в нём не
+ускоряет поиск.</p>
+<p>Чтобы найти одну конкретную попытку, передайте <code>call_id=</code> со значением
+<code>result.call_id</code>.</p>
+<p>llmbroker не запрещает использовать один <code>trace_id</code> для нескольких вызовов, но
+<a href="../usage/#quality">оценка по идентификатору</a> относится только к одному из них.
+Если нужно однозначно указать конкретную попытку, используйте <code>call_id</code>. Оба
+идентификатора позволяют записать оценку после завершения вызова.</p>
+<h3 id="stats">Статистика за период</h3>
+<p><code>stats()</code> группирует записи по моделям и показывает, сколько попыток было сделано
+за период и какими статусами они завершились:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">llmbroker</span><span class="w"> </span><span class="kn">import</span> <span class="n">CallStatus</span>
+
+<span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">broker</span><span class="o">.</span><span class="n">stats</span><span class="p">(</span><span class="n">since</span><span class="o">=</span><span class="n">week_ago</span><span class="p">)</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+    <span class="n">failed</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">total</span> <span class="o">-</span> <span class="n">s</span><span class="o">.</span><span class="n">by_status</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">CallStatus</span><span class="o">.</span><span class="n">OK</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">s</span><span class="o">.</span><span class="n">total</span><span class="p">,</span> <span class="n">failed</span><span class="p">,</span> <span class="n">s</span><span class="o">.</span><span class="n">last_status</span><span class="p">,</span> <span class="n">s</span><span class="o">.</span><span class="n">last_at</span><span class="p">)</span>
+</code></pre></div>
+<p>Поля результата описаны в
+<a href="../reference/#llmbroker.models.LLMStats"><code>LLMStats</code></a>.</p>
+<p><code>by_status</code> содержит только статусы, встречавшиеся за выбранный период. Поэтому
+число неудачных попыток удобнее вычислять из <code>total</code>. Статус <code>SUPERSEDED</code> не
+означает ошибку модели: он присваивается параллельному запросу, который ещё
+выполнялся, когда другая модель уже завершила ответ. Если нужен именно счётчик
+ошибок, такие записи также следует исключить. Запись оценки не создаёт новый
+вызов и не влияет на эти счётчики. Параметр <code>operation=</code> ограничивает статистику
+одной операцией.</p>
+<p>Приложение самостоятельно определяет, какие статусы считать ошибками, какой
+период использовать и как отображать модели без вызовов. llmbroker возвращает
+только исходные счётчики.</p>
+<p><code>limit</code>, равный 1000 по умолчанию, ограничивает число прочитанных записей, а не
+продолжительность периода. Значение должно быть не меньше 1. Если сумма <code>total</code>
+равна <code>limit</code>, часть записей могла не попасть в результат. Увеличьте ограничение
+или сократите период.</p>
+<p>В <code>since</code> нужно передавать дату с часовым поясом, например <code>datetime.now(UTC)</code>, а
+не <code>datetime.now()</code>. Значение без часового пояса отклоняется, чтобы граница
+периода не зависела от местных настроек машины.</p>
+<p><code>calls()</code> и <code>stats()</code> читают только журнал и, в отличие от <code>snapshot()</code>, не
+инициализируют пул. Поэтому страницу статистики можно построить, даже если реестр
+ещё не обновлялся. Для такого чтения создайте объект <code>Broker(...)</code> напрямую, без
+контекстного менеджера. Вход в <code>with Broker(...) as broker</code> сразу инициализирует
+пул: при отключённой автоматической загрузке пустой реестр приведёт к
+<code>EmptyRegistryError</code>, а при обычных настройках брокер может загрузить список
+моделей, который для статистики не требуется.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"search":"../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.6e5f0216.min.js"></script>
+      
+    
+  </body>
+</html>

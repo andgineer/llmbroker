@@ -1,0 +1,3 @@
+WARNING  llmbroker.broker:pool.py:434 LLM silent cooling for 60s
+WARNING  llmbroker.broker:pool.py:434 LLM broken cooling for 60s
+WARNING  llmbroker.broker:pool.py:434 LLM silent cooling for 120s

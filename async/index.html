@@ -1,0 +1,915 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+        <meta name="author" content="Andrey Sorokin">
+      
+      
+        <link rel="canonical" href="https://andgineer.github.io/llmbroker/async/">
+      
+      
+        <link rel="prev" href="../tools/">
+      
+      
+        <link rel="next" href="../direct/">
+      
+      
+        
+          <link rel="alternate" href="/llmbroker/" hreflang="en">
+        
+          <link rel="alternate" href="/llmbroker/ru/" hreflang="ru">
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.42">
+    
+    
+      
+        <title>Async & streaming - llmbroker</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.fba56155.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#async-streaming" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="llmbroker" class="md-header__button md-logo" aria-label="llmbroker" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            llmbroker
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Async &amp; streaming
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-languages" viewBox="0 0 24 24"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="/llmbroker/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="/llmbroker/ru/" hreflang="ru" class="md-select__link">
+              Русский
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/andgineer/llmbroker" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    llmbroker
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="llmbroker" class="md-nav__button md-logo" aria-label="llmbroker" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    llmbroker
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/andgineer/llmbroker" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    llmbroker
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  llmbroker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Model pool and calls
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tools &amp; agents
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Async &amp; streaming
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Async &amp; streaming
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#streaming-from-the-pool" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streaming
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Streaming">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#racing-a-stream" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Racing a stream
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#budget" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The budget covers the whole answer
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-process-one-file-no-init-step" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        One process, one file, no init step
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../direct/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Direct model calls
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API keys
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Servers &amp; clusters
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Monitoring and the journal
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../disable/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Disabling models
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#streaming-from-the-pool" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streaming
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Streaming">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#racing-a-stream" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Racing a stream
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#budget" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The budget covers the whole answer
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-process-one-file-no-init-step" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        One process, one file, no init step
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="async-streaming">Async &amp; streaming</h1>
+<p><code>AsyncBroker</code> is the primary engine; <code>Broker</code> is its blocking wrapper. The
+methods are the same, just with <code>await</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">AsyncBroker</span><span class="p">()</span> <span class="k">as</span> <span class="n">broker</span><span class="p">:</span>
+    <span class="n">reply</span> <span class="o">=</span> <span class="k">await</span> <span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">&quot;Hello&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">reply</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+</code></pre></div>
+<p>The async tool loop is <code>await llmbroker.arun_tool_loop(...)</code>, see
+<a href="../tools/">Tools &amp; agents</a>.</p>
+<h2 id="streaming-from-the-pool">Streaming</h2>
+<p>Streaming is async-only — the pool yields deltas as they arrive, with routing
+and failover intact:</p>
+<div class="highlight"><pre><span></span><code><span class="n">stream</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="s2">&quot;Write a haiku about brokers&quot;</span><span class="p">,</span> <span class="n">operation</span><span class="o">=</span><span class="s2">&quot;write&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">for</span> <span class="n">delta</span> <span class="ow">in</span> <span class="n">stream</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">delta</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">stream</span><span class="o">.</span><span class="n">llm_name</span><span class="p">,</span> <span class="n">stream</span><span class="o">.</span><span class="n">usage</span><span class="p">)</span>   <span class="c1"># who answered, and what it cost</span>
+<span class="k">await</span> <span class="n">stream</span><span class="o">.</span><span class="n">record_quality</span><span class="p">(</span><span class="mf">0.9</span><span class="p">)</span>       <span class="c1"># rate it without naming the call yourself</span>
+</code></pre></div>
+<p><code>stream(...)</code> hands back a handle you iterate for the deltas; it also names the
+model that answered and, once the answer is over, what it cost.</p>
+<p>Failover works normally right up to the <strong>first delta</strong> — a rate-limited or
+broken model is cooled down and the next one takes over, invisibly. A model whose
+answer ends without ever producing a delta is broken in that same sense: nothing
+reached you, so it is failed over too rather than handed to you as an empty
+stream. Once text has started arriving there is nothing left to fail over to, so a
+stream that dies mid-answer raises <code>StreamInterruptedError</code>; the deltas you
+already received stand. That last part is what changes when you race a stream with
+<code>fastest_of</code> — see <a href="#racing-a-stream">Racing a stream</a>.</p>
+<h3 id="racing-a-stream">Racing a stream</h3>
+<p><code>fastest_of</code> on a stream does more than start two models: it keeps both running until
+one has a <em>whole</em> answer. That is deliberate. The model that says its first word
+soonest is often not the model that finishes soonest, and committing to it throws away
+the only lane that could still rescue the call when it stalls or answers badly.</p>
+<p>So the deltas you receive are provisional. If another model finishes first, the stream
+stops and raises <code>StreamReplacementError</code> carrying that complete answer — you throw
+away everything you have shown and use it instead. Nothing is ever spliced.</p>
+<div class="highlight"><pre><span></span><code><span class="n">stream</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="s2">&quot;Write a haiku&quot;</span><span class="p">,</span> <span class="n">fastest_of</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">stream_selection_window</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+<span class="n">parts</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">for</span> <span class="n">delta</span> <span class="ow">in</span> <span class="n">stream</span><span class="p">:</span>
+        <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">delta</span><span class="p">)</span>
+        <span class="n">show</span><span class="p">(</span><span class="n">delta</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">StreamReplacementError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="n">replace_everything_with</span><span class="p">(</span><span class="n">exc</span><span class="o">.</span><span class="n">replacement</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>   <span class="c1"># exc.streamed_llm_name is discarded</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">stream</span><span class="o">.</span><span class="n">llm_name</span><span class="p">)</span>             <span class="c1"># whichever model&#39;s answer you ended up with</span>
+<span class="k">await</span> <span class="n">stream</span><span class="o">.</span><span class="n">record_quality</span><span class="p">(</span><span class="mf">0.9</span><span class="p">)</span>   <span class="c1"># rates that one, never the discarded lane</span>
+</code></pre></div>
+<p>That handle — or <code>exc.replacement</code> — is also the only safe way to rate a race
+later. <code>fastest_of</code> on <code>chat</code> or <code>ask</code> can leave two answered calls under one trace —
+both models finished, and only one of them is the answer you got — so
+<code>record_quality(..., trace_id=...)</code> has no way to tell which. Rate any race through
+what it handed you, or keep the <code>call_id</code> off it.</p>
+<p>The exception is terminal for that iterator: after it, no more deltas belong to the
+stream. Catch it <em>before</em> a broad <code>LLMRequestError</code>, or a completed answer will be
+handled as a failure.</p>
+<p><code>stream_selection_window</code> is what chooses which lane you see first, and nothing else.
+For that many seconds — one by default — the pool's highest-ranked lane keeps the
+right to be the visible one; if it starts inside that time you see it, otherwise you
+see whatever a sibling has already produced. A lane that fails gives the right up
+immediately rather than holding the interval out. <code>0</code> removes the preference: the
+first text to arrive is the text you see. Expiry is not a timeout and teaches the pool
+nothing — no model is cooled, set aside or ranked differently for missing it, and the
+race itself is still decided purely on who finishes first.</p>
+<p>The costs are worth stating plainly. Every lane is read to its end whatever your
+reader is doing, so each live answer is held in memory until the race settles, and the
+losers still spend their provider quota. In exchange, a model that goes quiet mid-answer
+or dribbles past your budget no longer takes the call down with it: a sibling that
+finished inside the budget replaces it. Only when no lane can finish does the failure
+belonging to the text you saw — <code>StreamInterruptedError</code> or <code>LLMTimeoutError</code> — reach
+you.</p>
+<p>Without <code>fastest_of</code>, or with <code>fastest_of=1</code>, none of this applies: an ordinary stream
+still commits at its first delta and the keyword changes nothing.</p>
+<h3 id="budget">The budget covers the whole answer</h3>
+<p><code>wait</code> bounds the answer, not its first token, and it counts only the time the
+library spends waiting on the provider:</p>
+<div class="highlight"><pre><span></span><code><span class="n">stream</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="s2">&quot;Write a long answer&quot;</span><span class="p">,</span> <span class="n">wait</span><span class="o">=</span><span class="mf">20.0</span><span class="p">)</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">for</span> <span class="n">delta</span> <span class="ow">in</span> <span class="n">stream</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">delta</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">LLMTimeoutError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">gave up: </span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Taking your time between deltas is yours to take: the clock is disarmed the moment
+a delta is handed to you and picks up where it left off when you ask for the next
+one, so a slow reader can never spend the budget. A model that opens at once and
+then dribbles is therefore not inside a budget it is busy overrunning — which is
+the whole point of bounding the answer rather than its opening.</p>
+<p>Unset means unbounded, which is the default. Before the first delta an exhausted
+budget ends the call with <code>NoLLMAvailableError</code>; after it, with <code>LLMTimeoutError</code>,
+and the deltas already delivered stand. Where the difference shows is what it costs
+the model: nothing at all by the deadline is silence, and the model is set aside
+briefly like any other that failed you, while a model already writing when your
+clock ran out is left alone — it answered, you simply stopped waiting. Both ways
+the pool remembers the budget it did not finish within, so equally tight callers
+are handed a sibling first. A call cut short this way cannot be rated: it never
+settled, so <code>record_quality</code> on its handle raises.</p>
+<p>That is also why the handle says nothing before the first delta: <code>llm_name</code> and
+<code>call_id</code> are <code>None</code> until then, because the call may still move to another
+model. <code>usage</code> fills in later still, when the answer is over.</p>
+<p>Rating waits for the same moment the counts do — the end of the answer, when the
+call reaches the journal. Ask earlier and you get a <code>ValueError</code> rather than a
+score that quietly goes nowhere.</p>
+<p>Stopping early is fine, but what hands the model's slot back is closing the
+stream: a <code>break</code> does not close the handle by itself — abandoned, it frees the
+slot only once Python collects it. Close it yourself; that is also the only way
+to score what you did receive, since closing is what ends the call.</p>
+<div class="highlight"><pre><span></span><code><span class="n">stream</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="s2">&quot;Write a haiku about brokers&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">for</span> <span class="n">delta</span> <span class="ow">in</span> <span class="n">stream</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">looks_wrong</span><span class="p">(</span><span class="n">delta</span><span class="p">):</span>
+        <span class="k">break</span>
+
+<span class="k">await</span> <span class="n">stream</span><span class="o">.</span><span class="n">aclose</span><span class="p">()</span>
+<span class="k">await</span> <span class="n">stream</span><span class="o">.</span><span class="n">record_quality</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+</code></pre></div>
+<p>Or let a context manager close it — where there is nothing to score:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">contextlib</span><span class="o">.</span><span class="n">aclosing</span><span class="p">(</span><span class="n">broker</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="s2">&quot;...&quot;</span><span class="p">))</span> <span class="k">as</span> <span class="n">stream</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">for</span> <span class="n">delta</span> <span class="ow">in</span> <span class="n">stream</span><span class="p">:</span>
+        <span class="o">...</span>
+</code></pre></div>
+<p>Streaming one named model, with no pool and no failover, is what <code>direct</code> does —
+see <a href="../direct/#streaming">Direct model calls</a>.</p>
+<h2 id="one-process-one-file-no-init-step">One process, one file, no init step</h2>
+<p>sqlite holds the models, the keys and the journal in one file — enough for a
+single-process service — and the curated model list fills it on the first call:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">AsyncBroker</span><span class="p">(</span><span class="s2">&quot;broker.db&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">broker</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">((</span><span class="k">await</span> <span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">&quot;Hello&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+</code></pre></div>
+<p>The database starts empty and is filled before the pool is provisioned, so there
+is no separate init step to remember, and it is kept current from then on. It is
+best-effort: an unreachable catalog logs a warning and the process starts on
+whatever the file already holds — and, where the file is empty, on the copy of
+the preset shipped inside the package.</p>
+<p>If that file is shared with your application, WAL and the file lock are worth
+knowing about — see <a href="../server/#sqlite">SQLite: sharing and WAL</a>. For several
+processes or hosts, fill the database once in the deploy job instead — see
+<a href="../server/#datasource">Servers &amp; clusters</a>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"search":"../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.6e5f0216.min.js"></script>
+      
+    
+  </body>
+</html>

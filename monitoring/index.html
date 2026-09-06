@@ -1,0 +1,962 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+        <meta name="author" content="Andrey Sorokin">
+      
+      
+        <link rel="canonical" href="https://andgineer.github.io/llmbroker/monitoring/">
+      
+      
+        <link rel="prev" href="../server/">
+      
+      
+        <link rel="next" href="../disable/">
+      
+      
+        
+          <link rel="alternate" href="/llmbroker/" hreflang="en">
+        
+          <link rel="alternate" href="/llmbroker/ru/" hreflang="ru">
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.42">
+    
+    
+      
+        <title>Monitoring and the journal - llmbroker</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.fba56155.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#monitoring-and-the-journal" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="llmbroker" class="md-header__button md-logo" aria-label="llmbroker" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            llmbroker
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Monitoring and the journal
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-languages" viewBox="0 0 24 24"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="/llmbroker/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="/llmbroker/ru/" hreflang="ru" class="md-select__link">
+              Русский
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/andgineer/llmbroker" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    llmbroker
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="llmbroker" class="md-nav__button md-logo" aria-label="llmbroker" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    llmbroker
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/andgineer/llmbroker" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    llmbroker
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  llmbroker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Model pool and calls
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tools &amp; agents
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../async/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Async &amp; streaming
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../direct/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Direct model calls
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API keys
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Servers &amp; clusters
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Monitoring and the journal
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Monitoring and the journal
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#pool-health" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Is the pool healthy
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Is the pool healthy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#alerts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What to alert on
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#journal" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Call journal
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Call journal">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#trace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Tracing one request
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stats" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Statistics over a window
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../disable/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Disabling models
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#pool-health" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Is the pool healthy
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Is the pool healthy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#alerts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What to alert on
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#journal" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Call journal
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Call journal">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#trace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Tracing one request
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stats" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Statistics over a window
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="monitoring-and-the-journal">Monitoring and the journal</h1>
+<p>Two questions, two answers: what the pool is doing right now — the snapshot; what
+it did earlier — the call journal. Both work on any installation, from a script
+to a cluster.</p>
+<h2 id="pool-health">Is the pool healthy</h2>
+<p>One call answers that — per-model facts and the pool-wide picture come off the
+same object:</p>
+<div class="highlight"><pre><span></span><code><span class="n">snap</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">snapshot</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">snap</span><span class="o">.</span><span class="n">providers_usable</span><span class="si">}</span><span class="s2"> of </span><span class="si">{</span><span class="n">snap</span><span class="o">.</span><span class="n">providers_total</span><span class="si">}</span><span class="s2"> providers usable&quot;</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">snap</span><span class="o">.</span><span class="n">degraded</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;nothing to fail over to&quot;</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">snap</span><span class="o">.</span><span class="n">missing_keys</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">key</span><span class="o">.</span><span class="n">api_key_ref</span><span class="si">}</span><span class="s2"> holds back </span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">key</span><span class="o">.</span><span class="n">entry_names</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">key</span><span class="o">.</span><span class="n">help</span><span class="p">)</span>                      <span class="c1"># where to get it</span>
+
+<span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">snap</span><span class="o">.</span><span class="n">direct_missing_keys</span><span class="p">:</span>     <span class="c1"># your own models, reached by name</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">key</span><span class="o">.</span><span class="n">api_key_ref</span><span class="si">}</span><span class="s2"> — direct(</span><span class="si">{</span><span class="n">key</span><span class="o">.</span><span class="n">entry_names</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">!r}</span><span class="s2">) will fail&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">key</span><span class="o">.</span><span class="n">help</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">llm</span> <span class="ow">in</span> <span class="n">snap</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>           <span class="c1"># still a mapping of name -&gt; per-model facts</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">llm</span><span class="o">.</span><span class="n">has_key</span><span class="p">,</span> <span class="n">llm</span><span class="o">.</span><span class="n">cooldown_until</span><span class="p">)</span>
+</code></pre></div>
+<p>In async code that is <code>await broker.snapshot()</code>. The one object also answers a
+whole admin screen: the per-model rows and the pool-wide verdict arrive together,
+with no second query to fetch them. Fields — in
+<a href="../reference/#llmbroker.models.PoolSnapshot"><code>PoolSnapshot</code></a>.</p>
+<p><code>direct_missing_keys</code> is separate from <code>missing_keys</code> on purpose: a model you
+declared is never routed, so a key it lacks cannot degrade the pool and the pool
+gaining a provider cannot fix it. Both carry the same <code>help</code> — from your own
+<code>[keys]</code> block if you wrote one, otherwise from the curated catalog.</p>
+<p>The unit is the provider (<code>api_key_ref</code>), not the model: two entries on one key
+are one quota and one failure domain, so they count once. <code>degraded</code> is true
+while fewer than two providers are usable: at one the pool still answers but a
+rate limit has nowhere to spill, at none it no longer answers at all. A registry
+that pools nothing has no pool to degrade, so there it is false.</p>
+<p>A key revoked in your secrets backend drops out of the count on the next pool
+rebuild — there are four of those, all listed in <a href="../server/#coordination">What processes do and do not
+share</a>. A model you
+<a href="../disable/">disabled yourself</a> still counts its provider: that verdict is on the
+model's own row.</p>
+<h3 id="alerts">What to alert on</h3>
+<p>There is no need to poll <code>snapshot()</code> on a schedule: when the pool's health
+changes, llmbroker writes a line about it itself — to the <code>llmbroker.broker</code>
+logger. So an alert hangs off three lines rather than off a metric; if your log
+collector can match a substring, that is all it takes.</p>
+<p><strong>The pool has lost its fallback</strong> — one usable provider left. It still answers,
+but the first rate limit will have nowhere to spill. Level <code>ERROR</code>:</p>
+<div class="highlight"><pre><span></span><code>pool degraded, no failover left: 1 of 3 providers usable — no key for GEMINI_API_KEY
+</code></pre></div>
+<p><strong>The pool cannot serve at all</strong> — no usable provider is left. Level <code>ERROR</code>:</p>
+<div class="highlight"><pre><span></span><code>pool cannot serve any request: no provider has a key — no key for GROQ_API_KEY, GEMINI_API_KEY
+</code></pre></div>
+<p><strong>Providers are there, but every model is cooling right now</strong> — the keys are in
+place and the pool is provisioned, there is simply nobody to answer this minute:
+they all hit their limits. It means the registry holds too few models for your
+traffic. Level <code>WARNING</code>, at most once a minute:</p>
+<div class="highlight"><pre><span></span><code>pool under-provisioned: all LLMs are COOLING — add more LLMs to the registry
+</code></pre></div>
+<p>The first two name the keys that are missing, so they show what to fix.</p>
+<p><strong>A line is written on a change of state, not on every call.</strong> A pool that stays
+down would otherwise flood your log; hence one line per transition. And "one
+provider left" and "none left" are different events, so the second line comes
+after the first rather than instead of it.</p>
+<p>Back to normal is one <code>INFO</code>:</p>
+<div class="highlight"><pre><span></span><code>pool recovered: 3 of 3 providers usable
+</code></pre></div>
+<p>It is written once, when two or more providers are usable again; the third and
+any after it are not worth a line of their own.</p>
+<p>A pending key on its own is never an alarm: two working providers may be exactly
+what you provisioned.</p>
+<h2 id="journal">Call journal</h2>
+<p>The journal cleans itself up; the retention depth is the journal backend's
+<code>retention</code> parameter (90 days by default), see
+<a href="../server/#journal">Servers &amp; clusters</a>. To read it: <code>broker.calls(limit=50)</code>.</p>
+<p>One row per call attempt — fields in <a href="../reference/#llmbroker.models.Call"><code>Call</code></a>,
+with <code>score</code> holding the quality rating you gave it (or <code>None</code>). Narrow the read
+by time, by operation, or by one of the ids you called with (see
+<a href="#trace">Tracing one request</a>):</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">UTC</span><span class="p">,</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">timedelta</span>
+
+<span class="n">week_ago</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">UTC</span><span class="p">)</span> <span class="o">-</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">7</span><span class="p">)</span>
+<span class="n">broker</span><span class="o">.</span><span class="n">calls</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">since</span><span class="o">=</span><span class="n">week_ago</span><span class="p">,</span> <span class="n">operation</span><span class="o">=</span><span class="s2">&quot;summarize&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The filters narrow the calls, never the ratings folded onto them: a verdict
+recorded a month after the call still shows up on it, and rating a call twice
+shows the newer verdict.</p>
+<p><code>since</code> is inclusive. On MongoDB it is inclusive to the millisecond — BSON dates
+carry no finer precision, so both stored timestamps and the bound are rounded
+down to whole milliseconds.</p>
+<h3 id="trace">Tracing one request</h3>
+<p><code>ask</code>, <code>chat</code> and <code>stream</code> all take <code>trace_id=</code> — an id of your own that
+llmbroker writes onto every journal row the call produces and never interprets.
+Pass whatever your system already uses, a request id or a job id, and the journal
+lines up with your logs without a second correlation scheme of its own.</p>
+<div class="highlight"><pre><span></span><code><span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">&quot;Summarize this clause&quot;</span><span class="p">,</span> <span class="n">operation</span><span class="o">=</span><span class="s2">&quot;summarize&quot;</span><span class="p">,</span> <span class="n">trace_id</span><span class="o">=</span><span class="n">request_id</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>One call is usually several rows.</strong> Failover journals every attempt it made,
+and they all carry the same <code>trace_id</code> — which is what the field is for: the
+trace keeps the two models that rate-limited before the third one answered, and
+that is the evidence for why the request took as long as it did. The attempt that
+answered is the row whose <code>status</code> is <code>CallStatus.OK</code>; a stream that died after
+emitting deltas is not it, having never completed.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">llmbroker</span><span class="w"> </span><span class="kn">import</span> <span class="n">CallStatus</span>
+
+<span class="n">rows</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">calls</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span> <span class="n">trace_id</span><span class="o">=</span><span class="n">request_id</span><span class="p">)</span>
+<span class="n">answered</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">c</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">rows</span> <span class="k">if</span> <span class="n">c</span><span class="o">.</span><span class="n">status</span> <span class="ow">is</span> <span class="n">CallStatus</span><span class="o">.</span><span class="n">OK</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<p>The filter runs inside the store, so <code>limit</code> caps the <em>matching</em> rows rather than
+the rows scanned — a trace made an hour and a million calls ago still comes back
+whole. On a DB backend the column is indexed; the file store has no index by
+construction, so there the filter buys correctness rather than speed.</p>
+<p>Pass <code>call_id=</code> to pull up a single attempt — <code>result.call_id</code> is exactly that
+value.</p>
+<p>To the journal a <code>trace_id</code> is just a field llmbroker stores and filters on, so
+nothing stops you grouping several calls under one. But a trace is meant as one
+call's id, and <a href="../usage/#quality">rating by it</a> works on exactly that assumption:
+it finds one call, not all of them. Both ids are how you rate a call after the
+fact, and <code>call_id</code> is the precise one.</p>
+<h3 id="stats">Statistics over a window</h3>
+<p><code>stats()</code> counts call records per model over a time window — how many calls each
+model made and how they ended:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">llmbroker</span><span class="w"> </span><span class="kn">import</span> <span class="n">CallStatus</span>
+
+<span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">broker</span><span class="o">.</span><span class="n">stats</span><span class="p">(</span><span class="n">since</span><span class="o">=</span><span class="n">week_ago</span><span class="p">)</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+    <span class="n">failed</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">total</span> <span class="o">-</span> <span class="n">s</span><span class="o">.</span><span class="n">by_status</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">CallStatus</span><span class="o">.</span><span class="n">OK</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">s</span><span class="o">.</span><span class="n">total</span><span class="p">,</span> <span class="n">failed</span><span class="p">,</span> <span class="n">s</span><span class="o">.</span><span class="n">last_status</span><span class="p">,</span> <span class="n">s</span><span class="o">.</span><span class="n">last_at</span><span class="p">)</span>
+</code></pre></div>
+<p>Fields — in <a href="../reference/#llmbroker.models.LLMStats"><code>LLMStats</code></a>.</p>
+<p><code>by_status</code> holds only the statuses actually seen in the window, so count the
+failures by subtracting from <code>total</code> rather than by adding up the other statuses.
+One status is neither: <code>SUPERSEDED</code> is a model that was answering when a faster
+sibling answered first — it says nothing about that model, so subtract it too if
+you are after a failure count. Rating a call does not add a row, so it cannot
+inflate the counts. Pass <code>operation=</code> to count one operation only.</p>
+<p>What counts as a failure, how long the window should be, and how a model with no
+calls in the window should read are yours to decide; llmbroker returns the counts
+and no policy.</p>
+<p><code>limit</code> (1000 by default) caps how many records are read — a guard against an
+anomalous window such as a retry storm, not the window itself. It must be at
+least 1. If the totals add up to exactly <code>limit</code>, the window may have been
+truncated: raise the limit or shorten the window.</p>
+<p><code>since</code> must be timezone-aware (<code>datetime.now(UTC)</code>, not <code>datetime.now()</code>) — a
+naive bound is refused rather than guessed at, since guessing would shift the
+window by your machine's offset.</p>
+<p><code>calls()</code> and <code>stats()</code> read the journal only: unlike <code>snapshot()</code>, neither
+initializes the model pool, so the screen still renders on an installation whose
+registry was never synced. Construct the broker directly for that — entering it
+as a context manager (<code>with Broker(...) as broker</code>) initializes the pool up front:
+on an installation that fetches nothing by itself that is <code>EmptyRegistryError</code>,
+and on an ordinary one a trip for the curated list, which a statistics screen has
+no use for.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"search":"../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.6e5f0216.min.js"></script>
+      
+    
+  </body>
+</html>

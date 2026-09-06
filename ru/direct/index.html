@@ -1,0 +1,1098 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+        <meta name="author" content="Andrey Sorokin">
+      
+      
+        <link rel="canonical" href="https://andgineer.github.io/llmbroker/direct/">
+      
+      
+        <link rel="prev" href="../async/">
+      
+      
+        <link rel="next" href="../secrets/">
+      
+      
+        
+          <link rel="alternate" href="/llmbroker/" hreflang="en">
+        
+          <link rel="alternate" href="/llmbroker/ru/" hreflang="ru">
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.42">
+    
+    
+      
+        <title>Прямые вызовы модели - llmbroker</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.fba56155.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#_1" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="llmbroker" class="md-header__button md-logo" aria-label="llmbroker" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            llmbroker
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Прямые вызовы модели
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-languages" viewBox="0 0 24 24"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="/llmbroker/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="/llmbroker/ru/" hreflang="ru" class="md-select__link">
+              Русский
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/andgineer/llmbroker" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    llmbroker
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="llmbroker" class="md-nav__button md-logo" aria-label="llmbroker" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    llmbroker
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/andgineer/llmbroker" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    llmbroker
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  llmbroker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Установка
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Пул моделей и вызовы
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Инструменты и агенты
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../async/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Асинхронные вызовы и потоковая выдача
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Прямые вызовы модели
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Прямые вызовы модели
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Настройка и вызов
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Собственная конфигурация модели
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Прямые модели не входят в пул
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Как найти платную модель
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#curated" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Чтение каталога из программы
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alias-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Различие между <code>alias</code> и <code>name</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Обновление модели, заданной псевдонимом
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Асинхронные вызовы и потоковая выдача
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Синхронно
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#params" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Параметры запроса
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ошибки
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API-ключи
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Серверы и кластеры
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Наблюдение и журнал
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../disable/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Отключение моделей
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Настройка и вызов
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Собственная конфигурация модели
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Прямые модели не входят в пул
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Как найти платную модель
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#curated" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Чтение каталога из программы
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alias-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Различие между <code>alias</code> и <code>name</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Обновление модели, заданной псевдонимом
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Асинхронные вызовы и потоковая выдача
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Синхронно
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#params" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Параметры запроса
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ошибки
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="_1">Прямые вызовы модели</h1>
+<p>Методы <code>ask</code>, <code>chat</code> и <code>stream</code> выбирают модель из пула и при ошибке переходят к
+следующей. Если нужно обратиться к <strong>одной конкретной модели</strong>, используйте
+<code>broker.direct(...)</code>. Такой вызов выполняется напрямую, без выбора из пула и без
+автоматического перехода к другой модели.</p>
+<p>Для прямого доступа модель нужно указать в параметре <code>direct=</code> при создании
+брокера. К моделям из пула обращаются только через <code>ask</code>, <code>chat</code> или <code>stream</code>.
+При попытке передать имя модели из пула в <code>direct()</code> возникнет <code>PoolModelError</code>.</p>
+<h2 id="_2">Настройка и вызов</h2>
+<div class="highlight"><pre><span></span><code><span class="n">broker</span> <span class="o">=</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">(</span><span class="n">direct</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;opus&quot;</span><span class="p">])</span>
+<span class="n">broker</span><span class="o">.</span><span class="n">direct</span><span class="p">(</span><span class="s2">&quot;opus&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">&quot;...&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><code>"opus"</code> — постоянный псевдоним из поддерживаемого каталога платных моделей. При
+выходе нового поколения Claude каталог может связать <code>opus</code> с новой версией, при
+этом код приложения менять не потребуется. Псевдоним не содержит номера версии
+и не переименовывается. Нужный API-ключ определяется провайдером, например
+<code>ANTHROPIC_API_KEY</code> или <code>OPENAI_API_KEY</code>.</p>
+<p>Список моделей из <code>direct=</code> не записывается в реестр: его источником остаётся код
+приложения. Соответствие псевдонима конкретной версии проверяется примерно раз в
+сутки вместе с обновлением пула. Отдельная синхронизация или локальный файл для
+этого не нужны.</p>
+<p>Если каталог недоступен во время проверки, брокер продолжает использовать уже
+выбранную версию и записывает предупреждение в журнал. Ранее найденное
+соответствие не заменяется более старым. Ошибка возникает только при первом
+разрешении псевдонима, например если в нём есть опечатка; сообщение перечислит
+доступные варианты.</p>
+<h2 id="_3">Собственная конфигурация модели</h2>
+<p>Вместо псевдонима можно передать <code>LLMConfig</code>. Это подходит для модели на
+собственном сервере, корпоративного шлюза или версии, которую нельзя обновлять
+автоматически:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">llmbroker</span><span class="w"> </span><span class="kn">import</span> <span class="n">LLMConfig</span>
+
+<span class="n">gateway</span> <span class="o">=</span> <span class="n">LLMConfig</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;frontier&quot;</span><span class="p">,</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;claude-opus-4-8&quot;</span><span class="p">,</span>
+    <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;https://api.anthropic.com/v1&quot;</span><span class="p">,</span>   <span class="c1"># любой API, совместимый с OpenAI</span>
+    <span class="n">api_key_ref</span><span class="o">=</span><span class="s2">&quot;ANTHROPIC_API_KEY&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">broker</span> <span class="o">=</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">(</span><span class="n">direct</span><span class="o">=</span><span class="p">[</span><span class="n">gateway</span><span class="p">])</span>
+<span class="n">broker</span><span class="o">.</span><span class="n">direct</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;frontier&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">&quot;...&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Такая конфигурация, включая версию модели, не изменяется при обновлении каталога.</p>
+<h2 id="_4">Прямые модели не входят в пул</h2>
+<p>Модель из <code>direct=</code> никогда не участвует в выборе моделей, не используется как
+запасная и не учитывается в <code>count()</code> и <code>snapshot()</code>. Пул предназначен для
+взаимозаменяемых бесплатных моделей с общей логикой ограничений. Прямые модели и
+частные шлюзы управляются отдельно.</p>
+<p>Собственную модель можно включить в пул, если <a href="../server/#own-entry">добавить её в реестр
+самостоятельно</a>. Автоматическое обновление такую запись не
+изменит. Реестр содержит только модели пула, поэтому добавление в реестр и
+объявление через <code>direct=</code> — два разных способа использования модели.</p>
+<h2 id="_5">Как найти платную модель</h2>
+<p>Команда <code>llmbroker list</code> показывает поддерживаемые бесплатные и платные модели и
+ничего не изменяет. В строке <code>direct</code> сначала указан псевдоним для <code>direct=</code>, а
+затем идентификаторы провайдера и модели, <code>base_url</code> и <code>api_key_ref</code>:</p>
+<div class="highlight"><pre><span></span><code>$ llmbroker list
+pool groq-gpt-oss-120b openai/gpt-oss-120b https://api.groq.com/openai/v1 GROQ_API_KEY
+...
+direct opus anthropic claude-opus-5 https://api.anthropic.com/v1 ANTHROPIC_API_KEY
+direct sonnet anthropic claude-sonnet-5 https://api.anthropic.com/v1 ANTHROPIC_API_KEY
+</code></pre></div>
+<h2 id="curated">Чтение каталога из программы</h2>
+<p>Те же данные можно прочитать из программы без создания брокера. Сначала
+используется сохранённая локальная копия, а при её отсутствии — копия из
+установленного пакета. Доступ к сети для этих функций не требуется:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">llmbroker</span><span class="w"> </span><span class="kn">import</span> <span class="n">curated_paid</span><span class="p">,</span> <span class="n">curated_pool</span><span class="p">,</span> <span class="n">curated_providers</span>
+
+<span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">curated_paid</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">alias</span> <span class="ow">or</span> <span class="s2">&quot;-&quot;</span><span class="p">,</span> <span class="n">row</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">row</span><span class="o">.</span><span class="n">label</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">provider</span> <span class="ow">in</span> <span class="n">curated_providers</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">provider</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="n">provider</span><span class="o">.</span><span class="n">base_url</span><span class="p">,</span> <span class="n">provider</span><span class="o">.</span><span class="n">api_key_ref</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">curated_pool</span><span class="p">()</span><span class="o">.</span><span class="n">configs</span><span class="p">),</span> <span class="s2">&quot;бесплатных моделей в поддерживаемом списке&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Через описание провайдера можно настроить и модель, которой ещё нет в каталоге,
+например недавно выпущенную версию. Создайте конфигурацию методом <code>declare()</code> и
+передайте её в <code>direct=</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">anthropic</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">curated_providers</span><span class="p">()</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">id</span> <span class="o">==</span> <span class="s2">&quot;anthropic&quot;</span><span class="p">)</span>
+<span class="n">broker</span> <span class="o">=</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">(</span><span class="n">direct</span><span class="o">=</span><span class="p">[</span><span class="n">anthropic</span><span class="o">.</span><span class="n">declare</span><span class="p">(</span><span class="s2">&quot;claude-opus-9-preview&quot;</span><span class="p">)])</span>
+<span class="n">broker</span><span class="o">.</span><span class="n">direct</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;anthropic-claude-opus-9-preview&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">&quot;...&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><code>declare()</code> подставляет адрес API и имя ключа. Результатом становится полная
+конфигурация с фиксированной версией, которая не обновляется вместе с каталогом.
+Метод <code>.declare()</code> есть и у записей каталога; он также фиксирует текущий
+идентификатор модели. Чтобы автоматически переходить на новые версии, передайте
+в <code>direct=</code> строковый псевдоним.</p>
+<p>Эти функции только читают данные. Обновление выполняет <code>sync</code>. Поведение при
+отсутствующем ключе описано в разделе <a href="#errors">Ошибки</a>.</p>
+<h2 id="alias-name">Различие между <code>alias</code> и <code>name</code></h2>
+<p>Псевдонимы и полные имена обрабатываются отдельно. Параметр <code>name=</code> можно
+использовать для проверки версии: если указать <code>anthropic-claude-opus-5</code>, а
+псевдоним в каталоге уже соответствует другой версии, вызов завершится ошибкой,
+а не перейдёт на новую модель незаметно.</p>
+<p>Конфигурации из <code>direct=</code> не сохраняются в реестре. Значения ключей также не
+сохраняются: во время вызова они читаются из переменных окружения или выбранного
+хранилища секретов.</p>
+<h2 id="_6">Обновление модели, заданной псевдонимом</h2>
+<p>Соответствие псевдонима конкретной версии проверяется примерно раз в сутки вместе
+с обновлением пула. При переходе на новую версию в журнал записываются прежнее и
+новое значения:</p>
+<div class="highlight"><pre><span></span><code>direct=: opus: claude-opus-4-8 -&gt; claude-opus-5
+</code></pre></div>
+<p>После обновления поле <code>name</code> содержит новую версию. Если изменился провайдер, в
+записи также будет новый <code>api_key_ref</code>. Перед следующим вызовом задайте
+соответствующую переменную окружения.</p>
+<p>Полная конфигурация <code>LLMConfig</code> не обновляется, поскольку она не связана с записью
+каталога.</p>
+<h2 id="streaming">Асинхронные вызовы и потоковая выдача</h2>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">AsyncBroker</span><span class="p">(</span><span class="n">direct</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;opus&quot;</span><span class="p">])</span> <span class="k">as</span> <span class="n">broker</span><span class="p">:</span>
+    <span class="n">client</span> <span class="o">=</span> <span class="k">await</span> <span class="n">broker</span><span class="o">.</span><span class="n">direct</span><span class="p">(</span><span class="s2">&quot;opus&quot;</span><span class="p">)</span>
+
+    <span class="c1"># потоковая выдача через асинхронный итератор</span>
+    <span class="k">async</span> <span class="k">for</span> <span class="n">delta</span> <span class="ow">in</span> <span class="n">client</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="s2">&quot;Напиши хокку про брокеров&quot;</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">delta</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># либо весь ответ сразу</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">&quot;Дай полный текст&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">text</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">usage</span><span class="p">)</span>
+</code></pre></div>
+<p>Прямой вызов обращается к одной указанной модели. Брокер не выбирает модель из
+пула, не переходит к другой при ошибке и не записывает вызов в журнал. Потоковая
+выдача из пула описана в разделе
+<a href="../async/#streaming-from-the-pool">Асинхронные вызовы</a>.</p>
+<h2 id="_7">Синхронно</h2>
+<p>Синхронный <code>Broker</code> также предоставляет <code>direct(...)</code>, но поддерживает только
+<code>ask()</code>. Для потоковой выдачи нужен <code>AsyncBroker</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="k">with</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">(</span><span class="n">direct</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;opus&quot;</span><span class="p">])</span> <span class="k">as</span> <span class="n">broker</span><span class="p">:</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">direct</span><span class="p">(</span><span class="s2">&quot;opus&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">&quot;...&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="params">Параметры запроса</h2>
+<p>При прямом вызове можно передать параметры, поддерживаемые выбранной моделью,
+например уровень рассуждения, температуру, ограничение числа токенов или <code>seed</code>.
+Словарь <code>params</code> добавляется в тело запроса без изменений. Синхронный и
+асинхронный клиенты принимают его в <code>ask()</code>, а асинхронный — также в <code>stream()</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">client</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">direct</span><span class="p">(</span><span class="s2">&quot;opus&quot;</span><span class="p">)</span>
+<span class="n">client</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">&quot;...&quot;</span><span class="p">,</span> <span class="n">params</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;reasoning_effort&quot;</span><span class="p">:</span> <span class="s2">&quot;low&quot;</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">})</span>
+</code></pre></div>
+<p>llmbroker не проверяет и не изменяет значения из <code>params</code>. Если провайдер не
+поддерживает параметр, его сообщение об ошибке передаётся приложению. Параметры
+API провайдера помещаются внутрь <code>params</code>, а параметры llmbroker, например
+<code>messages=</code> и <code>timeout=</code>, передаются отдельно.</p>
+<p>Поля <code>model</code>, <code>messages</code>, <code>stream</code>, <code>stream_options</code> и <code>tools</code> формирует сам
+llmbroker. Если одно из них передано в <code>params</code>, возникает <code>ValueError</code> с именем
+поля. Это предотвращает замену выбранной модели и несовместимое изменение режима
+ответа. Поле <code>tool_choice</code> разрешено, поэтому
+<code>params={"tool_choice": "required"}</code> заменяет значение <code>"auto"</code>, которое
+устанавливается вместе с <code>tools</code>.</p>
+<p><code>params</code> поддерживается только для прямых вызовов. Для пула доступны лишь
+параметры, которые можно одинаково применить ко всем моделям. См. раздел
+<a href="../usage/#response-format">Запрос JSON по схеме</a>.</p>
+<h2 id="errors">Ошибки</h2>
+<p>Все исключения прямых вызовов наследуют <code>LLMRequestError</code>:</p>
+<ul>
+<li><code>PoolModelError</code> — указано имя модели из поддерживаемого пула. Используйте
+  <code>ask</code>, <code>chat</code> или <code>stream</code> либо создайте собственную конфигурацию модели.</li>
+<li><code>UnknownModelError</code> — запись с таким именем или псевдонимом не найдена. Если
+  значение существует в другой категории, это будет указано в сообщении. Та же
+  ошибка возникает при запуске, если псевдонима из <code>direct=</code> нет в каталоге;
+  сообщение перечислит доступные псевдонимы.</li>
+<li><code>MissingKeyError</code> — не найден ключ из <code>api_key_ref</code>. Для прямого вызова это
+  ошибка; модель пула без ключа просто не используется.</li>
+<li><code>ProviderError</code> — провайдер вернул ошибку. Поля <code>.status</code> и <code>.detail</code> содержат
+  код HTTP и фрагмент ответа. Для отдельной обработки можно перехватывать
+  <code>AuthError</code> (401 или 403) и <code>RateLimitError</code> (429 или 503, с полем
+  <code>.retry_after</code>).</li>
+<li><code>InvalidProviderResponseError</code> — провайдер вернул HTTP 200, но тело не удалось
+  разобрать как ответ модели либо в нём нет ни текста, ни вызовов инструментов.
+  Поле <code>.model</code> содержит имя модели, а <code>.detail</code> — фрагмент ответа. При прямом
+  вызове брокер не может перейти к другой модели, поэтому исключение передаётся
+  приложению.</li>
+<li><code>LLMTimeoutError</code> — истекло время ожидания ответа.</li>
+<li><code>StreamInterruptedError</code> — потоковая выдача из пула прервалась после получения
+  первых частей текста. Поле <code>.llm_name</code> содержит имя модели, а исходная ошибка
+  доступна в <code>__cause__</code>.</li>
+<li><code>StreamReplacementError</code> — при потоковой выдаче из пула с <code>fastest_of &gt; 1</code>
+  другая модель завершила полный ответ раньше. Поле <code>.replacement</code> содержит этот
+  ответ, а <code>.streamed_llm_name</code> — имя модели, чей предварительный текст нужно
+  заменить.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"search":"../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.6e5f0216.min.js"></script>
+      
+    
+  </body>
+</html>

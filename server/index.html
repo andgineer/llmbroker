@@ -1,0 +1,1345 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+        <meta name="author" content="Andrey Sorokin">
+      
+      
+        <link rel="canonical" href="https://andgineer.github.io/llmbroker/server/">
+      
+      
+        <link rel="prev" href="../secrets/">
+      
+      
+        <link rel="next" href="../monitoring/">
+      
+      
+        
+          <link rel="alternate" href="/llmbroker/" hreflang="en">
+        
+          <link rel="alternate" href="/llmbroker/ru/" hreflang="ru">
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.42">
+    
+    
+      
+        <title>Servers & clusters - llmbroker</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.fba56155.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#servers-clusters" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="llmbroker" class="md-header__button md-logo" aria-label="llmbroker" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            llmbroker
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Servers &amp; clusters
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-languages" viewBox="0 0 24 24"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="/llmbroker/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="/llmbroker/ru/" hreflang="ru" class="md-select__link">
+              Русский
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/andgineer/llmbroker" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    llmbroker
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="llmbroker" class="md-nav__button md-logo" aria-label="llmbroker" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    llmbroker
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/andgineer/llmbroker" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    llmbroker
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  llmbroker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Model pool and calls
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tools &amp; agents
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../async/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Async &amp; streaming
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../direct/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Direct model calls
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API keys
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Servers &amp; clusters
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Servers &amp; clusters
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#datasource" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Shared DB
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Shared DB">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#own-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A registry of your own
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="A registry of your own">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#own-entry" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        An entry of your own, in the pool
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Filling the DB: a deploy job, not a startup step
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#no-fetch" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A deployment that may not fetch while it serves
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migrate" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Moving an installation between backends
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pool-health" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Watching the pool from an admin screen
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sqlite" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        SQLite: sharing and WAL
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Startup errors
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#closing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Closing the broker
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#journal" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Call journal
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multiuser" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        One broker, a caller per request
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="One broker, a caller per request">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#coordination" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What processes do and do not share
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alembic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Alembic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Monitoring and the journal
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../disable/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Disabling models
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#datasource" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Shared DB
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Shared DB">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#own-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A registry of your own
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="A registry of your own">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#own-entry" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        An entry of your own, in the pool
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Filling the DB: a deploy job, not a startup step
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#no-fetch" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A deployment that may not fetch while it serves
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migrate" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Moving an installation between backends
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pool-health" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Watching the pool from an admin screen
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sqlite" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        SQLite: sharing and WAL
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Startup errors
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#closing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Closing the broker
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#journal" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Call journal
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multiuser" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        One broker, a caller per request
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="One broker, a caller per request">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#coordination" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What processes do and do not share
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alembic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Alembic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="servers-clusters">Servers &amp; clusters</h1>
+<p>The same broker scales to multiple processes and hosts: point it at a shared DB
+instead of letting it keep its own state — the calling code stays the same.</p>
+<h2 id="datasource">Shared DB</h2>
+<p>The broker's first argument sets the model pool, the keys and the journal all at
+once:</p>
+<div class="highlight"><pre><span></span><code><span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">()</span>                          <span class="c1"># llmbroker&#39;s own directory + keys from the environment</span>
+<span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">(</span><span class="s2">&quot;broker.db&quot;</span><span class="p">)</span>               <span class="c1"># sqlite</span>
+<span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">(</span><span class="s2">&quot;postgresql://host/db&quot;</span><span class="p">)</span>    <span class="c1"># postgres</span>
+<span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">(</span><span class="s2">&quot;mongodb://host/db&quot;</span><span class="p">)</span>       <span class="c1"># mongodb</span>
+</code></pre></div>
+<p>Each variant needs its extra — see <a href="../installation/">Installation</a>. Any part can
+be overridden explicitly via <code>registry=</code> / <code>secrets=</code> / <code>store=</code>.</p>
+<h3 id="own-registry">A registry of your own</h3>
+<p>To supply the pool yourself, pass an object implementing the registry protocol
+and say what it follows:</p>
+<div class="highlight"><pre><span></span><code><span class="n">broker</span> <span class="o">=</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">(</span><span class="n">registry</span><span class="o">=</span><span class="n">MyRegistry</span><span class="p">(),</span> <span class="n">sync</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>        <span class="c1"># only your entries</span>
+<span class="n">broker</span> <span class="o">=</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">(</span><span class="n">registry</span><span class="o">=</span><span class="n">MyRegistry</span><span class="p">(),</span> <span class="n">sync</span><span class="o">=</span><span class="s2">&quot;freetier&quot;</span><span class="p">)</span>  <span class="c1"># yours plus ours</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>you pass</th>
+<th><code>sync=</code> left out</th>
+<th>entries you put there yourself</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>nothing, or a database URL</td>
+<td>follows <code>"freetier"</code></td>
+<td>never touched by a refresh</td>
+</tr>
+<tr>
+<td>a registry object</td>
+<td>an error — say which</td>
+<td>never touched by a refresh</td>
+</tr>
+</tbody>
+</table>
+<p><strong>A registry of your own covers the registry only.</strong> Keys and the journal are
+separate ports, and bringing your own registry does not make them yours: the keys
+will still be read from the environment, and the journal will land in a <code>store</code>
+directory beside the process's working directory. For a service that is almost
+certainly not what you wanted — pass both explicitly:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">llmbroker.postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">Secrets</span><span class="p">,</span> <span class="n">Store</span>
+
+<span class="n">broker</span> <span class="o">=</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">AsyncBroker</span><span class="p">(</span>
+    <span class="n">registry</span><span class="o">=</span><span class="n">MyRegistry</span><span class="p">(),</span>
+    <span class="n">secrets</span><span class="o">=</span><span class="n">Secrets</span><span class="p">(</span><span class="n">pool</span><span class="p">),</span>            <span class="c1"># keys in your database, not in the environment</span>
+    <span class="n">store</span><span class="o">=</span><span class="n">Store</span><span class="p">(</span><span class="n">pool</span><span class="p">),</span>                <span class="c1"># the journal there too</span>
+    <span class="n">sync</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>A refresh only ever rewrites what a sync itself wrote, so "the curated free pool
+plus two endpoints of my own, routed together" is just a registry with both in
+it.</p>
+<h4 id="own-entry">An entry of your own, in the pool</h4>
+<p>You put your own entry there through the registry protocol, not by writing rows:
+the table layout is llmbroker's own and may change between releases. Read what is
+there, add yours, write it all back — <code>mirror</code> is a total mirror, so anything you
+leave out is deleted:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">llmbroker</span><span class="w"> </span><span class="kn">import</span> <span class="n">LLMConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">llmbroker.postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">Registry</span>
+
+<span class="n">registry</span> <span class="o">=</span> <span class="n">Registry</span><span class="p">(</span><span class="n">pool</span><span class="p">)</span>
+<span class="n">mine</span> <span class="o">=</span> <span class="n">LLMConfig</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;my-gateway&quot;</span><span class="p">,</span>
+    <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;https://gw.internal/v1&quot;</span><span class="p">,</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;m&quot;</span><span class="p">,</span>
+    <span class="n">api_key_ref</span><span class="o">=</span><span class="s2">&quot;MY_GATEWAY_KEY&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="k">await</span> <span class="n">registry</span><span class="o">.</span><span class="n">mirror</span><span class="p">([</span><span class="o">*</span><span class="k">await</span> <span class="n">registry</span><span class="o">.</span><span class="n">load</span><span class="p">(),</span> <span class="n">mine</span><span class="p">])</span>
+</code></pre></div>
+<p>Nothing marks it as ours, so no sync ever removes or rewrites it. It is a pool
+member and the router fails over onto it — an endpoint you want reached by name
+instead is <a href="../direct/">a declared model</a>, which is not stored at all.</p>
+<h3 id="sync">Filling the DB: a deploy job, not a startup step</h3>
+<p>The DB starts empty. Sync it from your own code, in the same deploy step that
+runs <code>alembic upgrade</code> — built by the factory your application already uses, so
+the DSN and its secrets live in exactly one place:</p>
+<div class="highlight"><pre><span></span><code><span class="n">broker</span> <span class="o">=</span> <span class="n">build_broker</span><span class="p">()</span>                   <span class="c1"># your app&#39;s own factory</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="k">await</span> <span class="n">broker</span><span class="o">.</span><span class="n">sync</span><span class="p">(</span><span class="s2">&quot;freetier&quot;</span><span class="p">))</span>  <span class="c1"># the curated preset — the one source there is</span>
+<span class="k">finally</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">broker</span><span class="o">.</span><span class="n">aclose</span><span class="p">()</span>
+</code></pre></div>
+<p>Note this is <em>not</em> <code>async with</code>: entering the broker provisions the pool, and the
+deploy job has exactly one thing to do — fill the database. And where the broker
+may not reach the network (<a href="#no-fetch">below</a>), the context manager raises
+<code>EmptyRegistryError</code> right there, before you ever call <code>sync()</code>.</p>
+<p>Run it as a one-shot job (release phase, a Kubernetes Job, an init container).
+<strong>Keeping the model list current afterwards needs no job at all</strong>: the serving
+processes re-check the curated model list themselves, about once a day, on a call they
+were making anyway. N nodes checking is safe because they all compute the same
+merge from the same upstream and the same keys, so the first write settles it and
+every other node's check finds nothing to do. What the design avoids is a node
+reconciling the registry against a <em>local copy</em> of its own.</p>
+<p><code>sync</code> takes a curated preset name and nothing else — no file path, no second
+registry. A connection string keeps following the curated preset; hand the broker
+a registry <em>object</em> and you must say what it follows, <code>sync="freetier"</code> or
+<code>sync=None</code>. Either way a refresh rewrites only the entries a sync itself
+wrote — entries your installation states through its own registry are left alone.</p>
+<h3 id="no-fetch">A deployment that may not fetch while it serves</h3>
+<p>An egress policy, an audit rule, a network the serving hosts are not on: where the
+process may open no connection except to the providers themselves, switch the
+automatic refresh off and do the fetching in the job you already run.</p>
+<div class="highlight"><pre><span></span><code><span class="n">llmbroker</span><span class="o">.</span><span class="n">AsyncBroker</span><span class="p">(</span><span class="s2">&quot;postgresql://host/db&quot;</span><span class="p">,</span> <span class="n">sync_interval</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>   <span class="c1"># in your factory</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="n">broker</span> <span class="o">=</span> <span class="n">build_broker</span><span class="p">()</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">report</span> <span class="o">=</span> <span class="k">await</span> <span class="n">broker</span><span class="o">.</span><span class="n">sync</span><span class="p">()</span>      <span class="c1"># no argument: whatever this installation follows</span>
+    <span class="k">if</span> <span class="n">report</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>            <span class="c1"># the paid catalog alone merges nothing</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">llmbroker</span><span class="o">.</span><span class="n">format_report</span><span class="p">(</span><span class="n">report</span><span class="p">))</span>
+<span class="k">finally</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">broker</span><span class="o">.</span><span class="n">aclose</span><span class="p">()</span>
+</code></pre></div>
+<p><code>sync_interval=None</code> stops every clock in the process that goes online — the
+curated model list and the paid catalog your <code>direct=</code> aliases resolve through. It
+also stops the fetch that fills an empty registry at startup: such a broker raises
+<code>EmptyRegistryError</code> naming this job, rather than going online to serve its first
+request. That is the intended failure. Set the switch and skip the job and the
+broker will not serve.</p>
+<p><code>sync()</code> with no argument syncs what this installation follows: the preset named by
+<code>sync=</code>, or — where it follows none — the paid catalog alone, which refreshes your
+declared aliases, merges nothing into the registry and therefore returns no report.</p>
+<p>A <code>direct=</code> alias resolves from whatever your last sync left on the machine, or —
+on a host where none has run — from the copy shipped inside the package, and stays
+on that version until the job runs again. Nothing here goes online: the alias is
+frozen, not broken.</p>
+<p><strong>The freshness is now yours to keep.</strong> Providers retire free endpoints without
+notice, so a model list nobody refreshes decays into a pool that cannot serve. Run
+the job beside your migrations on every deploy, and on a schedule of its own
+between deploys — about once a day is what the built-in clock does, and copying
+that is the safe default.</p>
+<h3 id="migrate">Moving an installation between backends</h3>
+<p>There is no migrate command; the two registries already expose everything it
+would need, so it is two lines in the same deploy script that holds both DSNs:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">llmbroker.mongodb</span><span class="w"> </span><span class="kn">import</span> <span class="n">Registry</span> <span class="k">as</span> <span class="n">MongoRegistry</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">llmbroker.postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">Registry</span> <span class="k">as</span> <span class="n">PostgresRegistry</span>
+
+<span class="n">old</span> <span class="o">=</span> <span class="n">PostgresRegistry</span><span class="p">(</span><span class="n">old_pool</span><span class="p">)</span>
+<span class="n">new</span> <span class="o">=</span> <span class="n">MongoRegistry</span><span class="p">(</span><span class="n">new_db</span><span class="p">)</span>
+<span class="k">await</span> <span class="n">new</span><span class="o">.</span><span class="n">mirror</span><span class="p">(</span><span class="k">await</span> <span class="n">old</span><span class="o">.</span><span class="n">load</span><span class="p">())</span>
+</code></pre></div>
+<p>Secrets and the journal move the same way where you want them to, through their
+own backends; usually the keys are re-provisioned and the journal is left behind.</p>
+<p>A paid model you reach by name is declared where the factory builds the broker —
+<code>AsyncBroker(dsn, direct=["opus"])</code> — not written into the registry. One line in
+the factory you already have covers the whole cluster, and every process
+re-resolves the alias on its own refresh clock, so a long-lived deployment does
+not sit on the model id it was first deployed with. See
+<a href="../direct/">Direct model calls</a>.</p>
+<p><code>sync</code> brings the entries it wrote into line with the curated list it follows: an
+entry still on the list is updated, an entry the list no longer carries is
+removed, a new one is added. Nothing weighs whether a dropped entry might still
+work here, and an entry your own installation put in the registry is never
+touched. Removal is bounded where the list is curated instead — an entry leaves
+it only once it can no longer be called. The returned <code>SyncReport</code> says what
+happened, on every run including no-ops, and names any key that has become
+unused. A non-zero exit from the job and its log are the admin channel your
+failed migrations already use; hosts that forward elsewhere can read
+<code>broker.last_sync_report</code>.</p>
+<h3 id="pool-health">Watching the pool from an admin screen</h3>
+<p><code>snapshot()</code> is one call and answers the whole screen — the per-model rows plus
+the pool-wide verdict — and llmbroker logs that same verdict, so alerting needs
+no polling. See <a href="../monitoring/#pool-health">Monitoring and the journal</a>.</p>
+<h2 id="sqlite">SQLite: sharing and WAL</h2>
+<p>The normal setup is one database shared by llmbroker and your application: the
+broker keeps its own <code>llmbroker_*</code> tables alongside yours and touches nothing
+else (the <a href="#alembic">Alembic</a> hook keeps migration autogenerate clear of them).</p>
+<p>That includes <code>PRAGMA user_version</code>, the file header slot many migration tools
+use — it is yours. The broker keeps its own schema version in an
+<code>llmbroker_schema_version</code> table, so dropping the <code>llmbroker_*</code> tables resets
+everything llmbroker holds in the file.</p>
+<p>llmbroker never sets or changes SQLite's <code>journal_mode</code> — WAL is a persistent,
+file-level property that belongs to whoever owns the database file, so enabling
+it is your call, not the broker's. On a shared file that owner is your
+application: turn on WAL there if you want reader/writer concurrency.</p>
+<p>If your application writes to that file heavily, give the broker its own file
+instead — point it at a separate <code>.db</code> and the two stop contending on SQLite's
+file-level lock. A file that is the broker's alone is yours to configure
+directly; WAL is set once and persists:</p>
+<div class="highlight"><pre><span></span><code>sqlite3<span class="w"> </span>broker.db<span class="w"> </span><span class="s1">&#39;PRAGMA journal_mode=WAL&#39;</span>
+</code></pre></div>
+<p>This applies to SQLite only. Postgres and MongoDB have no equivalent file-level
+lock — sharing one database with your application is fine, and a dedicated
+schema or database is optional tidiness, not a concurrency need.</p>
+<h2 id="errors">Startup errors</h2>
+<p>Three conditions can stop the broker before it serves a single request, and a host
+usually wants to treat them differently:</p>
+<ul>
+<li><code>EmptyRegistryError</code> — nothing has been synced into the registry yet. Benign:
+  the installation is unconfigured, not broken.</li>
+<li><code>SyncRefusedError</code> — raised by <code>sync()</code> when applying its result would leave a
+  working registry with no entries at all. Nothing was written; <code>report</code> carries
+  what the merge would have done.</li>
+<li><code>SchemaVersionError</code> — the store holds a schema version this release cannot
+  use. Fatal and operator-actionable: drop the <code>llmbroker_*</code> tables and restart
+  (export registry/secrets/calls first if you need them). <code>found</code> and <code>expected</code>
+  carry the two versions.</li>
+</ul>
+<p>All three live on <code>llmbroker</code> (<code>llmbroker.SchemaVersionError</code>, and so on) and
+subclass <code>LLMBrokerError</code>, itself a <code>RuntimeError</code>, so catch at the granularity
+you need:</p>
+<div class="highlight"><pre><span></span><code><span class="k">try</span><span class="p">:</span>
+    <span class="n">models</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">snapshot</span><span class="p">()</span>
+<span class="k">except</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">EmptyRegistryError</span><span class="p">:</span>
+    <span class="n">models</span> <span class="o">=</span> <span class="p">{}</span>   <span class="c1"># nothing configured yet — render an empty screen, not a 500</span>
+</code></pre></div>
+<p><code>SchemaVersionError</code> propagates: its message is the operator's instruction, so
+swallowing it turns a schema mismatch into "no providers configured". Catching
+<code>LLMBrokerError</code> covers all three, and <code>RuntimeError</code> covers them plus everything
+else.</p>
+<p>A failed request raises from a separate tree (<code>LLMRequestError</code> and its
+subclasses) — see <a href="../usage/#errors">When nobody can answer</a>.</p>
+<h2 id="closing">Closing the broker</h2>
+<p>Close the broker explicitly when a long-lived process creates brokers repeatedly
+or an external DB is attached:</p>
+<div class="highlight"><pre><span></span><code><span class="k">with</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">(</span><span class="s2">&quot;broker.db&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">broker</span><span class="p">:</span>
+    <span class="n">reply</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">&quot;...&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><code>AsyncBroker</code> — <code>async with</code> or <code>await broker.aclose()</code>.</p>
+<h2 id="journal">Call journal</h2>
+<p>Every call attempt leaves a row: what answered, how it ended, what it cost, the
+<code>trace_id</code> you called it with, and how you rated it afterwards. It is read with
+<code>broker.calls(...)</code> and <code>broker.stats(...)</code>, neither of which initializes the
+pool, so both work on an installation that was never synced. See
+<a href="../monitoring/#journal">Monitoring and the journal</a>.</p>
+<p>The journal cleans itself up: rows older than <code>retention</code> are dropped, 90 days by
+default. The depth belongs to the journal backend rather than to the broker, so a
+connection string cannot set it — assemble the ports yourself and set it on the
+one that writes the journal.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">llmbroker.postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">Registry</span><span class="p">,</span> <span class="n">Secrets</span><span class="p">,</span> <span class="n">Store</span>
+
+<span class="n">broker</span> <span class="o">=</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">AsyncBroker</span><span class="p">(</span>
+    <span class="n">registry</span><span class="o">=</span><span class="n">Registry</span><span class="p">(</span><span class="n">pool</span><span class="p">),</span>
+    <span class="n">secrets</span><span class="o">=</span><span class="n">Secrets</span><span class="p">(</span><span class="n">pool</span><span class="p">),</span>
+    <span class="n">store</span><span class="o">=</span><span class="n">Store</span><span class="p">(</span><span class="n">pool</span><span class="p">,</span> <span class="n">retention</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">365</span><span class="p">)),</span>
+    <span class="n">sync</span><span class="o">=</span><span class="s2">&quot;freetier&quot;</span><span class="p">,</span>                  <span class="c1"># a registry object — say what it follows</span>
+<span class="p">)</span>
+</code></pre></div>
+<h2 id="multiuser">One broker, a caller per request</h2>
+<p><strong>A broker is the installation.</strong> It holds the model pool, the keys, everything
+it has learned and one HTTP client, and it lives as long as the process. What a
+request holds is a <em>caller</em>: the scope its journal rows are attributed to and the
+keys it may pay with, over that one shared pool. Asking for a caller costs no I/O,
+so building one per request is the intended shape.</p>
+<p>Four deployments, in order of how much they need:</p>
+<p><strong>A script.</strong> Nothing to hold, nothing to share — the broker's own call verbs are
+its unscoped caller, so the second noun never appears:</p>
+<div class="highlight"><pre><span></span><code><span class="n">broker</span> <span class="o">=</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">&quot;hi&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>A long-lived process with a database.</strong> Build the broker where you build your
+database engine — once, at startup — and close it at shutdown:</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@asynccontextmanager</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">lifespan</span><span class="p">(</span><span class="n">app</span><span class="p">:</span> <span class="n">FastAPI</span><span class="p">):</span>
+    <span class="n">app</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">broker</span> <span class="o">=</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">AsyncBroker</span><span class="p">(</span><span class="s2">&quot;postgresql://host/db&quot;</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">yield</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">app</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">broker</span><span class="o">.</span><span class="n">aclose</span><span class="p">()</span>
+</code></pre></div>
+<p><strong>A cluster on shared keys.</strong> Every handler takes the broker's own caller. One
+pool, one set of keys, one connection pool per process:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">llms</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">AsyncLLMs</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">request</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">broker</span><span class="o">.</span><span class="n">llms</span>
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/ask&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">ask</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">llms</span><span class="p">:</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">AsyncLLMs</span> <span class="o">=</span> <span class="n">Depends</span><span class="p">(</span><span class="n">llms</span><span class="p">)):</span>
+    <span class="k">return</span> <span class="p">(</span><span class="k">await</span> <span class="n">llms</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="n">prompt</span><span class="p">))</span><span class="o">.</span><span class="n">text</span>
+</code></pre></div>
+<p><strong>The same cluster with a key per user.</strong> Only the dependency changes:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">llms</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">AsyncLLMs</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">request</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">broker</span><span class="o">.</span><span class="n">for_scope</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="p">[</span><span class="s2">&quot;x-user-id&quot;</span><span class="p">])</span>
+</code></pre></div>
+<p><strong>A user's key lives under a ref with its scope in front: <code>&lt;scope&gt;/&lt;REF&gt;</code>.</strong> A
+caller scoped <code>u-42</code> asks the secrets store for <code>u-42/GROQ_API_KEY</code> first and only
+then falls back to the installation's shared <code>GROQ_API_KEY</code>; the shared value is
+read once for everybody. So giving a user a key of their own means storing it
+under that name — in an environment variable, in your database, in AWS or Vault,
+wherever the shared ones live. The scope is simply the string you passed to
+<code>for_scope(...)</code>; llmbroker has no notion of a user inside it. Vault has one
+caveat about the <code>/</code> in that name — see <a href="../secrets/#vault">API keys</a>.</p>
+<p>Every row that caller journals carries its scope, so one user's history is
+<code>broker.for_scope(user).calls(...)</code>. There is no <code>scope=</code> parameter on <code>calls()</code>:
+the scope comes from the caller you read through. The broker's own
+<code>broker.calls()</code> and <code>broker.stats()</code> are the installation's view and see every
+scope's rows at once.</p>
+<p>The pool, the quality it has learned and the per-model <code>parallel</code> cap belong to
+the broker, not the caller — one counter per user would not be a cap at all.
+A key one caller's provider rejects stops being offered to that caller; a caller
+holding a key of its own is untouched, and callers sharing one value lose it
+together, because that is one credential.</p>
+<h3 id="coordination">What processes do and do not share</h3>
+<p><strong>Processes do not coordinate.</strong> Each keeps its own view of which models are
+currently available: a cooldown one process met, and a key one process found
+dead, are that process's findings and are never read by another. The cost is one
+wasted call per process, absorbed by failover and invisible to the caller.</p>
+<p><strong>A peer's registry edit arrives at the next rebuild.</strong> The pool is rebuilt at
+start, on the refresh clock (about once a day), on an explicit <code>sync()</code>, and when
+the pool has just failed to answer. Nothing else re-reads the ports, so a
+successful call costs no database traffic beyond its own journal row.</p>
+<p><strong>A key stored into a running installation is picked up by the first call that
+needs it.</strong> That last trigger is what makes it work: a call the pool cannot serve
+re-reads the keys and then answers from them, so the caller sees no error at all —
+no restart, and no waiting out the clock. The re-read is skipped for a caller that
+already holds every key, since no key that appeared could help it, and it happens
+at most once a minute. A rebuild that finds the same rejected value keeps the
+rejection, so a key that is simply dead costs one call per period rather than one
+per request.</p>
+<h2 id="alembic">Alembic</h2>
+<p>To make migration autogeneration ignore the <code>llmbroker_*</code> tables:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># alembic/env.py</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">llmbroker.integrations.alembic</span>
+
+<span class="n">context</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span>
+    <span class="n">connection</span><span class="o">=</span><span class="n">connection</span><span class="p">,</span>
+    <span class="n">target_metadata</span><span class="o">=</span><span class="n">target_metadata</span><span class="p">,</span>
+    <span class="n">include_object</span><span class="o">=</span><span class="n">llmbroker</span><span class="o">.</span><span class="n">integrations</span><span class="o">.</span><span class="n">alembic</span><span class="o">.</span><span class="n">include_object</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Combine your own <code>include_object</code> with it via <code>and</code>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"search":"../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.6e5f0216.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,2 @@
+ERROR    llmbroker.broker:catalog.py:340 pool degraded, no failover left: 1 of 2 providers usable — no key for UNRESOLVED
+WARNING  llmbroker.broker:broker.py:562 pool under-provisioned: all LLMs are COOLING — add more LLMs to the registry

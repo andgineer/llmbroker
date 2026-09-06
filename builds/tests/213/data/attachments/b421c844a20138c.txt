@@ -1,0 +1,1 @@
+WARNING  llmbroker.broker:router.py:585 llmbroker: the cancelled attempt on a failed: ValueError('adapter bug')

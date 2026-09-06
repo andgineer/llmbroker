@@ -1,0 +1,2 @@
+ERROR    llmbroker.broker:catalog.py:340 pool degraded, no failover left: 1 of 1 providers usable
+WARNING  llmbroker.broker:llms.py:320 record_quality: trace_id='req-1' matched the 2-row read bound — a trace names one call, so the rating lands on the newest that answered under it

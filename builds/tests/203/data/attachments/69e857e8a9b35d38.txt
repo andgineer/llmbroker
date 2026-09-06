@@ -1,0 +1,40 @@
+ERROR    llmbroker.broker:catalog.py:340 pool degraded, no failover left: 1 of 2 providers usable — no key for K2
+ERROR    llmbroker.broker:broker.py:263 pool rebuild on pool exhaustion failed, continuing on the current pool
+Traceback (most recent call last):
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/llms.py", line 104, in chat
+    return await self._router.chat(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/router.py", line 294, in chat
+    return await anext(results)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/router.py", line 317, in _route
+    config = await self._pool.acquire(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/pool.py", line 260, in acquire
+    raise NoLLMAvailableError(
+    ...<3 lines>...
+    )
+llmbroker.exceptions.NoLLMAvailableError: no LLM slot came free within wait
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/broker.py", line 261, in _rebuild_safely
+    await self.rebuild()
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/broker.py", line 251, in rebuild
+    await self._catalog.rebuild(known)
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/catalog.py", line 229, in rebuild
+    stored, declared = await self.entries()
+                       ^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/catalog.py", line 196, in entries
+    configs = await self._registry.load()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/llmbroker/llmbroker/tests/test_rebuild_triggers.py", line 200, in load
+    raise OSError("registry is gone")
+OSError: registry is gone

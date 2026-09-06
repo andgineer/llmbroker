@@ -1,0 +1,8 @@
+ERROR    llmbroker.broker:router.py:728 llmbroker: store.record failed
+Traceback (most recent call last):
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/router.py", line 726, in _log_call
+    await self._store.record(call)
+  File "/home/runner/work/llmbroker/llmbroker/tests/test_router.py", line 529, in record
+    raise OSError("journal is gone")
+OSError: journal is gone
+ERROR    llmbroker.broker:learning.py:100 a: API key appears dead (HTTP 401) — check api_key_ref 'K'
