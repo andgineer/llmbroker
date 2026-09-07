@@ -1,7 +1,7 @@
-# Async & streaming
+# Asynchronous calls and streaming
 
-`AsyncBroker` is the primary engine; `Broker` is its blocking wrapper. The
-methods are the same, just with `await`:
+`AsyncBroker` provides the asynchronous API. `Broker` uses the same underlying
+behavior through synchronous methods. Call `AsyncBroker` methods with `await`:
 
 ```python
 async with llmbroker.AsyncBroker() as broker:
@@ -9,45 +9,46 @@ async with llmbroker.AsyncBroker() as broker:
     print(reply.text)
 ```
 
-The async tool loop is `await llmbroker.arun_tool_loop(...)`, see
+Use `await llmbroker.arun_tool_loop(...)` for an asynchronous tool loop. See
 [Tools & agents](tools.md).
 
 ## Streaming {#streaming-from-the-pool}
 
-Streaming is async-only — the pool yields deltas as they arrive, with routing
-and failover intact:
+Streaming is available only through the asynchronous API. `stream()` yields text
+chunks as they arrive. Model selection and fallback behave as they do for a
+regular call:
 
 ```python
 stream = broker.stream("Write a haiku about brokers", operation="write")
 async for delta in stream:
     print(delta, end="", flush=True)
 
-print(stream.llm_name, stream.usage)   # who answered, and what it cost
-await stream.record_quality(0.9)       # rate it without naming the call yourself
+print(stream.llm_name, stream.usage)   # model name and usage information
+await stream.record_quality(0.9)       # rate the completed reply
 ```
 
-`stream(...)` hands back a handle you iterate for the deltas; it also names the
-model that answered and, once the answer is over, what it cost.
+`stream(...)` returns an asynchronous iterator. After the reply is complete, its
+fields contain the model name and usage information.
 
-Failover works normally right up to the **first delta** — a rate-limited or
-broken model is cooled down and the next one takes over, invisibly. A model whose
-answer ends without ever producing a delta is broken in that same sense: nothing
-reached you, so it is failed over too rather than handed to you as an empty
-stream. Once text has started arriving there is nothing left to fail over to, so a
-stream that dies mid-answer raises `StreamInterruptedError`; the deltas you
-already received stand. That last part is what changes when you race a stream with
-`fastest_of` — see [Racing a stream](#racing-a-stream).
+Before the first text chunk arrives, the broker can try another model. This
+happens if the provider returns an error, rate-limits the request, or completes a
+reply with neither text nor tool calls. Once a chunk has been returned, switching
+models would require replacing visible text. If the reply is interrupted at that
+point, `StreamInterruptedError` is raised and the application retains the chunks
+it already received. Behavior with `fastest_of > 1` is described under
+[Concurrent streaming](#racing-a-stream).
 
-### Racing a stream {#racing-a-stream}
+### Concurrent streaming {#racing-a-stream}
 
-`fastest_of` on a stream does more than start two models: it keeps both running until
-one has a *whole* answer. That is deliberate. The model that says its first word
-soonest is often not the model that finishes soonest, and committing to it throws away
-the only lane that could still rescue the call when it stalls or answers badly.
+With `fastest_of > 1`, the broker calls multiple models concurrently. Every model
+continues until one produces a **complete** reply. The model that returns the
+first text chunk is not necessarily the one that finishes first, so the broker
+does not cancel the other requests when text first appears.
 
-So the deltas you receive are provisional. If another model finishes first, the stream
-stops and raises `StreamReplacementError` carrying that complete answer — you throw
-away everything you have shown and use it instead. Nothing is ever spliced.
+Chunks received before one reply completes are provisional. If another model
+finishes first, the iterator raises `StreamReplacementError`. Its `replacement`
+field contains the complete final reply. Replace all previously displayed text
+with that reply; chunks from different models are never combined.
 
 ```python
 stream = broker.stream("Write a haiku", fastest_of=2, stream_selection_window=1.0)
@@ -57,48 +58,48 @@ try:
         parts.append(delta)
         show(delta)
 except llmbroker.StreamReplacementError as exc:
-    replace_everything_with(exc.replacement.text)   # exc.streamed_llm_name is discarded
+    replace_everything_with(exc.replacement.text)   # replace the provisional text
 else:
     text = "".join(parts)
 
-print(stream.llm_name)             # whichever model's answer you ended up with
-await stream.record_quality(0.9)   # rates that one, never the discarded lane
+print(stream.llm_name)             # model whose reply became the final result
+await stream.record_quality(0.9)   # rate the final reply
 ```
 
-That handle — or `exc.replacement` — is also the only safe way to rate a race
-later. `fastest_of` on `chat` or `ask` can leave two answered calls under one trace —
-both models finished, and only one of them is the answer you got — so
-`record_quality(..., trace_id=...)` has no way to tell which. Rate any race through
-what it handed you, or keep the `call_id` off it.
+Rate a concurrent call through the `stream` object or `exc.replacement`. With
+`fastest_of`, the journal can contain several successful attempts with the same
+`trace_id`, although the user received only one reply.
+`record_quality(..., trace_id=...)` cannot determine which reply was shown. Use
+the returned object or save its `call_id`.
 
-The exception is terminal for that iterator: after it, no more deltas belong to the
-stream. Catch it *before* a broad `LLMRequestError`, or a completed answer will be
-handled as a failure.
+The iterator is finished after `StreamReplacementError` and yields no more data.
+Catch this exception **before** the broader `LLMRequestError`, or a complete reply
+will be handled as a failure.
 
-`stream_selection_window` is what chooses which lane you see first, and nothing else.
-For that many seconds — one by default — the pool's highest-ranked lane keeps the
-right to be the visible one; if it starts inside that time you see it, otherwise you
-see whatever a sibling has already produced. A lane that fails gives the right up
-immediately rather than holding the interval out. `0` removes the preference: the
-first text to arrive is the text you see. Expiry is not a timeout and teaches the pool
-nothing — no model is cooled, set aside or ranked differently for missing it, and the
-race itself is still decided purely on who finishes first.
+`stream_selection_window` affects only the text shown first. For this many
+seconds, one second by default, the broker waits for data from the model currently
+first in the selection order. If it does not start responding, data already
+received from another model is shown. If the first model fails, the wait ends
+immediately. A value of `0` displays the first text received, regardless of model
+order.
 
-The costs are worth stating plainly. Every lane is read to its end whatever your
-reader is doing, so each live answer is held in memory until the race settles, and the
-losers still spend their provider quota. In exchange, a model that goes quiet mid-answer
-or dribbles past your budget no longer takes the call down with it: a sibling that
-finished inside the budget replaces it. Only when no lane can finish does the failure
-belonging to the text you saw — `StreamInterruptedError` or `LLMTimeoutError` — reach
-you.
+Expiration of `stream_selection_window` is not an error or a timeout and does not
+change later model selection. The complete reply from the model that finishes
+first is still the final result.
 
-Without `fastest_of`, or with `fastest_of=1`, none of this applies: an ordinary stream
-still commits at its first delta and the keyword changes nothing.
+Each concurrent request consumes provider quota, and its reply remains in memory
+until a result is selected. This is independent of how quickly the application
+reads chunks. If one model stops generating or does not complete within `wait`,
+the broker can use another model's complete reply. `StreamInterruptedError` or
+`LLMTimeoutError` reaches the application only if no model completes.
 
-### The budget covers the whole answer {#budget}
+When `fastest_of` is unset or equals `1`, the broker stays with the model that
+returns the first chunk, and `stream_selection_window` has no effect.
 
-`wait` bounds the answer, not its first token, and it counts only the time the
-library spends waiting on the provider:
+### Time limit for the complete reply {#budget}
+
+`wait` limits the time used to receive the complete reply, not only the first
+chunk. It counts only time spent waiting for provider data:
 
 ```python
 stream = broker.stream("Write a long answer", wait=20.0)
@@ -106,37 +107,34 @@ try:
     async for delta in stream:
         print(delta, end="", flush=True)
 except llmbroker.LLMTimeoutError as exc:
-    print(f"\ngave up: {exc}")
+    print(f"\nresponse timed out: {exc}")
 ```
 
-Taking your time between deltas is yours to take: the clock is disarmed the moment
-a delta is handed to you and picks up where it left off when you ask for the next
-one, so a slow reader can never spend the budget. A model that opens at once and
-then dribbles is therefore not inside a budget it is busy overrunning — which is
-the whole point of bounding the answer rather than its opening.
+Time spent by the application processing a chunk does not count. Timing pauses
+when data are handed to the application and resumes when the next chunk is
+requested. The limit still applies when a model starts quickly but generates the
+rest of the reply too slowly.
 
-Unset means unbounded, which is the default. Before the first delta an exhausted
-budget ends the call with `NoLLMAvailableError`; after it, with `LLMTimeoutError`,
-and the deltas already delivered stand. Where the difference shows is what it costs
-the model: nothing at all by the deadline is silence, and the model is set aside
-briefly like any other that failed you, while a model already writing when your
-clock ran out is left alone — it answered, you simply stopped waiting. Both ways
-the pool remembers the budget it did not finish within, so equally tight callers
-are handed a sibling first. A call cut short this way cannot be rated: it never
-settled, so `record_quality` on its handle raises.
+When `wait` is unset, no user-defined time limit applies. If it expires before the
+first chunk, the call raises `NoLLMAvailableError`. After the first chunk, it
+raises `LLMTimeoutError`, and the application retains previously delivered data.
 
-That is also why the handle says nothing before the first delta: `llm_name` and
-`call_id` are `None` until then, because the call may still move to another
-model. `usage` fills in later still, when the answer is over.
+A model that returned no data within `wait` is temporarily excluded from
+selection. If the model had already started responding, that temporary exclusion
+does not apply. In both cases, the broker remembers which `wait` value was too
+short and prefers another model for a similarly short call. An incomplete reply
+cannot be rated; calling `record_quality` on its object raises an exception.
 
-Rating waits for the same moment the counts do — the end of the answer, when the
-call reaches the journal. Ask earlier and you get a `ValueError` rather than a
-score that quietly goes nowhere.
+Before the first chunk, `llm_name` and `call_id` are `None` because the broker can
+still try another model. `usage` is populated after the reply is complete.
 
-Stopping early is fine, but what hands the model's slot back is closing the
-stream: a `break` does not close the handle by itself — abandoned, it frees the
-slot only once Python collects it. Close it yourself; that is also the only way
-to score what you did receive, since closing is what ends the call.
+A rating can also be recorded only after the reply is complete and the call is in
+the journal. Calling `record_quality` earlier raises `ValueError`.
+
+You can stop reading at any point, but `break` does not close the iterator or
+release capacity for another request. Without explicit closure, this happens only
+when Python collects the object. Call `aclose()` yourself. Closing also completes
+the call and allows you to rate the partial reply:
 
 ```python
 stream = broker.stream("Write a haiku about brokers")
@@ -148,7 +146,7 @@ await stream.aclose()
 await stream.record_quality(0.0)
 ```
 
-Or let a context manager close it — where there is nothing to score:
+If no rating is needed, use a context manager to ensure closure:
 
 ```python
 async with contextlib.aclosing(broker.stream("...")) as stream:
@@ -156,26 +154,27 @@ async with contextlib.aclosing(broker.stream("...")) as stream:
         ...
 ```
 
-Streaming one named model, with no pool and no failover, is what `direct` does —
-see [Direct model calls](direct.md#streaming).
+Streaming is also available for one specific model through `direct()`, without
+pool selection or fallback. See [Direct model calls](direct.md#streaming).
 
-## One process, one file, no init step
+## A local database for one process
 
-sqlite holds the models, the keys and the journal in one file — enough for a
-single-process service — and the curated model list fills it on the first call:
+SQLite stores models, keys, and the journal in one file. This is sufficient for a
+single-process application. The maintained model list is written before the
+first call:
 
 ```python
 async with llmbroker.AsyncBroker("broker.db") as broker:
     print((await broker.ask("Hello")).text)
 ```
 
-The database starts empty and is filled before the pool is provisioned, so there
-is no separate init step to remember, and it is kept current from then on. It is
-best-effort: an unreachable catalog logs a warning and the process starts on
-whatever the file already holds — and, where the file is empty, on the copy of
-the preset shipped inside the package.
+An empty database is populated automatically before the pool is created, so no
+separate initialization step is required. The list is then updated
+automatically. If the remote catalog is unavailable, the broker logs a warning
+and uses the data in the database. If the database is empty, it uses the copy
+bundled with the installed package.
 
-If that file is shared with your application, WAL and the file lock are worth
-knowing about — see [SQLite: sharing and WAL](server.md#sqlite). For several
-processes or hosts, fill the database once in the deploy job instead — see
+If the application uses the same file, account for WAL mode and SQLite file
+locking. See [SQLite: sharing and WAL](server.md#sqlite). For multiple processes
+or hosts, update the database once during deployment instead. See
 [Servers & clusters](server.md#datasource).

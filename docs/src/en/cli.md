@@ -1,59 +1,61 @@
 # CLI
 
-You need none of this to use llmbroker — `Broker()` fetches the pool itself. The
-two commands cover the two things llmbroker cannot do for you: get you the
-provider keys, and show you which models the curated lists carry.
+The CLI is not required for normal use: `Broker()` loads the model list itself.
+The two commands help you prepare provider API keys and inspect the maintained
+model lists.
 
-There is no command that writes or refreshes a model list: a broker keeps its own
-list current [by itself](usage.md#sync), and a database registry is refreshed by
-your application's entrypoint calling `broker.sync("freetier")` — see
+There is no separate command for updating a model list. A local list
+[updates automatically](usage.md#sync), while a database registry should be
+updated from your application with `broker.sync("freetier")`. See
 [Servers & clusters](server.md#sync).
 
-Both ask the catalog for a fresh list first (a 10-second timeout), then the copy
-already fetched onto this machine, and only then the copy shipped inside the
-package. So offline and in a network-less CI they answer with what there is rather
-than failing; the bundled copy is frozen at the llmbroker release you installed,
-and when it comes to that the command warns about it on stderr.
+Both commands first try to load current data from the catalog, with a 10-second
+timeout. If that fails, they use the local cached copy and then the copy bundled
+with the installed package. This allows the commands to work offline, including
+in CI. When the bundled copy is used, the command writes a warning to standard
+error; that copy reflects the installed llmbroker version.
 
-## env — generate a .env with the keys {#env}
+## `env`: create a `.env` key template {#env}
 
 ```bash
 llmbroker env freetier > .env
 ```
 
-Prints a `.env` skeleton for the named curated model list: above each key, a hint
-where to get it:
+The command prints a `.env` template for the selected model list. Each variable
+is preceded by a link for obtaining the key:
 
 ```
 # OPENROUTER_API_KEY — Create a free API key at [openrouter](https://openrouter.ai/keys).
 OPENROUTER_API_KEY=
 ```
 
-The preset name is the whole argument, so the command works the same before you
-have anything local and on a broker whose registry lives in a database. The
-presets you can name:
+The list name is the command's only argument. Its behavior does not depend on
+whether a local registry exists or the broker uses a database. The available
+list is:
 
-- `freetier` — free endpoints from Groq, OpenRouter, Gemini and Z.AI
+- `freetier` — free API endpoints from Groq, OpenRouter, Gemini, and Z.AI.
 
-Get the keys themselves from the providers and fill them in. A broker reads the
-`.env` in its working directory automatically; an exported environment variable
-always wins over it. Keys do not have to live in `.env` at all — see
-[API keys](secrets.md).
+Obtain the keys from the providers and add them to the file. The broker reads
+`.env` from the working directory automatically. An environment variable takes
+precedence over the value in the file. See [API keys](secrets.md) for other
+storage options.
 
-## list — show what the curated lists carry {#list}
+## `list`: show available models {#list}
 
 ```bash
 llmbroker list
 ```
 
-One model per line and nothing written. A `pool` line is a model the pool routes
-over anonymously. A `direct` line is a paid model you can reach by name: the
-alias comes first, then the provider id, model id, `base_url` and `api_key_ref`.
+The command makes no changes and prints one model per line. A `pool` line
+describes a model in the shared pool. A `direct` line describes a paid model that
+can be called directly. The remaining fields are its stable alias, provider ID,
+model ID, `base_url`, and `api_key_ref`.
 
 ```
 pool groq-gpt-oss-120b openai/gpt-oss-120b https://api.groq.com/openai/v1 GROQ_API_KEY
 direct opus anthropic claude-opus-5 https://api.anthropic.com/v1 ANTHROPIC_API_KEY
 ```
 
-Declare the alias where you build the broker — `Broker(direct=["opus"])` — and
-call it with `broker.direct("opus")`. See [Direct model calls](direct.md).
+To use an alias, pass it when creating the broker:
+`Broker(direct=["opus"])`. Then call the model with `broker.direct("opus")`.
+See [Direct model calls](direct.md).

@@ -1,7 +1,8 @@
 # Tools & agents
 
-`run_tool_loop` drives the whole cycle: calls the model, executes the requested
-tools via `dispatch` and repeats until a final reply with no tool calls.
+`run_tool_loop` handles the complete tool-call cycle. It calls the model, runs
+the requested functions from `dispatch`, and repeats until the model returns a
+final reply with no further tool calls.
 
 ```python
 def get_weather(city: str) -> str:
@@ -30,25 +31,25 @@ reply = llmbroker.run_tool_loop(
 print(reply.text, "— by", reply.llm_name)
 ```
 
-The loop returns the result of its final round, exactly like `chat`: the text,
-the model that produced it, and that round's `usage`. Every earlier round was a
-routed call of its own with its own journal row, so the counts here are the last
-round's, not the whole loop's — read the rows if you want the total.
+The function returns the final model call in the same format as `chat`: its text,
+model name, and `usage`. Each earlier call has a separate journal row. The
+returned `usage` therefore covers only the final call; calculate totals for the
+whole loop from the journal.
 
-The async version is `await llmbroker.arun_tool_loop(...)` on top of
-[`AsyncBroker`](async.md).
+With [`AsyncBroker`](async.md), use
+`await llmbroker.arun_tool_loop(...)`.
 
-The loop is bounded by `max_steps` (8 by default). A model that still asks for
-tools after the last round raises `llmbroker.ToolLoopLimitError` rather than
-returning an empty answer — raise `max_steps`, or catch it to keep whatever the
-conversation produced.
+`max_steps`, which defaults to 8, limits the number of model calls. If the model
+requests another tool on the final step, the function raises
+`llmbroker.ToolLoopLimitError`. Increase `max_steps` or handle the exception if
+you want to retain the intermediate result.
 
-## What the loop passes to the broker
+## Parameters passed to the broker
 
-Anything else you pass goes into every `chat` the loop makes: `operation=`,
-`trace_id=`, `wait=`. Set them as you would on an ordinary call — otherwise the
-loop's rounds land in the common unlabelled bucket and
-[quality rating](usage.md#quality) learns nothing from them:
+Additional parameters, including `operation=`, `trace_id=`, and `wait=`, are
+passed to every `chat` call in the loop. Set them as you would for a direct
+`chat` call. Without `operation=`, every call uses the same general category, so
+[quality ratings](usage.md#quality) cannot distinguish between tasks:
 
 ```python
 reply = llmbroker.run_tool_loop(
@@ -61,29 +62,29 @@ reply = llmbroker.run_tool_loop(
 )
 ```
 
-One `trace_id` over the whole loop collects the task's rounds into a single
-journal trace — useful, and intended. Rating by it needs care though: a loop is
-several calls of its own, and [rating by trace](usage.md#quality) finds one of
-them — the last round that answered. For another one, keep its `call_id`.
+Using one `trace_id` groups all calls in a loop in the journal. A rating recorded
+with that ID applies only to the most recent successful call. To rate another
+call in the same loop, keep its `call_id`. See
+[Quality rating](usage.md#quality).
 
-## Your tool's exception does not come back to you
+## Tool error handling
 
-`dispatch` is called by the loop, but its errors do not reach you: if the function
-raises, the model gets back the text `Tool <name> failed: <error>` and decides
-what to do with it — usually fixes the arguments and asks again. A model asking
-for a tool that `dispatch` does not have gets `Unknown tool <name>`. What the
-function returned comes back the same way: the result is coerced to a string, so
-return text or JSON from a tool rather than an object.
+Exceptions raised by functions in `dispatch` do not propagate to the caller. If
+a function fails, the model receives `Tool <name> failed: <error>` and may try
+again with different arguments. If `dispatch` does not contain the requested
+function, the model receives `Unknown tool <name>`. Successful function results
+are also converted with `str()`, so tools should return text or a serialized JSON
+string rather than an arbitrary object.
 
-Which also means what the loop will not notice: a tool that failed quietly costs a
-step rather than stopping the loop. If a tool's failure should fail the request,
-catch it inside your own function and hand the model an explicit refusal — or drive
-the loop yourself: `chat(messages, tools=...)` returns a result with `tool_calls`,
-and the rest is up to you.
+If a function converts an error into an ordinary result, the loop continues and
+uses one step. To make a tool failure stop the request, handle it in the function
+and return an unambiguous failure to the model, or implement the loop yourself.
+`chat(messages, tools=...)` returns `tool_calls`, after which the application can
+choose what to do.
 
-## The loop takes a broker, not a caller
+## Limitation with scoped calls
 
-The first argument is the broker itself. In a multi-user service, where calls are
-made by a [scoped caller](server.md#multiuser), passing `broker.for_scope(user)` to
-the loop works but does not match the declared type — a type checker will complain
-about it. While the loop takes a broker, there is no place for a scope here.
+The function's first argument is the broker itself. In a multi-user application,
+`broker.for_scope(user)` works at runtime but does not match the declared argument
+type, so a static type checker reports an error. The current tool-loop API does
+not explicitly support scopes. See [Multi-user applications](server.md#multiuser).

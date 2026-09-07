@@ -1,65 +1,64 @@
 # Servers & clusters
 
-The same broker scales to multiple processes and hosts: point it at a shared DB
-instead of letting it keep its own state — the calling code stays the same.
+For multiple processes or hosts, configure the broker with a shared database
+instead of local storage. The call API remains unchanged.
 
-## Shared DB {#datasource}
+## Shared database {#datasource}
 
-The broker's first argument sets the model pool, the keys and the journal all at
-once:
+The broker's first argument selects storage for the model registry, keys, and
+journal:
 
 ```python
-llmbroker.Broker()                          # llmbroker's own directory + keys from the environment
-llmbroker.Broker("broker.db")               # sqlite
-llmbroker.Broker("postgresql://host/db")    # postgres
-llmbroker.Broker("mongodb://host/db")       # mongodb
+llmbroker.Broker()                          # local directory and environment keys
+llmbroker.Broker("broker.db")               # SQLite
+llmbroker.Broker("postgresql://host/db")    # PostgreSQL
+llmbroker.Broker("mongodb://host/db")       # MongoDB
 ```
 
-Each variant needs its extra — see [Installation](installation.md). Any part can
-be overridden explicitly via `registry=` / `secrets=` / `store=`.
+Install the matching optional dependency for each database. See
+[Installation](installation.md). Configure individual stores with `registry=`,
+`secrets=`, and `store=`.
 
-### A registry of your own {#own-registry}
+### A custom model registry {#own-registry}
 
-To supply the pool yourself, pass an object implementing the registry protocol
-and say what it follows:
+To manage the pool yourself, pass an object that implements the registry protocol
+and explicitly choose its update mode:
 
 ```python
 broker = llmbroker.Broker(registry=MyRegistry(), sync=None)        # only your entries
 broker = llmbroker.Broker(registry=MyRegistry(), sync="freetier")  # yours plus ours
 ```
 
-| you pass | `sync=` left out | entries you put there yourself |
+| registry source | if `sync=` is omitted | entries you add yourself |
 |---|---|---|
-| nothing, or a database URL | follows `"freetier"` | never touched by a refresh |
-| a registry object | an error — say which | never touched by a refresh |
+| nothing or a database URL | uses `"freetier"` | unchanged by updates |
+| a registry object | error: choose a mode | unchanged by updates |
 
-**A registry of your own covers the registry only.** Keys and the journal are
-separate ports, and bringing your own registry does not make them yours: the keys
-will still be read from the environment, and the journal will land in a `store`
-directory beside the process's working directory. For a service that is almost
-certainly not what you wanted — pass both explicitly:
+`registry=` replaces only the registry. Key and journal storage are configured
+separately. If omitted, keys are read from environment variables and the journal
+is written to a local `store` directory. Server applications should normally
+configure all three stores explicitly:
 
 ```python
 from llmbroker.postgres import Secrets, Store
 
 broker = llmbroker.AsyncBroker(
     registry=MyRegistry(),
-    secrets=Secrets(pool),            # keys in your database, not in the environment
-    store=Store(pool),                # the journal there too
+    secrets=Secrets(pool),            # keys in the database
+    store=Store(pool),                # journal in the same database
     sync=None,
 )
 ```
 
-A refresh only ever rewrites what a sync itself wrote, so "the curated free pool
-plus two endpoints of my own, routed together" is just a registry with both in
-it.
+An update modifies only entries created by previous syncs. A single registry can
+therefore contain both the maintained free list and your own models.
 
-#### An entry of your own, in the pool {#own-entry}
+#### Adding your own model to the pool {#own-entry}
 
-You put your own entry there through the registry protocol, not by writing rows:
-the table layout is llmbroker's own and may change between releases. Read what is
-there, add yours, write it all back — `mirror` is a total mirror, so anything you
-leave out is deleted:
+Modify the registry through its API rather than writing database rows directly;
+the internal schema can change between llmbroker releases. Load the existing
+entries, add yours, and pass the complete list to `mirror()`. This method replaces
+the entire registry, so entries omitted from the call are deleted:
 
 ```python
 from llmbroker import LLMConfig
@@ -75,89 +74,88 @@ mine = LLMConfig(
 await registry.mirror([*await registry.load(), mine])
 ```
 
-Nothing marks it as ours, so no sync ever removes or rewrites it. It is a pool
-member and the router fails over onto it — an endpoint you want reached by name
-instead is [a declared model](direct.md), which is not stored at all.
+This is a user-managed entry, so synchronization never removes or changes it. The
+model participates in normal pool selection and can be used after another model
+fails. To call a model only by name, configure it as a [direct
+model](direct.md); direct configurations are not stored in the registry.
 
-### Filling the DB: a deploy job, not a startup step {#sync}
+### Populating the database during deployment {#sync}
 
-The DB starts empty. Sync it from your own code, in the same deploy step that
-runs `alembic upgrade` — built by the factory your application already uses, so
-the DSN and its secrets live in exactly one place:
+A new database contains no models. Populate it in a deployment job, for example
+next to `alembic upgrade`. Use the same broker-construction function as the
+application so the connection string and related secrets are configured in one
+place:
 
 ```python
-broker = build_broker()                   # your app's own factory
+broker = build_broker()                   # the application's broker factory
 try:
-    print(await broker.sync("freetier"))  # the curated preset — the one source there is
+    print(await broker.sync("freetier"))  # maintained model-list name
 finally:
     await broker.aclose()
 ```
 
-Note this is *not* `async with`: entering the broker provisions the pool, and the
-deploy job has exactly one thing to do — fill the database. And where the broker
-may not reach the network ([below](#no-fetch)), the context manager raises
-`EmptyRegistryError` right there, before you ever call `sync()`.
+Do not use `async with` here. Entering the context manager initializes the pool,
+but this job must populate an empty database first. If automatic network access
+is disabled, `EmptyRegistryError` is raised before `sync()` can run. See
+[Deployment without automatic network access](#no-fetch).
 
-Run it as a one-shot job (release phase, a Kubernetes Job, an init container).
-**Keeping the model list current afterwards needs no job at all**: the serving
-processes re-check the curated model list themselves, about once a day, on a call they
-were making anyway. N nodes checking is safe because they all compute the same
-merge from the same upstream and the same keys, so the first write settles it and
-every other node's check finds nothing to do. What the design avoids is a node
-reconciling the registry against a *local copy* of its own.
+Run this code as a one-time release task, Kubernetes Job, or init container. No
+separate update job is required afterwards: serving processes check the
+maintained list about once a day during normal calls. Multiple processes can
+check safely because they use the same source and keys. The first writes any
+changes; the others find nothing left to update. A process's local cached copy is
+not used to overwrite the shared registry.
 
-`sync` takes a curated preset name and nothing else — no file path, no second
-registry. A connection string keeps following the curated preset; hand the broker
-a registry *object* and you must say what it follows, `sync="freetier"` or
-`sync=None`. Either way a refresh rewrites only the entries a sync itself
-wrote — entries your installation states through its own registry are left alone.
+`sync` accepts only a maintained list name, not a file path or second registry.
+With a connection string, `freetier` is selected by default. When `registry=` is
+an object, explicitly set `sync="freetier"` or `sync=None`. In either case, an
+update modifies only entries created by earlier syncs and preserves user-managed
+entries.
 
-### A deployment that may not fetch while it serves {#no-fetch}
+### Deployment without automatic network access {#no-fetch}
 
-An egress policy, an audit rule, a network the serving hosts are not on: where the
-process may open no connection except to the providers themselves, switch the
-automatic refresh off and do the fetching in the job you already run.
+If serving processes may contact only model-provider APIs, disable automatic
+catalog updates and run them from a separate deployment job. Network policy or
+audit requirements may require this configuration.
 
 ```python
-llmbroker.AsyncBroker("postgresql://host/db", sync_interval=None)   # in your factory
+llmbroker.AsyncBroker("postgresql://host/db", sync_interval=None)   # in broker construction
 ```
 
 ```python
 broker = build_broker()
 try:
     report = await broker.sync()      # no argument: whatever this installation follows
-    if report is not None:            # the paid catalog alone merges nothing
+    if report is not None:            # paid-catalog-only updates have no report
         print(llmbroker.format_report(report))
 finally:
     await broker.aclose()
 ```
 
-`sync_interval=None` stops every clock in the process that goes online — the
-curated model list and the paid catalog your `direct=` aliases resolve through. It
-also stops the fetch that fills an empty registry at startup: such a broker raises
-`EmptyRegistryError` naming this job, rather than going online to serve its first
-request. That is the intended failure. Set the switch and skip the job and the
-broker will not serve.
+`sync_interval=None` disables automatic network calls to update both the free
+model list and the paid catalog used by `direct=` aliases. It also disables
+automatic population of an empty registry. In that case, the broker raises
+`EmptyRegistryError` referring to the sync job instead of accessing the network
+for the first user request.
 
-`sync()` with no argument syncs what this installation follows: the preset named by
-`sync=`, or — where it follows none — the paid catalog alone, which refreshes your
-declared aliases, merges nothing into the registry and therefore returns no report.
+`sync()` without an argument updates the list selected by `sync=`. If
+`sync=None`, it updates only the paid catalog required by aliases in `direct=`.
+Nothing is written to the registry in that case, so the method returns no report.
 
-A `direct=` alias resolves from whatever your last sync left on the machine, or —
-on a host where none has run — from the copy shipped inside the package, and stays
-on that version until the job runs again. Nothing here goes online: the alias is
-frozen, not broken.
+A `direct=` alias is resolved from data written by the latest sync. If sync has
+never run, the broker uses the catalog copy bundled with the installed package.
+The selected model version remains unchanged until the job runs again; no
+automatic network request is made.
 
-**The freshness is now yours to keep.** Providers retire free endpoints without
-notice, so a model list nobody refreshes decays into a pool that cannot serve. Run
-the job beside your migrations on every deploy, and on a schedule of its own
-between deploys — about once a day is what the built-in clock does, and copying
-that is the safe default.
+When automatic updates are disabled, you must keep the list current. Free-model
+availability can change without notice. Run the job during every deployment and,
+if needed, on a schedule between releases. The standard automatic interval is
+about one day and is a reasonable default.
 
-### Moving an installation between backends {#migrate}
+### Moving data between storage backends {#migrate}
 
-There is no migrate command; the two registries already expose everything it
-would need, so it is two lines in the same deploy script that holds both DSNs:
+There is no separate migration command. Load entries from one registry and write
+them to another in a deployment task that has both connection strings:
 
 ```python
 from llmbroker.mongodb import Registry as MongoRegistry
@@ -168,120 +166,114 @@ new = MongoRegistry(new_db)
 await new.mirror(await old.load())
 ```
 
-Secrets and the journal move the same way where you want them to, through their
-own backends; usually the keys are re-provisioned and the journal is left behind.
+When needed, move keys and journal records through their respective storage APIs.
+In practice, keys are often issued again and the old journal is retained in its
+original location.
 
-A paid model you reach by name is declared where the factory builds the broker —
-`AsyncBroker(dsn, direct=["opus"])` — not written into the registry. One line in
-the factory you already have covers the whole cluster, and every process
-re-resolves the alias on its own refresh clock, so a long-lived deployment does
-not sit on the model id it was first deployed with. See
-[Direct model calls](direct.md).
+A paid model for direct calls is configured when the broker is created:
+`AsyncBroker(dsn, direct=["opus"])`. It is not written to the registry. One
+setting in the shared broker-construction function applies to every process.
+Each process periodically checks the alias against the current model version, so
+long-lived deployments also receive updates. See [Direct model calls](direct.md).
 
-`sync` brings the entries it wrote into line with the curated list it follows: an
-entry still on the list is updated, an entry the list no longer carries is
-removed, a new one is added. Nothing weighs whether a dropped entry might still
-work here, and an entry your own installation put in the registry is never
-touched. Removal is bounded where the list is curated instead — an entry leaves
-it only once it can no longer be called. The returned `SyncReport` says what
-happened, on every run including no-ops, and names any key that has become
-unused. A non-zero exit from the job and its log are the admin channel your
-failed migrations already use; hosts that forward elsewhere can read
-`broker.last_sync_report`.
+`sync` makes its own entries match the selected maintained list: existing entries
+are updated, missing entries are removed, and new entries are added.
+User-managed registry entries are unchanged. A model is removed from the
+maintained list only after it can no longer be called.
 
-### Watching the pool from an admin screen {#pool-health}
+`SyncReport` describes all changes and names keys that are no longer used. A
+report is returned even when nothing changed. Handle task failures like database
+migration failures. The latest report is also available through
+`broker.last_sync_report` for forwarding to another system.
 
-`snapshot()` is one call and answers the whole screen — the per-model rows plus
-the pool-wide verdict — and llmbroker logs that same verdict, so alerting needs
-no polling. See [Monitoring and the journal](monitoring.md#pool-health).
+### Displaying pool state {#pool-health}
+
+`snapshot()` returns each model's state and pool-wide information in one call.
+llmbroker also logs availability changes, so monitoring does not need to poll the
+application. See [Monitoring and the journal](monitoring.md#pool-health).
 
 ## SQLite: sharing and WAL {#sqlite}
 
-The normal setup is one database shared by llmbroker and your application: the
-broker keeps its own `llmbroker_*` tables alongside yours and touches nothing
-else (the [Alembic](#alembic) hook keeps migration autogenerate clear of them).
+llmbroker and the application can share one SQLite file. The broker creates only
+`llmbroker_*` tables and does not modify other tables. The [Alembic](#alembic)
+integration excludes these tables from migration autogeneration.
 
-That includes `PRAGMA user_version`, the file header slot many migration tools
-use — it is yours. The broker keeps its own schema version in an
-`llmbroker_schema_version` table, so dropping the `llmbroker_*` tables resets
-everything llmbroker holds in the file.
+llmbroker does not change `PRAGMA user_version`, which many migration tools use.
+Its own schema version is stored in `llmbroker_schema_version`. Dropping all
+`llmbroker_*` tables removes all llmbroker data from the file.
 
-llmbroker never sets or changes SQLite's `journal_mode` — WAL is a persistent,
-file-level property that belongs to whoever owns the database file, so enabling
-it is your call, not the broker's. On a shared file that owner is your
-application: turn on WAL there if you want reader/writer concurrency.
+llmbroker does not change SQLite's `journal_mode`. WAL mode persists in the file
+and should be configured by the application that manages it. Enable WAL when
+multiple connections need concurrent reads and writes.
 
-If your application writes to that file heavily, give the broker its own file
-instead — point it at a separate `.db` and the two stop contending on SQLite's
-file-level lock. A file that is the broker's alone is yours to configure
-directly; WAL is set once and persists:
+If the application writes frequently, give the broker a separate `.db` file to
+reduce contention on SQLite's file lock. WAL mode needs to be enabled only once
+for a separate file:
 
 ```bash
 sqlite3 broker.db 'PRAGMA journal_mode=WAL'
 ```
 
-This applies to SQLite only. Postgres and MongoDB have no equivalent file-level
-lock — sharing one database with your application is fine, and a dedicated
-schema or database is optional tidiness, not a concurrency need.
+This limitation applies only to SQLite. PostgreSQL and MongoDB do not use an
+equivalent shared file lock, so they can share a database with the application.
+A separate schema or database is an organizational choice.
 
 ## Startup errors {#errors}
 
-Three conditions can stop the broker before it serves a single request, and a host
-usually wants to treat them differently:
+Three errors can occur before the first request and require different handling:
 
-- `EmptyRegistryError` — nothing has been synced into the registry yet. Benign:
-  the installation is unconfigured, not broken.
-- `SyncRefusedError` — raised by `sync()` when applying its result would leave a
-  working registry with no entries at all. Nothing was written; `report` carries
-  what the merge would have done.
-- `SchemaVersionError` — the store holds a schema version this release cannot
-  use. Fatal and operator-actionable: drop the `llmbroker_*` tables and restart
-  (export registry/secrets/calls first if you need them). `found` and `expected`
-  carry the two versions.
+- `EmptyRegistryError` — the registry has not been populated. Run the initial
+  setup or synchronization.
+- `SyncRefusedError` — `sync()` did not apply an update because it would leave
+  the registry empty. The registry is unchanged, and `report` contains the
+  planned changes.
+- `SchemaVersionError` — the stored schema version is incompatible with this
+  llmbroker release. Export any registry, key, or journal data you need, drop the
+  `llmbroker_*` tables, and restart. `found` and `expected` contain the detected
+  and required versions.
 
-All three live on `llmbroker` (`llmbroker.SchemaVersionError`, and so on) and
-subclass `LLMBrokerError`, itself a `RuntimeError`, so catch at the granularity
-you need:
+All three classes are available directly from `llmbroker`, for example
+`llmbroker.SchemaVersionError`. They inherit `LLMBrokerError`, which inherits
+`RuntimeError`. Catch either a specific error or the common base class:
 
 ```python
 try:
     models = broker.snapshot()
 except llmbroker.EmptyRegistryError:
-    models = {}   # nothing configured yet — render an empty screen, not a 500
+    models = {}   # display an empty state instead of HTTP 500
 ```
 
-`SchemaVersionError` propagates: its message is the operator's instruction, so
-swallowing it turns a schema mismatch into "no providers configured". Catching
-`LLMBrokerError` covers all three, and `RuntimeError` covers them plus everything
-else.
+Do not hide `SchemaVersionError`; its message contains instructions for the
+operator. Otherwise an incompatible schema can look like a missing provider
+configuration. `LLMBrokerError` catches all three errors above, while
+`RuntimeError` also catches unrelated runtime errors.
 
-A failed request raises from a separate tree (`LLMRequestError` and its
-subclasses) — see [When nobody can answer](usage.md#errors).
+Request failures inherit a separate class, `LLMRequestError`. See
+[When nobody can answer](usage.md#errors).
 
 ## Closing the broker {#closing}
 
-Close the broker explicitly when a long-lived process creates brokers repeatedly
-or an external DB is attached:
+Close the broker explicitly when a process creates brokers repeatedly or uses an
+external database:
 
 ```python
 with llmbroker.Broker("broker.db") as broker:
     reply = broker.ask("...")
 ```
 
-`AsyncBroker` — `async with` or `await broker.aclose()`.
+For `AsyncBroker`, use `async with` or `await broker.aclose()`.
 
 ## Call journal {#journal}
 
-Every call attempt leaves a row: what answered, how it ended, what it cost, the
-`trace_id` you called it with, and how you rated it afterwards. It is read with
-`broker.calls(...)` and `broker.stats(...)`, neither of which initializes the
-pool, so both work on an installation that was never synced. See
-[Monitoring and the journal](monitoring.md#journal).
+Each model attempt records the model name, outcome, usage information, `trace_id`,
+and later rating. `broker.calls(...)` and `broker.stats(...)` read the journal
+without initializing the pool, so they work before the registry is populated.
+See [Monitoring and the journal](monitoring.md#journal).
 
-The journal cleans itself up: rows older than `retention` are dropped, 90 days by
-default. The depth belongs to the journal backend rather than to the broker, so a
-connection string cannot set it — assemble the ports yourself and set it on the
-one that writes the journal.
+Rows older than `retention` are deleted automatically; the default is 90 days.
+This setting belongs to the journal store and cannot be set in the broker's
+connection string. Construct the stores explicitly and pass `retention` to
+`Store`:
 
 ```python
 from datetime import timedelta
@@ -292,30 +284,30 @@ broker = llmbroker.AsyncBroker(
     registry=Registry(pool),
     secrets=Secrets(pool),
     store=Store(pool, retention=timedelta(days=365)),
-    sync="freetier",                  # a registry object — say what it follows
+    sync="freetier",                  # explicitly select the maintained list
 )
 ```
 
-## One broker, a caller per request {#multiuser}
+## One broker for multiple users {#multiuser}
 
-**A broker is the installation.** It holds the model pool, the keys, everything
-it has learned and one HTTP client, and it lives as long as the process. What a
-request holds is a *caller*: the scope its journal rows are attributed to and the
-keys it may pay with, over that one shared pool. Asking for a caller costs no I/O,
-so building one per request is the intended shape.
+Create one broker for the lifetime of each process. It owns the model pool, keys,
+quality data, and HTTP client. For an individual user, `for_scope(...)` creates a
+lightweight `AsyncLLMs` object. It uses the shared pool while associating journal
+rows and user-specific keys with the supplied scope. Creating this object performs
+no storage I/O, so it can be done for every incoming request.
 
-Four deployments, in order of how much they need:
+The following examples cover four common configurations.
 
-**A script.** Nothing to hold, nothing to share — the broker's own call verbs are
-its unscoped caller, so the second noun never appears:
+**A simple script.** Call methods on the broker itself; no separate scope is
+needed:
 
 ```python
 broker = llmbroker.Broker()
 print(broker.ask("hi").text)
 ```
 
-**A long-lived process with a database.** Build the broker where you build your
-database engine — once, at startup — and close it at shutdown:
+**A long-lived process with a database.** Create the broker once at application
+startup and close it during shutdown:
 
 ```python
 @asynccontextmanager
@@ -327,8 +319,9 @@ async def lifespan(app: FastAPI):
         await app.state.broker.aclose()
 ```
 
-**A cluster on shared keys.** Every handler takes the broker's own caller. One
-pool, one set of keys, one connection pool per process:
+**Multiple processes with shared keys.** Each handler receives the shared
+`AsyncLLMs` object. Requests use one model pool and one key set, with one
+connection pool per process:
 
 ```python
 def llms(request: Request) -> llmbroker.AsyncLLMs:
@@ -339,54 +332,52 @@ async def ask(prompt: str, llms: llmbroker.AsyncLLMs = Depends(llms)):
     return (await llms.ask(prompt)).text
 ```
 
-**The same cluster with a key per user.** Only the dependency changes:
+**A separate key for each user.** Only the dependency function changes:
 
 ```python
 def llms(request: Request) -> llmbroker.AsyncLLMs:
     return request.app.state.broker.for_scope(request.headers["x-user-id"])
 ```
 
-**A user's key lives under a ref with its scope in front: `<scope>/<REF>`.** A
-caller scoped `u-42` asks the secrets store for `u-42/GROQ_API_KEY` first and only
-then falls back to the installation's shared `GROQ_API_KEY`; the shared value is
-read once for everybody. So giving a user a key of their own means storing it
-under that name — in an environment variable, in your database, in AWS or Vault,
-wherever the shared ones live. The scope is simply the string you passed to
-`for_scope(...)`; llmbroker has no notion of a user inside it. Vault has one
-caveat about the `/` in that name — see [API keys](secrets.md#vault).
+A user-specific key is stored as `<scope>/<key name>`. For example, an object for
+scope `u-42` first requests `u-42/GROQ_API_KEY` and uses the shared
+`GROQ_API_KEY` if the scoped key is absent. The shared key is read once and reused
+across scopes. Store scoped keys in the same source as shared keys: environment
+variables, a database, AWS Secrets Manager, or Vault.
 
-Every row that caller journals carries its scope, so one user's history is
-`broker.for_scope(user).calls(...)`. There is no `scope=` parameter on `calls()`:
-the scope comes from the caller you read through. The broker's own
-`broker.calls()` and `broker.stats()` are the installation's view and see every
-scope's rows at once.
+A scope is simply a string passed to `for_scope(...)`. llmbroker assigns it no
+special meaning and does not require it to represent a user. See
+[API keys](secrets.md#vault) for the handling of `/` in Vault names.
 
-The pool, the quality it has learned and the per-model `parallel` cap belong to
-the broker, not the caller — one counter per user would not be a cap at all.
-A key one caller's provider rejects stops being offered to that caller; a caller
-holding a key of its own is untouched, and callers sharing one value lose it
-together, because that is one credential.
+Each journal row stores the scope of the object that made the call. Read one
+user's history with `broker.for_scope(user).calls(...)`. `calls()` has no separate
+`scope=` parameter; the scope comes from the object. `broker.calls()` and
+`broker.stats()` return rows from every scope.
 
-### What processes do and do not share {#coordination}
+The model pool, quality data, and each model's `parallel` limit belong to the
+broker rather than an individual scope. Separate concurrency counters per user
+would violate the provider's limit. If a provider rejects a user-specific key,
+that key stops being used only in the corresponding scope. If several scopes use
+the same key value, the rejection applies to all of them.
 
-**Processes do not coordinate.** Each keeps its own view of which models are
-currently available: a cooldown one process met, and a key one process found
-dead, are that process's findings and are never read by another. The cost is one
-wasted call per process, absorbed by failover and invisible to the caller.
+### Data shared between processes {#coordination}
 
-**A peer's registry edit arrives at the next rebuild.** The pool is rebuilt at
-start, on the refresh clock (about once a day), on an explicit `sync()`, and when
-the pool has just failed to answer. Nothing else re-reads the ports, so a
-successful call costs no database traffic beyond its own journal row.
+Temporary model availability is not shared between processes. Each process tracks
+provider limits and rejected keys independently. The same failed request may
+therefore occur once in each process before the broker moves to another model.
+This transition is automatic for the user.
 
-**A key stored into a running installation is picked up by the first call that
-needs it.** That last trigger is what makes it work: a call the pool cannot serve
-re-reads the keys and then answers from them, so the caller sees no error at all —
-no restart, and no waiting out the clock. The re-read is skipped for a caller that
-already holds every key, since no key that appeared could help it, and it happens
-at most once a minute. A rebuild that finds the same rejected value keeps the
-rejection, so a key that is simply dead costs one call per period rather than one
-per request.
+Changes to the shared registry become visible to a process at the next pool
+refresh: at startup, about once a day, after an explicit `sync()`, or after no
+model could answer a request. The registry and keys are not reread in other
+cases, so a successful call writes only its own journal row to the database.
+
+A newly stored key becomes available without restarting the process. If no model
+can serve a request, the broker rereads missing keys and immediately repeats model
+selection. The application does not receive the intermediate failure. The check
+is skipped when all keys were already available and runs at most once per minute.
+If the store returns the same rejected value, the broker retains the rejection
+and does not retry that key on every request.
 
 ## Alembic
 
@@ -403,4 +394,5 @@ context.configure(
 )
 ```
 
-Combine your own `include_object` with it via `and`.
+If the application already defines `include_object`, combine it with this check
+using `and`.

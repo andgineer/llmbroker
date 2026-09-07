@@ -2,38 +2,44 @@
 [![Coverage](https://raw.githubusercontent.com/andgineer/llmbroker/python-coverage-comment-action-data/badge.svg)](https://htmlpreview.github.io/?https://github.com/andgineer/llmbroker/blob/python-coverage-comment-action-data/htmlcov/index.html)
 # llmbroker
 
-Turn a crowd of free, rate-limited LLMs into one reliable model — no premium
-subscription, no single point of failure. No LangChain, no heavy deps.
+Use multiple free LLM providers through one reliable API. llmbroker selects an
+available model, recovers from provider errors and rate limits, and learns which
+models work best for each task.
+
+Start with no configuration file, paid subscription, or heavy orchestration
+framework. Add production storage, per-user keys, or a specific paid model only
+when you need them.
 
 ```bash
 pip install llmbroker
-llmbroker env freetier > .env   # which API keys to get, and where
+llmbroker env freetier > .env   # required key names and links to obtain them
 ```
 
 ```python
-broker = llmbroker.Broker()     # no config file: the curated pool of free models
+import llmbroker
+
+broker = llmbroker.Broker()
 reply = broker.ask("Explain decorators in one sentence")
-print(reply.text)   # groq rate-limited? gemini answers instead
+print(reply.text)
 ```
 
-Fill in whichever keys are easy — models without keys just stay inactive.
-
-**Why another router?** LiteLLM or OpenRouter forward your request and hand back the error;
-llmbroker *runs* the pool for you: backs off on rate limits and retries with the next model
-inside the same call, disables dead keys on its own, and learns which models are weak at which
-tasks. Set it up once, never administer it.
+Add any provider keys you have; models without keys are skipped automatically.
 
 | | |
 |---|---|
-| **Fast, resilient answers** | Automatic failover by default; `fastest_of=2` races models when latency matters |
-| **Chat, tools & agents** | `broker.chat(messages, tools=...)`, `run_tool_loop(...)` |
-| **Async & streaming** | `AsyncBroker` — same engine for FastAPI / agents / workers, token by token |
-| **A paid model by name** | `Broker(direct=["opus"])` — an eternal alias, called past the pool |
-| **Scale out** | `Broker("postgresql://…")` — sqlite / Postgres / MongoDB, calling code unchanged |
-| **Self-regulating pool** | `reply.record_quality(0.3)` — weak models sink per task kind; rate later with `broker.record_quality(...)` |
-| **Nothing hidden** | `broker.snapshot()`, the call journal, tracing by your own `trace_id` |
-| **Pluggable secrets** | env vars, DB, AWS, Vault, or your own backend |
-| **Multi-user mode** | per-user API keys on top of one shared pool |
+| **Resilient by default** | Automatically tries another model after rate limits and provider failures |
+| **Lower latency on demand** | `fastest_of=2` queries multiple models and returns the first complete reply |
+| **Improves with feedback** | `record_quality()` adapts model selection independently for each operation |
+| **Complete application API** | Sync and async calls, streaming, chat, tools, and built-in tool loops |
+| **Direct premium access** | `Broker(direct=["opus"])` calls a specific paid model through a stable alias |
+| **Ready to scale** | SQLite, PostgreSQL, MongoDB, shared journals, per-user keys, and pluggable secrets |
+| **Observable** | Pool state, call history, statistics, `trace_id`, and availability alerts |
+
+When a previously failed model becomes eligible again, llmbroker checks it in
+parallel with an available model. Unlike `fastest_of`, this is not a general
+race for the quickest reply: it keeps the recovery check from delaying the call
+if the failed model is still unavailable. Set `parallel_recovery=False` to make
+the check sequential and avoid the extra request.
 
 [Documentation](https://andgineer.github.io/llmbroker/)
 

@@ -6,12 +6,11 @@
 |---|---|---|---|
 | 1 | [`load-harness.md`](load-harness.md) | source-bound; revalidated on v1.7.0 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of inside one host's private script |
 | 2 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 1 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
-| 3 | [`in-flight-budget-protection.md`](in-flight-budget-protection.md) | problem statement; discuss later | protect one interactive call when its preferred model consumes the answer budget, without assuming an unconditional fastest-answer race |
 
 ## Detail horizon
 
-The queue is ordered work, not three implementation briefs that may be handed to
-three executors at once. Only a **source-bound** row is executable. A **functional**
+The queue is ordered work, not a set of implementation briefs that may be handed to
+several executors at once. Only a **source-bound** row is executable. A **functional**
 row preserves the problem, boundary and evidence, but deliberately leaves names,
 signatures and test placement open until every earlier handover has landed.
 
@@ -33,6 +32,18 @@ Concretization is rolling:
 This keeps durable detail now — dependencies, outcome, exclusions and acceptance
 evidence — while postponing volatile detail: private helper names, exact signatures
 and test locations beyond the next implementation boundary.
+
+## Measurements still outstanding
+
+The raced stream shipped on the evidence of one host's uncontrolled runs, and the
+comparison against the semantics it replaced was never run. It needs the controlled
+pair of queue row 1, and at minimum it compares completion rate inside the caller's
+budget, which model ends up authoritative, host-rated quality, visible first-delta
+latency, replacement frequency, whole-answer latency and duplicate provider usage.
+Keep per-lane timings this time: the two-lane run behind the shipped behavior retained
+only the winning lane's, so it cannot replay the replacement rate at candidate values
+of the caller's selection interval, which is the one number that would settle its
+default ([`../reference/decisions.md`](../reference/decisions.md#parallelism-is-explicit-or-recovery-owned)).
 
 ## Rejected proposals
 

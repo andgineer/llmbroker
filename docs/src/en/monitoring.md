@@ -1,113 +1,109 @@
 # Monitoring and the journal
 
-Two questions, two answers: what the pool is doing right now — the snapshot; what
-it did earlier — the call journal. Both work on any installation, from a script
-to a cluster.
+Use `snapshot()` for the pool's current state and the call journal for previous
+activity. Both work in a simple script and in a multi-process deployment.
 
-## Is the pool healthy {#pool-health}
+## Pool state {#pool-health}
 
-One call answers that — per-model facts and the pool-wide picture come off the
-same object:
+`snapshot()` returns both pool-wide information and the state of each model:
 
 ```python
 snap = broker.snapshot()
 
 print(f"{snap.providers_usable} of {snap.providers_total} providers usable")
 if snap.degraded:
-    print("nothing to fail over to")
+    print("fewer than two providers are available")
 
 for key in snap.missing_keys:
-    print(f"{key.api_key_ref} holds back {', '.join(key.entry_names)}")
-    print(key.help)                      # where to get it
+    print(f"{key.api_key_ref} is required by {', '.join(key.entry_names)}")
+    print(key.help)                      # where to obtain the key
 
-for key in snap.direct_missing_keys:     # your own models, reached by name
+for key in snap.direct_missing_keys:     # models configured for direct calls
     print(f"{key.api_key_ref} — direct({key.entry_names[0]!r}) will fail")
     print(key.help)
 
-for name, llm in snap.items():           # still a mapping of name -> per-model facts
+for name, llm in snap.items():           # mapping: name -> model state
     print(name, llm.has_key, llm.cooldown_until)
 ```
 
-In async code that is `await broker.snapshot()`. The one object also answers a
-whole admin screen: the per-model rows and the pool-wide verdict arrive together,
-with no second query to fetch them. Fields — in
-[`PoolSnapshot`](reference.md#llmbroker.models.PoolSnapshot).
+In asynchronous code, use `await broker.snapshot()`. All data are returned in one
+object, so no second query is needed for individual model rows. The fields are
+documented in [`PoolSnapshot`](reference.md#llmbroker.models.PoolSnapshot).
 
-`direct_missing_keys` is separate from `missing_keys` on purpose: a model you
-declared is never routed, so a key it lacks cannot degrade the pool and the pool
-gaining a provider cannot fix it. Both carry the same `help` — from your own
-`[keys]` block if you wrote one, otherwise from the curated catalog.
+`direct_missing_keys` is separate from `missing_keys` because models configured
+for direct calls are not pool members. A missing key for a direct model does not
+affect pool health, and the availability of other models cannot replace it. In
+both fields, `help` comes from your `[keys]` section when provided, or from the
+maintained catalog otherwise.
 
-The unit is the provider (`api_key_ref`), not the model: two entries on one key
-are one quota and one failure domain, so they count once. `degraded` is true
-while fewer than two providers are usable: at one the pool still answers but a
-rate limit has nowhere to spill, at none it no longer answers at all. A registry
-that pools nothing has no pool to degrade, so there it is false.
+Availability is counted by provider (`api_key_ref`), not by model. Models using
+the same key share a quota and failure domain, so they count as one provider.
+`degraded` is true when fewer than two providers are usable. With one provider,
+the pool still works but cannot switch providers after a rate limit. With zero,
+it cannot serve requests. `degraded` is false for a registry with no pool models.
 
-A key revoked in your secrets backend drops out of the count on the next pool
-rebuild — there are four of those, all listed in [What processes do and do not
-share](server.md#coordination). A model you
-[disabled yourself](disable.md) still counts its provider: that verdict is on the
-model's own row.
+A key removed from the secrets store stops counting after the next pool refresh.
+The events that trigger a refresh are listed under
+[Data shared between processes](server.md#coordination). If a model is
+[disabled manually](disable.md), its provider still counts as usable; the model's
+own row shows the disabled state.
 
-### What to alert on {#alerts}
+### Availability alerts {#alerts}
 
-There is no need to poll `snapshot()` on a schedule: when the pool's health
-changes, llmbroker writes a line about it itself — to the `llmbroker.broker`
-logger. So an alert hangs off three lines rather than off a metric; if your log
-collector can match a substring, that is all it takes.
+You do not need to poll `snapshot()`. When availability changes, llmbroker writes
+a message through the `llmbroker.broker` logger. A monitoring system can alert on
+the following messages.
 
-**The pool has lost its fallback** — one usable provider left. It still answers,
-but the first rate limit will have nowhere to spill. Level `ERROR`:
+**Only one provider remains usable.** The pool still responds but cannot switch
+to another provider after a rate limit. Level `ERROR`:
 
 ```
 pool degraded, no failover left: 1 of 3 providers usable — no key for GEMINI_API_KEY
 ```
 
-**The pool cannot serve at all** — no usable provider is left. Level `ERROR`:
+**No provider is usable.** The pool cannot serve requests. Level `ERROR`:
 
 ```
 pool cannot serve any request: no provider has a key — no key for GROQ_API_KEY, GEMINI_API_KEY
 ```
 
-**Providers are there, but every model is cooling right now** — the keys are in
-place and the pool is provisioned, there is simply nobody to answer this minute:
-they all hit their limits. It means the registry holds too few models for your
-traffic. Level `WARNING`, at most once a minute:
+**Every model is temporarily unavailable.** The required keys are configured,
+but every model has reached a provider limit. This usually means the registry
+contains too few models for the current load. Level `WARNING`, emitted at most
+once per minute:
 
 ```
 pool under-provisioned: all LLMs are COOLING — add more LLMs to the registry
 ```
 
-The first two name the keys that are missing, so they show what to fix.
+The first two messages list any missing keys.
 
-**A line is written on a change of state, not on every call.** A pool that stays
-down would otherwise flood your log; hence one line per transition. And "one
-provider left" and "none left" are different events, so the second line comes
-after the first rather than instead of it.
+Messages are written only when the state changes, not on every call. A transition
+to one provider and a transition to zero providers are separate events, so each
+produces its own message.
 
-Back to normal is one `INFO`:
+When at least two providers become available again, one `INFO` message is written:
 
 ```
 pool recovered: 3 of 3 providers usable
 ```
 
-It is written once, when two or more providers are usable again; the third and
-any after it are not worth a line of their own.
+The third and later providers do not produce additional recovery messages.
 
-A pending key on its own is never an alarm: two working providers may be exactly
-what you provisioned.
+A missing key by itself is not an alert condition if at least two other providers
+are usable.
 
 ## Call journal {#journal}
 
-The journal cleans itself up; the retention depth is the journal backend's
-`retention` parameter (90 days by default), see
-[Servers & clusters](server.md#journal). To read it: `broker.calls(limit=50)`.
+Old records are deleted automatically. The journal store's `retention` parameter
+controls how long they are kept and defaults to 90 days. See
+[Servers & clusters](server.md#journal). Read recent records with
+`broker.calls(limit=50)`.
 
-One row per call attempt — fields in [`Call`](reference.md#llmbroker.models.Call),
-with `score` holding the quality rating you gave it (or `None`). Narrow the read
-by time, by operation, or by one of the ids you called with (see
-[Tracing one request](#trace)):
+Each attempt creates one row. The fields are documented in
+[`Call`](reference.md#llmbroker.models.Call); `score` contains its quality rating
+or `None`. Filter rows by time, operation, or call identifier. See
+[Finding the entries for one request](#trace).
 
 ```python
 from datetime import UTC, datetime, timedelta
@@ -116,31 +112,28 @@ week_ago = datetime.now(UTC) - timedelta(days=7)
 broker.calls(limit=50, since=week_ago, operation="summarize")
 ```
 
-The filters narrow the calls, never the ratings folded onto them: a verdict
-recorded a month after the call still shows up on it, and rating a call twice
-shows the newer verdict.
+Filters apply to calls, not to the time a rating was recorded. A later rating is
+still displayed on the original call. If a call is rated more than once, the
+latest rating is shown.
 
-`since` is inclusive. On MongoDB it is inclusive to the millisecond — BSON dates
-carry no finer precision, so both stored timestamps and the bound are rounded
-down to whole milliseconds.
+`since` is inclusive. MongoDB stores time with millisecond precision, so both
+stored timestamps and the boundary are rounded down to whole milliseconds.
 
-### Tracing one request {#trace}
+### Finding the entries for one request {#trace}
 
-`ask`, `chat` and `stream` all take `trace_id=` — an id of your own that
-llmbroker writes onto every journal row the call produces and never interprets.
-Pass whatever your system already uses, a request id or a job id, and the journal
-lines up with your logs without a second correlation scheme of its own.
+`ask`, `chat`, and `stream` accept `trace_id=`, an identifier from your system
+such as a request or job ID. llmbroker stores it unchanged on every attempt. Use
+it to match journal rows with your application logs.
 
 ```python
 broker.ask("Summarize this clause", operation="summarize", trace_id=request_id)
 ```
 
-**One call is usually several rows.** Failover journals every attempt it made,
-and they all carry the same `trace_id` — which is what the field is for: the
-trace keeps the two models that rate-limited before the third one answered, and
-that is the evidence for why the request took as long as it did. The attempt that
-answered is the row whose `status` is `CallStatus.OK`; a stream that died after
-emitting deltas is not it, having never completed.
+One call can create several rows because each model attempt is recorded
+separately. Every attempt receives the same `trace_id`. The rows can show, for
+example, that two models were rate-limited before a third answered. A successful
+attempt has status `CallStatus.OK`. Interrupted streaming is not successful even
+if some text chunks were already returned.
 
 ```python
 from llmbroker import CallStatus
@@ -149,24 +142,22 @@ rows = broker.calls(limit=200, trace_id=request_id)
 answered = next((c for c in rows if c.status is CallStatus.OK), None)
 ```
 
-The filter runs inside the store, so `limit` caps the *matching* rows rather than
-the rows scanned — a trace made an hour and a million calls ago still comes back
-whole. On a DB backend the column is indexed; the file store has no index by
-construction, so there the filter buys correctness rather than speed.
+Filtering occurs inside the store, so `limit` caps *matching* rows rather than
+the number scanned. An old request can still be returned in full when its row
+count does not exceed the limit. The field is indexed in database stores. The
+file store has no index, so filtering there does not make lookup faster.
 
-Pass `call_id=` to pull up a single attempt — `result.call_id` is exactly that
-value.
+To find one attempt, pass `call_id=` with the value from `result.call_id`.
 
-To the journal a `trace_id` is just a field llmbroker stores and filters on, so
-nothing stops you grouping several calls under one. But a trace is meant as one
-call's id, and [rating by it](usage.md#quality) works on exactly that assumption:
-it finds one call, not all of them. Both ids are how you rate a call after the
-fact, and `call_id` is the precise one.
+llmbroker allows one `trace_id` to be shared by several calls, but
+[rating by identifier](usage.md#quality) applies to only one of them. Use
+`call_id` to identify a specific attempt unambiguously. Either identifier can be
+used to rate a call after it completes.
 
 ### Statistics over a window {#stats}
 
-`stats()` counts call records per model over a time window — how many calls each
-model made and how they ended:
+`stats()` groups records by model and shows the number and final status of
+attempts in a time period:
 
 ```python
 from llmbroker import CallStatus
@@ -176,32 +167,32 @@ for name, s in broker.stats(since=week_ago).items():
     print(name, s.total, failed, s.last_status, s.last_at)
 ```
 
-Fields — in [`LLMStats`](reference.md#llmbroker.models.LLMStats).
+The fields are documented in
+[`LLMStats`](reference.md#llmbroker.models.LLMStats).
 
-`by_status` holds only the statuses actually seen in the window, so count the
-failures by subtracting from `total` rather than by adding up the other statuses.
-One status is neither: `SUPERSEDED` is a model that was answering when a faster
-sibling answered first — it says nothing about that model, so subtract it too if
-you are after a failure count. Rating a call does not add a row, so it cannot
-inflate the counts. Pass `operation=` to count one operation only.
+`by_status` contains only statuses present in the selected period, so calculate
+failures from `total` rather than by adding other statuses. `SUPERSEDED` does not
+mean the model failed; it identifies a concurrent request that was still running
+when another model completed. Exclude it when calculating actual failures.
+Recording a rating does not create a call row or affect these counts. Pass
+`operation=` to limit the statistics to one operation.
 
-What counts as a failure, how long the window should be, and how a model with no
-calls in the window should read are yours to decide; llmbroker returns the counts
-and no policy.
+The application decides which statuses count as failures, what period to use, and
+how to display models with no calls. llmbroker returns the underlying counts.
 
-`limit` (1000 by default) caps how many records are read — a guard against an
-anomalous window such as a retry storm, not the window itself. It must be at
-least 1. If the totals add up to exactly `limit`, the window may have been
-truncated: raise the limit or shorten the window.
+`limit`, which defaults to 1000, caps the number of records read rather than the
+length of the period. It must be at least 1. If the sum of `total` equals
+`limit`, some records may have been omitted. Increase the limit or shorten the
+period.
 
-`since` must be timezone-aware (`datetime.now(UTC)`, not `datetime.now()`) — a
-naive bound is refused rather than guessed at, since guessing would shift the
-window by your machine's offset.
+`since` must include a time zone, for example `datetime.now(UTC)` rather than
+`datetime.now()`. A value without a time zone is rejected so the boundary does
+not depend on the machine's local settings.
 
-`calls()` and `stats()` read the journal only: unlike `snapshot()`, neither
-initializes the model pool, so the screen still renders on an installation whose
-registry was never synced. Construct the broker directly for that — entering it
-as a context manager (`with Broker(...) as broker`) initializes the pool up front:
-on an installation that fetches nothing by itself that is `EmptyRegistryError`,
-and on an ordinary one a trip for the curated list, which a statistics screen has
-no use for.
+`calls()` and `stats()` read only the journal and, unlike `snapshot()`, do not
+initialize the pool. A statistics page can therefore work before the registry is
+populated. For this use case, construct `Broker(...)` directly without a context
+manager. Entering `with Broker(...) as broker` initializes the pool immediately:
+an empty registry with automatic downloads disabled raises `EmptyRegistryError`,
+while normal settings may download a model list that journal access does not
+need.

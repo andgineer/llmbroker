@@ -229,7 +229,10 @@ open in a fraction of a second and then stall past the budget, while the lane th
 would have finished was cancelled unread the moment the first one spoke. Committing
 at the first delta throws away the only work that could still rescue the call, and
 the cost of not committing is bounded and visible — a typed replacement the host
-must handle, buffering per lane, and quota the caller already agreed to spend.
+must handle, buffering per lane, and quota the caller already agreed to spend. One
+interactive host met exactly that: its stream twice committed on a first delta under
+1.3 s to a lane that then finished at 11.7 s and 21.3 s, and both of those answers
+were ones it rated unfit.
 
 **The bounded preference for the pool's first choice decides what is shown, never
 who wins.** A stream may hold the highest-ranked lane's place for a short interval
@@ -240,6 +243,16 @@ have finished. It is refused: it adds latency after a complete answer is already
 hand, which is the one thing this option exists to remove. Expiry of the interval is
 therefore not a timeout and not evidence: it cools nothing, demotes nothing, and is
 journaled nowhere.
+
+**How long that interval is by default is a smaller call, and the alternative to name
+is a longer one.** On the pool's highest-ranked workhorse first deltas cluster inside
+one second — 43 of 51 paced calls, and 90% of a 1,026-start sample — with the knee
+just after it: half a second more covers 49 of 51 and 97.9%. Buying that knee would
+avoid a few replacements per hundred calls and would hold an already-answering reserve
+back by that same half-second on *every* call where the first choice stays silent. The
+visible delay is the one a reader feels, so the default sits at the near edge of the
+cluster rather than past it, and a caller who wants the ranked preference held longer
+raises it — that is what the setting is for.
 
 **Two answered rows under one trace are the price of that, and the handle is what
 pays it.** Where both lanes finish, both rows are honest and neither may be

@@ -2,50 +2,49 @@
 
 ## Model pool
 
-The pool is the curated list of free LLMs, and you get it by asking for a broker:
+The pool is a maintained list of free language models. Create a broker to use it:
 
 ```python
 broker = llmbroker.Broker()
 ```
 
-There is nothing to create and nothing to keep. Generate the key skeleton and
-fill in whichever keys are easy to get:
+You do not need to assemble or maintain the list. Create a file for provider API
+keys and add the keys you want to use:
 
 ```bash
 llmbroker env freetier > .env
 ```
 
-`llmbroker env` prints a hint above each key — where to get it, see
-[CLI](cli.md#env). A model without a key simply stays inactive, it is not an
-error.
+`llmbroker env` tells you where to obtain each key. See [CLI](cli.md#env). A
+model without a key is simply not used.
 
-A provider that cannot handle parallel requests on one key is capped by
-`parallel` on its entry. For the pool that is the curated model list's call, not
-yours — the file is llmbroker's, see [below](#file); on a model of your own you
-set it, as a field of the [`LLMConfig`](reference.md#llmbroker.models.LLMConfig)
-you declare.
+If a provider limits concurrent requests on one key, the `parallel` setting
+accounts for that limit. Values are already set for models in the maintained
+list. For a model you add yourself, set `parallel` in its
+[`LLMConfig`](reference.md#llmbroker.models.LLMConfig).
 
-A paid model can be reached by name: `Broker(direct=["opus"])`, then
-`broker.direct("opus").ask(...)`. It is called directly and never joins the pool —
-see [Direct model calls](direct.md).
+You can configure a paid model for direct calls with
+`Broker(direct=["opus"])`, then call it with
+`broker.direct("opus").ask(...)`. It is not part of the pool. See
+[Direct model calls](direct.md).
 
-### Where the model list lives {#file}
+### Where the model list is stored {#file}
 
-You do not have to put it anywhere. A broker keeps its model list in [llmbroker's
-own directory](#state) and refreshes it there. Set `LLMBROKER_HOME` to move that
-directory, which is what a container without a writable cache needs.
+The broker stores the list in [llmbroker's data directory](#state) and updates it
+there. Set `LLMBROKER_HOME` to use another directory. This is useful in a
+container that cannot write to the system cache directory.
 
-That file is written by llmbroker, not by you: a refresh regenerates it in full,
-and it holds the pool and nothing else — a model you reach by name is
-[declared in code](direct.md). There is no way to point a broker at a model list file
-of your own — a model list arrives as a curated preset name and nothing else.
+Each update regenerates the file in full, so do not edit it. The file contains
+only the pool. Models used for direct calls are [declared in code](direct.md).
+You cannot pass an arbitrary model-list file to the broker; select one of the
+maintained lists by name instead.
 
-To keep the list in a database instead, shared across processes, or to fill the
-registry yourself — see [Servers & clusters](server.md#datasource).
+See [Servers & clusters](server.md#datasource) to store the list in a shared
+database or manage the registry yourself.
 
 ### Which model is tried first {#weight}
 
-Row order does not decide it — `weight` does:
+Row order does not matter. The `weight` setting determines the initial order:
 
 ```toml
 [[llms]]
@@ -56,130 +55,114 @@ api_key_ref = "GEMINI_API_KEY"
 weight      = 0.75
 ```
 
-A weight is a number from 0 to 1 — how good you expect this model's answers to
-be, on the same scale as the ratings you record. Higher goes first. The default
-is `0.0`, so an entry you add without one is tried after every weighted model:
-give [your own entries](server.md#own-entry) a weight if you want them competing
-on merit.
+`weight` is the expected answer quality on a scale from 0 to 1. A higher value
+makes the broker try the model earlier. The default is `0.0`, so models without
+an explicit weight are tried after models with positive weights. Set a weight
+when you [add your own model](server.md#own-entry).
 
-It is a starting point, not a fixed order. Every rating you record through
-[`record_quality()`](#quality) moves the model off its weight and toward what it
-actually earns, and once you have rated it enough times the weight stops counting
-altogether — the order is then whatever your ratings say, however you ranked the
-models to begin with. A model nobody has rated yet still starts where you put it,
-instead of at the bottom where it could never earn its way up.
+The weight controls only the initial order. Ratings recorded with
+[`record_quality()`](#quality) gradually replace it with measured quality. Once
+there are enough ratings, the original weight is no longer used. Until then, an
+unrated model keeps the position established by its weight.
 
 !!! tip "Keys do not have to live in `.env`"
     AWS Secrets Manager, Vault, a DB or your own storage — see [API keys](secrets.md).
 
-### Keeping the pool fresh {#sync}
+### Updating the model list {#sync}
 
-Providers come and go, and the curated preset follows them. You do not have to do
-anything about it. When you want to force a refresh, it is one call, and it
-returns a report of what it did:
-
-```python
-report = broker.sync("freetier")         # a preset name — the only call that goes online
-print(llmbroker.format_report(report))   # or forward the report to your own admin channel
-```
-
-You rarely need to. **The curated model list keeps itself current on its own**, with
-no argument and no job to schedule: providers retire free endpoints without
-notice, so a model list that stops updating slowly stops working. The broker
-re-checks it about once a day, lazily — the check happens on a call you were
-making anyway, never on a timer, so an idle process does nothing at all.
-
-It is best-effort: if the catalog is unreachable, the broker logs a warning and
-carries on with the config it already has. The explicit `broker.sync(...)` call
-raises instead — you asked for it, so you get to handle it.
-
-**A check that changes nothing touches nothing.** The model list is rewritten only
-when the curated one genuinely moved, so a check that found no news leaves it
-byte-identical, mtime included.
-
-To follow nothing — because you fill the registry yourself — say so, and the
-check interval is yours to set:
+Available free models change over time. llmbroker tracks these changes and
+normally requires no manual update. To update immediately, call `sync`; the
+method returns a report:
 
 ```python
-llmbroker.Broker(sync=None)              # nothing is refreshed
-llmbroker.Broker(sync_interval=3600)     # check hourly instead
-llmbroker.Broker(sync_interval=None)     # never check by itself — you run the sync
+report = broker.sync("freetier")         # freetier is the model-list name
+print(llmbroker.format_report(report))   # log the report or send it to an administrator
 ```
 
-`sync_interval=None` is for a process that may make no outbound connection while it
-serves: it stops every automatic fetch, including the one that fills an empty
-registry at startup, and the freshness becomes yours to keep — see
+By default, the broker checks for updates about once a day during an ordinary
+call. No scheduled job is required, and an idle process performs no checks.
+
+If an automatic update fails, the broker logs a warning and continues with the
+existing configuration. An explicit `broker.sync(...)` reports the failure to
+the caller as an exception.
+
+If the maintained list has not changed, the local file is not rewritten. Its
+contents and modification time remain unchanged.
+
+You can disable automatic updates or change the check interval:
+
+```python
+llmbroker.Broker(sync=None)              # do not use a maintained model list
+llmbroker.Broker(sync_interval=3600)     # check once an hour
+llmbroker.Broker(sync_interval=None)     # do not check automatically
+```
+
+`sync_interval=None` disables every automatic download, including the initial
+population of an empty registry. In this mode, run updates yourself. See
 [Servers & clusters](server.md#no-fetch).
 
-**The sync report.** Its fields are in
-[`SyncReport`](reference.md#llmbroker.models.SyncReport), and three things in it
-are worth understanding:
+The report fields are documented in
+[`SyncReport`](reference.md#llmbroker.models.SyncReport). A report can include
+these states:
 
-- **A pending key** is a model waiting for a key you have not set. Harmless: it
-  stays inactive and the pool routes over the rest. The report prints where to
-  get the key.
-- **A removed entry** is a model the curated list no longer carries. It goes,
-  whether or not you still hold a key for it — the list is what decides which
-  models this pool routes over, and a model leaves it only once it can no longer
-  be called. Nothing is lost if it comes back later: the key stays in the secrets
-  store and everything learned about the model derives from your call journal.
-- **An unused key** is a key you actually have that nothing in your config
-  references any more. Whether to revoke it at the provider is your call, and a
-  model of your own still using it keeps it out of that advice. A provider you
-  never had a key for just disappears quietly — there is nothing to revoke.
+- **Pending key** — the model has no configured API key. The model is not used,
+  but the rest of the pool remains available. The report tells you where to
+  obtain the key.
+- **Removed entry** — the model is no longer in the maintained list and is
+  removed from the pool. Its key remains in the secrets store, and its call
+  history remains in the journal. Those data are available if the model returns.
+- **Unused key** — the secrets store contains a key that no model in the current
+  configuration references. If your own configuration does not need it, you can
+  revoke it at the provider.
 
-A removal is never silent: taking a provider away is what moves the usable-provider
-count, and the [pool alarm](monitoring.md#alerts) fires on the way down to one
-and to none.
+Removing a model affects the number of usable providers. An
+[availability alert](monitoring.md#alerts) is emitted when that count reaches one
+or zero.
 
 ### Where llmbroker keeps its own state {#state}
 
-llmbroker keeps a little of its own: the fetched preset, the paid catalog, when it
-last checked for an update — and, when you named no database, the model list it
-runs and its call journal too. That lives in one machine directory, and which
-directory it is follows this order, down to the first one it can write to:
+llmbroker stores the downloaded model list, the paid-model catalog, and the time
+of the last update check. If no database is configured, the active registry and
+call journal are stored there as well. The directory is selected in this order:
 
-1. `home=`, this broker's own, if you passed it;
-2. `$LLMBROKER_HOME`, this process's own, if the variable is set;
+1. the `home=` argument, if set;
+2. `$LLMBROKER_HOME`, if set;
 3. `$XDG_CACHE_HOME/llmbroker`, and without that variable the platform cache:
    `~/Library/Caches/llmbroker` on macOS, `~/.cache/llmbroker` on Linux,
    `%LOCALAPPDATA%\llmbroker` on Windows;
-4. a per-user directory under the system temp — the last thing left.
+4. a per-user directory inside the system temporary directory.
 
-So `$XDG_CACHE_HOME` overrides the platform cache, and `home=` and
-`$LLMBROKER_HOME` override that in turn: which is how two projects on one machine
-keep entirely separate state.
+`home=` has the highest priority, followed by `$LLMBROKER_HOME` and then
+`$XDG_CACHE_HOME`. Use `home=` or `$LLMBROKER_HOME` to keep projects on the same
+machine separate.
 
-That order decides where state is *written*. Reading a copy that is already there
-is not gated on it: point `home=` at a read-only directory — a catalog mounted
-into a container — and what it holds is what you get, never a writable directory
-holding something else.
+This order determines where data is written. Write access is not required for
+reading: if `home=` points to a read-only directory, such as one mounted into a
+container, the broker uses data from that directory instead of searching for a
+writable alternative.
 
-Whatever happens to that directory, the broker will not break: delete it, or run
-where nothing is writable, and it still works. It re-fetches, and where no
-candidate directory is writable — the temporary one included — the state lives in
-memory for that run alone. Even with no network at all, a first run starts on the
-copy of the preset shipped inside the package.
+If the directory is missing, the broker downloads the data again. If no candidate
+directory is writable, including the temporary directory, data remains in memory
+until the process exits. Even without network access, a first run can use the
+copy bundled with the package.
 
-That is harmless for what was fetched only. **The call journal, and with it
-everything the pool learned, cannot be recovered from anywhere.** With no database
-the journal lives in that same directory, so deleting it erases the call history
-and the [quality ratings](#quality) built on it for good — the models restart from
-their curated [weights](#weight), as on a first run. Keep the journal in a
-database if you want the history to survive — see
-[Servers & clusters](server.md#datasource).
+The downloaded list can be restored, but **the call journal and accumulated
+quality data cannot**. Without a database, the journal is kept in the same
+directory. Deleting it makes models start again from their initial
+[weights](#weight). Store the journal in a database if the history must persist.
+See [Servers & clusters](server.md#datasource).
 
-The one thing that does need a real directory is a refresh, which exists to leave
-a copy behind: with nowhere writable it fails and says so — make one writable, or
-run with `sync_interval=None` and fetch nothing by yourself.
+An update requires a writable directory because the downloaded list must be
+saved. If no directory is writable, the update fails. Provide write access or
+disable automatic downloads with `sync_interval=None`.
 
-Sharing one journal per machine is deliberate in the zero-config case: your keys
-come from the environment, so the rate limits it remembers really are one pool,
-and scattering the journal per working directory would make every run rediscover
-the same 429. Pass `home=` if you want a project to keep its own.
+Without a database, llmbroker uses one journal per machine. Processes that share
+environment keys can therefore reuse knowledge about provider limits instead of
+discovering the same limit independently. Pass `home=` to keep a separate
+journal for one project.
 
-To keep a database registry current from your own deploy job, see
-[Servers & clusters](server.md).
+See [Servers & clusters](server.md) to update a database registry from a
+deployment job.
 
 ## Calling the broker {#calling}
 
@@ -196,16 +179,15 @@ reply = broker.chat([
 ])
 ```
 
-Every call also takes `trace_id=` — your own request or job id, stored on the
-journal rows the call leaves behind and never interpreted, so that the journal
-lines up with your logs. See [Tracing one request](monitoring.md#trace).
+Every call accepts `trace_id=`, an identifier from your application such as a
+request or job ID. llmbroker stores it unchanged so journal entries can be
+matched to your logs. See [Finding the entries for one request](monitoring.md#trace).
 
-To print the answer as it is written rather than all at once, the pool streams
-too — `async for delta in broker.stream(...)`, async-only, see
-[Streaming](async.md#streaming-from-the-pool).
+To receive an answer incrementally, use the asynchronous `broker.stream(...)`
+method with `async for`. See [Streaming](async.md#streaming-from-the-pool).
 
-Scripts do not need to close the broker; when you do need to — see
-[Servers & clusters](server.md#closing).
+Ordinary scripts do not need to close the broker. See
+[Servers & clusters](server.md#closing) for shutdown in server applications.
 
 ### How long to wait for an answer {#wait}
 
@@ -213,77 +195,77 @@ Scripts do not need to close the broker; when you do need to — see
 try:
     reply = broker.ask("Question", wait=5.0)   # at most 5 seconds, start to finish
 except llmbroker.NoLLMAvailableError:
-    print("No LLM answered within the budget")
+    print("No model answered within the requested time")
 ```
 
-`wait` covers both halves of the call: waiting for a free model *and* the answer
-itself. A provider that has said nothing at all by the time the budget runs out is
-abandoned and set aside for a short while: to you it was indistinguishable from a
-dead endpoint, and the next call should not spend the same budget finding that out
-again. Without `wait` a single attempt is bounded only by an internal 60-second
-ceiling.
+`wait` limits the total duration of the call, including both the wait for an
+available model and the response itself. If a provider returns no data during
+that time, the broker stops the attempt and temporarily avoids that provider for
+requests with the same short limit. This prevents every subsequent call from
+waiting for the same slow provider. Without `wait`, a single attempt is limited
+only by an internal 60-second maximum.
 
-A model that misses your budget also stops being the first choice for equally
-tight budgets, and that outlives the short pause: the next caller is handed a
-sibling instead of the same trap — one call pays for the discovery, not all of
-them. Nothing is switched off for good: callers with a roomier budget still get
-that model first, it is still used when it is the only one left, and its next
-successful answer clears the mark.
+A model that misses the requested time also stops being the first choice for
+calls with the same or a smaller `wait`. It remains available for calls with a
+longer limit and when no other model is available. Its next timely response
+clears this restriction.
 
-`wait=0` is the one exception: it means "do not queue", not "answer instantly" —
-every model that is free right now is tried, with no deadline of yours on the
-answer.
+`wait=0` has a special meaning: do not wait for a model to become available. The
+broker considers models that are available immediately but does not set a
+deadline on their responses.
 
-### Asking several models at once {#parallel}
+### Calling several models concurrently {#parallel}
 
 ```python
-reply = broker.ask("Question", fastest_of=2)   # two models start, the first answer wins
+reply = broker.ask("Question", fastest_of=2)   # call two models and return the first reply
 ```
 
-`fastest_of=N` starts up to `N` *different* models on one call and keeps whichever
-answers first; the rest are dropped. It is a trade of provider quota for latency —
-the answers you throw away were still paid for — so it is off by default and worth
-setting only where a slow answer costs you more than a spent request. `N` is a
-maximum: with fewer models free right now, fewer lanes run. Your `wait` is not
-multiplied by it — every lane runs against the same one budget.
+`fastest_of=N` sends the request to at most `N` different models concurrently and
+returns the first complete reply. Every request consumes provider quota even when
+its reply is discarded. The option is disabled by default and is appropriate
+when latency matters more than request count. If fewer than `N` models are
+available, the broker uses all available models. `wait` applies to the whole call
+and is not multiplied by the number of models.
 
-There is a second, narrower case the broker handles for you. When a model has been
-set aside after a failure and its pause has just elapsed, the call that tries it
-again is a gamble: nobody knows yet whether it is back. That one call runs beside
-another available model when there is one, so the recheck does not sit alone on
-your latency path; the first of the two to answer is the answer you get. Nothing
-else is parallel: a pool of healthy models still answers one call with one request.
+The broker also makes one additional concurrent request automatically. After an
+error, a model is temporarily excluded from selection. When that period ends,
+the broker checks the model again while also calling another available model.
+The first complete reply is returned, so rechecking the unavailable model does
+not add latency. In other cases, a normal call sends one request to one model.
 
 ```python
-reply = broker.ask("Question", parallel_recovery=False)  # never spend a second request
+reply = broker.ask("Question", parallel_recovery=False)  # do not send the extra request
 ```
 
-Turn it off where requests are scarcer than seconds. The recheck then happens on
-your call path, exactly as an ordinary attempt does, and if the model is still down
-the call fails over to the next one.
+Set `parallel_recovery=False` when request count matters more than latency. The
+broker then checks the previously unavailable model first and moves to the next
+model only if that attempt also fails.
 
-A stream you did not explicitly race commits to whichever model produces the first
-piece of text and stays with it to the end. A stream you *did* race keeps every lane
-running to a whole answer instead, because the fastest first token and the fastest
-answer are not the same model:
+When `fastest_of` is not set, `broker.stream(...)` uses the first model that
+starts returning text and stays with that model for the rest of the response. To
+call multiple models concurrently, as with `ask(..., fastest_of=N)`, pass
+`fastest_of`:
 
 ```python
 stream = broker.stream("Question", fastest_of=2, stream_selection_window=1.0)
 ```
 
-`stream_selection_window` is in seconds, defaults to `1.0`, and only means anything on
-a stream with more than one lane. It says how long the pool's own first choice may
-take to start before whatever a sibling has already produced is shown instead — it
-chooses what you *see* first, never who wins. `0` shows the first text that arrives,
-whoever produced it.
+With `fastest_of > 1`, every selected model continues generating a full reply.
+`stream_selection_window` specifies how many seconds to wait for the broker's
+first-choice model before showing data that another model has already returned.
+The default is `1.0`; `0` displays data from the first model to respond. This
+setting controls only which text is shown initially. The final result is still
+the complete reply from the model that finishes first.
 
-Racing a stream costs more than racing a completion. Every lane's answer is held in
-memory until the race settles, and the text you were shown is provisional: when
-another model finishes first, it is withdrawn and replaced whole, as a
-`StreamReplacementError` your code has to handle. Nothing is ever spliced — see
-[Racing a stream](async.md#racing-a-stream) for the shape of that catch. Both options
-are for the routed pool only; a model you reach by name with `direct()` is one model,
-so neither applies.
+Concurrent streaming uses more memory because the broker keeps each selected
+model's reply until the first one is complete. Text shown before that point is
+provisional. If another model finishes first, the broker raises
+`StreamReplacementError`, and the application must replace all previously shown
+text. Replies from different models are never combined. See
+[Concurrent streaming](async.md#racing-a-stream) for an example.
+
+`fastest_of` and `stream_selection_window` apply only to the pool. A direct call
+through `direct()` uses one specific model, so neither option applies.
 
 ### Asking for JSON that matches a schema {#response-format}
 
@@ -298,108 +280,103 @@ reply = broker.ask(
 )
 ```
 
-`response_format` is passed to whichever model answers, unchanged. Both sync and
-async callers accept it on `ask` and `chat`; the async caller accepts it on
-`stream` too. It is the provider's own OpenAI-style value; llmbroker never reads
-it.
+`response_format` is passed to the selected model unchanged. Synchronous and
+asynchronous clients accept it in `ask` and `chat`; the asynchronous client also
+accepts it in `stream`. The value uses the provider's OpenAI-compatible format.
+llmbroker does not inspect it.
 
-**The broker routes it, it does not guarantee it.** The pool is heterogeneous:
-some members honor a strict schema on every attempt, and some accept the parameter
-and then answer in a shape of their own. llmbroker cannot tell the two apart —
-telling them apart means reading the answer against your schema, and your schema's
-meaning is yours. So keep validating what you get.
+**Schema compliance is not guaranteed.** Some models consistently follow a
+strict schema, while others accept the parameter but return another shape.
+llmbroker does not validate reply content, so the application must validate it
+against the schema.
 
-That validation is also the fix. Feed it back as a
-[quality rating](#quality) with an `operation=` for this task, and the members that
-ignore your schema sort last for it — the ordering the pool already has, no new
-machinery. Against prompting for JSON, which is what you would do otherwise, the
-parameter strictly wins: the same answer from the members that ignore it, and an
-exactly conforming one from those that do not.
+You can record the validation result as a [quality rating](#quality) and set an
+`operation=` for the task. Models that often violate the schema will then be
+selected later for that operation. `response_format` is preferable to requesting
+JSON only in the prompt: models that support the parameter can enforce a strict
+schema, while behavior does not become worse for the others.
 
-A model that answers off-schema has not failed: it is an ordinary successful call,
-so nothing is cooled down and no failover follows. Measured behaviour of the
-curated free pool is recorded in `specs/reference/freetier-providers.md`.
+A reply that does not match the schema is still successful from llmbroker's
+perspective. The broker does not temporarily exclude the model or send the same
+request to another model. Results from testing the free model list are recorded
+in `specs/reference/freetier-providers.md`.
 
-This is the routed pool. A model you reach by
-[`direct()`](direct.md#params) takes arbitrary request parameters instead, because
-you named it.
+This limitation applies to the pool. A specific model called through
+[`direct()`](direct.md#params) accepts arbitrary request parameters.
 
 ### When nobody can answer {#errors}
 
-The pool works through the models until one answers. A model that returns HTTP 200
-carrying neither text nor tool calls has not answered — it is failed over like any
-other broken reply, so a reply that says nothing at all never reaches you as a
-success. If nobody answered, the call raises `NoLLMAvailableError`, and you do not
-have to read the message: the reason is in the fields.
+The broker tries models until it receives a reply. If a provider returns HTTP 200
+but the response contains neither text nor tool calls, the attempt is treated as
+failed and the broker tries the next model. If no model answers, the call raises
+`NoLLMAvailableError`. Inspect its fields rather than parsing the error message.
 
 ```python
 try:
     reply = broker.ask("Question", wait=5.0)
 except llmbroker.NoLLMAvailableError as exc:
     if exc.retry_at is not None:
-        retry_after(exc.retry_at)          # somebody comes back by then, on its own
+        retry_after(exc.retry_at)          # a model will be available by this time
     else:
-        alert(f"the pool is not serving: {exc.reason}")
+        alert(f"the pool is unavailable: {exc.reason}")
 ```
 
-`reason` is a short string telling five unlike situations apart:
+The `reason` field has one of five values:
 
 | `reason` | what happened | what to do |
 |---|---|---|
-| `empty_pool` | the registry holds no entries at all | fill it — see [Keeping the pool fresh](#sync) and [Servers & clusters](server.md#sync) |
-| `no_keys` | there are entries, but this caller can pay for none of them | set the keys — see [API keys](secrets.md) |
+| `empty_pool` | the registry contains no models | populate it — see [Updating the model list](#sync) and [Servers & clusters](server.md#sync) |
+| `no_keys` | models exist, but their API keys are unavailable for this call | configure keys — see [API keys](secrets.md) |
 | `all_disabled` | every model is [disabled by hand](disable.md) | enable at least one |
-| `timeout` | your `wait` ran out — queueing for a free model, or already on the answer | retry with a larger budget, or later |
-| `excluded` | every candidate dropped out on this particular request — the provider rejected each one's key, say | read the call journal: the reason per attempt is there |
+| `timeout` | `wait` expired while waiting for an available model or a reply | increase `wait` or retry later |
+| `excluded` | no model can be used for this request; for example, providers rejected every available key | inspect individual attempts in the call journal |
 
-The first three mean "this installation is not configured", and a human fixes
-them, not a retry. The last two are about one request, and the next one may pass.
+The first three values indicate a configuration problem, so retrying without a
+configuration change will not help. `timeout` and `excluded` apply to one request;
+the next request may succeed.
 
-`retry_at` is filled only where a model is known to come back by itself, and only
-where nobody can serve you now: it is the moment the nearest cooling model's
-cooldown expires. `empty_pool`, `no_keys` and `all_disabled` carry none — there is
-nothing to wait for. A `timeout` carries one when the whole pool is cooling, and
-none when some model is free right now: what expired was your clock, not the pool,
-so retrying at once beats waiting.
+`retry_at` is set when no model is currently available but the broker knows when
+one model's temporary exclusion ends. It is not set for `empty_pool`, `no_keys`,
+or `all_disabled`, because waiting cannot resolve those conditions. For
+`timeout`, it is set only when every model is temporarily unavailable. If a
+model is already free, the request can be retried immediately.
 
-**An error in the request itself is not a `NoLLMAvailableError`.** If every model
-tried answered "this request is wrong" (a 4xx other than 401/403/429 — a 400 on a
-malformed `tools` schema, say), that says nothing about the models: what comes up
-is a `ProviderError` carrying `.status` and `.detail`, the code and a snippet of
-the body, which is the only thing you can act on. It is the same class
-[direct calls](direct.md#errors) raise, so one `except` can cover both:
+**An invalid request does not produce `NoLLMAvailableError`.** If every selected
+model rejects the request with a 4xx response other than 401, 403, or 429, the
+broker raises `ProviderError`. A malformed `tools` schema is one example. The
+`.status` field contains the HTTP status and `.detail` contains part of the
+provider response. [Direct model calls](direct.md#errors) use the same exception:
 
 ```python
 try:
     reply = broker.ask(prompt, wait=5.0)
 except llmbroker.NoLLMAvailableError as exc:
-    ...                                    # nobody to answer — see above
+    ...                                    # no model is currently available
 except llmbroker.ProviderError as exc:
-    log.error("every model rejected the request: HTTP %s — %s", exc.status, exc.detail)
+    log.error("Every model rejected the request: HTTP %s — %s", exc.status, exc.detail)
 ```
 
-Nothing is cooled down by it — the next, corrected request reaches those models as
-usual.
+`ProviderError` does not exclude any model. A corrected request reaches those
+models in the normal order.
 
 ## Quality rating {#quality}
 
-Rate the replies and the broker learns which models are good at which tasks:
+Ratings help the broker select the best models for different tasks:
 
 ```python
 reply = broker.ask("Summarize this contract clause", operation="summarize")
 reply.record_quality(0.9)   # 1.0 — good reply, 0.0 — bad; outside [0, 1] is a ValueError
 ```
 
-Ratings accumulate per `(model, operation)` pair: a model consistently weak at a
-given operation sinks to the back of the queue, displacing the [weight](#weight)
-it started from as they add up. Demotion is soft — if no other
-models are left, it still answers — and it lifts with new good ratings; there is
-no separate "reset". Calls without `operation=` share one common bucket.
+Ratings accumulate separately for each `(model, operation)` pair. A model with
+low ratings for an operation is selected later but remains available when no
+other model can answer. New positive ratings move it forward again; no separate
+reset is required. As ratings accumulate, they replace the initial
+[weight](#weight). Calls without `operation=` share one general category.
 
-**Rate it later.** The verdict often arrives after the call — a user reviews an
-LLM-produced artifact the next day. A rating names the call it rates, and there
-are two ways to name it. Pass an id of your own as `trace_id=` at call time and
-rate by it later:
+You can rate a reply later, after a user has reviewed the result. The rating must
+identify the call it applies to. One option is to pass your own `trace_id=` when
+making the call and use it when recording the rating:
 
 ```python
 broker.ask("Summarize this clause", operation="summarize", trace_id=document_id)
@@ -408,46 +385,47 @@ broker.ask("Summarize this clause", operation="summarize", trace_id=document_id)
 broker.record_quality(0.0, trace_id=document_id)
 ```
 
-Or persist `reply.call_id` and rate that one attempt: `broker.record_quality(0.0,
-call_id=saved_call_id)`. Exactly one of the two is required.
+Alternatively, save `reply.call_id` and rate that specific call with
+`broker.record_quality(0.0, call_id=saved_call_id)`. Provide exactly one of
+`trace_id` and `call_id`.
 
-A key is the way to rate a call you no longer hold. If you do still hold it —
-including the handle a [stream](async.md#streaming-from-the-pool) hands back —
-its own `record_quality(...)` needs no key and no journal read. On a stream it
-becomes available once the answer is over, not while it is still arriving.
+An identifier is needed when the result object is no longer available. If you
+still have the result, call its own `record_quality(...)` method without a journal
+lookup. This also applies to the object returned by
+[streaming](async.md#streaming-from-the-pool); its method becomes available after
+the response is complete.
 
-The model and the operation are read off the call, so you store neither. The
-attempts that failed — a model that rate-limited before another answered — are not
-rated: there was no answer to judge, and the rating goes to the attempt that
-answered.
+The model and operation are read from the call record, so they do not need to be
+stored separately. Failed attempts are not rated; the rating applies only to the
+model whose reply was returned.
 
-**One rating, one call, and the search goes back a week.** Two bounds worth
-knowing in advance:
+Two restrictions apply when rating by identifier:
 
-- **A `trace_id` identifies one call.** llmbroker will not stop you putting one on
-  several — the journal groups them exactly as you would expect — but a rating
-  names exactly one call, and that will be the newest one that answered under the
-  trace. If the trace turns out to carry noticeably more rows than a single call
-  does, llmbroker also warns about it in the log. To rate one specific call out of
-  several, keep its `call_id`: that is what it is for. One call can do this to you
-  by itself — a `fastest_of` race can leave two answered calls under one trace when
-  both models finish, and nothing on them says which answer you were given. Rate a
-  race through the result or handle it hands back — for a stream,
-  [the one described here](async.md#racing-a-stream) — never by trace.
-- **The call is looked for among the last 7 days.** Rating an older one is
-  pointless: the quality window is rebuilt from a recent journal tail, and such a
-  verdict would not survive the next pool rebuild. So rather than working through a
-  quarter of journal for a vanishing effect, llmbroker refuses:
-  `UnknownCallError`. You get the same one when the key matched nothing at all, or
-  when no attempt answered — a rating never disappears silently.
+- **One `trace_id` should identify one call.** llmbroker allows the same
+  `trace_id` on multiple calls, but a rating is applied to the most recent
+  successful call with that ID. If the journal contains substantially more
+  matching rows than one call normally creates, llmbroker logs a warning. Save a
+  call's `call_id` when you need to identify it unambiguously.
 
-All of that is about rating **by key**. Rating through the call itself — a `reply`
-or a stream handle — looks nothing up and is bounded by no window.
+  With `fastest_of`, one call can leave several successful journal rows: one for
+  every model that completed before the result was selected. The rows do not
+  indicate which reply the user received. Rate such a call through its returned
+  result object rather than `trace_id`. For streaming, use the
+  [object returned by the stream](async.md#racing-a-stream).
+- **The lookup covers the last seven days.** Quality calculations use the recent
+  portion of the journal, so older calls are not eligible. `UnknownCallError` is
+  raised when no record is found, the call is older than seven days, or no attempt
+  completed with a reply.
 
-Rate through the same caller that made the call: the scope comes from the caller
-object, not from the key, so a scoped call is rated with
-`broker.for_scope(user).record_quality(...)` — sent through the bare broker it
-would land unscoped.
+These restrictions apply only to lookup by `trace_id` or `call_id`. Calling
+`record_quality(...)` on a `reply` or stream object performs no journal lookup
+and has no seven-day limit.
+
+Record the rating through the same object that made the call. Its scope is taken
+from that object rather than from the identifier. For example, rate a call made
+through `broker.for_scope(user)` with
+`broker.for_scope(user).record_quality(...)`. Calling the method directly on
+`broker` records an unscoped rating.
 
 Thresholds and the rating window are configurable — see
 [`Optimizer`](reference.md#llmbroker.Optimizer).

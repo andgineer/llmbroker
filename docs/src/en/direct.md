@@ -1,43 +1,41 @@
 # Direct model calls
 
-The pool (`ask`/`chat`/`stream`) routes over many models with failover.
-Sometimes you want **one specific model**, called directly — a paid frontier
-model for a quality task. That is what `broker.direct(...)` gives you: a client
-for exactly that model, with **no pool, no failover**.
+`ask`, `chat`, and `stream` select a model from the pool and try another after an
+error. Use `broker.direct(...)` when you need **one specific model**. A direct
+call does not select from the pool or automatically try another model.
 
-Direct access is for **models you declare with `direct=`** where you build the
-broker. Pool models are anonymous: reach them with `ask`/`chat`/`stream`, which
-route and learn; naming one raises `PoolModelError`.
+Configure direct-access models with `direct=` when creating the broker. Access
+pool models only through `ask`, `chat`, or `stream`. Passing a pool model name to
+`direct()` raises `PoolModelError`.
 
-## Declare it and call it
+## Configuration and use
 
 ```python
 broker = llmbroker.Broker(direct=["opus"])
 broker.direct("opus").ask("...")
 ```
 
-`"opus"` is an **alias** from a curated catalog of paid providers — an eternal
-handle. When the next Claude generation lands, llmbroker re-points `opus` at it
-and your code does not change. An alias never disappears, never gets renamed, and
-never carries a version number in it. Set the key it needs
-(`llmbroker env freetier` does not list paid keys; the alias resolves
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and so on by provider).
+`"opus"` is a stable alias from the maintained paid-model catalog. When a new
+Claude generation becomes available, the catalog can associate `opus` with that
+version without requiring an application change. Aliases do not contain version
+numbers and are not renamed or removed. Configure the API key required by the
+provider, such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
 
-Nothing is written anywhere for a declared model. The list in your code is the
-only source of truth, and the alias is re-resolved against the catalog on the
-same daily clock the pool refreshes on — which is what keeps it on the current
-version with no sync and no file to update.
+`llmbroker env freetier` does not list keys for paid models.
 
-If the catalog cannot be reached when that clock comes round, the model stays on
-the version it is already serving and a warning is logged. A resolution that
-worked is never traded for an older one; only the very first one, at start-up,
-can fail — that is where a mistyped alias tells you so, listing the ones that
-exist.
+Models from `direct=` are not written to the registry; the application code
+remains their source. Alias resolution is checked about once a day along with the
+pool update. No separate synchronization or local file is required.
 
-## A model that is entirely yours
+If the catalog is unavailable during a check, the broker keeps the currently
+selected version and logs a warning. A known alias is not replaced with an older
+version. Resolution can fail only on the first attempt, for example because of a
+misspelled alias; the error lists the available aliases.
 
-Pass a config instead of an alias — a self-hosted endpoint, a company gateway, a
-version you must pin:
+## A custom model configuration
+
+Pass an `LLMConfig` instead of an alias for a self-hosted model, a company
+gateway, or a version that must remain fixed:
 
 ```python
 from llmbroker import LLMConfig
@@ -52,28 +50,25 @@ broker = llmbroker.Broker(direct=[gateway])
 broker.direct(name="frontier").ask("...")
 ```
 
-That one is yours down to the version: no refresh ever touches it, because
-llmbroker was never told which catalog line it follows.
+Updates to the catalog do not change this configuration or its model version.
 
-## The pool takes no model you declare here
+## Direct models are not pool members
 
-Not "by default" — ever. A declared model is never routed, never failed over
-onto, never a pool member in `count()` or `snapshot()`. The pool's whole value is
-failover across interchangeable free endpoints curated as one set; a private
-gateway dropped into it would be spilled onto by a rate limit that has nothing to
-do with it, and would be handed traffic you meant for the free tier.
+A model from `direct=` never participates in pool selection, is not used as a
+fallback, and does not appear in `count()` or `snapshot()`. The pool is designed
+for interchangeable free models with shared rate-limit behavior. Direct models
+and private gateways are managed separately.
 
-An endpoint of your own *can* be a pool member — by [writing it into your
-registry](server.md#own-entry), where a refresh never touches it. That is a
-decision you make once and record there, not a side effect of naming a model you
-wanted to call. A registry holds pool members and nothing else, so putting a
-model there is the opposite choice from declaring it here.
+You can include your own model in the pool by [adding it to the
+registry](server.md#own-entry). Automatic updates do not modify that entry. The
+registry contains only pool models, so adding a model to the registry and
+declaring it with `direct=` are separate choices.
 
 ## Finding a paid model
 
-`llmbroker list` prints both curated lists and writes nothing. A `direct` line
-gives you the alias to declare, then the provider id, model id, `base_url` and
-`api_key_ref` a pinned declaration states for itself:
+`llmbroker list` displays the maintained free and paid model lists without
+changing anything. A `direct` line contains the alias for `direct=`, followed by
+the provider ID, model ID, `base_url`, and `api_key_ref`:
 
 ```
 $ llmbroker list
@@ -85,9 +80,9 @@ direct sonnet anthropic claude-sonnet-5 https://api.anthropic.com/v1 ANTHROPIC_A
 
 ## Reading the catalog from a program {#curated}
 
-`llmbroker list` is for a human. The same two curated files are readable as data,
-with no broker and no network — they come from the copy already on this machine,
-the wheel's copy under it:
+You can read the same data programmatically without creating a broker. The
+functions use the cached local copy first and the copy bundled with the installed
+package if no cache exists. They do not access the network:
 
 ```python
 from llmbroker import curated_paid, curated_pool, curated_providers
@@ -98,12 +93,12 @@ for row in curated_paid():
 for provider in curated_providers():
     print(provider.id, provider.base_url, provider.api_key_ref)
 
-print(len(curated_pool().configs), "free models curated")
+print(len(curated_pool().configs), "free models in the maintained list")
 ```
 
-This is where a **model the catalog does not carry** comes from — a new release,
-or one you want to benchmark before anyone curates it. Ask the provider for a
-declaration and pass it to `direct=`:
+You can also configure a model that is not yet in the catalog, such as a newly
+released version. Create its configuration with `declare()` and pass it to
+`direct=`:
 
 ```python
 anthropic = next(p for p in curated_providers() if p.id == "anthropic")
@@ -111,47 +106,49 @@ broker = llmbroker.Broker(direct=[anthropic.declare("claude-opus-9-preview")])
 broker.direct(name="anthropic-claude-opus-9-preview").ask("...")
 ```
 
-`declare()` fills in the base url and key reference for you; the rest is the same
-fully stated config as the section above, so nothing ever re-points it. A curated
-row has `.declare()` too, which pins that row's exact model id — pass the alias
-string instead if you want it to keep following the catalog.
+`declare()` fills in the API base URL and key name. It returns a complete
+configuration with a fixed model version, which is not updated with the catalog.
+Catalog entries also have `.declare()`, and that method similarly fixes their
+current model ID. Pass an alias string to `direct=` instead when you want future
+version updates.
 
-Nothing here refreshes anything: these functions read, `sync` writes. See
-[Errors](#errors) for what a missing key raises.
+These functions only read data; `sync` performs updates. See [Errors](#errors)
+for behavior when a key is missing.
 
-## `alias` and `name` are separate keyspaces
+## The difference between `alias` and `name`
 
-A call site says which one it means. That makes `direct(name=...)` a **version
-assertion** as well as a lookup: point it at `anthropic-claude-opus-5` and the
-day the catalog moves the alias onward, the call fails loudly instead of quietly
-running a newer model.
+Aliases and full model names are handled separately. You can use `name=` as a
+version check: if you specify `anthropic-claude-opus-5` after the catalog alias
+has moved to another version, the call fails rather than silently using the new
+model.
 
-Nothing you declare is written anywhere — no key value ever, and no config
-either. The key is read from the env var or secrets backend at call time.
+Configurations from `direct=` are not stored in the registry. Key values are not
+stored either; they are read from environment variables or the selected secrets
+store at call time.
 
-## Following the catalog without losing your version
+## Updating a model configured by alias
 
-A declared alias is re-resolved on the same daily clock the pool refreshes on.
-When the catalog moves it, one line is logged naming both versions:
+The broker checks an alias against the catalog about once a day along with the
+pool update. When the alias moves, the old and new versions are logged:
 
 ```
 direct=: opus: claude-opus-4-8 -> claude-opus-5
 ```
 
-A re-resolution gives the model a new `name` — that is what carries the version.
-If it also moves to another provider, the line names the new `api_key_ref`: set
-that env var before the next call.
+After the update, `name` contains the new model version. If the provider also
+changes, the log entry includes the new `api_key_ref`; configure that environment
+variable before the next call.
 
-A declaration you wrote out in full is never re-pointed: llmbroker was never told
-which catalog line it follows.
+A complete `LLMConfig` is not updated because it is not associated with a catalog
+entry.
 
-## Stream and ask (async) {#streaming}
+## Asynchronous calls and streaming {#streaming}
 
 ```python
 async with llmbroker.AsyncBroker(direct=["opus"]) as broker:
     client = await broker.direct("opus")
 
-    # streaming — an async iterator of text deltas
+    # streaming through an asynchronous iterator
     async for delta in client.stream("Write a haiku about brokers"):
         print(delta, end="", flush=True)
 
@@ -160,13 +157,14 @@ async with llmbroker.AsyncBroker(direct=["opus"]) as broker:
     print(result.text, result.usage)
 ```
 
-This streams from the one model you named: no routing, no failover, no journal
-row. Streaming over the pool is in [Async & streaming](async.md#streaming-from-the-pool).
+A direct call uses the one model you selected. The broker does not select from the
+pool, try another model after an error, or write a journal row. Pool streaming is
+described in [Asynchronous calls](async.md#streaming-from-the-pool).
 
 ## Synchronous
 
-The blocking `Broker` offers `direct(...)` too, with `ask()` only (streaming is
-async-only):
+Synchronous `Broker` also provides `direct(...)`, but only with `ask()`. Use
+`AsyncBroker` for streaming.
 
 ```python
 with llmbroker.Broker(direct=["opus"]) as broker:
@@ -176,54 +174,55 @@ with llmbroker.Broker(direct=["opus"]) as broker:
 
 ## Request parameters {#params}
 
-You named the model, so you may send it whatever it documents — a reasoning
-budget, a temperature, a token cap, a seed. `params` is a mapping merged into the
-request body verbatim: both clients accept it on `ask()`, and the async client
-accepts it on `stream()` too:
+Direct calls can include any parameter supported by the selected model, such as
+reasoning effort, temperature, a token limit, or `seed`. The `params` mapping is
+added to the request body unchanged. Synchronous and asynchronous clients accept
+it in `ask()`; the asynchronous client also accepts it in `stream()`:
 
 ```python
 client = broker.direct("opus")
 client.ask("...", params={"reasoning_effort": "low", "temperature": 0})
 ```
 
-llmbroker does not read, validate, rewrite or default what is in there, and does
-not promise the provider honors it: an unsupported parameter is your error, and
-the provider's own message is the report of it. What is inside `params` is the
-provider's vocabulary, what is beside it (`messages=`, `timeout=`) is llmbroker's.
+llmbroker does not validate or modify values in `params`. If the provider does
+not support a parameter, its error response is returned to the application. Put
+provider API parameters inside `params`; pass llmbroker parameters such as
+`messages=` and `timeout=` separately.
 
-The five keys llmbroker builds itself — `model`, `messages`, `stream`,
-`stream_options`, `tools` — raise `ValueError` naming the key instead of being
-merged: a moved `model` would answer as a model nobody named, and a flipped
-streaming switch would hand the body to the wrong reader. `tool_choice` is not on
-that list, so `params={"tool_choice": "required"}` overrides the `"auto"` set
-alongside `tools`.
+llmbroker constructs `model`, `messages`, `stream`, `stream_options`, and `tools`
+itself. Passing any of them in `params` raises `ValueError` naming the field. This
+prevents replacement of the selected model or an incompatible change to the
+response mode. `tool_choice` is allowed, so
+`params={"tool_choice": "required"}` overrides the `"auto"` value set with
+`tools`.
 
-This is the direct path only. Pooled calls carry a parameter only where it has
-been weighed for the whole pool one at a time — see
-[schema-constrained output](usage.md#response-format).
+`params` is available only for direct calls. Pool calls accept parameters that
+can be applied consistently to every model. See
+[Schema-constrained output](usage.md#response-format).
 
 ## Errors {#errors}
 
-Direct calls raise from one hierarchy under `LLMRequestError`:
+All direct-call exceptions inherit `LLMRequestError`:
 
-- `PoolModelError` — you named a preset-managed pool model. Use
-  `ask`/`chat`/`stream`, or declare the model yourself.
-- `UnknownModelError` — no entry matches. If your string exists in the *other*
-  keyspace, the message says so. An alias in `direct=` that the paid catalog does
-  not carry raises this at startup, listing the aliases it does.
-- `MissingKeyError` — the model's `api_key_ref` is not set (a paid model without
-  a key is an error here, unlike a pool model which just stays inactive).
-- `ProviderError` — the provider returned an error, with `.status` and `.detail`.
-  Catch it coarsely, or its subclasses `AuthError` (401/403) and `RateLimitError`
-  (429/503, with `.retry_after`) for specific handling.
-- `InvalidProviderResponseError` — HTTP 200 with a body that is not a chat
-  completion (undecodable, or no assistant message), or one that is a completion
-  and carries no answer at all — no text and no tool calls — with `.model` and a
-  `.detail` snippet. There is no failover here to hide it behind: the one model
-  you named answered with garbage, or with nothing.
-- `LLMTimeoutError` — the call exceeded its timeout.
-- `StreamInterruptedError` — a **pool** stream died after deltas had already been
-  emitted, with `.llm_name` and the cause attached.
-- `StreamReplacementError` — a **pool** stream you raced with `fastest_of` lost to
-  another lane's complete answer: `.replacement` is that answer and
-  `.streamed_llm_name` the model whose deltas you must discard.
+- `PoolModelError` — the name belongs to a model in the maintained pool. Use
+  `ask`, `chat`, or `stream`, or create your own model configuration.
+- `UnknownModelError` — no matching name or alias exists. If the value exists in
+  the other category, the message explains that. The same error is raised at
+  startup when `direct=` contains an alias not found in the paid catalog; the
+  message lists available aliases.
+- `MissingKeyError` — the key named by `api_key_ref` was not found. This is an
+  error for a direct call; a pool model without a key is simply not used.
+- `ProviderError` — the provider returned an error. `.status` and `.detail`
+  contain the HTTP status and part of the response. For specific handling, catch
+  `AuthError` (401 or 403) or `RateLimitError` (429 or 503, with
+  `.retry_after`).
+- `InvalidProviderResponseError` — the provider returned HTTP 200, but the body
+  could not be parsed as a model reply or contained neither text nor tool calls.
+  `.model` contains the model name and `.detail` contains part of the response.
+  A direct call cannot try another model, so the exception reaches the
+  application.
+- `LLMTimeoutError` — the reply exceeded its time limit.
+
+Pool streaming has two additional exceptions, `StreamInterruptedError` and
+`StreamReplacementError`. They cannot occur during a direct call. See
+[Asynchronous calls and streaming](async.md#streaming-from-the-pool).
