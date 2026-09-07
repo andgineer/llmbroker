@@ -28,18 +28,13 @@ Add any provider keys you have; models without keys are skipped automatically.
 | | |
 |---|---|
 | **Resilient by default** | Automatically tries another model after rate limits and provider failures |
+| **Recovery without delays** | Rechecks a failed model alongside a working one; disable with `parallel_recovery=False` |
 | **Lower latency on demand** | `fastest_of=2` queries multiple models and returns the first complete reply |
 | **Improves with feedback** | `record_quality()` adapts model selection independently for each operation |
 | **Complete application API** | Sync and async calls, streaming, chat, tools, and built-in tool loops |
 | **Direct premium access** | `Broker(direct=["opus"])` calls a specific paid model through a stable alias |
 | **Ready to scale** | SQLite, PostgreSQL, MongoDB, shared journals, per-user keys, and pluggable secrets |
 | **Observable** | Pool state, call history, statistics, `trace_id`, and availability alerts |
-
-When a previously failed model becomes eligible again, llmbroker checks it in
-parallel with an available model. Unlike `fastest_of`, this is not a general
-race for the quickest reply: it keeps the recovery check from delaying the call
-if the failed model is still unavailable. Set `parallel_recovery=False` to make
-the check sequential and avoid the extra request.
 
 [Documentation](https://andgineer.github.io/llmbroker/)
 
