@@ -4,8 +4,9 @@
 
 | # | plan | readiness | what it is |
 |---|---|---|---|
-| 1 | [`load-harness.md`](load-harness.md) | source-bound; revalidated on v1.7.0 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of inside one host's private script |
-| 2 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 1 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
+| 1 | [`answer-recovery.md`](answer-recovery.md) | source-bound on `b912317d1`; no prerequisite plan | another complete answer from a streamed pool call: retain existing lanes until close, then continue through untried candidates within the same budget |
+| 2 | [`load-harness.md`](load-harness.md) | source-bound on v1.7.0; revalidate after row 1 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of inside one host's private script |
+| 3 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 2 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
 
 ## Detail horizon
 
@@ -37,7 +38,7 @@ and test locations beyond the next implementation boundary.
 
 The raced stream shipped on the evidence of one host's uncontrolled runs, and the
 comparison against the semantics it replaced was never run. It needs the controlled
-pair of queue row 1, and at minimum it compares completion rate inside the caller's
+pair from [`load-harness.md`](load-harness.md), and at minimum it compares completion rate inside the caller's
 budget, which model ends up authoritative, host-rated quality, visible first-delta
 latency, replacement frequency, whole-answer latency and duplicate provider usage.
 Keep per-lane timings this time: the two-lane run behind the shipped behavior retained
@@ -72,7 +73,7 @@ silence for a whole budget now cools the endpoint that produced it, so the model
 behind it are reached
 ([`../reference/decisions.md`](../reference/decisions.md#silence-cools-and-teaches-ordering)).
 What is left is whether a caller still misses answers the pool could have given, and
-that question needs a controlled pair, which is queue row 1. A second mechanism aimed
+that question needs the controlled pair from [`load-harness.md`](load-harness.md). A second mechanism aimed
 at the same symptom before it is the failure mode above.
 
 A queued plan is a row in this file and a file beside it. How one is executed lives in `CLAUDE.md`

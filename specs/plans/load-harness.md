@@ -1,8 +1,11 @@
 # Plan — a load harness
 
-**Status: source-bound and revalidated against v1.7.0; ready for implementation.**
+**Status: source-bound against v1.7.0; revalidate after `answer-recovery.md`.**
 The binding below reflects the stream receipt and curated readers added by the
-preceding plan. It deliberately leaves `src/` untouched.
+released library. Before implementation, read answer recovery's handover and
+check the pooled route's handle lifetime: its `aclosing` must cover observation
+of the completed answer and close retained alternatives. The harness itself
+leaves `src/` untouched and is not a prerequisite for answer recovery.
 
 ## Goal
 
