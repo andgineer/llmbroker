@@ -26,13 +26,13 @@
 | src/llmbroker/broker/refresher.py         |      147 |        3 |     98% |106, 212-213 |
 | src/llmbroker/broker/report.py            |       19 |        0 |    100% |           |
 | src/llmbroker/broker/result.py            |      135 |        3 |     98% |182, 198, 200 |
-| src/llmbroker/broker/route\_state.py      |       52 |        0 |    100% |           |
+| src/llmbroker/broker/route\_state.py      |       51 |        0 |    100% |           |
 | src/llmbroker/broker/router.py            |      297 |       28 |     91% |119, 203-204, 208, 304-305, 311-314, 349-358, 364-368, 393, 452-453, 582-583, 720-721 |
 | src/llmbroker/broker/source.py            |       48 |        2 |     96% |     29-30 |
 | src/llmbroker/broker/stamps.py            |       35 |        3 |     91% | 42, 56-57 |
 | src/llmbroker/broker/stats.py             |       15 |        0 |    100% |           |
 | src/llmbroker/broker/stream\_owner.py     |      390 |       14 |     96% |80, 82, 91, 112, 199-201, 316, 332, 474, 483, 485, 507, 527 |
-| src/llmbroker/broker/streaming.py         |      245 |       15 |     94% |193-194, 267-277, 323-324, 437 |
+| src/llmbroker/broker/streaming.py         |      243 |       14 |     94% |195-196, 269-279, 325-326 |
 | src/llmbroker/broker/verdict.py           |       37 |        0 |    100% |           |
 | src/llmbroker/chat.py                     |      147 |        5 |     97% |45, 163-164, 285-286 |
 | src/llmbroker/cli.py                      |       75 |        0 |    100% |           |
@@ -66,7 +66,7 @@
 | src/llmbroker/tool\_loop.py               |       48 |        1 |     98% |        32 |
 | src/llmbroker/util/atomic.py              |       17 |        3 |     82% |     29-31 |
 | src/llmbroker/vault/secrets.py            |       29 |        3 |     90% | 26, 62-63 |
-| **TOTAL**                                 | **4622** |  **144** | **97%** |           |
+| **TOTAL**                                 | **4619** |  **143** | **97%** |           |
 
 
 ## Setup coverage badge
