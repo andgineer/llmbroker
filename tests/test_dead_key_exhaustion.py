@@ -109,7 +109,7 @@ def test_replacing_secret_revives_model(tmp_path):
                     await asyncio.wait_for(broker.ask("hi"), timeout=5)
             assert await broker._shared_ring.resolve("K") is None
 
-            secrets._mapping["K"] = "fresh-key"  # noqa: SLF001 - test double, direct mutation
+            secrets._mapping["K"] = "fresh-key"
             await broker.rebuild()
 
             assert (await broker.snapshot())["p1"].has_key is True

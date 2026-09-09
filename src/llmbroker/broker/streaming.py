@@ -197,21 +197,19 @@ async def budgeted_await(
             if budget.deadline is not None and budget.paused_at is None:
                 deadline = min(deadline, budget.deadline)
             changed = asyncio.create_task(budget.changed.wait())
-            done, _ = await asyncio.wait(
-                (task, changed),
-                timeout=max(deadline - time.monotonic(), 0.0),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if task in done:
+            try:
+                done, _ = await asyncio.wait(
+                    (task, changed),
+                    timeout=max(deadline - time.monotonic(), 0.0),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
                 changed.cancel()
                 await asyncio.gather(changed, return_exceptions=True)
+            if task in done:
                 return task.result()
             if changed in done:
-                await changed
                 continue
-            changed.cancel()
-            task.cancel()
-            await asyncio.gather(changed, task, return_exceptions=True)
             raise TimeoutError
     except BaseException:
         if not task.done():

@@ -4,8 +4,8 @@ import tomllib
 
 import pytest
 
-from llmbroker.broker.model_list_file import sync_model_list_file
 from llmbroker.broker.merge import SyncSource
+from llmbroker.broker.model_list_file import sync_model_list_file
 from llmbroker.standalone.registry import Registry, parse_model_list
 
 _NEW = (

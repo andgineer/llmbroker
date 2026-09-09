@@ -36,6 +36,7 @@ class Secrets:
                 self._client.secrets.kv.v2.read_secret_version,
                 path=self._path(ref),
                 mount_point=self._mount_point,
+                raise_on_deleted_version=True,
             )
             return response["data"]["data"]["value"]
         except hvac.exceptions.InvalidPath as exc:

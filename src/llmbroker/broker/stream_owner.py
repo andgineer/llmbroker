@@ -418,6 +418,7 @@ class RoutedStream:
             frozenset(),
             needed,
             frozenset(self._eligible_names),
+            still_needed=lambda: self._buffered_lane() is None,
         )
         self._open(configs, hold_first=False)
 
@@ -463,6 +464,7 @@ class RoutedStream:
             if race.live():
                 await self._pause()
                 continue
+            unexpected = self._unexpected_fault()
             if call.expired or (
                 self._budget is not None
                 and self._budget.deadline is not None
@@ -470,9 +472,10 @@ class RoutedStream:
             ):
                 if call.last_client_error is not None:
                     raise call.last_client_error
+                if unexpected is not None:
+                    raise unexpected
                 self._terminal = True
                 return None
-            unexpected = self._unexpected_fault()
             try:
                 configs = await self._acquire(initial=False)
             except NoLLMAvailableError:
@@ -535,3 +538,6 @@ class RoutedStream:
         await self._backend.settled(self._current_call)
         if not self._initial_complete and settled is not None:
             self._backend.publish(self._receipt, settled)
+        self._race = None
+        self._authoritative = None
+        self._initial = None

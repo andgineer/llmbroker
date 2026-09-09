@@ -8,18 +8,21 @@
 def get_weather(city: str) -> str:
     return f"В {city} сейчас 20°C"
 
-tools = [{
-    "type": "function",
-    "function": {
-        "name": "get_weather",
-        "description": "Текущая погода в городе",
-        "parameters": {
-            "type": "object",
-            "properties": {"city": {"type": "string"}},
-            "required": ["city"],
+
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Текущая погода в городе",
+            "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            },
         },
-    },
-}]
+    }
+]
 
 broker = llmbroker.Broker()
 reply = llmbroker.run_tool_loop(

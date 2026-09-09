@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from support import CLOCK_SLACK, make_ring
 
 from llmbroker.broker.learning import Learner
 from llmbroker.broker.pool import LLMPool
@@ -24,8 +25,6 @@ from llmbroker.exceptions import (
 )
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
-
-from support import CLOCK_SLACK, make_ring
 
 _SSE = {"content-type": "text/event-stream"}
 _DONE = b"data: [DONE]\n\n"
@@ -59,7 +58,7 @@ async def _router(*names: str) -> tuple[Router, LLMPool, _RecordingStore]:
 
 
 def _mount(router: Router, handler) -> None:
-    router._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=30.0)  # noqa: SLF001
+    router._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=30.0)
 
 
 def _delta(text: str) -> bytes:
@@ -147,7 +146,7 @@ def test_an_ordinary_consumer_pause_extends_the_deadline_for_a_reserve():
 
         router, pool, _ = await _router("a", "b")
         await pool.cool_down(pool.config("a"), 60)
-        pool._slots["a"].cooldown_until = datetime.now(UTC) - timedelta(seconds=1)  # noqa: SLF001
+        pool._slots["a"].cooldown_until = datetime.now(UTC) - timedelta(seconds=1)
         _mount(router, _lanes({"a": recovery, "b": ordinary}))
         stream = _stream(router, wait=0.08)
         async with aclosing(stream):
@@ -290,7 +289,7 @@ def test_an_exhausted_budget_journals_the_time_it_did_not_finish_within():
     assert row.status is CallStatus.ERROR
     # Not the caller's `wait` to the millisecond: routing runs inside the budget, so
     # what the attempt was given is what it missed.
-    assert row.budget_ms == pytest.approx(300, abs=50)  # noqa: PLR2004
+    assert row.budget_ms == pytest.approx(300, abs=50)
 
 
 def test_an_exhausted_budget_is_not_a_stream_death():
@@ -340,7 +339,7 @@ def test_a_slow_consumer_does_not_inflate_the_journaled_budget():
         return store.rows
 
     (row,) = asyncio.run(run())
-    assert row.budget_ms == pytest.approx(300, abs=50)  # noqa: PLR2004
+    assert row.budget_ms == pytest.approx(300, abs=50)
 
 
 # ── one budget, several lanes ────────────────────────────────────────────────
@@ -435,9 +434,9 @@ def test_every_racing_lane_is_given_the_one_budget_and_not_a_share_of_it():
     error, elapsed, store = asyncio.run(run())
     assert error.reason == "timeout"
     # Neither doubled by the second lane nor halved into per-lane shares.
-    assert 0.3 - CLOCK_SLACK <= elapsed < 0.9  # noqa: PLR2004
+    assert 0.3 - CLOCK_SLACK <= elapsed < 0.9
     assert {row.llm_name for row in store.rows} == {"a", "b"}
-    assert all(row.budget_ms is not None and 0 < row.budget_ms <= 300 for row in store.rows)  # noqa: PLR2004
+    assert all(row.budget_ms is not None and 0 < row.budget_ms <= 300 for row in store.rows)
 
 
 def test_a_slow_consumer_changes_neither_the_winner_nor_the_journaled_budget():

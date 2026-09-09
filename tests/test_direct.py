@@ -324,18 +324,16 @@ def test_sync_ask_403_raises_auth_error():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, text="nope")
 
-    with _sync_client(handler) as client:
-        with pytest.raises(AuthError):
-            client.ask("hi")
+    with _sync_client(handler) as client, pytest.raises(AuthError):
+        client.ask("hi")
 
 
 def test_sync_ask_timeout_raises_llm_timeout():
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("slow", request=request)
 
-    with _sync_client(handler) as client:
-        with pytest.raises(LLMTimeoutError):
-            client.ask("hi")
+    with _sync_client(handler) as client, pytest.raises(LLMTimeoutError):
+        client.ask("hi")
 
 
 # --------------------------------------------------------------------------- #

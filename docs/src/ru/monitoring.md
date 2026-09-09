@@ -17,13 +17,13 @@ if snap.degraded:
 
 for key in snap.missing_keys:
     print(f"{key.api_key_ref} нужен для {', '.join(key.entry_names)}")
-    print(key.help)                      # где получить ключ
+    print(key.help)  # где получить ключ
 
-for key in snap.direct_missing_keys:     # модели для прямого вызова
+for key in snap.direct_missing_keys:  # модели для прямого вызова
     print(f"{key.api_key_ref} — direct({key.entry_names[0]!r}) не сработает")
     print(key.help)
 
-for name, llm in snap.items():           # отображение: имя -> состояние модели
+for name, llm in snap.items():  # отображение: имя -> состояние модели
     print(name, llm.has_key, llm.cooldown_until)
 ```
 

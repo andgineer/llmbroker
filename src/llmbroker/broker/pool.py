@@ -5,6 +5,7 @@ The pool holds no key: which refs a caller can pay for arrives per acquisition."
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -389,10 +390,13 @@ class LLMPool:
         exclude: frozenset[str] = frozenset(),
         answer_deadline: float | None = None,
         eligible_names: frozenset[str] | None = None,
+        still_needed: Callable[[], bool] | None = None,
     ) -> list[LLMConfig]:
         """Whatever is free this instant, up to ``width``, or nothing: it never waits
         and never raises, because the lanes it tops up are already racing."""
         async with self._cond:
+            if still_needed is not None and not still_needed():
+                return []
             now = datetime.now(UTC)
             remaining = None if answer_deadline is None else answer_deadline - time.monotonic()
             return self._reserve(

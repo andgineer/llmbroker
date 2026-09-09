@@ -27,7 +27,7 @@ def _http_status_error(status: int) -> httpx.HTTPStatusError:
     return httpx.HTTPStatusError("err", request=MagicMock(), response=resp)
 
 
-async def _keys_used(config, api_key, messages, tools, *, client=None, timeout=None, params=None):  # noqa: ARG001
+async def _keys_used(config, api_key, messages, tools, *, client=None, timeout=None, params=None):
     if api_key == "dead-key":
         raise _http_status_error(401)
     return api_key, None, None
@@ -186,7 +186,7 @@ async def test_parallel_one_holds_across_two_callers(tmp_path):
 
     async def _blocking(
         config, api_key, messages, tools, *, client=None, timeout=None, params=None
-    ):  # noqa: ARG001
+    ):
         started.set()
         await release.wait()
         return "ok", None, None

@@ -11,7 +11,6 @@ from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
 
-
 _PAYABLE = frozenset({"K"})
 
 

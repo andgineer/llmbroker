@@ -4,7 +4,7 @@ import pytest
 
 from llmbroker.broker.merge import check_not_emptying, merge_upstream
 from llmbroker.exceptions import SyncRefusedError
-from llmbroker.models import KeyInfo, ModelList, LLMConfig
+from llmbroker.models import KeyInfo, LLMConfig, ModelList
 
 
 def _cfg(name, ref="K", *, model="m", url="https://x/v1", from_preset=True):

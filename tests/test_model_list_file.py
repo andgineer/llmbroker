@@ -6,14 +6,14 @@ import tomllib
 
 import pytest
 
+from llmbroker.broker.merge import SyncSource
 from llmbroker.broker.model_list_file import (
     FileSyncOutcome,
     render_model_list,
     sync_model_list_file,
 )
-from llmbroker.broker.merge import SyncSource
 from llmbroker.exceptions import SyncRefusedError
-from llmbroker.models import KeyInfo, ModelList, LLMConfig
+from llmbroker.models import KeyInfo, LLMConfig, ModelList
 from llmbroker.standalone.registry import parse_model_list
 from llmbroker.util.atomic import write_atomic
 

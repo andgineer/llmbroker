@@ -16,13 +16,13 @@ if snap.degraded:
 
 for key in snap.missing_keys:
     print(f"{key.api_key_ref} is required by {', '.join(key.entry_names)}")
-    print(key.help)                      # where to obtain the key
+    print(key.help)  # where to obtain the key
 
-for key in snap.direct_missing_keys:     # models configured for direct calls
+for key in snap.direct_missing_keys:  # models configured for direct calls
     print(f"{key.api_key_ref} — direct({key.entry_names[0]!r}) will fail")
     print(key.help)
 
-for name, llm in snap.items():           # mapping: name -> model state
+for name, llm in snap.items():  # mapping: name -> model state
     print(name, llm.has_key, llm.cooldown_until)
 ```
 

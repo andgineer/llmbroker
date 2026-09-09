@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+from support import make_ring
 
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.pool import LLMPool
@@ -18,8 +19,6 @@ from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
-
-from support import make_ring
 
 _PATCH = "llmbroker.broker.router.call_provider"
 
@@ -290,10 +289,9 @@ def test_host_timeout_around_the_call_releases_the_slot():
         async def hang(*args, **kwargs):
             await asyncio.sleep(60)
 
-        with patch(_PATCH, new=hang):
-            with pytest.raises(TimeoutError):
-                async with asyncio.timeout(0.05):
-                    await router.chat(make_ring(), [{"role": "user", "content": "hi"}])
+        with patch(_PATCH, new=hang), pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.05):
+                await router.chat(make_ring(), [{"role": "user", "content": "hi"}])
 
         assert pool._slots["p1"].in_flight == 0
         assert await asyncio.wait_for(pool.acquire(None, payable=frozenset({"K"})), 0.5) is cfg

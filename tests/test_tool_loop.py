@@ -121,25 +121,27 @@ def test_tool_loop_over_a_real_broker_hands_back_the_routed_call(tmp_path):
         ("3", None, Usage(prompt_tokens=9, completion_tokens=2, total_tokens=11)),
     ]
 
-    with Broker(
-        registry=Registry(f),
-        secrets=DictSecrets({"K": "test"}),
-        store=InMemoryStore(),
-        sync=None,
-    ) as broker:
-        with patch(
+    with (
+        Broker(
+            registry=Registry(f),
+            secrets=DictSecrets({"K": "test"}),
+            store=InMemoryStore(),
+            sync=None,
+        ) as broker,
+        patch(
             "llmbroker.broker.router.call_provider",
             new=AsyncMock(side_effect=rounds),
-        ) as provider:
-            reply = run_tool_loop(
-                broker,
-                [{"role": "user", "content": "1 + 2?"}],
-                dispatch={"add": lambda a, b: a + b},
-            )
+        ) as provider,
+    ):
+        reply = run_tool_loop(
+            broker,
+            [{"role": "user", "content": "1 + 2?"}],
+            dispatch={"add": lambda a, b: a + b},
+        )
 
     assert provider.await_count == 2
     assert (reply.text, reply.llm_name) == ("3", "p1")
-    assert reply.usage.total_tokens == 11  # noqa: PLR2004 - the final round's, not the loop's
+    assert reply.usage.total_tokens == 11
     assert reply.call_id
 
 

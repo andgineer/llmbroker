@@ -6,6 +6,7 @@ from contextlib import aclosing
 
 import httpx
 import pytest
+from support import make_ring
 
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.result import CallReceipt
@@ -13,8 +14,6 @@ from llmbroker.broker.router import Router
 from llmbroker.direct import AsyncDirectClient, DirectClient
 from llmbroker.exceptions import InvalidProviderResponseError, NoLLMAvailableError
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
-
-from support import make_ring
 
 _TOOLS = [{"type": "function", "function": {"name": "now", "parameters": {}}}]
 _TOOL_CALLS = [{"id": "1", "type": "function", "function": {"name": "now", "arguments": "{}"}}]
@@ -43,7 +42,7 @@ async def _router(store, *names: str) -> Router:
 
 
 def _mount(router: Router, handler) -> None:
-    router._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5.0)  # noqa: SLF001
+    router._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5.0)
 
 
 def _completion(content=None, tool_calls=None) -> dict:
@@ -181,7 +180,7 @@ def test_an_empty_answer_cools_the_model_like_any_malformed_response():
         _mount(router, handler)
         with pytest.raises(NoLLMAvailableError):
             await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=0)
-        return router._pool  # noqa: SLF001
+        return router._pool
 
     pool = asyncio.run(run())
     empty, garbage = store.calls

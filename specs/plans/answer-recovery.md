@@ -39,7 +39,8 @@ This is the agreed public shape, not a choice left to implementation. The usage
 boundary includes the host's validation and every continuation:
 
 ```python
-async with aclosing(broker.stream(prompt, fastest_of=3, wait=25)) as stream:
+async with AsyncBroker() as broker:
+    stream = broker.stream(prompt, fastest_of=3, wait=25)
     try:
         text = "".join([delta async for delta in stream])
         rated = stream
@@ -89,6 +90,9 @@ The handle must own continuation beyond the lifetime of its delta iterator.
 An async generator's normal exhaustion or replacement exception runs its
 `finally` blocks; merely adding a method to that generator cannot retain lanes.
 Explicit `aclose()` is idempotent and waits for all owned settlement to finish.
+The broker owns the default lifetime boundary and closes all its stream handles
+before shared HTTP and storage resources. A stream's own async context is optional
+for earlier release in a long-lived broker; it adds no routing or retention flag.
 Closing before iteration must not start a request. Closing during a continuation
 or cancelling its await must release every acquired slot and leave no orphan task.
 
@@ -137,8 +141,10 @@ entry verbatim when that behavior lands; do not publish it as current state now:
 >
 > A streamed handle retains already-open alternatives after its first complete
 > answer. The host may request another complete answer, and closing the handle
-> ends the provider work still owned by it. Only an explicit request for another
-> answer starts further candidates after the first answer exists.
+> ends the provider work still owned by it. The broker closes its streams before
+> closing shared resources; a stream context permits earlier release within a
+> long-lived broker. Only an explicit request for another answer starts further
+> candidates after the first answer exists.
 >
 > **Blocks:** cancelling every alternative on the first completion; a retention
 > flag; host-side rerouting by model name; automatic content validation or a paid
@@ -146,7 +152,8 @@ entry verbatim when that behavior lands; do not publish it as current state now:
 > **Why:** only the host can judge the payload, and its judgement follows the
 > completion that cancellation would make irreversible. One request already owns
 > distinct candidates, their budget and their attribution; another ordinary pool
-> call owns none of that history. Explicit close supplies the lifetime boundary.
+> call owns none of that history. The broker supplies the default lifetime boundary;
+> the host can shorten it by closing an individual stream.
 > **Accepted cost:** reserve lanes may consume the rest of their output quota,
 > occupy slots and retain buffered answers until they finish, reach the budget or
 > are closed. Slow hosts can make this cost material; first-completion cancellation
@@ -244,7 +251,7 @@ Update the two stream-specific assertions in `tests/test_race.py` named
 `test_a_losing_lane_is_retired_while_the_reader_holds_a_delta`: their cancellation
 boundary becomes explicit close, and new tests prove retention before it. Keep
 atomic-race cancellation assertions. Update internal stream helpers and existing
-consumers in tests to use `aclosing` where they now retain owned alternatives.
+consumers in tests to use broker ownership or a stream context for retained alternatives.
 
 ## Acceptance evidence
 
@@ -284,8 +291,8 @@ or immediate cancellation for streamed alternatives. Land the decision entry abo
 in `reference/decisions.md`. Link existing invariants instead of duplicating them.
 Update `docs/src/en/async.md`, its Russian counterpart `docs/src/ru/async.md`, and
 the public docstrings in `broker/result.py`, `broker/llms.py` and `broker/broker.py`
-with validation inside `aclosing`, both initial-answer paths, separate ratings
-and explicit close. Keep in-repo additions in English per `CLAUDE.md`. No
+with broker-owned cleanup, optional early stream contexts, both initial-answer
+paths and separate ratings. Keep in-repo additions in English per `CLAUDE.md`. No
 application payload rules belong here.
 
 The deterministic contract needs no live-model calls. The later `load-harness.md`
@@ -329,7 +336,8 @@ and rating suites retain the cases that belong to their established contracts.
 
 Reference rules, the required decision entry, English and Russian async usage,
 and public stream docstrings were updated. The documentation demonstrates both
-normal iteration and `StreamReplacementError`, validation within `aclosing`, and
+normal iteration and `StreamReplacementError`, validation within the broker or
+optional stream context, and
 separate rating of every returned result.
 
 No live-provider measurement was run. The optional load-harness comparison and
@@ -338,3 +346,57 @@ bump, commit, or publication was performed.
 
 Final gates on 2026-09-09: `invoke pre` passed; `python -m pytest` passed with
 1581 tests, zero failures, errors, or skips.
+
+### Review follow-up — 2026-09-09
+
+Independent Sol review sessions were limited to reporting findings; the parent
+agent reproduced, assessed and fixed the runtime defects. Three regressions were
+demonstrated before their fixes:
+
+- Closing a continuation during provider I/O left a budget-change waiter alive.
+  The waiter is now cancelled and awaited on every exit from the race with I/O.
+- An unexpected retained-lane fault disappeared into `None` after deadline
+  expiry. It now propagates once no complete answer remains obtainable, and the
+  owner closes rather than presenting stable exhaustion.
+- A retained answer could complete while refill awaited candidate selection,
+  yet refill still reserved and opened a fresh provider. Selection now checks
+  that an answer is still needed under the pool condition before reservation;
+  the untried candidate remains available for a later explicit continuation.
+
+These changes preserve the agreed invariants and public API. Event-gated
+regressions cover cancellation cleanup and concurrent refill; a controlled clock
+covers fault precedence after expiry. No live-provider calls, version changes,
+commits or publication were performed.
+
+Gates after the corrections: `invoke pre` passed; `python -m pytest` passed with
+1584 tests, zero failures, errors, or skips. Integration tests required access
+outside the sandbox to the local Docker daemon and test sockets.
+
+Review converged within three fresh Sol sessions. Round two found no additional
+runtime defects after reviewing all corrections; round three independently
+reviewed the final implementation and reported no runtime-changing findings or
+plan deviations. No invariant simplification was needed.
+
+### Broker ownership follow-up — 2026-09-09
+
+The maintainer requested a simpler lifetime contract after review: the broker
+owns final cleanup, while a stream context is optional for earlier release. The
+caller example, reference rules, decision entry, public docstrings and both async
+guides now reflect that contract. The ordinary example needs only the broker's
+context; a long-lived server can use `async with broker.stream(...)` to release
+one request's retained work as soon as validation is done.
+
+The broker tracks handles from creation, including scoped callers and lazy
+streams. Shutdown refuses new streams, interrupts active pulls, continuations
+and stream provisioning, and awaits their settlement before closing shared HTTP
+and storage resources. Explicitly closed handles leave the broker's tracking set
+and release buffered answers while preserving their settled receipts. Broker
+and stream close share their respective cleanup task across repeated calls;
+cancelling a waiting caller does not cancel that cleanup.
+
+Eight additional lifecycle cases cover broker-owned retained lanes and scope,
+early context exit on application failure, unstarted handles, active pulls and
+continuations, lazy provisioning and cancellation during a blocked journal write.
+No routing flags were introduced. No version change, commit, publication or live
+provider call was performed. Final gates: `invoke pre` passed and
+`python -m pytest` reported 1592 passed, zero failures, errors or skips.

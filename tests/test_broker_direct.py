@@ -202,16 +202,18 @@ def test_sync_broker_direct_ask(tmp_path):
 
     mock = httpx.Client(transport=httpx.MockTransport(handler), timeout=1.0)
 
-    with patch("llmbroker.direct.httpx.Client", return_value=mock):
-        with Broker(
+    with (
+        patch("llmbroker.direct.httpx.Client", return_value=mock),
+        Broker(
             registry=_registry(tmp_path),
             secrets=DictSecrets({"K": "test"}),
             store=FileStore(tmp_path / "store"),
             sync=None,
             direct=_DECLARED,
-        ) as broker:
-            result = broker.direct("opus").ask("hi")
-            with pytest.raises(PoolModelError):
-                broker.direct(name="managed-a")
+        ) as broker,
+    ):
+        result = broker.direct("opus").ask("hi")
+        with pytest.raises(PoolModelError):
+            broker.direct(name="managed-a")
 
     assert result.text == "sync-direct"

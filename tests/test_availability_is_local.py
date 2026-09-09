@@ -38,9 +38,8 @@ def _broker(stack, key: str = "shared") -> AsyncBroker:
 
 
 async def _fail_once(broker: AsyncBroker, error: httpx.HTTPStatusError) -> None:
-    with patch(_PATCH, new=AsyncMock(side_effect=error)):
-        with pytest.raises(NoLLMAvailableError):
-            await broker.chat([{"role": "user", "content": "hi"}], wait=0)
+    with patch(_PATCH, new=AsyncMock(side_effect=error)), pytest.raises(NoLLMAvailableError):
+        await broker.chat([{"role": "user", "content": "hi"}], wait=0)
 
 
 async def test_a_cooldown_one_broker_met_does_not_withdraw_the_model_on_its_peer(persistent_stack):

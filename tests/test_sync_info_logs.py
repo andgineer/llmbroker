@@ -11,7 +11,6 @@ import logging
 import pytest
 
 import llmbroker
-
 from llmbroker.broker import presets
 from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.sqlite import Secrets as SqliteSecrets

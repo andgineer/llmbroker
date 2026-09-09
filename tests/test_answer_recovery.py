@@ -2,17 +2,18 @@
 
 import asyncio
 from contextlib import aclosing
+from types import SimpleNamespace
 
 import httpx
 import pytest
+from support import make_ring
 
+from llmbroker.broker import stream_owner
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.result import CallReceipt
 from llmbroker.broker.router import Router
 from llmbroker.exceptions import NoLLMAvailableError, StreamReplacementError
 from llmbroker.models import CallStatus, LLMConfig
-
-from support import make_ring
 
 
 class _RecordingStore:
@@ -50,7 +51,7 @@ def _delta(text: str) -> bytes:
 
 
 def _mount(router: Router, handler) -> None:
-    router._http_client = httpx.AsyncClient(  # noqa: SLF001
+    router._http_client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler),
         timeout=2.0,
     )
@@ -73,7 +74,7 @@ def test_retained_answers_then_untried_candidate_follow_completion_order():
 
         async def body(name: str):
             opened.append(name)
-            if len(opened) == 3:  # noqa: PLR2004
+            if len(opened) == 3:
                 all_open.set()
             yield _sse(name)[:-14]
             await gates[name].wait()
@@ -183,7 +184,7 @@ def test_close_cancels_an_active_continuation_and_settles_its_lane():
         return pool, store
 
     pool, store = asyncio.run(run())
-    assert [pool._slots[name].in_flight for name in ("a", "b")] == [0, 0]  # noqa: SLF001
+    assert [pool._slots[name].in_flight for name in ("a", "b")] == [0, 0]
     assert {row.llm_name: row.status for row in store.calls} == {
         "a": CallStatus.OK,
         "b": CallStatus.SUPERSEDED,
@@ -274,7 +275,7 @@ def test_a_slow_earlier_journal_row_cannot_reorder_continuations():
 
         async def body(name: str):
             opened.add(name)
-            if len(opened) == 3:  # noqa: PLR2004
+            if len(opened) == 3:
                 all_open.set()
             yield _delta(name)
             await gates[name].wait()
@@ -438,3 +439,119 @@ def test_continuation_waits_for_a_busy_untried_candidate_within_original_budget(
 
     answer = asyncio.run(run())
     assert (answer.text, answer.llm_name) == ("b", "b")
+
+
+def test_closing_a_waiting_continuation_leaves_no_owned_tasks():
+    async def run():
+        started = asyncio.Event()
+
+        async def waiting():
+            started.set()
+            await asyncio.Event().wait()
+            yield b""  # pragma: no cover
+
+        def handler(request):
+            return httpx.Response(
+                200,
+                content=_sse("a") if request.url.host == "a" else waiting(),
+                headers={"content-type": "text/event-stream"},
+            )
+
+        router = Router(await _pool("a", "b"), _RecordingStore())
+        _mount(router, handler)
+        before = asyncio.all_tasks()
+        stream = _stream(router, wait=10)
+        assert "".join([delta async for delta in stream]) == "a"
+        continuation = asyncio.create_task(stream.another())
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await stream.aclose()
+        with pytest.raises(asyncio.CancelledError):
+            await continuation
+        assert asyncio.all_tasks() - before == set()
+
+    asyncio.run(run())
+
+
+def test_an_unexpected_reserve_fault_survives_deadline_expiry(monkeypatch):
+    async def run():
+        def handler(request):
+            if request.url.host == "b":
+                raise ValueError("unexpected provider bug")
+            return httpx.Response(
+                200, content=_sse("a"), headers={"content-type": "text/event-stream"}
+            )
+
+        router = Router(await _pool("a", "b"), _RecordingStore())
+        _mount(router, handler)
+        stream = _stream(router, fastest_of=2, wait=10)
+        async with aclosing(stream):
+            assert "".join([delta async for delta in stream]) == "a"
+            monkeypatch.setattr(
+                stream_owner,
+                "time",
+                SimpleNamespace(monotonic=lambda: float("inf")),
+            )
+            with pytest.raises(ValueError, match="unexpected provider bug"):
+                await stream.another()
+            with pytest.raises(RuntimeError, match="closed"):
+                await stream.another()
+
+    asyncio.run(run())
+
+
+def test_a_completion_during_refill_keeps_the_untried_candidate_free():
+    async def run():
+        finish_b = asyncio.Event()
+        finish_c = asyncio.Event()
+        refilling = asyncio.Event()
+        release_refill = asyncio.Event()
+        c_recorded = asyncio.Event()
+        opened = []
+
+        class HeldRouter(Router):
+            async def _untried(self, call, tried, needed, *args, **kwargs):
+                if needed > 0:
+                    refilling.set()
+                    await release_refill.wait()
+                return await super()._untried(call, tried, needed, *args, **kwargs)
+
+        class RecordingStore(_RecordingStore):
+            async def record(self, call):
+                await super().record(call)
+                if call.llm_name == "c":
+                    c_recorded.set()
+
+        async def body(name):
+            if name == "b":
+                await finish_b.wait()
+                raise httpx.ReadError("broken")
+            if name == "c":
+                await finish_c.wait()
+            yield _sse(name)
+
+        def handler(request):
+            name = request.url.host
+            opened.append(name)
+            return httpx.Response(
+                200, content=body(name), headers={"content-type": "text/event-stream"}
+            )
+
+        pool = await _pool("a", "b", "c", "d")
+        router = HeldRouter(pool, RecordingStore())
+        _mount(router, handler)
+        stream = _stream(router, fastest_of=3, wait=10)
+        async with aclosing(stream):
+            assert "".join([delta async for delta in stream]) == "a"
+            finish_b.set()
+            continuation = asyncio.create_task(stream.another())
+            await asyncio.wait_for(refilling.wait(), timeout=1)
+            finish_c.set()
+            await asyncio.wait_for(c_recorded.wait(), timeout=1)
+            release_refill.set()
+            assert (await asyncio.wait_for(continuation, timeout=1)).text == "c"
+            assert pool._slots["d"].in_flight == 0
+            assert opened == ["a", "b", "c"]
+            assert (await stream.another()).text == "d"
+            assert opened == ["a", "b", "c", "d"]
+
+    asyncio.run(run())

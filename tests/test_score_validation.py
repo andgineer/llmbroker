@@ -3,14 +3,14 @@ the optimizer derives is only defined on [0, 1].
 """
 
 import asyncio
-
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from llmbroker.broker.broker import AsyncBroker
+from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets
-from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.standalone.store import InMemoryStore
 from llmbroker.sync import Broker
 

@@ -76,7 +76,7 @@ async def driver(request, tmp_path_factory, pg_pool, mongo_db):
         finally:
             async with pg_pool.acquire() as conn:
                 for table in _PG_TABLES:
-                    await conn.execute(f"DELETE FROM {table}")  # noqa: S608
+                    await conn.execute(f"DELETE FROM {table}")
     elif param == "mongodb":
         try:
             yield MongoDriver(mongo_db)

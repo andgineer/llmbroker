@@ -9,10 +9,10 @@ The broker's first argument selects storage for the model registry, keys, and
 journal:
 
 ```python
-llmbroker.Broker()                          # local directory and environment keys
-llmbroker.Broker("broker.db")               # SQLite
-llmbroker.Broker("postgresql://host/db")    # PostgreSQL
-llmbroker.Broker("mongodb://host/db")       # MongoDB
+llmbroker.Broker()  # local directory and environment keys
+llmbroker.Broker("broker.db")  # SQLite
+llmbroker.Broker("postgresql://host/db")  # PostgreSQL
+llmbroker.Broker("mongodb://host/db")  # MongoDB
 ```
 
 Install the matching optional dependency for each database. See
@@ -25,7 +25,7 @@ To manage the pool yourself, pass an object that implements the registry protoco
 and explicitly choose its update mode:
 
 ```python
-broker = llmbroker.Broker(registry=MyRegistry(), sync=None)        # only your entries
+broker = llmbroker.Broker(registry=MyRegistry(), sync=None)  # only your entries
 broker = llmbroker.Broker(registry=MyRegistry(), sync="freetier")  # yours plus ours
 ```
 
@@ -44,8 +44,8 @@ from llmbroker.postgres import Secrets, Store
 
 broker = llmbroker.AsyncBroker(
     registry=MyRegistry(),
-    secrets=Secrets(pool),            # keys in the database
-    store=Store(pool),                # journal in the same database
+    secrets=Secrets(pool),  # keys in the database
+    store=Store(pool),  # journal in the same database
     sync=None,
 )
 ```
@@ -87,7 +87,7 @@ application so the connection string and related secrets are configured in one
 place:
 
 ```python
-broker = build_broker()                   # the application's broker factory
+broker = build_broker()  # the application's broker factory
 try:
     print(await broker.sync("freetier"))  # maintained model-list name
 finally:
@@ -119,14 +119,14 @@ catalog updates and run them from a separate deployment job. Network policy or
 audit requirements may require this configuration.
 
 ```python
-llmbroker.AsyncBroker("postgresql://host/db", sync_interval=None)   # in broker construction
+llmbroker.AsyncBroker("postgresql://host/db", sync_interval=None)  # in broker construction
 ```
 
 ```python
 broker = build_broker()
 try:
-    report = await broker.sync()      # no argument: whatever this installation follows
-    if report is not None:            # paid-catalog-only updates have no report
+    report = await broker.sync()  # no argument: whatever this installation follows
+    if report is not None:  # paid-catalog-only updates have no report
         print(llmbroker.format_report(report))
 finally:
     await broker.aclose()
@@ -240,7 +240,7 @@ All three classes are available directly from `llmbroker`, for example
 try:
     models = broker.snapshot()
 except llmbroker.EmptyRegistryError:
-    models = {}   # display an empty state instead of HTTP 500
+    models = {}  # display an empty state instead of HTTP 500
 ```
 
 Do not hide `SchemaVersionError`; its message contains instructions for the
@@ -284,7 +284,7 @@ broker = llmbroker.AsyncBroker(
     registry=Registry(pool),
     secrets=Secrets(pool),
     store=Store(pool, retention=timedelta(days=365)),
-    sync="freetier",                  # explicitly select the maintained list
+    sync="freetier",  # explicitly select the maintained list
 )
 ```
 
@@ -326,6 +326,7 @@ connection pool per process:
 ```python
 def llms(request: Request) -> llmbroker.AsyncLLMs:
     return request.app.state.broker.llms
+
 
 @app.post("/ask")
 async def ask(prompt: str, llms: llmbroker.AsyncLLMs = Depends(llms)):

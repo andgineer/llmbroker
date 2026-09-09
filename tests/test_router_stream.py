@@ -6,14 +6,15 @@ from contextlib import aclosing
 
 import httpx
 import pytest
+from support import make_ring
 
 from llmbroker.broker import verdict as verdict_module
 from llmbroker.broker.broker import AsyncBroker
+from llmbroker.broker.llms import AsyncLLMs
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.result import CallReceipt
 from llmbroker.broker.router import Router
 from llmbroker.direct import AsyncDirectClient
-from llmbroker.broker.llms import AsyncLLMs
 from llmbroker.exceptions import (
     InvalidProviderResponseError,
     NoLLMAvailableError,
@@ -25,8 +26,6 @@ from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import FileStore
-
-from support import make_ring
 
 
 class _RecordingStore:
@@ -59,7 +58,7 @@ def _sse(*deltas: str) -> bytes:
 
 
 def _mount(router: Router, handler) -> None:
-    router._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5.0)  # noqa: SLF001
+    router._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5.0)
 
 
 def _stream(router: Router, **kwargs):
@@ -576,7 +575,7 @@ def test_a_finish_chunk_with_no_choices_is_not_malformed():
     assert deltas == ["ok"]
     (row,) = store.calls
     assert (row.llm_name, row.status) == ("a", CallStatus.OK)
-    assert row.usage.total_tokens == 7  # noqa: PLR2004
+    assert row.usage.total_tokens == 7
     assert pool.state("a").phase is LifecyclePhase.AVAILABLE
 
 
@@ -594,7 +593,7 @@ def test_stream_reraises_the_provider_error_when_every_candidate_rejects_the_req
         return exc_info.value, pool
 
     err, pool = asyncio.run(run())
-    assert err.status == 400  # noqa: PLR2004
+    assert err.status == 400
     assert err.detail == "messages[0].role is invalid"
     assert [(c.llm_name, c.status) for c in store.calls] == [
         ("a", CallStatus.ERROR),
@@ -677,7 +676,7 @@ def test_broker_stream_end_to_end(tmp_path):
         )
         async with broker:
             await broker.ensure_pool()
-            broker._router._http_client = httpx.AsyncClient(  # noqa: SLF001
+            broker._router._http_client = httpx.AsyncClient(
                 transport=httpx.MockTransport(
                     lambda _r: httpx.Response(
                         200,
@@ -697,7 +696,7 @@ def test_broker_stream_end_to_end(tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-async def _streaming_broker(tmp_path, handler, *names: str) -> AsyncBroker:
+async def _streaming_broker(tmp_path, handler, *names: str, store=None) -> AsyncBroker:
     """A provisioned broker over ``names``, answering through ``handler``."""
     f = tmp_path / "llms.toml"
     f.write_text(
@@ -709,11 +708,11 @@ async def _streaming_broker(tmp_path, handler, *names: str) -> AsyncBroker:
     broker = AsyncBroker(
         registry=Registry(f),
         secrets=DictSecrets({"K": "test"}),
-        store=FileStore(tmp_path / "store"),
+        store=store if store is not None else FileStore(tmp_path / "store"),
         sync=None,
     )
     await broker.ensure_pool()
-    broker._router._http_client = httpx.AsyncClient(  # noqa: SLF001
+    broker._router._http_client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler),
         timeout=5.0,
     )
@@ -880,7 +879,7 @@ def test_stream_handle_reports_usage_after_completion(tmp_path):
 
     during, usage = asyncio.run(run())
     assert during[0] is None  # not known until the attempt is over
-    assert usage.total_tokens == 7  # noqa: PLR2004
+    assert usage.total_tokens == 7
 
 
 def test_stream_handle_records_quality(tmp_path):
@@ -895,7 +894,7 @@ def test_stream_handle_records_quality(tmp_path):
             return await broker.calls(limit=10)
 
     (row,) = asyncio.run(run())
-    assert row.score == 0.25  # noqa: PLR2004
+    assert row.score == 0.25
 
 
 def test_stream_handle_record_quality_before_an_answer_raises(tmp_path):
@@ -931,7 +930,7 @@ def test_stream_handle_record_quality_mid_stream_raises(tmp_path):
 
     named, (row,) = asyncio.run(run())
     assert named == ["a", "a"]  # named all along — it is the rating that had to wait
-    assert row.score == 0.5  # noqa: PLR2004
+    assert row.score == 0.5
 
 
 def test_stream_handle_rating_survives_a_broken_off_stream(tmp_path):
@@ -1180,8 +1179,228 @@ def test_the_selection_window_survives_the_post_exhaustion_retry():
             learner=None,
             ensure_pool=ensure_pool,
             on_exhausted=on_exhausted,
+            own_stream=lambda stream: None,
+            release_stream=lambda stream: None,
         )
         handle = caller.stream("hi", fastest_of=2, stream_selection_window=0.25)
         return [d async for d in handle], router.windows
 
     assert asyncio.run(run()) == (["after-rebuild"], [0.25])
+
+
+@pytest.mark.parametrize("scoped", [False, True])
+def test_broker_context_settles_retained_streams_before_closing_the_store(tmp_path, scoped):
+    async def run():
+        reserve_open = asyncio.Event()
+        reserve_closed = asyncio.Event()
+
+        class Store:
+            closed = False
+
+            def __init__(self):
+                self.rows = []
+
+            async def record(self, call):
+                assert not self.closed
+                self.rows.append(call)
+
+            async def record_quality(self, call_id, score, *, scope=None):
+                pass
+
+            async def aclose(self):
+                assert reserve_closed.is_set()
+                assert client.is_closed
+                assert len(self.rows) == 2
+                self.closed = True
+
+        async def reserve():
+            reserve_open.set()
+            try:
+                await asyncio.Event().wait()
+                yield b""  # pragma: no cover
+            finally:
+                reserve_closed.set()
+
+        def handler(request):
+            return httpx.Response(
+                200,
+                content=_sse("answer") if request.url.host == "a" else reserve(),
+                headers={"content-type": "text/event-stream"},
+            )
+
+        store = Store()
+        broker = await _streaming_broker(tmp_path, handler, "a", "b", store=store)
+        client = broker._router.http
+        before = asyncio.all_tasks()
+        async with broker:
+            caller = broker.for_scope("alice") if scoped else broker
+            stream = caller.stream("hi", fastest_of=2)
+            assert "".join([delta async for delta in stream]) == "answer"
+            await asyncio.wait_for(reserve_open.wait(), timeout=1)
+            assert not reserve_closed.is_set()
+        assert store.closed
+        assert [row.status for row in store.rows] == [CallStatus.OK, CallStatus.SUPERSEDED]
+        assert all(row.scope == ("alice" if scoped else None) for row in store.rows)
+        assert all(slot.in_flight == 0 for slot in broker._pool._slots.values())
+        assert not broker._streams
+        assert asyncio.all_tasks() - before == set()
+        with pytest.raises(RuntimeError, match="closed"):
+            await stream.another()
+        with pytest.raises(RuntimeError, match="closed"):
+            caller.stream("too late")
+        await broker.aclose()
+
+    asyncio.run(run())
+
+
+def test_stream_context_releases_early_on_host_error_and_broker_remains_usable(tmp_path):
+    async def run():
+        broker = await _streaming_broker(tmp_path, _ok_sse("one", "two"), "a")
+        async with broker:
+            with pytest.raises(ValueError, match="host rejected"):
+                async with broker.stream("hi") as stream:
+                    assert await anext(stream) == "one"
+                    raise ValueError("host rejected")
+            assert not broker._streams
+            assert broker._pool._slots["a"].in_flight == 0
+            assert not broker._router.http.is_closed
+            await stream.record_quality(0.0)
+            async with broker.stream("again") as next_stream:
+                assert "".join([delta async for delta in next_stream]) == "onetwo"
+            with pytest.raises(RuntimeError, match="closed"):
+                async with stream:
+                    pass
+
+    asyncio.run(run())
+
+
+def test_broker_closes_unstarted_streams_without_provisioning(tmp_path):
+    async def run():
+        broker = AsyncBroker(home=tmp_path, sync=None)
+        stream = broker.stream("hi")
+        async with stream:
+            assert broker._provisioned is False
+        pending = broker.for_scope("alice").stream("later")
+        await broker.aclose()
+        assert broker._provisioned is False
+        assert broker._router._http_client is None
+        with pytest.raises(StopAsyncIteration):
+            await anext(pending)
+        with pytest.raises(RuntimeError, match="closed"):
+            async with pending:
+                pass
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("continuation", [False, True])
+def test_broker_close_interrupts_a_stream_operation(tmp_path, continuation):
+    async def run():
+        opened = asyncio.Event()
+        closed = asyncio.Event()
+
+        async def waiting():
+            opened.set()
+            try:
+                await asyncio.Event().wait()
+                yield b""  # pragma: no cover
+            finally:
+                closed.set()
+
+        def handler(request):
+            content = _sse("first") if continuation and request.url.host == "a" else waiting()
+            return httpx.Response(
+                200, content=content, headers={"content-type": "text/event-stream"}
+            )
+
+        broker = await _streaming_broker(tmp_path, handler, "a", "b")
+        stream = broker.stream("hi", fastest_of=1)
+        if continuation:
+            assert "".join([delta async for delta in stream]) == "first"
+        operation = asyncio.create_task(stream.another() if continuation else anext(stream))
+        await asyncio.wait_for(opened.wait(), timeout=1)
+        await asyncio.wait_for(broker.aclose(), timeout=1)
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+        assert closed.is_set()
+        assert not broker._streams
+        assert all(slot.in_flight == 0 for slot in broker._pool._slots.values())
+
+    asyncio.run(run())
+
+
+def test_cancelled_broker_close_waiter_does_not_interrupt_stream_settlement(tmp_path):
+    async def run():
+        writing = asyncio.Event()
+        release_write = asyncio.Event()
+
+        class Store:
+            closed = False
+            close_count = 0
+
+            def __init__(self):
+                self.rows = []
+
+            async def record(self, call):
+                writing.set()
+                await release_write.wait()
+                assert not self.closed
+                self.rows.append(call)
+
+            async def record_quality(self, call_id, score, *, scope=None):
+                pass
+
+            async def aclose(self):
+                assert len(self.rows) == 1
+                self.closed = True
+                self.close_count += 1
+
+        store = Store()
+        broker = await _streaming_broker(tmp_path, _ok_sse("answer"), "a", store=store)
+        stream = broker.stream("hi")
+        assert await anext(stream) == "answer"
+        finishing = asyncio.create_task(anext(stream))
+        await asyncio.wait_for(writing.wait(), timeout=1)
+        closing = asyncio.create_task(broker.aclose())
+        await asyncio.sleep(0)
+        closing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        assert not store.closed
+        release_write.set()
+        await asyncio.wait_for(broker.aclose(), timeout=1)
+        with pytest.raises(asyncio.CancelledError):
+            await finishing
+        assert store.closed
+        assert not broker._streams
+        await broker.aclose()
+        assert store.close_count == 1
+
+    asyncio.run(run())
+
+
+def test_broker_close_cancels_lazy_stream_provisioning(tmp_path, monkeypatch):
+    async def run():
+        starting = asyncio.Event()
+        stopped = asyncio.Event()
+        broker = AsyncBroker(home=tmp_path, sync=None)
+
+        async def ensure_pool():
+            starting.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+
+        monkeypatch.setattr(broker, "ensure_pool", ensure_pool)
+        stream = broker.for_scope("alice").stream("hi")
+        pulling = asyncio.create_task(anext(stream))
+        await asyncio.wait_for(starting.wait(), timeout=1)
+        await asyncio.wait_for(broker.aclose(), timeout=1)
+        with pytest.raises(asyncio.CancelledError):
+            await pulling
+        assert stopped.is_set()
+        assert not broker._streams
+        assert broker._router._http_client is None
+
+    asyncio.run(run())

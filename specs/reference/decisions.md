@@ -267,8 +267,10 @@ hands back a handle naming the winner, so that is where a race is rated.
 
 A streamed handle retains already-open alternatives after its first complete
 answer. The host may request another complete answer, and closing the handle
-ends the provider work still owned by it. Only an explicit request for another
-answer starts further candidates after the first answer exists.
+ends the provider work still owned by it. The broker closes its streams before
+closing shared resources; a stream context permits earlier release within a
+long-lived broker. Only an explicit request for another answer starts further
+candidates after the first answer exists.
 
 **Blocks:** cancelling every alternative on the first completion; a retention
 flag; host-side rerouting by model name; automatic content validation or a paid
@@ -276,7 +278,8 @@ fallback inside the broker.
 **Why:** only the host can judge the payload, and its judgement follows the
 completion that cancellation would make irreversible. One request already owns
 distinct candidates, their budget and their attribution; another ordinary pool
-call owns none of that history. Explicit close supplies the lifetime boundary.
+call owns none of that history. The broker supplies the default lifetime boundary;
+the host can shorten it by closing an individual stream.
 **Accepted cost:** reserve lanes may consume the rest of their output quota,
 occupy slots and retain buffered answers until they finish, reach the budget or
 are closed. Slow hosts can make this cost material; first-completion cancellation

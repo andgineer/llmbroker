@@ -75,8 +75,8 @@ normally requires no manual update. To update immediately, call `sync`; the
 method returns a report:
 
 ```python
-report = broker.sync("freetier")         # freetier is the model-list name
-print(llmbroker.format_report(report))   # log the report or send it to an administrator
+report = broker.sync("freetier")  # freetier is the model-list name
+print(llmbroker.format_report(report))  # log the report or send it to an administrator
 ```
 
 By default, the broker checks for updates about once a day during an ordinary
@@ -92,9 +92,9 @@ contents and modification time remain unchanged.
 You can disable automatic updates or change the check interval:
 
 ```python
-llmbroker.Broker(sync=None)              # do not use a maintained model list
-llmbroker.Broker(sync_interval=3600)     # check once an hour
-llmbroker.Broker(sync_interval=None)     # do not check automatically
+llmbroker.Broker(sync=None)  # do not use a maintained model list
+llmbroker.Broker(sync_interval=3600)  # check once an hour
+llmbroker.Broker(sync_interval=None)  # do not check automatically
 ```
 
 `sync_interval=None` disables every automatic download, including the initial
@@ -173,10 +173,12 @@ reply = broker.ask("Translate to French: Hello world")
 print(reply.text)
 
 # Full messages API
-reply = broker.chat([
-    {"role": "system", "content": "Answer briefly."},
-    {"role": "user",   "content": "What is Python?"},
-])
+reply = broker.chat(
+    [
+        {"role": "system", "content": "Answer briefly."},
+        {"role": "user", "content": "What is Python?"},
+    ]
+)
 ```
 
 Every call accepts `trace_id=`, an identifier from your application such as a
@@ -193,7 +195,7 @@ Ordinary scripts do not need to close the broker. See
 
 ```python
 try:
-    reply = broker.ask("Question", wait=5.0)   # at most 5 seconds, start to finish
+    reply = broker.ask("Question", wait=5.0)  # at most 5 seconds, start to finish
 except llmbroker.NoLLMAvailableError:
     print("No model answered within the requested time")
 ```
@@ -217,7 +219,7 @@ deadline on their responses.
 ### Calling several models concurrently {#parallel}
 
 ```python
-reply = broker.ask("Question", fastest_of=2)   # call two models and return the first reply
+reply = broker.ask("Question", fastest_of=2)  # call two models and return the first reply
 ```
 
 `fastest_of=N` sends the request to at most `N` different models concurrently and
@@ -316,7 +318,7 @@ try:
     reply = broker.ask("Question", wait=5.0)
 except llmbroker.NoLLMAvailableError as exc:
     if exc.retry_at is not None:
-        retry_after(exc.retry_at)          # a model will be available by this time
+        retry_after(exc.retry_at)  # a model will be available by this time
     else:
         alert(f"the pool is unavailable: {exc.reason}")
 ```
@@ -351,7 +353,7 @@ provider response. [Direct model calls](direct.md#errors) use the same exception
 try:
     reply = broker.ask(prompt, wait=5.0)
 except llmbroker.NoLLMAvailableError as exc:
-    ...                                    # no model is currently available
+    ...  # no model is currently available
 except llmbroker.ProviderError as exc:
     log.error("Every model rejected the request: HTTP %s — %s", exc.status, exc.detail)
 ```
@@ -365,7 +367,7 @@ Ratings help the broker select the best models for different tasks:
 
 ```python
 reply = broker.ask("Summarize this contract clause", operation="summarize")
-reply.record_quality(0.9)   # 1.0 — good reply, 0.0 — bad; outside [0, 1] is a ValueError
+reply.record_quality(0.9)  # 1.0 — good reply, 0.0 — bad; outside [0, 1] is a ValueError
 ```
 
 Ratings accumulate separately for each `(model, operation)` pair. A model with

@@ -331,9 +331,15 @@ continuation. After the first complete answer it runs continuously. Completed bu
 answers remain readable after expiry, but no new provider work starts then. The
 existing meanings of an unset, zero or negative `wait` remain unchanged.
 
-**The slot goes back when the handle is closed, and closing it is the consumer's
-move.** Normal iteration and a replacement finish only the initial answer; they leave
-retained alternatives owned by the handle. Explicit close cancels unfinished work,
-waits for every row and release already owed, and is idempotent. Closing before the
-first pull starts no request. Long-lived hosts use `aclosing` around validation and
-continuation so every exit supplies this lifetime boundary.
+**The broker owns its stream handles, including scoped and unstarted ones.** Normal
+iteration and a replacement finish only the initial answer; retained alternatives
+remain available. Exiting the broker's context closes its streams and awaits every
+row and release already owed before closing HTTP and storage. Shutdown refuses new
+streams and interrupts active pulls, continuations and lazy stream provisioning.
+Repeated close awaits the same cleanup; cancelling a close waiter does not cancel it.
+
+A separate stream context is optional. In a long-lived broker, `async with
+broker.stream(...)` ends that request's retained work earlier, on normal exit or an
+error. Keep validation and continuation inside that context when using it. Direct
+`aclose()` has the same effect. Closing before the first pull starts no request;
+closing a handle releases its buffered answers without losing its settled receipt.

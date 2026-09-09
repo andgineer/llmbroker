@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from support import CLOCK_SLACK, make_ring
 
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.learning import Learner
@@ -23,8 +24,6 @@ from llmbroker.exceptions import (
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
 from llmbroker.sync import Broker, LLMs
-
-from support import CLOCK_SLACK, make_ring
 
 _PATCH = "llmbroker.broker.router.call_provider"
 
@@ -80,7 +79,7 @@ async def _pool(*names: str, optimizer: Optimizer | None = None) -> LLMPool:
 
 async def _due_for_recovery(pool: LLMPool, name: str) -> None:
     await pool.cool_down(pool.config(name), 60)
-    pool._slots[name].cooldown_until = datetime.now(UTC) - timedelta(seconds=1)  # noqa: SLF001
+    pool._slots[name].cooldown_until = datetime.now(UTC) - timedelta(seconds=1)
 
 
 async def _expire_cooldown(pool: LLMPool, name: str) -> None:
@@ -98,7 +97,7 @@ def _sse(*deltas: str) -> bytes:
 
 
 def _mount(router: Router, handler) -> None:
-    router._http_client = httpx.AsyncClient(  # noqa: SLF001
+    router._http_client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler),
         timeout=2.0,
     )
@@ -529,7 +528,7 @@ def test_superseded_stream_lane_is_journaled_and_neutral_to_learning():
     assert rows["a"].budget_ms is None
     assert pool.state("a").phase is LifecyclePhase.AVAILABLE
     assert optimizer.rl_fail_count("a") == 0
-    assert "a" not in pool._budget_bounds  # noqa: SLF001
+    assert "a" not in pool._budget_bounds
     assert rows["b"].status is CallStatus.OK
 
 
@@ -878,7 +877,7 @@ def test_a_recovery_is_covered_by_an_ordinary_candidate_not_a_second_recheck():
 
     pool = asyncio.run(run())
     assert set(requested) == {"a", "c"}
-    assert pool._slots["b"].recovery_due  # noqa: SLF001
+    assert pool._slots["b"].recovery_due
 
 
 def test_a_lane_a_bug_hit_keeps_its_error_row_when_a_sibling_wins():
@@ -1029,7 +1028,7 @@ def test_a_raced_stream_starts_every_lane_before_either_may_finish():
             host = request.url.host or ""
             requested.append(host)
             opened += 1
-            if opened == 2:  # noqa: PLR2004
+            if opened == 2:
                 both_open.set()
 
             async def body():
@@ -1077,7 +1076,7 @@ def test_the_preferred_lane_inside_the_window_is_exposed_at_once():
     first, named, elapsed = asyncio.run(run())
     assert (first, named) == ("a-first", "a")
     # The default window is a whole second: the preferred lane may not be made to wait it out.
-    assert elapsed < 0.5  # noqa: PLR2004
+    assert elapsed < 0.5
 
 
 def test_an_earlier_reserve_delta_is_buffered_until_the_preferred_lane_begins():
@@ -1135,7 +1134,7 @@ def test_buffered_reserve_output_is_released_when_the_window_expires():
 
     first, named, elapsed = asyncio.run(run())
     assert (first, named) == ("b-first", "b")
-    assert elapsed >= 0.1 - CLOCK_SLACK  # noqa: PLR2004
+    assert elapsed >= 0.1 - CLOCK_SLACK
 
 
 def test_with_every_lane_silent_at_expiry_the_next_delta_selects_the_stream():
@@ -1347,7 +1346,7 @@ def test_a_preferred_failure_ends_its_selection_privilege_at_once():
     assert (first, named) == ("c-first", "c")
     assert set(requested) == {"a", "b", "c"}
     # Nothing waited out the five-second window the dead lane no longer owns.
-    assert elapsed < 2.0  # noqa: PLR2004
+    assert elapsed < 2.0
     rows = {row.llm_name: row for row in store.calls}
     assert rows["a"].status is CallStatus.UNAVAILABLE
     assert pool.state("a").phase is LifecyclePhase.COOLING
@@ -1562,7 +1561,7 @@ def test_abandoning_a_raced_stream_settles_the_exposed_lane_as_answered():
         "a": CallStatus.OK,
         "b": CallStatus.SUPERSEDED,
     }
-    assert [pool._slots[name].in_flight for name in ("a", "b")] == [0, 0]  # noqa: SLF001
+    assert [pool._slots[name].in_flight for name in ("a", "b")] == [0, 0]
 
 
 def test_a_lane_that_already_won_is_what_an_abandoned_race_hands_back():
@@ -1609,7 +1608,7 @@ def test_a_lane_that_already_won_is_what_an_abandoned_race_hands_back():
         "a": CallStatus.SUPERSEDED,
         "b": CallStatus.OK,
     }
-    assert [pool._slots[name].in_flight for name in ("a", "b")] == [0, 0]  # noqa: SLF001
+    assert [pool._slots[name].in_flight for name in ("a", "b")] == [0, 0]
 
 
 def test_a_raced_stream_cancelled_inside_the_window_leaves_nothing_behind():
@@ -1621,7 +1620,7 @@ def test_a_raced_stream_cancelled_inside_the_window_leaves_nothing_behind():
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal starts
             starts += 1
-            if starts == 2:  # noqa: PLR2004
+            if starts == 2:
                 opened.set()
             return httpx.Response(
                 200,
@@ -1651,7 +1650,7 @@ def test_a_raced_stream_cancelled_inside_the_window_leaves_nothing_behind():
         "a": CallStatus.SUPERSEDED,
         "b": CallStatus.SUPERSEDED,
     }
-    assert [pool._slots[name].in_flight for name in ("a", "b")] == [0, 0]  # noqa: SLF001
+    assert [pool._slots[name].in_flight for name in ("a", "b")] == [0, 0]
     assert left == set()
 
 
@@ -1744,7 +1743,7 @@ def test_a_bug_in_a_hidden_lane_leaves_the_lane_being_read_alone():
         "a": CallStatus.OK,
         "b": CallStatus.ERROR,
     }
-    assert [pool._slots[name].in_flight for name in ("a", "b")] == [0, 0]  # noqa: SLF001
+    assert [pool._slots[name].in_flight for name in ("a", "b")] == [0, 0]
 
 
 def test_a_losing_lane_stays_on_its_provider_until_the_handle_closes():
@@ -1815,14 +1814,14 @@ def test_a_lane_cancelled_before_its_attempt_began_gives_its_slot_back():
             yield ""  # pragma: no cover - cancelled before its first step
 
         lane = _StreamLane(config=taken, outcome=_Outcome(), produced=never_runs())
-        lane.task = asyncio.create_task(Router._drain_lane(lane, asyncio.Event()))  # noqa: SLF001
+        lane.task = asyncio.create_task(Router._drain_lane(lane, asyncio.Event()))
         lane.task.cancel()
-        await asyncio.wait_for(router._stop(lane), timeout=1.0)  # noqa: SLF001
+        await asyncio.wait_for(router._stop(lane), timeout=1.0)
         return pool, store
 
     pool, store = asyncio.run(run())
     assert store.calls == []
-    assert pool._slots["a"].in_flight == 0  # noqa: SLF001
+    assert pool._slots["a"].in_flight == 0
 
 
 def test_a_losing_lane_is_retained_while_the_reader_holds_a_delta():

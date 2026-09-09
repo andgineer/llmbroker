@@ -21,18 +21,21 @@ async with llmbroker.AsyncBroker() as broker:
 модели при ошибке выполняются так же, как для обычного вызова:
 
 ```python
-async with contextlib.aclosing(
-    broker.stream("Напиши хокку про брокеров", operation="write")
-) as stream:
+async with llmbroker.AsyncBroker() as broker:
+    stream = broker.stream("Напиши хокку про брокеров", operation="write")
     async for delta in stream:
         print(delta, end="", flush=True)
 
-    print(stream.llm_name, stream.usage)   # имя модели и сведения об использовании
-    await stream.record_quality(0.9)       # оценить полученный ответ
+    print(stream.llm_name, stream.usage)  # имя модели и сведения об использовании
+    await stream.record_quality(0.9)  # оценить полученный ответ
 ```
 
 `stream(...)` возвращает объект асинхронного итератора. После завершения ответа в
 его полях доступны имя модели и сведения об использовании.
+
+The broker owns its streams. Leaving its context closes unfinished work and
+waits for journal writes before closing HTTP and storage. No separate stream
+context is required.
 
 До получения первой части текста брокер может перейти к другой модели. Это
 происходит, если провайдер вернул ошибку, ограничил число запросов или завершил
@@ -56,21 +59,19 @@ async with contextlib.aclosing(
 ответов разных моделей не объединяются.
 
 ```python
-async with contextlib.aclosing(
-    broker.stream("Напиши хайку", fastest_of=2, stream_selection_window=1.0)
-) as stream:
-    parts = []
-    try:
-        async for delta in stream:
-            parts.append(delta)
-            show(delta)
-    except llmbroker.StreamReplacementError as exc:
-        replace_everything_with(exc.replacement.text)  # заменить предварительный текст
-    else:
-        text = "".join(parts)
+stream = broker.stream("Напиши хайку", fastest_of=2, stream_selection_window=1.0)
+parts = []
+try:
+    async for delta in stream:
+        parts.append(delta)
+        show(delta)
+except llmbroker.StreamReplacementError as exc:
+    replace_everything_with(exc.replacement.text)  # заменить предварительный текст
+else:
+    text = "".join(parts)
 
-    print(stream.llm_name)             # модель, чей ответ выбран итоговым
-    await stream.record_quality(0.9)   # оценить итоговый ответ
+print(stream.llm_name)  # модель, чей ответ выбран итоговым
+await stream.record_quality(0.9)  # оценить итоговый ответ
 ```
 
 Оценивайте параллельный вызов через объект `stream` или `exc.replacement`. При
@@ -105,26 +106,23 @@ async with contextlib.aclosing(
 
 ### Получение ещё одного полного ответа {#another-answer}
 
-Проверяйте ответ внутри `aclosing` и вызывайте `another()`, если приложение его
-отклонило. Сначала брокер использует уже запущенные попытки, затем обращается к
-моделям пула, которые этот вызов ещё не пробовал:
+Call `another()` while the broker is open when the application rejects a complete
+answer. The broker uses retained attempts before trying unattempted pool models:
 
 ```python
-async with contextlib.aclosing(
-    broker.stream(prompt, fastest_of=3, wait=25)
-) as stream:
-    try:
-        text = "".join([delta async for delta in stream])
-        rated = stream
-    except llmbroker.StreamReplacementError as exc:
-        text, rated = exc.replacement.text, exc.replacement
+stream = broker.stream(prompt, fastest_of=3, wait=25)
+try:
+    text = "".join([delta async for delta in stream])
+    rated = stream
+except llmbroker.StreamReplacementError as exc:
+    text, rated = exc.replacement.text, exc.replacement
 
-    while not acceptable(text):
-        await rated.record_quality(0.0)
-        answer = await stream.another()
-        if answer is None:
-            break
-        text, rated = answer.text, answer
+while not acceptable(text):
+    await rated.record_quality(0.0)
+    answer = await stream.another()
+    if answer is None:
+        break
+    text, rated = answer.text, answer
 ```
 
 У каждого результата свои `llm_name`, `call_id`, `usage` и объект для оценки.
@@ -143,14 +141,12 @@ async with contextlib.aclosing(
 Учитывается только время, которое библиотека ждёт данные от провайдера:
 
 ```python
-async with contextlib.aclosing(
-    broker.stream("Напиши длинный ответ", wait=20.0)
-) as stream:
-    try:
-        async for delta in stream:
-            print(delta, end="", flush=True)
-    except llmbroker.LLMTimeoutError as exc:
-        print(f"\nвремя ожидания истекло: {exc}")
+stream = broker.stream("Напиши длинный ответ", wait=20.0)
+try:
+    async for delta in stream:
+        print(delta, end="", flush=True)
+except llmbroker.LLMTimeoutError as exc:
+    print(f"\nвремя ожидания истекло: {exc}")
 ```
 
 Время, которое приложение тратит на обработку уже полученной части, не
@@ -182,29 +178,22 @@ async with contextlib.aclosing(
 Оценку также можно записать только после завершения ответа и появления записи в
 журнале. При более раннем вызове `record_quality` возникнет `ValueError`.
 
-Чтение можно прервать в любой момент, но `break` не закрывает итератор и не
-освобождает место для следующего запроса. Без явного закрытия это произойдёт
-только при сборке мусора. Вызовите `aclose()` самостоятельно. Закрытие завершает
-вызов и позволяет оценить уже полученную часть ответа:
+A `break` does not close the stream; the broker closes it on exit. In a long-lived
+broker, use the stream's optional context for immediate release when this request
+ends, including on errors. You can rate a partial reply after closing its stream
+while the broker remains open:
 
 ```python
-stream = broker.stream("Напиши хокку про брокеров")
-async for delta in stream:
-    if looks_wrong(delta):
-        break
+async with broker.stream("Write a haiku about brokers") as stream:
+    async for delta in stream:
+        if looks_wrong(delta):
+            break
 
-await stream.aclose()
 await stream.record_quality(0.0)
 ```
 
-Если сохранять оценку не нужно, для гарантированного закрытия можно использовать
-контекстный менеджер:
-
-```python
-async with contextlib.aclosing(broker.stream("...")) as stream:
-    async for delta in stream:
-        ...
-```
+Keep validation and `another()` inside this optional context.
+`await stream.aclose()` performs the same early release without a context.
 
 Потоковая выдача доступна и для одной конкретной модели через `direct()`, без
 выбора из пула и перехода к другой модели. Подробнее см. в разделе

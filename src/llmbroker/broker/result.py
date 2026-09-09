@@ -137,7 +137,7 @@ class AsyncResult(RoutedCall):
 
 class StreamHandle(RoutedCall):
     """A streamed answer whose owner can supply further complete pool answers.
-    Use ``aclosing`` so retained provider work is always settled."""
+    The broker closes it; ``async with`` releases its resources earlier."""
 
     def __init__(  # noqa: PLR0913
         self,
@@ -148,6 +148,7 @@ class StreamHandle(RoutedCall):
         store: StoreProtocol,
         scope: str | None,
         observe_quality: ObserveQuality | None,
+        on_close: Callable[["StreamHandle"], None] | None = None,
     ) -> None:
         super().__init__(
             receipt,
@@ -160,6 +161,16 @@ class StreamHandle(RoutedCall):
         self._source: _StreamSource | None = None
         self._active: asyncio.Task[object] | None = None
         self._closed = False
+        self._cleanup: asyncio.Task[None] | None = None
+        self._on_close = on_close
+
+    async def __aenter__(self) -> "StreamHandle":
+        if self._closed:
+            raise RuntimeError("the stream is closed")
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()
 
     def __aiter__(self) -> "StreamHandle":
         return self
@@ -197,14 +208,24 @@ class StreamHandle(RoutedCall):
 
     async def aclose(self) -> None:
         """Close all provider work and await its settlement."""
-        self._closed = True
+        if self._cleanup is None:
+            self._closed = True
+            self._cleanup = asyncio.create_task(self._close())
+        await asyncio.shield(self._cleanup)
+
+    async def _close(self) -> None:
         active = self._active
-        current = asyncio.current_task()
-        if active is not None and active is not current:
+        if active is not None:
             active.cancel()
             await asyncio.gather(active, return_exceptions=True)
-        if self._source is not None:
-            await self._source.aclose()
+        try:
+            if self._source is not None:
+                await self._source.aclose()
+                self._source = None
+        finally:
+            if self._on_close is not None:
+                self._on_close(self)
+                self._on_close = None
 
 
 class AsyncLLM:

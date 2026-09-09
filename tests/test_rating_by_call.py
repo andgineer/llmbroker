@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import aiosqlite
 import httpx
 import pytest
+from support import make_ring
 
 from llmbroker.broker import llms as llms_module
 from llmbroker.broker.broker import AsyncBroker
@@ -22,8 +23,6 @@ from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import InMemoryStore
-
-from support import make_ring
 
 _PATCH = "llmbroker.broker.router.call_provider"
 
@@ -61,7 +60,7 @@ def test_continuation_results_rate_distinct_answered_rows_without_reads():
             )
         store = _Store()
         router = Router(pool, store)
-        router._http_client = httpx.AsyncClient(  # noqa: SLF001
+        router._http_client = httpx.AsyncClient(
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(
                     200,

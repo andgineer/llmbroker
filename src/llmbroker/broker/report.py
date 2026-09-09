@@ -22,8 +22,10 @@ def format_report(report: SyncReport) -> str:
     """The whole outcome as text, printed on every run including a no-op."""
     verb = "applied" if report.applied else "refused"
     lines = [
-        f"sync {report.source}: {verb}"
-        f" — {report.active_before} -> {report.active_after} entries with a key",
+        (
+            f"sync {report.source}: {verb}"
+            f" — {report.active_before} -> {report.active_after} entries with a key"
+        ),
     ]
     for label, names in (
         ("added", report.added),

@@ -57,7 +57,7 @@ exclude = ["**/presets/*.md"]
 [dependency-groups]
 dev = [
     "allure-pytest>=2.14.2",
-    "testcontainers[mongodb,postgres,vault,localstack]>=4.8",
+    "testcontainers[mongodb,postgres,vault,localstack]>=4.15.0",
     "invoke>=2.2.0",
     "mkdocs-awesome-pages-plugin>=2.10.1",
     "zensical>=0.0.41",

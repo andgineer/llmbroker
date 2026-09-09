@@ -79,8 +79,8 @@ weight      = 0.75
 сразу, вызовите `sync`; метод вернёт отчёт:
 
 ```python
-report = broker.sync("freetier")         # freetier — имя набора моделей
-print(llmbroker.format_report(report))   # отчёт можно записать в журнал или отправить администратору
+report = broker.sync("freetier")  # freetier — имя набора моделей
+print(llmbroker.format_report(report))  # отчёт можно записать в журнал или отправить администратору
 ```
 
 По умолчанию брокер проверяет обновления примерно раз в сутки во время очередного
@@ -97,9 +97,9 @@ print(llmbroker.format_report(report))   # отчёт можно записат�
 Автоматическое обновление можно отключить, а интервал проверки — изменить:
 
 ```python
-llmbroker.Broker(sync=None)              # не использовать готовый набор моделей
-llmbroker.Broker(sync_interval=3600)     # проверять раз в час
-llmbroker.Broker(sync_interval=None)     # не проверять автоматически
+llmbroker.Broker(sync=None)  # не использовать готовый набор моделей
+llmbroker.Broker(sync_interval=3600)  # проверять раз в час
+llmbroker.Broker(sync_interval=None)  # не проверять автоматически
 ```
 
 `sync_interval=None` отключает все автоматические загрузки, в том числе
@@ -181,10 +181,12 @@ reply = broker.ask("Переведи на английский: Привет м�
 print(reply.text)
 
 # Полный messages API
-reply = broker.chat([
-    {"role": "system", "content": "Отвечай кратко."},
-    {"role": "user",   "content": "Что такое Python?"},
-])
+reply = broker.chat(
+    [
+        {"role": "system", "content": "Отвечай кратко."},
+        {"role": "user", "content": "Что такое Python?"},
+    ]
+)
 ```
 
 В любой вызов можно передать `trace_id=` — идентификатор запроса или задачи в
@@ -203,7 +205,7 @@ reply = broker.chat([
 
 ```python
 try:
-    reply = broker.ask("Вопрос", wait=5.0)   # максимум 5 секунд от начала до конца
+    reply = broker.ask("Вопрос", wait=5.0)  # максимум 5 секунд от начала до конца
 except llmbroker.NoLLMAvailableError:
     print("Никто не ответил за отведённое время")
 ```
@@ -226,7 +228,7 @@ except llmbroker.NoLLMAvailableError:
 ### Одновременный запрос к нескольким моделям {#parallel}
 
 ```python
-reply = broker.ask("Вопрос", fastest_of=2)   # запросить две модели и вернуть первый ответ
+reply = broker.ask("Вопрос", fastest_of=2)  # запросить две модели и вернуть первый ответ
 ```
 
 `fastest_of=N` одновременно отправляет запрос не более чем `N` разным моделям и
@@ -333,7 +335,7 @@ try:
     reply = broker.ask("Вопрос", wait=5.0)
 except llmbroker.NoLLMAvailableError as exc:
     if exc.retry_at is not None:
-        retry_after(exc.retry_at)          # к этому времени модель станет доступна
+        retry_after(exc.retry_at)  # к этому времени модель станет доступна
     else:
         alert(f"пул недоступен: {exc.reason}")
 ```
@@ -368,7 +370,7 @@ except llmbroker.NoLLMAvailableError as exc:
 try:
     reply = broker.ask(prompt, wait=5.0)
 except llmbroker.NoLLMAvailableError as exc:
-    ...                                    # ни одна модель сейчас не доступна
+    ...  # ни одна модель сейчас не доступна
 except llmbroker.ProviderError as exc:
     log.error("Все модели отклонили запрос: HTTP %s — %s", exc.status, exc.detail)
 ```
@@ -382,7 +384,7 @@ except llmbroker.ProviderError as exc:
 
 ```python
 reply = broker.ask("Кратко перескажи этот пункт договора", operation="summarize")
-reply.record_quality(0.9)   # 1.0 — хороший ответ, 0.0 — неудачный; вне [0, 1] — ValueError
+reply.record_quality(0.9)  # 1.0 — хороший ответ, 0.0 — неудачный; вне [0, 1] — ValueError
 ```
 
 Оценки накапливаются отдельно для каждой пары `(модель, операция)`. Модель с

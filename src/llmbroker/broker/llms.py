@@ -56,6 +56,8 @@ class AsyncLLMs:
         learner: Learner | None,
         ensure_pool: Callable[[], Awaitable[None]],
         on_exhausted: Callable[[NoLLMAvailableError, KeyRing], Awaitable[bool]],
+        own_stream: Callable[[StreamHandle], None],
+        release_stream: Callable[[StreamHandle], None],
     ) -> None:
         self._ring = ring
         self._router = router
@@ -65,6 +67,8 @@ class AsyncLLMs:
         self._learner = learner
         self._ensure_pool = ensure_pool
         self._on_exhausted = on_exhausted
+        self._own_stream = own_stream
+        self._release_stream = release_stream
 
     @property
     def scope(self) -> str | None:
@@ -151,9 +155,9 @@ class AsyncLLMs:
         stream_selection_window: float = 1.0,
     ) -> StreamHandle:
         """Return an owned stream that can supply another complete pool answer.
-        Keep validation and ``another()`` inside ``aclosing``. Async-only."""
+        The broker closes it; use ``async with`` for earlier release. Async-only."""
         receipt = CallReceipt()
-        return StreamHandle(
+        handle = StreamHandle(
             partial(
                 self._start_stream,
                 receipt,
@@ -173,7 +177,10 @@ class AsyncLLMs:
             observe_quality=(
                 self._learner.record_quality_observed if self._learner is not None else None
             ),
+            on_close=self._release_stream,
         )
+        self._own_stream(handle)
+        return handle
 
     async def _start_stream(  # noqa: PLR0913 - the call knobs, one keyword each
         self,
@@ -201,7 +208,7 @@ class AsyncLLMs:
             parallel_recovery=parallel_recovery,
             response_format=response_format,
             stream_selection_window=stream_selection_window,
-            _on_exhausted=partial(self._on_exhausted, ring=self._ring),
+            _on_exhausted=lambda exc: self._on_exhausted(exc, self._ring),
         )
 
     # ------------------------------------------------------------------

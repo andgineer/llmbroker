@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+from support import make_ring
 
 from llmbroker import chat
 from llmbroker.broker import learning as learning_module
@@ -26,8 +27,6 @@ from llmbroker.broker.router import Router
 from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import Call, CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
-
-from support import make_ring
 
 _PATCH = "llmbroker.broker.router.call_provider"
 _HANG_SEC = 30
@@ -76,7 +75,7 @@ async def _router(*names: str) -> tuple[Router, LLMPool, _RecordingStore]:
 def _provider(hangs: set[str]):
     """Answer at once, unless this model is in ``hangs`` — then never."""
 
-    async def fake(config, api_key, messages, tools, *, client=None, timeout=None, params=None):  # noqa: ARG001
+    async def fake(config, api_key, messages, tools, *, client=None, timeout=None, params=None):
         if config.name in hangs:
             await asyncio.sleep(_HANG_SEC)
         return f"{config.name} answered", None, None
@@ -212,7 +211,7 @@ def test_a_stale_miss_does_not_hide_a_fresh_smaller_one():
     derived = budget_bounds_from_calls(
         [fresh, stale], since=datetime.now(UTC) - timedelta(minutes=10)
     )
-    assert derived["a"][0] == 0.2  # noqa: PLR2004
+    assert derived["a"][0] == 0.2
 
 
 def test_a_rebuild_applies_the_bound_a_peer_recorded():
@@ -459,7 +458,7 @@ def test_a_lapsed_window_retires_the_bound_it_recorded():
 
             with pytest.raises(NoLLMAvailableError):
                 await _ask(router, wait=0.1)
-            assert pool._budget_bounds["a"].seconds < 0.2  # noqa: PLR2004
+            assert pool._budget_bounds["a"].seconds < 0.2
             _uncool(pool, "a")
 
             hangs.clear()

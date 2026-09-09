@@ -322,6 +322,8 @@ class Router:
         tried: frozenset[str],
         needed: int,
         eligible_names: frozenset[str] | None = None,
+        *,
+        still_needed: Callable[[], bool] | None = None,
     ) -> list[LLMConfig]:
         """Whatever is free this instant among the models this call has not tried. Never
         waits: the lanes still racing must not be stalled to widen the field."""
@@ -336,6 +338,7 @@ class Router:
             | (call.attempted if eligible_names is not None else set()),
             answer_deadline=call.answer_deadline,
             eligible_names=eligible_names,
+            still_needed=still_needed,
         )
         if eligible_names is not None:
             call.attempted.update(config.name for config in configs)

@@ -305,7 +305,7 @@ async def test_a_key_stored_while_the_pool_is_exhausted_answers_the_same_call(mo
         with pytest.raises(NoLLMAvailableError):
             await broker.ask("hi", wait=0)
 
-        secrets._mapping["K"] = "stored-now"  # noqa: SLF001 - test double, direct mutation
+        secrets._mapping["K"] = "stored-now"
         broker._next_exhaustion_rebuild = float("-inf")
 
         assert (await broker.ask("hi", wait=0)).text == "ok"

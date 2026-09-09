@@ -62,9 +62,8 @@ def test_threads_share_one_broker_and_parallel_1_serializes(tmp_path):
     watch = _OverlapWatch()
     broker = _broker(tmp_path, parallel=1)
     try:
-        with patch(_PATCH, new=watch):
-            with ThreadPoolExecutor(max_workers=_THREADS) as pool:
-                texts = list(pool.map(lambda i: broker.ask(f"q{i}").text, range(_THREADS)))
+        with patch(_PATCH, new=watch), ThreadPoolExecutor(max_workers=_THREADS) as pool:
+            texts = list(pool.map(lambda i: broker.ask(f"q{i}").text, range(_THREADS)))
         assert texts == ["ok"] * _THREADS
         assert watch.max_in_flight == 1
     finally:
@@ -77,9 +76,8 @@ def test_uncapped_model_actually_overlaps_across_threads(tmp_path):
     watch = _OverlapWatch()
     broker = _broker(tmp_path, parallel=None)
     try:
-        with patch(_PATCH, new=watch):
-            with ThreadPoolExecutor(max_workers=_THREADS) as pool:
-                list(pool.map(lambda i: broker.ask(f"q{i}").text, range(_THREADS)))
+        with patch(_PATCH, new=watch), ThreadPoolExecutor(max_workers=_THREADS) as pool:
+            list(pool.map(lambda i: broker.ask(f"q{i}").text, range(_THREADS)))
         assert watch.max_in_flight > 1
     finally:
         broker.close()

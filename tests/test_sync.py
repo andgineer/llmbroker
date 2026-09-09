@@ -12,12 +12,12 @@ import pytest
 from llmbroker.broker import presets
 from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.models import LifecyclePhase, LLMConfig
-from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.sqlite import Registry as SqliteRegistry
+from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
-from llmbroker.sync import Broker
 from llmbroker.standalone.store import InMemoryStore
+from llmbroker.sync import Broker
 
 
 def _registry(tmp_path, name="p1"):
@@ -82,41 +82,49 @@ def _secrets() -> DictSecrets:
 
 
 def test_broker_chat_happy_path(tmp_path):
-    with Broker(
-        registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore(), sync=None
-    ) as broker:
-        with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("sync-hello")):
-            result = broker.chat([{"role": "user", "content": "hi"}])
-            assert result.text == "sync-hello"
+    with (
+        Broker(
+            registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore(), sync=None
+        ) as broker,
+        patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("sync-hello")),
+    ):
+        result = broker.chat([{"role": "user", "content": "hi"}])
+        assert result.text == "sync-hello"
 
 
 def test_broker_ask_happy_path(tmp_path):
-    with Broker(
-        registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore(), sync=None
-    ) as broker:
-        with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("yes")):
-            result = broker.ask("question")
-            assert result.text == "yes"
+    with (
+        Broker(
+            registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore(), sync=None
+        ) as broker,
+        patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("yes")),
+    ):
+        result = broker.ask("question")
+        assert result.text == "yes"
 
 
 def test_broker_chat_500_wait0_raises_no_llm_available(tmp_path):
     """A generic HTTP error cools the slot and fails over instead of raising immediately;
     with wait=0 and no other LLM to fail over to, that surfaces as NoLLMAvailableError."""
-    with Broker(
-        registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore(), sync=None
-    ) as broker:
-        with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(500)):
-            with pytest.raises(NoLLMAvailableError):
-                broker.chat([{"role": "user", "content": "hi"}], wait=0)
+    with (
+        Broker(
+            registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore(), sync=None
+        ) as broker,
+        patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_error(500)),
+    ):
+        with pytest.raises(NoLLMAvailableError):
+            broker.chat([{"role": "user", "content": "hi"}], wait=0)
 
 
 def test_result_record_quality_does_not_raise(tmp_path):
-    with Broker(
-        registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore(), sync=None
-    ) as broker:
-        with patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")):
-            result = broker.chat([{"role": "user", "content": "x"}])
-            result.record_quality(1.0)
+    with (
+        Broker(
+            registry=_registry(tmp_path), secrets=_secrets(), store=InMemoryStore(), sync=None
+        ) as broker,
+        patch("llmbroker.chat.httpx.AsyncClient", return_value=_http_ok("hi")),
+    ):
+        result = broker.chat([{"role": "user", "content": "x"}])
+        result.record_quality(1.0)
 
 
 def test_result_exposes_rating_identity(tmp_path):

@@ -7,13 +7,13 @@ import pytest
 
 from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
-from llmbroker.broker.keyring import KeyRing
 from llmbroker.broker.catalog import Catalog
+from llmbroker.broker.keyring import KeyRing
 from llmbroker.broker.pool import LLMPool
 from llmbroker.exceptions import EmptyRegistryError
 from llmbroker.models import LLMConfig
-from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.sqlite import Registry as SqliteRegistry
+from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import InMemoryStore
 

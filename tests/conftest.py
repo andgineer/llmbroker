@@ -11,10 +11,10 @@ import asyncpg
 import hvac
 import pytest
 from motor.motor_asyncio import AsyncIOMotorClient
-from testcontainers.localstack import LocalStackContainer
-from testcontainers.mongodb import MongoDbContainer
-from testcontainers.postgres import PostgresContainer
-from testcontainers.vault import VaultContainer
+from testcontainers.community.localstack import LocalStackContainer
+from testcontainers.community.mongodb import MongoDbContainer
+from testcontainers.community.postgres import PostgresContainer
+from testcontainers.community.vault import VaultContainer
 
 from llmbroker.aws import Secrets as AwsSecrets
 from llmbroker.broker import presets
@@ -373,7 +373,7 @@ async def _stack_ctx(
         finally:
             async with pg_pool.acquire() as conn:
                 for table in _PG_TABLES:
-                    await conn.execute(f"DELETE FROM {table}")  # noqa: S608
+                    await conn.execute(f"DELETE FROM {table}")
 
     elif name == "all_mongodb":
         s = Stack(

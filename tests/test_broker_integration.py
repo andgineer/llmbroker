@@ -10,11 +10,10 @@ import httpx
 import pytest
 
 from llmbroker.exceptions import EmptyRegistryError, NoLLMAvailableError
-from llmbroker.models import CallStatus, LLMConfig, LifecyclePhase
+from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.protocols.registry import MutableRegistryProtocol
 from llmbroker.protocols.secrets import MutableSecretsProtocol
 from llmbroker.standalone.secrets import DictSecrets
-
 
 # ---------------------------------------------------------------------------
 # HTTP mock helpers

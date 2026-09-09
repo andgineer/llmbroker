@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from support import make_ring
 
 from llmbroker.broker.learning import Learner
 from llmbroker.broker.pool import LLMPool
@@ -22,8 +23,6 @@ from llmbroker.exceptions import (
 from llmbroker.models import LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
 from llmbroker.standalone.store import InMemoryStore
-
-from support import make_ring
 
 
 class _NoStore:
@@ -374,7 +373,7 @@ def test_400_fails_over_without_cooling_and_leaves_no_cooldown_on_the_row():
         assert pool.state("a").phase is LifecyclePhase.AVAILABLE  # never cooled
         row_a = next(c for c in store.calls if c.llm_name == "a")
         assert row_a.cooldown_until is None
-        assert row_a.http_status == 400  # noqa: PLR2004
+        assert row_a.http_status == 400
 
     asyncio.run(run())
 

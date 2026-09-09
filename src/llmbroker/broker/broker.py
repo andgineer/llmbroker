@@ -207,6 +207,8 @@ class AsyncBroker:
         self._last_underprov_alert: float = float("-inf")
         self._underprov_alert_interval: float = 60.0
         self._next_exhaustion_rebuild: float = float("-inf")
+        self._streams: set[StreamHandle] = set()
+        self._closing: asyncio.Task[None] | None = None
         self.llms = self._caller(self._shared_ring)
 
     def _caller(self, ring: KeyRing) -> AsyncLLMs:
@@ -219,7 +221,14 @@ class AsyncBroker:
             learner=self._learner,
             ensure_pool=self.ensure_pool,
             on_exhausted=self._on_exhausted,
+            own_stream=self._own_stream,
+            release_stream=self._streams.discard,
         )
+
+    def _own_stream(self, stream: StreamHandle) -> None:
+        if self._closing is not None:
+            raise RuntimeError("the broker is closed")
+        self._streams.add(stream)
 
     def for_scope(self, scope: str) -> AsyncLLMs:
         """A caller that pays with ``scope``\'s own keys, falling back to the shared
@@ -302,11 +311,10 @@ class AsyncBroker:
     # ------------------------------------------------------------------
 
     async def ensure_pool(self) -> None:
-        """Lazy idempotent initializer — provisions the pool exactly once, and
-        schedules the model list refresh when its interval has elapsed.
-
-        Raises if the registry is empty and nothing filled it — sync a model list in.
-        """
+        """Provision lazily and schedule a due model list refresh.
+        Raises if the broker is closed or its registry is empty and unfilled."""
+        if self._closing is not None:
+            raise RuntimeError("the broker is closed")
         if not self._provisioned:
             async with self._provision_lock:
                 if not self._provisioned:
@@ -331,6 +339,16 @@ class AsyncBroker:
         return await self._refresher.sync(source)
 
     async def aclose(self) -> None:
+        """Settle owned streams before closing the installation's shared resources."""
+        if self._closing is None:
+            self._closing = asyncio.create_task(self._close())
+        await asyncio.shield(self._closing)
+
+    async def _close(self) -> None:
+        results = await asyncio.gather(
+            *(stream.aclose() for stream in tuple(self._streams)),
+            return_exceptions=True,
+        )
         # Before the ports: a refresh in flight would otherwise write through a
         # registry whose driver is closing.
         await self._refresher.aclose()
@@ -338,6 +356,9 @@ class AsyncBroker:
         for port in (self._registry, self._secrets, self._store):
             if isinstance(port, AsyncResourceProtocol):
                 await port.aclose()
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
     async def __aenter__(self) -> "AsyncBroker":
         await self.ensure_pool()
@@ -407,7 +428,7 @@ class AsyncBroker:
         stream_selection_window: float = 1.0,
     ) -> StreamHandle:
         """Return an owned stream that can supply another complete pool answer.
-        Keep validation and ``another()`` inside ``aclosing``. Async-only."""
+        The broker closes it; use ``async with`` for earlier release. Async-only."""
         return self.llms.stream(
             prompt,
             operation=operation,

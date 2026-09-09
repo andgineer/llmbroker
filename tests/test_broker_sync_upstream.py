@@ -14,7 +14,7 @@ from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.merge import check_not_emptying, merge_upstream
 from llmbroker.broker.report import format_report
 from llmbroker.exceptions import SyncRefusedError
-from llmbroker.models import ModelList, LLMConfig
+from llmbroker.models import LLMConfig, ModelList
 from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.sqlite import Secrets as SqliteSecrets
 from llmbroker.standalone.registry import Registry as FileRegistry

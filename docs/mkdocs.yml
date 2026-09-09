@@ -10,10 +10,12 @@ edit_uri: edit/master/docs
 docs_dir: 'src/LANGUAGE'
 site_dir: 'SITE_DIR'
 
+theme:
+  language: LANGUAGE
+
 plugins:
   - awesome-pages
-  - search:
-      lang: LANGUAGE
+  - search
   - mkdocstrings:
         handlers:
           python:

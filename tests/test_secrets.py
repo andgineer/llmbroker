@@ -1,18 +1,19 @@
 """Tests for secrets batteries and the broker's private key resolution."""
 
 import asyncio
+import warnings
 
-import llmbroker
 import pytest
 
+import llmbroker
 from llmbroker.broker import presets
 from llmbroker.models import LLMConfig
-from llmbroker.protocols.secrets import MutableSecretsProtocol
+from llmbroker.protocols.secrets import EnumerableSecretsProtocol, MutableSecretsProtocol
 from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.sqlite import Secrets as SqliteSecrets
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets, Secrets, as_secrets
-from llmbroker.protocols.secrets import EnumerableSecretsProtocol
+from llmbroker.vault import Secrets as VaultSecrets
 
 
 def test_env_secrets_resolves(monkeypatch):
@@ -233,3 +234,19 @@ async def test_a_scoped_ref_survives_the_round_trip_both_ways(mutable_secrets):
 
     assert await mutable_secrets.resolve("alice/GEMINI_API_KEY") == "alice-key"
     assert "alice/GEMINI_API_KEY" in await mutable_secrets.refs("alice/")
+
+
+async def test_vault_deleted_secret_is_missing_without_deprecation(vault_url_and_token):
+    url, token = vault_url_and_token
+    secrets = VaultSecrets(url, token)
+    await secrets.set("DELETED", "value")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        assert await secrets.resolve("DELETED") == "value"
+        await asyncio.to_thread(
+            secrets._client.secrets.kv.v2.delete_latest_version_of_secret,
+            path="llmbroker/DELETED",
+            mount_point="secret",
+        )
+        with pytest.raises(KeyError, match="not found"):
+            await secrets.resolve("DELETED")

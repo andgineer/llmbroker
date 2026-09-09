@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from support import CLOCK_SLACK, make_ring
 
 from llmbroker import chat
 from llmbroker.broker.learning import Learner
@@ -17,8 +18,6 @@ from llmbroker.broker.router import Router
 from llmbroker.exceptions import NoLLMAvailableError, ProviderError
 from llmbroker.models import CallStatus, LifecyclePhase, LLMConfig
 from llmbroker.optimizer import Optimizer
-
-from support import CLOCK_SLACK, make_ring
 
 _PATCH = "llmbroker.broker.router.call_provider"
 
@@ -49,7 +48,7 @@ def _fake_provider(captured: list, *, raises=None, results=None):
     """Record the per-attempt timeout the router hands down; then answer or fail."""
     outcomes = list(results or [])
 
-    async def fake(config, api_key, messages, tools, *, client=None, timeout=None, params=None):  # noqa: ARG001
+    async def fake(config, api_key, messages, tools, *, client=None, timeout=None, params=None):
         captured.append(timeout)
         if outcomes:
             outcome = outcomes.pop(0)
@@ -231,9 +230,8 @@ def test_a_client_error_already_seen_outranks_the_expired_budget():
             response=httpx.Response(400, text="messages[0].role is invalid"),
         )
         provider = _fake_provider([], results=[client_error, httpx.ReadTimeout("hung")])
-        with patch(_PATCH, new=provider):
-            with pytest.raises(ProviderError) as exc_info:
-                await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=5.0)
+        with patch(_PATCH, new=provider), pytest.raises(ProviderError) as exc_info:
+            await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=5.0)
         assert exc_info.value.status == 400
         assert exc_info.value.detail == "messages[0].role is invalid"
 
@@ -274,9 +272,8 @@ def test_a_hung_provider_cannot_outlive_the_budget():
             await asyncio.sleep(30)
 
         started = time.monotonic()
-        with patch(_PATCH, new=hang):
-            with pytest.raises(NoLLMAvailableError) as exc_info:
-                await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=0.2)
+        with patch(_PATCH, new=hang), pytest.raises(NoLLMAvailableError) as exc_info:
+            await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=0.2)
         assert exc_info.value.reason == "timeout"
         assert time.monotonic() - started < 5.0
         assert pool._slots["p1"].in_flight == 0

@@ -73,7 +73,7 @@ async def test_a_rejection_clears_once_the_value_behind_it_changes():
     await ring.payable(["K"])
     ring.forget("K")
 
-    secrets._mapping["K"] = "fresh"  # noqa: SLF001 - test double, direct mutation
+    secrets._mapping["K"] = "fresh"
     await ring.refresh(None)
     assert await ring.resolve("K") == "fresh"
 

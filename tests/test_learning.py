@@ -4,7 +4,6 @@ ratings, and the one tail read a rebuild asks for (scores, budget bounds, metric
 import uuid
 from datetime import UTC, datetime, timedelta
 
-
 from llmbroker.broker.learning import (
     Learner,
     metrics_from_calls,

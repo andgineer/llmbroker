@@ -13,9 +13,9 @@ import pytest
 from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.catalog import Catalog
-from llmbroker.broker.model_list_file import render_model_list
 from llmbroker.broker.merge import merge_upstream
-from llmbroker.models import ModelList, LLMConfig
+from llmbroker.broker.model_list_file import render_model_list
+from llmbroker.models import LLMConfig, ModelList
 from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.standalone.registry import parse_model_list
 from llmbroker.standalone.secrets import DictSecrets

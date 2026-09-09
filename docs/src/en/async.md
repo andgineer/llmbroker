@@ -19,18 +19,19 @@ chunks as they arrive. Model selection and fallback behave as they do for a
 regular call:
 
 ```python
-async with contextlib.aclosing(
-    broker.stream("Write a haiku about brokers", operation="write")
-) as stream:
+async with llmbroker.AsyncBroker() as broker:
+    stream = broker.stream("Write a haiku about brokers", operation="write")
     async for delta in stream:
         print(delta, end="", flush=True)
 
-    print(stream.llm_name, stream.usage)   # model name and usage information
-    await stream.record_quality(0.9)       # rate the completed reply
+    print(stream.llm_name, stream.usage)  # model name and usage information
+    await stream.record_quality(0.9)  # rate the completed reply
 ```
 
 `stream(...)` returns an asynchronous iterator. After the reply is complete, its
-fields contain the model name and usage information.
+fields contain the model name and usage information. The broker owns its streams:
+leaving its context closes unfinished work and waits for journal writes before
+closing the HTTP client and storage. No separate stream context is required.
 
 Before the first text chunk arrives, the broker can try another model. This
 happens if the provider returns an error, rate-limits the request, or completes a
@@ -53,21 +54,19 @@ field contains the complete final reply. Replace all previously displayed text
 with that reply; chunks from different models are never combined.
 
 ```python
-async with contextlib.aclosing(
-    broker.stream("Write a haiku", fastest_of=2, stream_selection_window=1.0)
-) as stream:
-    parts = []
-    try:
-        async for delta in stream:
-            parts.append(delta)
-            show(delta)
-    except llmbroker.StreamReplacementError as exc:
-        replace_everything_with(exc.replacement.text)  # replace the provisional text
-    else:
-        text = "".join(parts)
+stream = broker.stream("Write a haiku", fastest_of=2, stream_selection_window=1.0)
+parts = []
+try:
+    async for delta in stream:
+        parts.append(delta)
+        show(delta)
+except llmbroker.StreamReplacementError as exc:
+    replace_everything_with(exc.replacement.text)  # replace the provisional text
+else:
+    text = "".join(parts)
 
-    print(stream.llm_name)             # model whose reply became the final result
-    await stream.record_quality(0.9)   # rate the final reply
+print(stream.llm_name)  # model whose reply became the final result
+await stream.record_quality(0.9)  # rate the final reply
 ```
 
 Rate a concurrent call through the `stream` object or `exc.replacement`. With
@@ -101,26 +100,24 @@ returns the first chunk, and `stream_selection_window` has no effect.
 
 ### Requesting another complete answer {#another-answer}
 
-Keep validation inside `aclosing` and call `another()` when the application rejects
+Call `another()` while the broker is open when the application rejects
 a complete answer. The broker first uses retained lanes and then tries pool models
 that this routed request has not attempted:
 
 ```python
-async with contextlib.aclosing(
-    broker.stream(prompt, fastest_of=3, wait=25)
-) as stream:
-    try:
-        text = "".join([delta async for delta in stream])
-        rated = stream
-    except llmbroker.StreamReplacementError as exc:
-        text, rated = exc.replacement.text, exc.replacement
+stream = broker.stream(prompt, fastest_of=3, wait=25)
+try:
+    text = "".join([delta async for delta in stream])
+    rated = stream
+except llmbroker.StreamReplacementError as exc:
+    text, rated = exc.replacement.text, exc.replacement
 
-    while not acceptable(text):
-        await rated.record_quality(0.0)
-        answer = await stream.another()
-        if answer is None:
-            break
-        text, rated = answer.text, answer
+while not acceptable(text):
+    await rated.record_quality(0.0)
+    answer = await stream.another()
+    if answer is None:
+        break
+    text, rated = answer.text, answer
 ```
 
 Each returned result has its own `llm_name`, `call_id`, `usage`, and rating target.
@@ -139,14 +136,12 @@ capacity releases.
 chunk. It counts only time spent waiting for provider data:
 
 ```python
-async with contextlib.aclosing(
-    broker.stream("Write a long answer", wait=20.0)
-) as stream:
-    try:
-        async for delta in stream:
-            print(delta, end="", flush=True)
-    except llmbroker.LLMTimeoutError as exc:
-        print(f"\nresponse timed out: {exc}")
+stream = broker.stream("Write a long answer", wait=20.0)
+try:
+    async for delta in stream:
+        print(delta, end="", flush=True)
+except llmbroker.LLMTimeoutError as exc:
+    print(f"\nresponse timed out: {exc}")
 ```
 
 Time spent by the application processing a chunk does not count. Timing pauses
@@ -175,28 +170,22 @@ still try another model. `usage` is populated after the reply is complete.
 A rating can also be recorded only after the reply is complete and the call is in
 the journal. Calling `record_quality` earlier raises `ValueError`.
 
-You can stop reading at any point, but `break` does not close the iterator or
-release capacity for another request. Without explicit closure, this happens only
-when Python collects the object. Call `aclose()` yourself. Closing also completes
-the call and allows you to rate the partial reply:
+You can stop reading at any point, but `break` does not close the stream. The
+broker closes it on exit. In a long-lived broker, use the stream's own context to
+release its resources as soon as this request is finished, including on errors.
+Closing also allows you to rate a partial reply while the broker is still open:
 
 ```python
-stream = broker.stream("Write a haiku about brokers")
-async for delta in stream:
-    if looks_wrong(delta):
-        break
+async with broker.stream("Write a haiku about brokers") as stream:
+    async for delta in stream:
+        if looks_wrong(delta):
+            break
 
-await stream.aclose()
 await stream.record_quality(0.0)
 ```
 
-If no rating is needed, use a context manager to ensure closure:
-
-```python
-async with contextlib.aclosing(broker.stream("...")) as stream:
-    async for delta in stream:
-        ...
-```
+When using this optional context, keep validation and `another()` inside it.
+`await stream.aclose()` performs the same early release if needed without a context.
 
 Streaming is also available for one specific model through `direct()`, without
 pool selection or fallback. See [Direct model calls](direct.md#streaming).

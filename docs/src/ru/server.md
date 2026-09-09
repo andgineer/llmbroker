@@ -8,10 +8,10 @@
 Первый аргумент брокера задаёт хранилище для списка моделей, ключей и журнала:
 
 ```python
-llmbroker.Broker()                          # локальный каталог и ключи из окружения
-llmbroker.Broker("broker.db")               # SQLite
-llmbroker.Broker("postgresql://host/db")    # PostgreSQL
-llmbroker.Broker("mongodb://host/db")       # MongoDB
+llmbroker.Broker()  # локальный каталог и ключи из окружения
+llmbroker.Broker("broker.db")  # SQLite
+llmbroker.Broker("postgresql://host/db")  # PostgreSQL
+llmbroker.Broker("mongodb://host/db")  # MongoDB
 ```
 
 Для каждой базы установите соответствующие дополнительные зависимости. См.
@@ -24,7 +24,7 @@ llmbroker.Broker("mongodb://host/db")       # MongoDB
 протокол реестра, и явно укажите режим обновления:
 
 ```python
-broker = llmbroker.Broker(registry=MyRegistry(), sync=None)        # только ваши записи
+broker = llmbroker.Broker(registry=MyRegistry(), sync=None)  # только ваши записи
 broker = llmbroker.Broker(registry=MyRegistry(), sync="freetier")  # ваши плюс наши
 ```
 
@@ -43,8 +43,8 @@ from llmbroker.postgres import Secrets, Store
 
 broker = llmbroker.AsyncBroker(
     registry=MyRegistry(),
-    secrets=Secrets(pool),            # ключи в базе данных
-    store=Store(pool),                # журнал в той же базе
+    secrets=Secrets(pool),  # ключи в базе данных
+    store=Store(pool),  # журнал в той же базе
     sync=None,
 )
 ```
@@ -88,7 +88,7 @@ await registry.mirror([*await registry.load(), mine])
 настраивались в одном месте:
 
 ```python
-broker = build_broker()                   # функция создания брокера в приложении
+broker = build_broker()  # функция создания брокера в приложении
 try:
     print(await broker.sync("freetier"))  # имя поддерживаемого набора
 finally:
@@ -122,14 +122,14 @@ finally:
 развёртывания. Это может требоваться из-за сетевой политики или правил аудита.
 
 ```python
-llmbroker.AsyncBroker("postgresql://host/db", sync_interval=None)   # в функции создания брокера
+llmbroker.AsyncBroker("postgresql://host/db", sync_interval=None)  # в функции создания брокера
 ```
 
 ```python
 broker = build_broker()
 try:
-    report = await broker.sync()      # без аргумента: то, чему следует эта установка
-    if report is not None:            # при обновлении только платного каталога отчёта нет
+    report = await broker.sync()  # без аргумента: то, чему следует эта установка
+    if report is not None:  # при обновлении только платного каталога отчёта нет
         print(llmbroker.format_report(report))
 finally:
     await broker.aclose()
@@ -250,7 +250,7 @@ sqlite3 broker.db 'PRAGMA journal_mode=WAL'
 try:
     models = broker.snapshot()
 except llmbroker.EmptyRegistryError:
-    models = {}   # показать пустое состояние вместо ошибки HTTP 500
+    models = {}  # показать пустое состояние вместо ошибки HTTP 500
 ```
 
 Не скрывайте `SchemaVersionError`: сообщение содержит инструкции для
@@ -294,7 +294,7 @@ broker = llmbroker.AsyncBroker(
     registry=Registry(pool),
     secrets=Secrets(pool),
     store=Store(pool, retention=timedelta(days=365)),
-    sync="freetier",                  # явно выбрать набор для обновления реестра
+    sync="freetier",  # явно выбрать набор для обновления реестра
 )
 ```
 
@@ -337,6 +337,7 @@ async def lifespan(app: FastAPI):
 ```python
 def llms(request: Request) -> llmbroker.AsyncLLMs:
     return request.app.state.broker.llms
+
 
 @app.post("/ask")
 async def ask(prompt: str, llms: llmbroker.AsyncLLMs = Depends(llms)):

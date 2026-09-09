@@ -1,8 +1,8 @@
 """Tests for onboarding DTOs: KeyInfo, SyncReport."""
 
-import llmbroker
 import pytest
 
+import llmbroker
 from llmbroker.models import KeyInfo, PendingKey, SyncReport
 
 

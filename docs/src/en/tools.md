@@ -8,18 +8,21 @@ final reply with no further tool calls.
 def get_weather(city: str) -> str:
     return f"It is 20°C in {city}"
 
-tools = [{
-    "type": "function",
-    "function": {
-        "name": "get_weather",
-        "description": "Current weather in a city",
-        "parameters": {
-            "type": "object",
-            "properties": {"city": {"type": "string"}},
-            "required": ["city"],
+
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Current weather in a city",
+            "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            },
         },
-    },
-}]
+    }
+]
 
 broker = llmbroker.Broker()
 reply = llmbroker.run_tool_loop(

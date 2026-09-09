@@ -43,7 +43,7 @@ from llmbroker import LLMConfig
 gateway = LLMConfig(
     name="frontier",
     model="claude-opus-4-8",
-    base_url="https://api.anthropic.com/v1",   # any OpenAI-compatible endpoint
+    base_url="https://api.anthropic.com/v1",  # any OpenAI-compatible endpoint
     api_key_ref="ANTHROPIC_API_KEY",
 )
 broker = llmbroker.Broker(direct=[gateway])

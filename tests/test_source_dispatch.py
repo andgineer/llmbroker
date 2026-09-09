@@ -3,18 +3,18 @@
 import asyncio
 import sys
 
-import llmbroker
 import pytest
 
-from llmbroker.backends.ports import DriverStore, DriverRegistry, DriverSecrets
+import llmbroker
+from llmbroker.backends.ports import DriverRegistry, DriverSecrets, DriverStore
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.source import resolve_source
 from llmbroker.models import LLMConfig
 from llmbroker.mongodb.driver import MongoDriver
 from llmbroker.postgres.driver import PostgresDriver
-from llmbroker.sqlite.driver import SqliteDriver
 from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.sqlite import Secrets as SqliteSecrets
+from llmbroker.sqlite.driver import SqliteDriver
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.sync import Broker
@@ -46,7 +46,7 @@ def test_sqlite_source_dot_sqlite_suffix_and_url_form_both_dispatch(tmp_path):
     for path in (str(tmp_path / "a.sqlite"), f"sqlite://{tmp_path / 'b.db'}"):
         registry, _secrets, _store = resolve_source(path)
         assert isinstance(registry, DriverRegistry)
-        assert isinstance(registry._driver, SqliteDriver)  # noqa: SLF001
+        assert isinstance(registry._driver, SqliteDriver)
 
 
 def test_a_config_file_path_is_refused_and_names_the_forms_that_work(tmp_path):
@@ -113,7 +113,7 @@ def test_postgres_source_dispatches_to_postgres_ports_lazily():
     assert isinstance(registry, DriverRegistry)
     assert isinstance(secrets, DriverSecrets)
     assert isinstance(store, DriverStore)
-    assert isinstance(registry._driver, PostgresDriver)  # noqa: SLF001
+    assert isinstance(registry._driver, PostgresDriver)
 
 
 def test_mongodb_source_dispatches_to_mongo_ports_lazily():
@@ -122,7 +122,7 @@ def test_mongodb_source_dispatches_to_mongo_ports_lazily():
     assert isinstance(registry, DriverRegistry)
     assert isinstance(secrets, DriverSecrets)
     assert isinstance(store, DriverStore)
-    assert isinstance(registry._driver, MongoDriver)  # noqa: SLF001
+    assert isinstance(registry._driver, MongoDriver)
 
 
 def test_postgres_source_missing_extra_raises_actionable_error(monkeypatch):
