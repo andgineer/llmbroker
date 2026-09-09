@@ -182,15 +182,11 @@ as they arrive, but they are provisional and the first complete answer settles t
 call however it arrived (invariant 18); *Racing a stream* below is where that lives
 ([`decisions.md`](../decisions.md#parallelism-is-explicit-or-recovery-owned)).
 
-**Every other lane is then cancelled at that same instant and journaled as superseded,
-which teaches nothing.** It never cools a model, never advances or resets a failure
-streak, never raises or clears a budget bound, and never enters a quality window: losing
-a race proves only that a sibling was quicker by that instant. It is still an
-observation a host can read, naming the model, the operation, the trace and the
-elapsed time, and carrying usage where the provider reported any before the
-cancellation — unless the lane had not reached its provider yet, and then there is no
-call to journal at all: the slot it never used goes back (invariant 19) and the pool is
-told nothing, because nothing was asked of anyone.
+**An atomic call cancels every other lane when its answer completes. A streamed
+handle retains its open alternatives until the handle closes.** Cancellation only
+because a sibling answered settles neutrally as superseded and teaches nothing. A
+lane that had not reached its provider writes no row; its unused slot simply goes
+back (invariant 19).
 
 **Supersession is never applied after the fact**, so a lane that had already settled
 keeps the row it settled on: a real failure keeps everything the pool learned from it,
@@ -200,14 +196,11 @@ driver looks at them only once one of them has. Nothing on a row says which of t
 the call returned, which is why a race is rated through what it hands back rather than
 by trace ([`selection.md`](selection.md)).
 
-**A stream's settlement never stands between a delta and the consumer.** A lane still
-waiting on its provider is cancelled at once; one that has already left it — by a
-classified failure, by an answer, or by an unexpected exception — is settling itself and
-is waited for instead, because a verdict applied in memory whose row never lands is
-evidence silently lost (invariant 8), and a release cut in half loses the slot
-(invariant 19). Those rows and slots are handed back beside the deltas the consumer is
-already reading. A completion has no such *beside*: it reaches the caller when the call
-ends, and a call that raced ends only once every attempt it made is journaled.
+**A stream's settlement never stands between a delta and the consumer.** Each lane
+that leaves its provider settles its own row and slot. The handle waits for that
+settlement before returning that lane as a complete answer, while other lanes may
+continue beside it. Closing waits for all settlement already under way; a release or
+journal row is never cut in half (invariants 8 and 19).
 
 **Failures inside a race are disposed exactly as they are alone**, through the
 classification above, and the lane they empty is refilled from a model this call
@@ -306,34 +299,41 @@ complete answer replaces the partial text. Only where no lane can complete is a 
 failure raised — the one belonging to the text the caller saw, and failing that a bug,
 which no change of candidate can route around.
 
-**Consumer speed decides nothing.** Every lane is drained to its end independently of
-how fast the reader pulls, so a provider may finish while the consumer is still
-holding an earlier delta and its completion time still counts — and the losers come off
-their providers at that same instant, not when the reader next pulls: a slow consumer
-may not be charged for provider work the race has already decided against. Once the
-winner has finished, replaying what is already in memory is under no deadline at all.
-The price is memory: each live lane's answer is held until the race settles.
+**Consumer speed decides nothing in an explicit race.** Every lane is drained to its
+end independently of how fast the reader pulls, so provider completion order is
+preserved while the reader holds an earlier delta. An ordinary stream remains
+consumer-driven, and its consumer pauses extend the shared deadline for all of that
+handle's lanes. Once an answer finishes, it remains readable from memory after the
+deadline.
 
-**What the journal records.** Exactly one lane writes an answered row — the winner is
-the only one still on a provider once it has completed. A lane cancelled by that
-completion is written as superseded, even where some of its deltas reached the caller,
-and one that had not reached its provider yet writes nothing; a lane that reached a real
-failure keeps that row and everything the pool learned from it. Only the authoritative
-call is nameable and rateable: while provisional output arrives the handle names the
-lane producing it but stays unrateable, and a replacement moves the handle to the
-winner before it is raised. A host that stops reading a race keeps the abandonment
-contract above — the lane it was reading is the call it chose to stop, so that lane
-is answered and rateable, and the hidden ones are superseded. Where a lane had
-already completed, that answer is the call whichever way the reader went: the handle
-names the winner, and the lane being read is superseded like any other loser.
+**What the journal records.** Every lane that completes keeps its answered row, and
+every real failure keeps its own classification and learning. The initial handle names
+and rates only its authoritative answer; each additional complete result has its own
+immutable identity, usage and rating callback. Closing settles unfinished hidden lanes
+as superseded. Where no answer completed, the visible lane keeps the existing
+abandonment contract and settles as the answer the host chose to stop.
 
-**The slot goes back when the iterator is closed, and closing it is the
-consumer's move.** An async generator has no other signal: the broker cannot
-tell "paused between deltas" from "never coming back", and the provider
-connection is still open either way, so holding the slot until close is correct
-rather than conservative. Python closes the iterator for the ordinary shapes —
-`break`, an exception through the loop, a cancelled task — because the last
-reference drops there. A consumer that keeps the iterator in a variable and
-walks away holds the slot until the event loop finalizes it, so a long-lived
-host that abandons streams that way must close them itself. This is the standard
-async-generator ownership contract, not a broker rule.
+### Continuing after a complete answer
+
+The stream handle can return another complete answer from the same routed request.
+It first returns completed retained lanes in provider completion order, then waits for
+the remaining lanes, and only an explicit continuation request may open an untried
+candidate. The initial answer is already consumed and is never returned again.
+
+The candidate set and attempted names belong to the whole handle. A model is tried at
+most once, and a later pool refresh cannot admit an endless sequence of new names. The
+one pre-output exhaustion refresh may extend the captured set; continuation itself
+does not refresh it. Expected exhaustion and expiry return `None` repeatedly, while a
+client request error or unexpected fault keeps its existing typed error contract.
+
+A positive `wait` is one deadline for initial routing, host validation and every
+continuation. After the first complete answer it runs continuously. Completed buffered
+answers remain readable after expiry, but no new provider work starts then. The
+existing meanings of an unset, zero or negative `wait` remain unchanged.
+
+**The slot goes back when the handle is closed, and closing it is the consumer's
+move.** Normal iteration and a replacement finish only the initial answer; they leave
+retained alternatives owned by the handle. Explicit close cancels unfinished work,
+waits for every row and release already owed, and is idempotent. Closing before the
+first pull starts no request. Long-lived hosts use `aclosing` around validation and
+continuation so every exit supplies this lifetime boundary.

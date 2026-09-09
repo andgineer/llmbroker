@@ -114,7 +114,8 @@ def _stream(router: Router, receipt: CallReceipt | None = None, **kwargs):
 
 
 async def _drain(router: Router, **kwargs) -> list[str]:
-    return [delta async for delta in _stream(router, **kwargs)]
+    async with aclosing(_stream(router, **kwargs)) as stream:
+        return [delta async for delta in stream]
 
 
 def test_public_routed_surfaces_expose_parallel_options_and_direct_does_not():
@@ -761,6 +762,13 @@ def test_the_first_delta_does_not_wait_for_a_losing_lane_journal_write():
     async def run():
         never = asyncio.Event()
         both_open = asyncio.Event()
+        winner_written = asyncio.Event()
+
+        class _WatchingStore(_GatedStore):
+            async def record(self, call):
+                await super().record(call)
+                if call.status is CallStatus.OK:
+                    winner_written.set()
 
         async def loser_body():
             await never.wait()
@@ -770,12 +778,13 @@ def test_the_first_delta_does_not_wait_for_a_losing_lane_journal_write():
             await both_open.wait()
             yield _sse("a-first", "a-rest")
 
-        store = _GatedStore()
+        store = _WatchingStore()
         router = Router(await _pool("a", "b"), store)
         _mount(router, _paired_handler({"a": winner_body, "b": loser_body}, both_open))
         seen: list[str] = []
         async with aclosing(_stream(router, fastest_of=2, parallel_recovery=False)) as deltas:
             seen.append(await asyncio.wait_for(anext(deltas), timeout=1.0))
+            await asyncio.wait_for(winner_written.wait(), timeout=1.0)
             written_by_then = list(store.calls)
             store.release.set()
             async for delta in deltas:
@@ -1194,10 +1203,10 @@ def test_a_complete_reserve_inside_the_window_is_replayed_without_replacement():
         router = Router(await _pool("a", "b"), store)
         _mount(router, _race_handler({"a": _silent(never), "b": reserve}))
         receipt = CallReceipt()
-        deltas = [
-            delta
-            async for delta in _stream(router, receipt, fastest_of=2, stream_selection_window=5.0)
-        ]
+        async with aclosing(
+            _stream(router, receipt, fastest_of=2, stream_selection_window=5.0),
+        ) as stream:
+            deltas = [delta async for delta in stream]
         return deltas, receipt, store
 
     deltas, receipt, store = asyncio.run(run())
@@ -1514,7 +1523,8 @@ def test_a_one_model_pool_runs_one_lane_under_an_explicit_race():
         router = Router(await _pool("a"), store)
         _mount(router, handler)
         receipt = CallReceipt()
-        deltas = [delta async for delta in _stream(router, receipt, fastest_of=2)]
+        async with aclosing(_stream(router, receipt, fastest_of=2)) as stream:
+            deltas = [delta async for delta in stream]
         return deltas, receipt, store
 
     deltas, receipt, store = asyncio.run(run())
@@ -1737,12 +1747,12 @@ def test_a_bug_in_a_hidden_lane_leaves_the_lane_being_read_alone():
     assert [pool._slots[name].in_flight for name in ("a", "b")] == [0, 0]  # noqa: SLF001
 
 
-def test_a_losing_lane_leaves_its_provider_before_the_winners_row_lands():
-    """A complete answer retires its siblings the instant it exists, not once its row has
-    landed: a slow store may be paid for in neither the caller's latency nor quota."""
+def test_a_losing_lane_stays_on_its_provider_until_the_handle_closes():
+    """A complete answer retains its siblings through settlement and iteration."""
 
     async def run():
         held = asyncio.Event()
+        winner_settling = asyncio.Event()
         both_open = asyncio.Event()
         loser_cancelled = asyncio.Event()
         never = asyncio.Event()
@@ -1750,6 +1760,7 @@ def test_a_losing_lane_leaves_its_provider_before_the_winners_row_lands():
         class _HeldAnswerRow(_RecordingStore):
             async def record(self, call):
                 if call.status is CallStatus.OK:
+                    winner_settling.set()
                     await held.wait()
                 await super().record(call)
 
@@ -1769,18 +1780,20 @@ def test_a_losing_lane_leaves_its_provider_before_the_winners_row_lands():
         _mount(router, _paired_handler({"a": winner_body, "b": loser_body}, both_open))
         seen: list[str] = []
         async with aclosing(_stream(router, fastest_of=2, parallel_recovery=False)) as deltas:
-            seen.append(await asyncio.wait_for(anext(deltas), timeout=1.0))
-            await asyncio.wait_for(loser_cancelled.wait(), timeout=1.0)
+            pull = asyncio.create_task(anext(deltas))
+            await asyncio.wait_for(winner_settling.wait(), timeout=1.0)
+            assert not loser_cancelled.is_set()
             answered_by_then = [row for row in store.calls if row.status is CallStatus.OK]
             held.set()
+            seen.append(await asyncio.wait_for(pull, timeout=1.0))
             async for delta in deltas:
                 seen.append(delta)
+            assert not loser_cancelled.is_set()
+        await asyncio.wait_for(loser_cancelled.wait(), timeout=1.0)
         return seen, answered_by_then, store.calls
 
     seen, answered_by_then, calls = asyncio.run(run())
     assert seen == ["a-answer"]
-    # The loser was off its provider and the delta was with the caller while the winner's
-    # own row was still in the store.
     assert answered_by_then == []
     assert {row.llm_name: row.status for row in calls} == {
         "a": CallStatus.OK,
@@ -1812,20 +1825,21 @@ def test_a_lane_cancelled_before_its_attempt_began_gives_its_slot_back():
     assert pool._slots["a"].in_flight == 0  # noqa: SLF001
 
 
-def test_a_losing_lane_is_retired_while_the_reader_holds_a_delta():
-    """Retirement is a lane reporting, never the caller reading: the driver is suspended
-    on a yield between deltas, and a paused reader may not keep a loser on its provider."""
+def test_a_losing_lane_is_retained_while_the_reader_holds_a_delta():
+    """A paused reader retains the reserve until the shared handle closes."""
 
     async def run():
         held = asyncio.Event()
         both_open = asyncio.Event()
         finish = asyncio.Event()
+        winner_settling = asyncio.Event()
         never = asyncio.Event()
         loser_cancelled = asyncio.Event()
 
         class _HeldAnswerRow(_RecordingStore):
             async def record(self, call):
                 if call.status is CallStatus.OK:
+                    winner_settling.set()
                     await held.wait()
                 await super().record(call)
 
@@ -1851,11 +1865,14 @@ def test_a_losing_lane_is_retired_while_the_reader_holds_a_delta():
             seen.append(await asyncio.wait_for(anext(deltas), timeout=2.0))
             # Nothing pulls the driver on from here: the reader is holding that delta.
             finish.set()
-            await asyncio.wait_for(loser_cancelled.wait(), timeout=2.0)
+            await asyncio.wait_for(winner_settling.wait(), timeout=2.0)
+            assert not loser_cancelled.is_set()
             answered_by_then = [row for row in store.calls if row.status is CallStatus.OK]
             held.set()
             async for delta in deltas:
                 seen.append(delta)
+            assert not loser_cancelled.is_set()
+        await asyncio.wait_for(loser_cancelled.wait(), timeout=2.0)
         return seen, answered_by_then, store.calls
 
     seen, answered_by_then, calls = asyncio.run(run())

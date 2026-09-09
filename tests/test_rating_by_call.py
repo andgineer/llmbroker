@@ -1,23 +1,111 @@
 """The delayed rating entry point: a rating names the call it rates, by the call's
 own id or by the trace the request was made under."""
 
+import asyncio
+from contextlib import aclosing
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import aiosqlite
+import httpx
 import pytest
 
 from llmbroker.broker import llms as llms_module
 from llmbroker.broker.broker import AsyncBroker
+from llmbroker.broker.pool import LLMPool
+from llmbroker.broker.result import CallReceipt, StreamHandle
+from llmbroker.broker.router import Router
 from llmbroker.exceptions import UnknownCallError
-from llmbroker.models import Call, CallStatus
+from llmbroker.models import Call, CallStatus, LLMConfig
 from llmbroker.optimizer import Optimizer
 from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import InMemoryStore
 
+from support import make_ring
+
 _PATCH = "llmbroker.broker.router.call_provider"
+
+
+def test_continuation_results_rate_distinct_answered_rows_without_reads():
+    class _Store:
+        def __init__(self) -> None:
+            self.calls = []
+            self.ratings = []
+
+        async def record(self, call) -> None:
+            self.calls.append(call)
+
+        async def record_quality(self, call_id, score, *, scope=None) -> None:
+            self.ratings.append((call_id, score, scope))
+
+    def response(name: str) -> bytes:
+        return (
+            b'data: {"choices": [{"delta": {"content": "'
+            + name.encode()
+            + b'"}}]}\n\ndata: [DONE]\n\n'
+        )
+
+    async def run():
+        pool = LLMPool()
+        for order, name in enumerate(("a", "b")):
+            await pool.add(
+                LLMConfig(
+                    name=name,
+                    base_url=f"https://{name}/v1",
+                    model="m",
+                    api_key_ref="K",
+                ),
+                order,
+            )
+        store = _Store()
+        router = Router(pool, store)
+        router._http_client = httpx.AsyncClient(  # noqa: SLF001
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    content=response(request.url.host or ""),
+                    headers={"content-type": "text/event-stream"},
+                ),
+            ),
+        )
+        receipt = CallReceipt()
+        routed = router.stream(
+            make_ring({"alice/K": "secret"}, scope="alice"),
+            [{"role": "user", "content": "hi"}],
+            receipt,
+            operation="summarize",
+            fastest_of=2,
+        )
+
+        async def start():
+            return routed
+
+        stream = StreamHandle(
+            start,
+            receipt,
+            operation="summarize",
+            store=store,
+            scope="alice",
+            observe_quality=None,
+        )
+        async with aclosing(stream):
+            assert "".join([delta async for delta in stream]) == "a"
+            initial_id = receipt.call_id
+            second = await stream.another()
+            await second.record_quality(0.0)
+            await stream.record_quality(1.0)
+            assert receipt.call_id == initial_id
+        return store, initial_id, second
+
+    store, initial_id, second = asyncio.run(run())
+    assert initial_id != second.call_id
+    assert store.ratings == [(second.call_id, 0.0, "alice"), (initial_id, 1.0, "alice")]
+    assert {call.id for call in store.calls if call.status is CallStatus.OK} == {
+        initial_id,
+        second.call_id,
+    }
 
 
 def _registry(tmp_path):

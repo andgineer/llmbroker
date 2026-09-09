@@ -6,6 +6,8 @@ nothing is retried once output has reached the caller.
 """
 
 import asyncio
+from contextlib import aclosing
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -78,7 +80,84 @@ def _stream(router: Router, receipt: CallReceipt | None = None, **kwargs):
 
 
 async def _drain(router: Router, **kwargs) -> list[str]:
-    return [d async for d in _stream(router, **kwargs)]
+    async with aclosing(_stream(router, **kwargs)) as stream:
+        return [d async for d in stream]
+
+
+def test_validation_time_spends_the_shared_continuation_budget():
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.host or "")
+        return httpx.Response(
+            200,
+            content=_delta(request.url.host or "") + _DONE,
+            headers=_SSE,
+        )
+
+    async def run():
+        router, _, _ = await _router("a", "b")
+        _mount(router, handler)
+        stream = _stream(router, wait=0.1)
+        async with aclosing(stream):
+            assert "".join([delta async for delta in stream]) == "a"
+            await asyncio.sleep(0.11)
+            return await stream.another()
+
+    assert asyncio.run(run()) is None
+    assert requested == ["a"]
+
+
+def test_a_buffered_answer_survives_shared_deadline_expiry():
+    async def run():
+        router, _, _ = await _router("a", "b")
+        _mount(
+            router,
+            lambda request: httpx.Response(
+                200,
+                content=_delta(request.url.host or "") + _DONE,
+                headers=_SSE,
+            ),
+        )
+        stream = _stream(router, fastest_of=2, wait=0.1)
+        async with aclosing(stream):
+            first = "".join([delta async for delta in stream])
+            await asyncio.sleep(0.11)
+            second = await stream.another()
+            return first, second.text
+
+    assert asyncio.run(run()) == ("a", "b")
+
+
+def test_an_ordinary_consumer_pause_extends_the_deadline_for_a_reserve():
+    async def run():
+        b_open = asyncio.Event()
+
+        async def recovery():
+            await b_open.wait()
+            await asyncio.sleep(0.01)
+            yield _delta("a")
+            await asyncio.sleep(0.1)
+            yield _DONE
+
+        async def ordinary():
+            b_open.set()
+            yield _delta("b")
+            yield _DONE
+
+        router, pool, _ = await _router("a", "b")
+        await pool.cool_down(pool.config("a"), 60)
+        pool._slots["a"].cooldown_until = datetime.now(UTC) - timedelta(seconds=1)  # noqa: SLF001
+        _mount(router, _lanes({"a": recovery, "b": ordinary}))
+        stream = _stream(router, wait=0.08)
+        async with aclosing(stream):
+            assert await anext(stream) == "b"
+            await asyncio.sleep(0.12)
+            with pytest.raises(StopAsyncIteration):
+                await anext(stream)
+            return await stream.another()
+
+    assert asyncio.run(run()).text == "a"
 
 
 async def _dribbles():

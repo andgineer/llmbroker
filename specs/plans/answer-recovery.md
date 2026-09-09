@@ -1,6 +1,7 @@
 # Plan — another complete answer from the same pool call
 
-**Status: source-bound on `b912317d1`; not implemented.** Requested by echo-words on 2026-09-08
+**Status: implemented from source binding `b912317d1` on 2026-09-09.** Requested by
+echo-words on 2026-09-08
 for part D of its
 [`answer-recovery.md`](../../../echo-words/spec/plan/answer-recovery.md#d-another-the-pools-next-answer).
 The public shape comes from that agreed design; the implementation binding below
@@ -301,3 +302,39 @@ For implementation, activate the repository environment before each gate and run
 `invoke pre`, then the full `python -m pytest`, with zero failures, errors or
 skips. Keep the plan and append the implementation handover as required by
 `CLAUDE.md`; no version bump, commit or publication is part of creating this plan.
+
+## Handover
+
+Implemented the streamed continuation contract. `StreamHandle` now owns one lazy
+routed stream, returns itself as its iterator, serializes pulls and continuation,
+and exposes idempotent `aclose()` plus `another()`. The routed owner retains open
+lanes after the initial complete answer, returns additional results in provider
+completion order, refills only while a continuation needs an answer, and keeps
+the initial receipt attached to the initial authoritative answer.
+
+The stream owner carries one attempted-name set, a membership snapshot taken
+after lazy provisioning, and the original acquisition and answer deadlines.
+Pool acquisition and opportunistic refill accept an internal eligible-name
+filter. Ordinary consumer pauses extend the shared stream deadline; explicit
+races continue draining against their original deadline. Buffered completions
+survive expiry, while stable exhaustion returns `None` without later work.
+
+The implementation was split so routing did not grow into one oversized module:
+`router.py` keeps orchestration and settlement services, `route_state.py` holds
+shared call state, `verdict.py` owns failure classification, `streaming.py` owns
+provider-facing stream attempts and lane state, and `stream_owner.py` owns the
+public stream lifetime. Continuation-specific acceptance tests were consolidated
+in `tests/test_answer_recovery.py`; existing selection, budget, pool, lifecycle,
+and rating suites retain the cases that belong to their established contracts.
+
+Reference rules, the required decision entry, English and Russian async usage,
+and public stream docstrings were updated. The documentation demonstrates both
+normal iteration and `StreamReplacementError`, validation within `aclosing`, and
+separate rating of every returned result.
+
+No live-provider measurement was run. The optional load-harness comparison and
+echo-words payload acceptance remain downstream work, as specified. No version
+bump, commit, or publication was performed.
+
+Final gates on 2026-09-09: `invoke pre` passed; `python -m pytest` passed with
+1581 tests, zero failures, errors, or skips.

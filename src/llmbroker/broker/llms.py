@@ -2,9 +2,9 @@
 journal rows carry and the keys it may pay with. Built by the broker only."""
 
 import logging
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
-from contextlib import aclosing
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 import httpx
 
@@ -13,7 +13,7 @@ from llmbroker.broker.keyring import KeyRing
 from llmbroker.broker.learning import Learner
 from llmbroker.broker.pool_view import PoolView
 from llmbroker.broker.result import AsyncLLM, AsyncResult, CallReceipt, StreamHandle
-from llmbroker.broker.router import Router
+from llmbroker.broker.router import Router, _RoutedStream
 from llmbroker.broker.stats import stats_from_calls
 from llmbroker.direct import AsyncDirectClient
 from llmbroker.exceptions import MissingKeyError, NoLLMAvailableError, UnknownCallError
@@ -150,12 +150,12 @@ class AsyncLLMs:
         response_format: dict | None = None,
         stream_selection_window: float = 1.0,
     ) -> StreamHandle:
-        """Route a completion over the pool as a handle yielding text deltas and naming
-        what answered them. ``wait`` bounds the whole answer in provider time; an explicit
-        ``fastest_of`` above one may end in ``StreamReplacementError``. Async-only."""
+        """Return an owned stream that can supply another complete pool answer.
+        Keep validation and ``another()`` inside ``aclosing``. Async-only."""
         receipt = CallReceipt()
         return StreamHandle(
-            self._deltas(
+            partial(
+                self._start_stream,
                 receipt,
                 prompt,
                 operation=operation,
@@ -175,7 +175,7 @@ class AsyncLLMs:
             ),
         )
 
-    async def _deltas(  # noqa: PLR0913 - the call knobs, one keyword each
+    async def _start_stream(  # noqa: PLR0913 - the call knobs, one keyword each
         self,
         receipt: CallReceipt,
         prompt: str,
@@ -187,50 +187,22 @@ class AsyncLLMs:
         parallel_recovery: bool,
         response_format: dict | None,
         stream_selection_window: float,
-    ) -> AsyncGenerator[str, None]:
+    ) -> _RoutedStream:
         await self._ensure_pool()
         messages = [{"role": "user", "content": prompt}]
-        produced = False
-        try:
-            async with aclosing(
-                self._router.stream(
-                    self._ring,
-                    messages,
-                    receipt,
-                    operation=operation,
-                    trace_id=trace_id,
-                    wait=wait,
-                    fastest_of=fastest_of,
-                    parallel_recovery=parallel_recovery,
-                    response_format=response_format,
-                    stream_selection_window=stream_selection_window,
-                ),
-            ) as deltas:
-                async for delta in deltas:
-                    produced = True
-                    yield delta
-            return
-        except NoLLMAvailableError as exc:
-            # ``produced`` guards invariant 18: past the first delta the answer is
-            # already partly the caller's, and a second pass could only splice.
-            if produced or not await self._on_exhausted(exc, self._ring):
-                raise
-        async with aclosing(
-            self._router.stream(
-                self._ring,
-                messages,
-                receipt,
-                operation=operation,
-                trace_id=trace_id,
-                wait=0,
-                fastest_of=fastest_of,
-                parallel_recovery=parallel_recovery,
-                response_format=response_format,
-                stream_selection_window=stream_selection_window,
-            ),
-        ) as deltas:
-            async for delta in deltas:
-                yield delta
+        return self._router.stream(
+            self._ring,
+            messages,
+            receipt,
+            operation=operation,
+            trace_id=trace_id,
+            wait=wait,
+            fastest_of=fastest_of,
+            parallel_recovery=parallel_recovery,
+            response_format=response_format,
+            stream_selection_window=stream_selection_window,
+            _on_exhausted=partial(self._on_exhausted, ring=self._ring),
+        )
 
     # ------------------------------------------------------------------
     # Direct single-model access (no pool, no failover)

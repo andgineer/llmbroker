@@ -263,6 +263,25 @@ cancelled when it answered, and *marking authority on the row*, a second truth s
 beside the answer for one lookup's benefit. Neither is worth it: the call already
 hands back a handle naming the winner, so that is where a race is rated.
 
+### streamed-alternatives-live-until-close
+
+A streamed handle retains already-open alternatives after its first complete
+answer. The host may request another complete answer, and closing the handle
+ends the provider work still owned by it. Only an explicit request for another
+answer starts further candidates after the first answer exists.
+
+**Blocks:** cancelling every alternative on the first completion; a retention
+flag; host-side rerouting by model name; automatic content validation or a paid
+fallback inside the broker.
+**Why:** only the host can judge the payload, and its judgement follows the
+completion that cancellation would make irreversible. One request already owns
+distinct candidates, their budget and their attribution; another ordinary pool
+call owns none of that history. Explicit close supplies the lifetime boundary.
+**Accepted cost:** reserve lanes may consume the rest of their output quota,
+occupy slots and retain buffered answers until they finish, reach the budget or
+are closed. Slow hosts can make this cost material; first-completion cancellation
+saves that work but destroys the very alternatives the host needs to inspect.
+
 ---
 
 ## The call path

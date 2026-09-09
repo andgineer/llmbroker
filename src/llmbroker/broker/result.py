@@ -1,9 +1,10 @@
 """Per-call result handle and the live per-LLM view returned by the broker."""
 
+import asyncio
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from typing import cast
+from typing import Protocol, cast
 
 from llmbroker.broker.pool import LLMPool
 from llmbroker.models import LLMConfig, LLMMetrics, LLMState, Usage, check_score
@@ -11,6 +12,19 @@ from llmbroker.protocols.store import StoreProtocol
 
 MetricsSource = Callable[[], Awaitable[dict[str, LLMMetrics]]]
 ObserveQuality = Callable[[str, str | None, str, float], None]
+
+
+class _StreamSource(Protocol):
+    def __aiter__(self) -> AsyncIterator[str]: ...
+
+    async def __anext__(self) -> str: ...
+
+    async def another(self) -> "AsyncResult | None": ...
+
+    async def aclose(self) -> None: ...
+
+
+StreamStart = Callable[[], Awaitable[_StreamSource]]
 
 logger = logging.getLogger("llmbroker.broker")
 
@@ -122,13 +136,12 @@ class AsyncResult(RoutedCall):
 
 
 class StreamHandle(RoutedCall):
-    """Returned by ``stream()``: an async iterator of text deltas that also names the
-    model answering them. Closing it is the consumer's move; under an explicit race that
-    name is provisional and unrateable until a complete answer settles the call."""
+    """A streamed answer whose owner can supply further complete pool answers.
+    Use ``aclosing`` so retained provider work is always settled."""
 
     def __init__(  # noqa: PLR0913
         self,
-        deltas: AsyncGenerator[str, None],
+        start: StreamStart,
         receipt: CallReceipt,
         *,
         operation: str | None,
@@ -143,14 +156,55 @@ class StreamHandle(RoutedCall):
             scope=scope,
             observe_quality=observe_quality,
         )
-        self._deltas = deltas
+        self._start = start
+        self._source: _StreamSource | None = None
+        self._active: asyncio.Task[object] | None = None
+        self._closed = False
 
-    def __aiter__(self) -> AsyncIterator[str]:
-        return self._deltas
+    def __aiter__(self) -> "StreamHandle":
+        return self
+
+    async def __anext__(self) -> str:
+        if self._closed:
+            raise StopAsyncIteration
+        if self._active is not None:
+            raise RuntimeError("the stream already has an active pull or continuation")
+        task = cast("asyncio.Task[object]", asyncio.current_task())
+        self._active = task
+        try:
+            if self._source is None:
+                self._source = await self._start()
+            return await anext(self._source)
+        finally:
+            if self._active is task:
+                self._active = None
+
+    async def another(self) -> AsyncResult | None:
+        """Return the next complete answer from this routed call, or ``None``."""
+        if self._closed:
+            raise RuntimeError("the stream is closed")
+        if self._active is not None:
+            raise RuntimeError("the stream already has an active pull or continuation")
+        if self._source is None:
+            raise RuntimeError("another answer requires a complete initial answer")
+        task = cast("asyncio.Task[object]", asyncio.current_task())
+        self._active = task
+        try:
+            return await self._source.another()
+        finally:
+            if self._active is task:
+                self._active = None
 
     async def aclose(self) -> None:
-        """Close the stream, handing the model's slot back."""
-        await self._deltas.aclose()
+        """Close all provider work and await its settlement."""
+        self._closed = True
+        active = self._active
+        current = asyncio.current_task()
+        if active is not None and active is not current:
+            active.cancel()
+            await asyncio.gather(active, return_exceptions=True)
+        if self._source is not None:
+            await self._source.aclose()
 
 
 class AsyncLLM:

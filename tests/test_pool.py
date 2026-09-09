@@ -555,3 +555,23 @@ async def test_take_free_never_waits_and_never_raises():
     assert await pool.take_free(payable=_PAYABLE, width=2)
     assert await pool.take_free(payable=_PAYABLE, width=2) == []
     assert await pool.take_free(payable=frozenset(), width=1) == []
+
+
+async def test_candidate_membership_filter_applies_to_acquisition_and_refill():
+    pool = LLMPool()
+    for config in (_cfg("a"), _cfg("b"), _cfg("c")):
+        await pool.add(config)
+    eligible = frozenset({"b", "c"})
+
+    taken = await pool.acquire_many(
+        time.monotonic(),
+        payable=_PAYABLE,
+        width=2,
+        eligible_names=eligible,
+    )
+    assert [config.name for config in taken] == ["b", "c"]
+    assert await pool.take_free(
+        payable=_PAYABLE,
+        width=1,
+        eligible_names=frozenset({"a"}),
+    ) == [pool.config("a")]

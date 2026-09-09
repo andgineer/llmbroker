@@ -7,7 +7,7 @@ from contextlib import aclosing
 import httpx
 import pytest
 
-from llmbroker.broker import router as router_module
+from llmbroker.broker import verdict as verdict_module
 from llmbroker.broker.broker import AsyncBroker
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.result import CallReceipt
@@ -68,7 +68,8 @@ def _stream(router: Router, **kwargs):
 
 
 async def _drain(router: Router, **kwargs) -> list[str]:
-    return [d async for d in _stream(router, **kwargs)]
+    async with aclosing(_stream(router, **kwargs)) as stream:
+        return [d async for d in stream]
 
 
 # --------------------------------------------------------------------------- #
@@ -347,13 +348,13 @@ def test_garbage_200_reads_the_same_from_the_router_and_the_direct_client(monkey
     garbage = b'data: {"error": {"message": "upstream rate limit"}}\n\ndata: [DONE]\n\n'
     store = _RecordingStore()
     routed: list[Exception] = []
-    real_classify = router_module._classify  # noqa: SLF001
+    real_classify = verdict_module.classify
 
     def spy(exc, *, budget_bound):
         routed.append(exc)
         return real_classify(exc, budget_bound=budget_bound)
 
-    monkeypatch.setattr(router_module, "_classify", spy)
+    monkeypatch.setattr(verdict_module, "classify", spy)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "a":
@@ -620,9 +621,10 @@ def test_abandoned_stream_releases_the_slot():
                 headers={"content-type": "text/event-stream"},
             ),
         )
-        async for delta in _stream(router):
-            assert delta == "one"
-            break
+        async with aclosing(_stream(router)) as stream:
+            async for delta in stream:
+                assert delta == "one"
+                break
         # a second stream can only start if the first released its only slot
         return await _drain(router)
 
@@ -1114,6 +1116,7 @@ def test_the_selection_window_reaches_the_router_through_the_broker(tmp_path):
 
     async def preferred():
         await release.wait()
+        await asyncio.sleep(0.01)
         yield _sse("a-late")
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1138,22 +1141,20 @@ def test_the_selection_window_reaches_the_router_through_the_broker(tmp_path):
 
 
 def test_the_selection_window_survives_the_post_exhaustion_retry():
-    """The rebuild retry re-routes with every knob the first pass had, the window
-    included — and a completed answer is never mistaken for an exhausted pool."""
+    """The routed owner keeps every knob while its one initial refresh runs."""
 
     class _SpyRouter:
         def __init__(self) -> None:
             self.windows: list[float] = []
-            self.passes = 0
 
         def stream(self, _ring, _messages, receipt, **kwargs):
-            self.passes += 1
             self.windows.append(kwargs["stream_selection_window"])
-            first = self.passes == 1
 
             async def deltas():
-                if first:
-                    raise NoLLMAvailableError("nothing yet", reason="empty_pool")
+                refreshed = await kwargs["_on_exhausted"](
+                    NoLLMAvailableError("nothing yet", reason="empty_pool"),
+                )
+                assert refreshed is True
                 receipt.llm_name = "a"
                 receipt.settled = True
                 yield "after-rebuild"
@@ -1166,7 +1167,8 @@ def test_the_selection_window_survives_the_post_exhaustion_retry():
         async def ensure_pool() -> None:
             return None
 
-        async def on_exhausted(_exc, _ring) -> bool:
+        async def on_exhausted(_exc, ring) -> bool:
+            assert ring is caller._ring
             return True
 
         caller = AsyncLLMs(
@@ -1182,4 +1184,4 @@ def test_the_selection_window_survives_the_post_exhaustion_retry():
         handle = caller.stream("hi", fastest_of=2, stream_selection_window=0.25)
         return [d async for d in handle], router.windows
 
-    assert asyncio.run(run()) == (["after-rebuild"], [0.25, 0.25])
+    assert asyncio.run(run()) == (["after-rebuild"], [0.25])

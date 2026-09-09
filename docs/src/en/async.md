@@ -19,12 +19,14 @@ chunks as they arrive. Model selection and fallback behave as they do for a
 regular call:
 
 ```python
-stream = broker.stream("Write a haiku about brokers", operation="write")
-async for delta in stream:
-    print(delta, end="", flush=True)
+async with contextlib.aclosing(
+    broker.stream("Write a haiku about brokers", operation="write")
+) as stream:
+    async for delta in stream:
+        print(delta, end="", flush=True)
 
-print(stream.llm_name, stream.usage)   # model name and usage information
-await stream.record_quality(0.9)       # rate the completed reply
+    print(stream.llm_name, stream.usage)   # model name and usage information
+    await stream.record_quality(0.9)       # rate the completed reply
 ```
 
 `stream(...)` returns an asynchronous iterator. After the reply is complete, its
@@ -51,19 +53,21 @@ field contains the complete final reply. Replace all previously displayed text
 with that reply; chunks from different models are never combined.
 
 ```python
-stream = broker.stream("Write a haiku", fastest_of=2, stream_selection_window=1.0)
-parts = []
-try:
-    async for delta in stream:
-        parts.append(delta)
-        show(delta)
-except llmbroker.StreamReplacementError as exc:
-    replace_everything_with(exc.replacement.text)   # replace the provisional text
-else:
-    text = "".join(parts)
+async with contextlib.aclosing(
+    broker.stream("Write a haiku", fastest_of=2, stream_selection_window=1.0)
+) as stream:
+    parts = []
+    try:
+        async for delta in stream:
+            parts.append(delta)
+            show(delta)
+    except llmbroker.StreamReplacementError as exc:
+        replace_everything_with(exc.replacement.text)  # replace the provisional text
+    else:
+        text = "".join(parts)
 
-print(stream.llm_name)             # model whose reply became the final result
-await stream.record_quality(0.9)   # rate the final reply
+    print(stream.llm_name)             # model whose reply became the final result
+    await stream.record_quality(0.9)   # rate the final reply
 ```
 
 Rate a concurrent call through the `stream` object or `exc.replacement`. With
@@ -73,8 +77,8 @@ Rate a concurrent call through the `stream` object or `exc.replacement`. With
 the returned object or save its `call_id`.
 
 The iterator is finished after `StreamReplacementError` and yields no more data.
-Catch this exception **before** the broader `LLMRequestError`, or a complete reply
-will be handled as a failure.
+The same handle remains open for `another()`. Catch this exception **before** the
+broader `LLMRequestError`, or a complete reply will be handled as a failure.
 
 `stream_selection_window` affects only the text shown first. For this many
 seconds, one second by default, the broker waits for data from the model currently
@@ -87,14 +91,47 @@ Expiration of `stream_selection_window` is not an error or a timeout and does no
 change later model selection. The complete reply from the model that finishes
 first is still the final result.
 
-Each concurrent request consumes provider quota, and its reply remains in memory
-until a result is selected. This is independent of how quickly the application
-reads chunks. If one model stops generating or does not complete within `wait`,
-the broker can use another model's complete reply. `StreamInterruptedError` or
-`LLMTimeoutError` reaches the application only if no model completes.
+Each concurrent request consumes provider quota, and completed replies remain in
+memory until requested or the handle closes. This is independent of how quickly
+the application reads chunks. If one model stops generating or does not complete
+within `wait`, the broker can use another model's complete reply.
 
 When `fastest_of` is unset or equals `1`, the broker stays with the model that
 returns the first chunk, and `stream_selection_window` has no effect.
+
+### Requesting another complete answer {#another-answer}
+
+Keep validation inside `aclosing` and call `another()` when the application rejects
+a complete answer. The broker first uses retained lanes and then tries pool models
+that this routed request has not attempted:
+
+```python
+async with contextlib.aclosing(
+    broker.stream(prompt, fastest_of=3, wait=25)
+) as stream:
+    try:
+        text = "".join([delta async for delta in stream])
+        rated = stream
+    except llmbroker.StreamReplacementError as exc:
+        text, rated = exc.replacement.text, exc.replacement
+
+    while not acceptable(text):
+        await rated.record_quality(0.0)
+        answer = await stream.another()
+        if answer is None:
+            break
+        text, rated = answer.text, answer
+```
+
+Each returned result has its own `llm_name`, `call_id`, `usage`, and rating target.
+The original stream keeps the identity of its first authoritative answer. `None`
+means no further complete answer can be obtained from this call and is returned
+again on later `another()` calls.
+
+Keeping the handle open starts no new provider request after the first answer;
+only `another()` may do that. Lanes already started may continue and retain their
+answers. Closing cancels unfinished lanes and waits for their journal rows and
+capacity releases.
 
 ### Time limit for the complete reply {#budget}
 
@@ -102,18 +139,25 @@ returns the first chunk, and `stream_selection_window` has no effect.
 chunk. It counts only time spent waiting for provider data:
 
 ```python
-stream = broker.stream("Write a long answer", wait=20.0)
-try:
-    async for delta in stream:
-        print(delta, end="", flush=True)
-except llmbroker.LLMTimeoutError as exc:
-    print(f"\nresponse timed out: {exc}")
+async with contextlib.aclosing(
+    broker.stream("Write a long answer", wait=20.0)
+) as stream:
+    try:
+        async for delta in stream:
+            print(delta, end="", flush=True)
+    except llmbroker.LLMTimeoutError as exc:
+        print(f"\nresponse timed out: {exc}")
 ```
 
 Time spent by the application processing a chunk does not count. Timing pauses
 when data are handed to the application and resumes when the next chunk is
 requested. The limit still applies when a model starts quickly but generates the
 rest of the reply too slowly.
+
+The same positive `wait` covers the initial answer, application validation, and
+all calls to `another()`. After the first complete answer the clock runs
+continuously. A reply completed before expiry remains available from memory, but
+the broker starts no new candidate after expiry.
 
 When `wait` is unset, no user-defined time limit applies. If it expires before the
 first chunk, the call raises `NoLLMAvailableError`. After the first chunk, it

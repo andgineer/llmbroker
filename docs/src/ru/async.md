@@ -21,12 +21,14 @@ async with llmbroker.AsyncBroker() as broker:
 модели при ошибке выполняются так же, как для обычного вызова:
 
 ```python
-stream = broker.stream("Напиши хокку про брокеров", operation="write")
-async for delta in stream:
-    print(delta, end="", flush=True)
+async with contextlib.aclosing(
+    broker.stream("Напиши хокку про брокеров", operation="write")
+) as stream:
+    async for delta in stream:
+        print(delta, end="", flush=True)
 
-print(stream.llm_name, stream.usage)   # имя модели и сведения об использовании
-await stream.record_quality(0.9)       # оценить полученный ответ
+    print(stream.llm_name, stream.usage)   # имя модели и сведения об использовании
+    await stream.record_quality(0.9)       # оценить полученный ответ
 ```
 
 `stream(...)` возвращает объект асинхронного итератора. После завершения ответа в
@@ -54,19 +56,21 @@ await stream.record_quality(0.9)       # оценить полученный о�
 ответов разных моделей не объединяются.
 
 ```python
-stream = broker.stream("Напиши хайку", fastest_of=2, stream_selection_window=1.0)
-parts = []
-try:
-    async for delta in stream:
-        parts.append(delta)
-        show(delta)
-except llmbroker.StreamReplacementError as exc:
-    replace_everything_with(exc.replacement.text)   # заменить предварительный текст
-else:
-    text = "".join(parts)
+async with contextlib.aclosing(
+    broker.stream("Напиши хайку", fastest_of=2, stream_selection_window=1.0)
+) as stream:
+    parts = []
+    try:
+        async for delta in stream:
+            parts.append(delta)
+            show(delta)
+    except llmbroker.StreamReplacementError as exc:
+        replace_everything_with(exc.replacement.text)  # заменить предварительный текст
+    else:
+        text = "".join(parts)
 
-print(stream.llm_name)             # модель, чей ответ выбран итоговым
-await stream.record_quality(0.9)   # оценить итоговый ответ
+    print(stream.llm_name)             # модель, чей ответ выбран итоговым
+    await stream.record_quality(0.9)   # оценить итоговый ответ
 ```
 
 Оценивайте параллельный вызов через объект `stream` или `exc.replacement`. При
@@ -75,9 +79,10 @@ await stream.record_quality(0.9)   # оценить итоговый ответ
 `record_quality(..., trace_id=...)` не позволяет определить, какой именно ответ
 был показан. Поэтому используйте возвращённый объект или сохраните его `call_id`.
 
-После `StreamReplacementError` итератор завершён и больше не возвращает данные.
-Обрабатывайте это исключение **до** более общего `LLMRequestError`, иначе готовый
-ответ будет ошибочно обработан как сбой.
+После `StreamReplacementError` итератор завершён и больше не возвращает данные,
+но тот же объект остаётся открытым для `another()`. Обрабатывайте это исключение
+**до** более общего `LLMRequestError`, иначе готовый ответ будет ошибочно
+обработан как сбой.
 
 Параметр `stream_selection_window` влияет только на выбор текста, который будет
 показан первым. В течение указанного числа секунд, по умолчанию одной секунды,
@@ -90,16 +95,47 @@ await stream.record_quality(0.9)   # оценить итоговый ответ
 ожидания и не влияет на дальнейший порядок моделей. Итоговым остаётся полный
 ответ модели, которая завершила работу первой.
 
-Каждый параллельный запрос расходует квоту провайдера, а его ответ хранится в
-памяти до выбора результата. Это происходит независимо от скорости, с которой
-приложение читает данные. Если одна модель прервёт генерацию или не успеет
-завершить ответ за время `wait`, брокер сможет использовать полный ответ другой
-модели. `StreamInterruptedError` или `LLMTimeoutError` передаётся приложению,
-только если ни одна модель не завершила ответ.
+Каждый параллельный запрос расходует квоту провайдера, а завершённые ответы
+хранятся в памяти до запроса или закрытия объекта. Это происходит независимо от
+скорости, с которой приложение читает данные.
 
 Если `fastest_of` не задан или равен `1`, брокер после получения первой части
 текста продолжает работать только с этой моделью, а `stream_selection_window` не
 влияет на поведение.
+
+### Получение ещё одного полного ответа {#another-answer}
+
+Проверяйте ответ внутри `aclosing` и вызывайте `another()`, если приложение его
+отклонило. Сначала брокер использует уже запущенные попытки, затем обращается к
+моделям пула, которые этот вызов ещё не пробовал:
+
+```python
+async with contextlib.aclosing(
+    broker.stream(prompt, fastest_of=3, wait=25)
+) as stream:
+    try:
+        text = "".join([delta async for delta in stream])
+        rated = stream
+    except llmbroker.StreamReplacementError as exc:
+        text, rated = exc.replacement.text, exc.replacement
+
+    while not acceptable(text):
+        await rated.record_quality(0.0)
+        answer = await stream.another()
+        if answer is None:
+            break
+        text, rated = answer.text, answer
+```
+
+У каждого результата свои `llm_name`, `call_id`, `usage` и объект для оценки.
+Исходный поток сохраняет идентификатор первого итогового ответа. Значение `None`
+означает, что получить ещё один полный ответ в рамках этого вызова нельзя;
+последующие вызовы `another()` также вернут `None`.
+
+Само хранение открытого объекта не запускает новые запросы после первого ответа:
+это может сделать только `another()`. Уже запущенные попытки могут продолжаться.
+Закрытие прерывает незавершённые попытки и дожидается записи журнала и
+освобождения занятых мест.
 
 ### Ограничение времени для полного ответа {#budget}
 
@@ -107,18 +143,25 @@ await stream.record_quality(0.9)   # оценить итоговый ответ
 Учитывается только время, которое библиотека ждёт данные от провайдера:
 
 ```python
-stream = broker.stream("Напиши длинный ответ", wait=20.0)
-try:
-    async for delta in stream:
-        print(delta, end="", flush=True)
-except llmbroker.LLMTimeoutError as exc:
-    print(f"\nвремя ожидания истекло: {exc}")
+async with contextlib.aclosing(
+    broker.stream("Напиши длинный ответ", wait=20.0)
+) as stream:
+    try:
+        async for delta in stream:
+            print(delta, end="", flush=True)
+    except llmbroker.LLMTimeoutError as exc:
+        print(f"\nвремя ожидания истекло: {exc}")
 ```
 
 Время, которое приложение тратит на обработку уже полученной части, не
 учитывается. Отсчёт приостанавливается при передаче данных приложению и
 продолжается при запросе следующей части. Если модель быстро начала ответ, но
 генерирует его слишком медленно, ограничение всё равно сработает.
+
+Одно положительное значение `wait` действует для первого ответа, проверки в
+приложении и всех вызовов `another()`. После первого полного ответа отсчёт идёт
+непрерывно. Ответ, завершённый до истечения времени, можно получить из памяти и
+позже, но новый запрос к провайдеру после истечения времени не начинается.
 
 Если `wait` не задан, пользовательского ограничения времени нет. Если время
 истекло до получения первой части, возникает `NoLLMAvailableError`; после первой

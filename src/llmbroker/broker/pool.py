@@ -214,11 +214,19 @@ class LLMPool:
         }[reason]
         raise NoLLMAvailableError(message, reason=reason)
 
-    def _candidates(self, payable: frozenset[str], exclude: frozenset[str]) -> list[_Slot]:
+    def _candidates(
+        self,
+        payable: frozenset[str],
+        exclude: frozenset[str],
+        eligible_names: frozenset[str] | None = None,
+    ) -> list[_Slot]:
         return [
             s
             for s in self._slots.values()
-            if s.config.api_key_ref in payable and not s.disabled and s.config.name not in exclude
+            if (eligible_names is None or s.config.name in eligible_names)
+            and s.config.api_key_ref in payable
+            and not s.disabled
+            and s.config.name not in exclude
         ]
 
     @staticmethod
@@ -335,6 +343,7 @@ class LLMPool:
         operation: str | None = None,
         exclude: frozenset[str] = frozenset(),
         answer_deadline: float | None = None,
+        eligible_names: frozenset[str] | None = None,
     ) -> list[LLMConfig]:
         """Take up to ``width`` distinct slots for one call, waiting as ``wait`` allows
         for the first of them and taking whatever else is free by then — never fewer
@@ -345,7 +354,7 @@ class LLMPool:
                 # Recomputed per iteration: the longer the queue wait, the less budget is
                 # left for the answer, and the stricter the choice below becomes.
                 remaining = None if answer_deadline is None else answer_deadline - time.monotonic()
-                candidates = self._candidates(payable, exclude)
+                candidates = self._candidates(payable, exclude, eligible_names)
                 taken = self._reserve(
                     candidates,
                     width=width,
@@ -371,7 +380,7 @@ class LLMPool:
                     # Re-check: a cooldown may have expired, or the deadline hit (next loop raises).
                     continue
 
-    async def take_free(
+    async def take_free(  # noqa: PLR0913 - one call's candidate boundary
         self,
         *,
         payable: frozenset[str],
@@ -379,6 +388,7 @@ class LLMPool:
         operation: str | None = None,
         exclude: frozenset[str] = frozenset(),
         answer_deadline: float | None = None,
+        eligible_names: frozenset[str] | None = None,
     ) -> list[LLMConfig]:
         """Whatever is free this instant, up to ``width``, or nothing: it never waits
         and never raises, because the lanes it tops up are already racing."""
@@ -386,7 +396,7 @@ class LLMPool:
             now = datetime.now(UTC)
             remaining = None if answer_deadline is None else answer_deadline - time.monotonic()
             return self._reserve(
-                self._candidates(payable, exclude),
+                self._candidates(payable, exclude, eligible_names),
                 width=width,
                 recovery_width=1,
                 remaining=remaining,

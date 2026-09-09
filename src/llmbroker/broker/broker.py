@@ -406,9 +406,8 @@ class AsyncBroker:
         response_format: dict | None = None,
         stream_selection_window: float = 1.0,
     ) -> StreamHandle:
-        """Route a completion over the pool as a handle yielding text deltas and naming
-        what answered them. ``wait`` bounds the whole answer in provider time; an explicit
-        ``fastest_of`` above one may end in ``StreamReplacementError``. Async-only."""
+        """Return an owned stream that can supply another complete pool answer.
+        Keep validation and ``another()`` inside ``aclosing``. Async-only."""
         return self.llms.stream(
             prompt,
             operation=operation,
