@@ -1673,6 +1673,26 @@ def test_the_winner_is_the_first_provider_completion_not_the_first_row_written()
     assert race.winner() is lanes[1]
 
 
+def test_a_completion_tie_the_clock_cannot_split_keeps_the_lane_being_read():
+    """Windows' monotonic ticks every 15.6 ms, so two providers finishing inside one tick
+    carry the same instant. Ranking may not win that tie: it would withdraw text the
+    caller has already read for an answer that arrived no earlier."""
+
+    async def _unused():
+        yield ""  # pragma: no cover - nothing drives these lanes
+
+    lanes = [
+        _StreamLane(config=_cfg(name), outcome=_Outcome(), produced=_unused())
+        for name in ("a", "b")
+    ]
+    race = _StreamRace(lanes=lanes, width=2)
+    race.exposed = lanes[1]
+    lanes[0].outcome.completed_at = lanes[1].outcome.completed_at = 1.0
+    assert race.winner() is lanes[1]
+    lanes[0].outcome.completed_at = 0.5
+    assert race.winner() is lanes[0]
+
+
 def test_a_bug_in_every_lane_reaches_the_caller_instead_of_being_retried():
     """A bug empties its own lane and is held exactly like any other lane failure. With
     one in every lane there is nobody left to answer, so the held bug reaches the
@@ -1903,6 +1923,10 @@ def test_the_selection_window_is_judged_by_when_the_delta_landed():
     assert inside.select() is inside.lanes[0]
     late = _race(closed + 0.1, closed - 0.5, closed)
     assert late.select() is late.lanes[1]
+    # A coarse clock stamps the opening and a delta right after it with one instant, and
+    # a window of zero closes on the instant it opened: that delta is outside it.
+    boundary = _race(closed, closed - 0.5, closed)
+    assert boundary.select() is boundary.lanes[1]
 
 
 @pytest.mark.parametrize(

@@ -114,6 +114,16 @@ def pre(c):
 
 
 @task
+def test(c: Context):
+    """Run the suite on this platform's clock, then again on a coarse Windows one."""
+    c.run("python -m pytest")
+    c.run(
+        'python -m pytest -p coarse_clock -m "not docker"',
+        env={"PYTHONPATH": "tests"},
+    )
+
+
+@task
 def catalog_refresh(c: Context):
     """Print the freetier preset refresh prompt for handing to a maintainer or an agent."""
     prompt_path = Path("src/llmbroker/presets/freetier-refresh-prompt.md")

@@ -35,7 +35,6 @@ class Outcome:
     superseded: bool = False
     stopped: bool = False
     completed_at: float | None = None
-    completed: Callable[[], None] | None = None
     settling: bool = False
     holds_slot: bool = False
     crashed: Exception | None = None

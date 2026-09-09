@@ -265,7 +265,9 @@ committed at the first delta, and so does an unraced stream.
 
 **Which lane is shown is decided once, early, and never again.** The pool's
 highest-ranked lane holds a short caller-set interval in which to produce a useful
-delta of its own; if it does, its output becomes the provisional stream at once. A
+delta of its own; if it does, its output becomes the provisional stream at once. The
+interval is half-open — a delta landing on the instant it closes is outside it — so a
+caller's zero leaves no privilege at all, whatever the platform's clock resolution. A
 reserve that speaks first is consumed and held meanwhile, and becomes the stream
 either when the interval closes with the first choice still silent, or the moment
 that lane fails, since a lane that will never begin has nothing left to hold back.
@@ -282,12 +284,15 @@ runs against the same deadline, as it does for an atomic race.
 **The first complete answer wins, and its identity replaces the provisional one.**
 Completion is measured when the provider's stream ends normally with at least one
 useful delta, before the row is written, so a slow store cannot make the second
-provider to finish look like the first. Where the winner is the lane being read, its
-remaining buffered deltas are handed over and the call ends normally. Where it is
-another lane, the stream stops at once and raises the typed replacement carrying
-that lane's complete answer; the host discards every provisional delta and uses it
-instead. A lane that completes before anything was exposed simply becomes the
-stream — the caller has nothing to discard, so no replacement is needed.
+provider to finish look like the first. Where the platform's clock is too coarse to
+separate two finishes, that tie goes to the lane being read rather than to the pool's
+ranking: an answer that arrived no earlier may not withdraw text the caller has
+already seen. Where the winner is the lane being read, its remaining buffered deltas
+are handed over and the call ends normally. Where it is another lane, the stream stops
+at once and raises the typed replacement carrying that lane's complete answer; the
+host discards every provisional delta and uses it instead. A lane that completes
+before anything was exposed simply becomes the stream — the caller has nothing to
+discard, so no replacement is needed.
 
 **A failure inside a raced stream is not the end of the call it would be alone.** A
 hidden lane's failure is disposed of exactly as any other, keeps whatever the pool

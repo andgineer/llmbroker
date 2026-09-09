@@ -17,7 +17,7 @@ so the gate reports errors that do not exist. If untouched files suddenly go red
 
 | Task | Command |
 |---|---|
-| Run tests | `python -m pytest` |
+| Run tests | `invoke test` |
 | Run single test | `pytest -k 'test_name'` |
 | Lint + format + type-check | `invoke pre` |
 | Preview docs (English) | `invoke docs-en` |
@@ -33,7 +33,15 @@ so the gate reports errors that do not exist. If untouched files suddenly go red
 Before claiming anything is done, both must be green:
 
 1. `invoke pre` → no errors from ruff or pyrefly
-2. `python -m pytest` → `N passed` with zero failures or errors
+2. `invoke test` → `N passed` with zero failures or errors, in **both** passes
+
+**Never call `pytest` directly for a whole run — always `invoke test`.** It runs the suite
+twice: once on this platform's clock, then again with `-p coarse_clock` (`tests/`), which
+makes `time.monotonic()` tick every 15.6 ms the way Windows' does before Python 3.13.
+Ordering taken from a clock that coarse ties, and a tie broken the wrong way is a real
+Windows failure that a Linux or macOS run cannot see. The second pass skips the Docker
+tests: they exercise backends, not clock ordering. A bare `pytest -k` while iterating is
+fine; the gate is the two passes.
 
 Run `invoke pre` after each discrete batch of changes, not only at the end.
 
@@ -99,7 +107,7 @@ Any request to implement a plan — "выполни очередной план"
 2. The plan is the suggested route, the code is the truth. Where they disagree, follow the code
    and say so; do not implement something the code has already made obsolete.
 3. Run `. ./activate.sh` first. Every `invoke`/`pytest` call needs it.
-4. Work in batches, and after each batch both must be green: `invoke pre` and `python -m pytest`
+4. Work in batches, and after each batch both must be green: `invoke pre` and `invoke test`
    (`N passed`, zero skips, zero errors). Docker must be running for testcontainer tests.
 5. **Never bump the version.** Plans list `invoke ver-*` in their work order; skip that step —
    the maintainer bumps by hand.
@@ -134,7 +142,7 @@ Any request to implement a plan — "выполни очередной план"
    A dozen mixed items reads as a failing process even when two are bugs.
 5. Do not re-open what the plan or `specs/reference/` has already settled. Disagree in one
    sentence, then move on.
-6. Confirm the gate (`invoke pre`, `python -m pytest`) but do not spend the pass on it.
+6. Confirm the gate (`invoke pre`, `invoke test`) but do not spend the pass on it.
 7. Fix nothing unless asked; report in chat.
 8. **The round is done when nothing found changes runtime behavior.** Remarks about docs, naming,
    or comments are not grounds for another round. If a fix batch follows, review that batch too —
@@ -149,6 +157,7 @@ Any request to implement a plan — "выполни очередной план"
 - Every new function needs tests in the same session. Never skip.
 - **Never use `pytest.skip()`, `pytest.importorskip()`, or `skipIf` to hide missing services or packages.** Tests must fail, not silently pass as skipped. Postgres and MongoDB are spun up automatically via testcontainers — no external services needed. A green run with skipped tests is a false green.
 - **Never assert that a measured wall-clock span reached its budget without `CLOCK_SLACK` (`tests/support.py`).** An asyncio timer fires up to one clock resolution early, and on Windows that clock ticks every 15.6 ms — a 0.3 s budget legitimately measures 0.297 s there. Lower bounds are written `budget - CLOCK_SLACK`; on Linux the slack is nanoseconds, so the test keeps its teeth. Upper bounds need no slack.
+- **The coarse-clock pass is a second pass, never a replacement for the first.** Under it `CLOCK_SLACK` grows to ~31 ms and every lower-bound timing assertion loosens with it, so collapsing the gate to that pass alone would quietly disarm them. It exists to catch ordering that ties when the clock cannot separate two instants.
 
 ## Code style
 

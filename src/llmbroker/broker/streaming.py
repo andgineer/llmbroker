@@ -103,12 +103,14 @@ class StreamRace:
         return [lane for lane in self.lanes if not lane.finished]
 
     def winner(self) -> StreamLane | None:
-        """Return the lane whose provider completed a valid answer first."""
+        """Return the lane whose provider completed a valid answer first. Rank already
+        decided who is shown, so a tie the clock cannot split keeps that lane instead of
+        withdrawing text the caller has read."""
         best: StreamLane | None = None
-        best_key = (0.0, 0)
+        best_key = (0.0, False, 0)
         for lane in self.lanes:
             at = lane.outcome.completed_at
-            key = (at, lane.opening_order) if at is not None else None
+            key = (at, lane is not self.exposed, lane.opening_order) if at is not None else None
             if key is not None and (best is None or key < best_key):
                 best, best_key = lane, key
         return best
@@ -116,7 +118,7 @@ class StreamRace:
     def select(self) -> StreamLane | None:
         """Choose whose deltas become the provisional initial stream."""
         preferred = self.preferred
-        if preferred.first_delta_at is not None and preferred.first_delta_at <= self.deadline:
+        if preferred.first_delta_at is not None and preferred.first_delta_at < self.deadline:
             return preferred
         if not preferred.finished and time.monotonic() < self.deadline:
             return None
@@ -433,8 +435,6 @@ async def settle_stream(  # noqa: PLR0913
         outcome.verdict = verdict.outcome
         return
     outcome.completed_at = time.monotonic()
-    if outcome.completed is not None:
-        outcome.completed()
     await backend.finish_ok(attempt, progress.usage)
     progress.settle()
     outcome.answered = True
