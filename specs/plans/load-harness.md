@@ -1,11 +1,12 @@
 # Plan — a load harness
 
-**Status: source-bound against v1.7.0; revalidate after `answer-recovery.md`.**
+**Status: source-bound against v1.7.0; revalidate after `architecture-simplification.md`.**
 The binding below reflects the stream receipt and curated readers added by the
-released library. Before implementation, read answer recovery's handover and
+released library. Before implementation, read the architecture simplification
+handover and current streaming rules in `../reference/rules/call-path.md`, and
 check the pooled route's handle lifetime: its `aclosing` must cover observation
 of the completed answer and close retained alternatives. The harness itself
-leaves `src/` untouched and is not a prerequisite for answer recovery.
+leaves `src/` untouched.
 
 ## Goal
 
@@ -296,4 +297,4 @@ is weighed and unqueued.
 
 ## Gate
 
-`invoke pre` and `python -m pytest` green, per `CLAUDE.md`.
+Activate first, then `invoke pre` and both passes of `invoke test` green, per `CLAUDE.md`.

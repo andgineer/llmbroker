@@ -6,9 +6,11 @@ test yet; that binding is the next step, and until it is done no `src/` line is
 written.
 
 **Queue gate:** concretize only after `load-harness.md` has an implementation
-handover. Its row and summary shapes will show which latency and attribution facts
-still require a public library surface instead of merely being convenient in the
-harness. Do not hand this file to an implementation executor in its present state.
+handover, using the preceding `architecture-simplification.md` handover for the
+final deadline, receipt and storage contracts. The harness's row and summary shapes
+will show which latency and attribution facts still require a public library surface
+instead of merely being convenient in the harness. Do not hand this file to an
+implementation executor in its present state.
 
 ## Goal
 

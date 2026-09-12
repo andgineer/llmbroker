@@ -285,6 +285,15 @@ occupy slots and retain buffered answers until they finish, reach the budget or
 are closed. Slow hosts can make this cost material; first-completion cancellation
 saves that work but destroys the very alternatives the host needs to inspect.
 
+**Rejected refactoring: separate ordinary and alternative-capable streams.**
+Moving continuation behind a second API or an opt-in mode does not remove its
+implementation: the retained-lane machinery remains, while another public mode,
+branching and test combinations are added. Potential savings in buffered text,
+unused provider output and resource lifetime provide no practical benefit worth
+that split for this package's intended use. The refactoring is therefore rejected
+as unhelpful, not deferred pending measurements. Consolidating duplicated lifecycle
+and settlement code while preserving the existing stream contract remains valid.
+
 ---
 
 ## The call path
@@ -477,7 +486,15 @@ document store keeps answering off the old one.
 
 **Blocks:** an `ALTER`-based migration path.
 **Why:** create-if-missing plus fail-fast on a version mismatch, with
-instructions. Upgrading means dropping the `llmbroker_*` objects.
+instructions. Upgrading means dropping the `llmbroker_*` objects. A migration
+path is code on all three backends plus a test matrix over version pairs, and
+written now it would be written against guessed pairs: the shape a future schema
+change takes is exactly what is unknown, and a migration nobody has ever run
+against real stored data is not the guarantee it looks like.
+**Accepted cost:** an upgrade across a version bump destroys what the store
+holds, so it is bounded rather than permanent — the obligation to ship a
+migration once an installation's data has to survive is in
+[`rules/backends.md`](rules/backends.md#db-schema).
 
 ### schema-marker-inside-the-namespace
 

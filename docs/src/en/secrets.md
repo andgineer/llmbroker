@@ -79,6 +79,10 @@ separately:
 llmbroker.AsyncBroker("postgresql://host/db", secrets=llmbroker.Secrets())
 ```
 
+Keys stored this way are lost when the `llmbroker_*` tables are dropped, which is
+how an llmbroker release that changes the schema is installed. Export them first;
+see [Upgrading llmbroker](server.md#upgrade).
+
 ## A key per user
 
 In a multi-user application, the broker looks for a user-specific key before the

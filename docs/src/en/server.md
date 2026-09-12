@@ -218,6 +218,54 @@ This limitation applies only to SQLite. PostgreSQL and MongoDB do not use an
 equivalent shared file lock, so they can share a database with the application.
 A separate schema or database is an organizational choice.
 
+## Upgrading llmbroker {#upgrade}
+
+llmbroker never migrates an existing database in place. When a release changes
+the internal schema, the broker refuses to start and raises `SchemaVersionError`
+instead of reading the old tables. The upgrade is a reset: drop the
+`llmbroker_*` tables and let the new release create them again.
+
+Save what you need before dropping. The registry is restored by the next
+`sync()` and the journal is history, but keys held in the broker's own store
+exist nowhere else, so exporting them is a required step of the upgrade rather
+than an optional one. This applies only to keys in the database; keys that come
+from the environment, AWS Secrets Manager, or Vault are untouched by the reset.
+
+**Export the keys before installing the new release.** The new release refuses
+to read the old tables, so its API can no longer reach them — the export must
+run while the old version is still installed:
+
+```python
+import json
+from pathlib import Path
+
+from llmbroker.sqlite import Secrets  # or llmbroker.postgres / llmbroker.mongodb
+
+secrets = Secrets("broker.db")
+dump = {ref: await secrets.resolve(ref) for ref in sorted(await secrets.refs())}
+Path("keys.json").write_text(json.dumps(dump))
+```
+
+The file holds the keys in plain text: keep it outside the repository and delete
+it once the upgrade is finished. If the old version is already gone, read the
+rows with the database's own client instead:
+
+```bash
+sqlite3 broker.db 'SELECT ref, value FROM llmbroker_secrets'
+```
+
+Then drop the tables, start the new release, and restore the data:
+
+```python
+for ref, value in json.loads(Path("keys.json").read_text()).items():
+    await secrets.set(ref, value)
+await broker.sync("freetier")
+```
+
+The pool starts cold after a reset: earlier calls, quality history, and active
+cooldowns are gone, and the models are ranked again from the first calls of the
+new deployment.
+
 ## Startup errors {#errors}
 
 Three errors can occur before the first request and require different handling:
@@ -228,9 +276,8 @@ Three errors can occur before the first request and require different handling:
   the registry empty. The registry is unchanged, and `report` contains the
   planned changes.
 - `SchemaVersionError` — the stored schema version is incompatible with this
-  llmbroker release. Export any registry, key, or journal data you need, drop the
-  `llmbroker_*` tables, and restart. `found` and `expected` contain the detected
-  and required versions.
+  llmbroker release. `found` and `expected` contain the detected and required
+  versions. See [Upgrading llmbroker](#upgrade).
 
 All three classes are available directly from `llmbroker`, for example
 `llmbroker.SchemaVersionError`. They inherit `LLMBrokerError`, which inherits

@@ -4,9 +4,14 @@
 
 | # | plan | readiness | what it is |
 |---|---|---|---|
-| 1 | [`answer-recovery.md`](answer-recovery.md) | source-bound on `b912317d1`; no prerequisite plan | another complete answer from a streamed pool call: retain existing lanes until close, then continue through untried candidates within the same budget |
-| 2 | [`load-harness.md`](load-harness.md) | source-bound on v1.7.0; revalidate after row 1 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of inside one host's private script |
+| 1 | [`architecture-simplification.md`](architecture-simplification.md) | source-bound on `67659c350`; next implementation | consolidate stream ownership and attempt settlement, remove duplicate rebuilds, acknowledge journal writes, simplify deadlines and backend rating storage; retain the alternative-answer contract |
+| 2 | [`load-harness.md`](load-harness.md) | source-bound on v1.7.0; revalidate after row 1 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of one host's private script |
 | 3 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 2 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
+
+Architecture simplification comes before the harness because its deadline and
+storage changes determine what the harness measures and what caller visibility can
+reuse. Its batches form one implementation and review unit; complete all of them
+before handing off the harness. No existing plan requires a joint release with it.
 
 ## Detail horizon
 
@@ -48,7 +53,10 @@ default ([`../reference/decisions.md`](../reference/decisions.md#parallelism-is-
 
 ## Rejected proposals
 
-Two proposals were rejected rather than implemented, and the reasoning is worth keeping
+Separating ordinary streams from streams with alternative answers is rejected in
+[`streamed-alternatives-live-until-close`](../reference/decisions.md#streamed-alternatives-live-until-close).
+
+Two other proposals were rejected rather than implemented, and the reasoning is worth keeping
 because both will be re-proposed otherwise. A *reachability check* — a read-only,
 human-run command reporting whether each key reaches its model — was a module, a CLI
 verb and a permanent public function for a one-time onboarding act on a handful of

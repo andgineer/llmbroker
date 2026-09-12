@@ -123,6 +123,14 @@ dropping the `llmbroker_*` objects and restarting, exporting first if needed.
 That is what makes invariant 14 load-bearing: dropping the namespace has to be a
 full reset, so the marker lives inside it on every backend.
 
+**The absence of a migration path is conditional, not permanent.** It holds only
+while no installation's stored data has to survive an upgrade — today every
+deployed database can be re-created, the model list from its source and the
+journal as history a host can afford to lose. A schema change proposed once that
+stops being true ships an automatic migration in the same release: raising the
+version marker without one destroys data nobody can re-create, the keys in the
+broker's own secrets store first of all.
+
 Passing an already-constructed pool or database object means the caller owns its
 lifecycle and closing the broker is a no-op for it; passing a connection string
 instead makes the driver create and own the connection.
