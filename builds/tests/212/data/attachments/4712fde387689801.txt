@@ -1,0 +1,2 @@
+ERROR    llmbroker.broker:catalog.py:340 pool degraded, no failover left: 1 of 1 providers usable
+WARNING  llmbroker.broker:pool.py:323 LLM a cooling for 60s

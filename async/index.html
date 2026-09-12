@@ -1,0 +1,962 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+        <meta name="author" content="Andrey Sorokin">
+      
+      
+        <link rel="canonical" href="https://andgineer.github.io/llmbroker/async/">
+      
+      
+        <link rel="prev" href="../tools/">
+      
+      
+        <link rel="next" href="../direct/">
+      
+      
+        
+          <link rel="alternate" href="/llmbroker/" hreflang="en">
+        
+          <link rel="alternate" href="/llmbroker/ru/" hreflang="ru">
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.60">
+    
+    
+      
+        <title>Asynchronous calls and streaming - llmbroker</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.ce62732f.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#asynchronous-calls-and-streaming" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="llmbroker" class="md-header__button md-logo" aria-label="llmbroker" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            llmbroker
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Asynchronous calls and streaming
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-languages" viewBox="0 0 24 24"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="/llmbroker/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="/llmbroker/ru/" hreflang="ru" class="md-select__link">
+              Русский
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/andgineer/llmbroker" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    llmbroker
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="llmbroker" class="md-nav__button md-logo" aria-label="llmbroker" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    llmbroker
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/andgineer/llmbroker" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    llmbroker
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  llmbroker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Model pool and calls
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tools &amp; agents
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Asynchronous calls and streaming
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Asynchronous calls and streaming
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#streaming-from-the-pool" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streaming
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Streaming">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#racing-a-stream" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Concurrent streaming
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#another-answer" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Requesting another complete answer
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#budget" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Time limit for the complete reply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-local-database-for-one-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A local database for one process
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../direct/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Direct model calls
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API keys
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Servers &amp; clusters
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Monitoring and the journal
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../disable/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Disabling models
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#streaming-from-the-pool" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streaming
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Streaming">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#racing-a-stream" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Concurrent streaming
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#another-answer" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Requesting another complete answer
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#budget" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Time limit for the complete reply
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-local-database-for-one-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A local database for one process
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="asynchronous-calls-and-streaming">Asynchronous calls and streaming</h1>
+<p><code>AsyncBroker</code> provides the asynchronous API. <code>Broker</code> uses the same underlying
+behavior through synchronous methods. Call <code>AsyncBroker</code> methods with <code>await</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">AsyncBroker</span><span class="p">()</span> <span class="k">as</span> <span class="n">broker</span><span class="p">:</span>
+    <span class="n">reply</span> <span class="o">=</span> <span class="k">await</span> <span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">"Hello"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">reply</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+</code></pre></div>
+<p>Use <code>await llmbroker.arun_tool_loop(...)</code> for an asynchronous tool loop. See
+<a href="../tools/">Tools &amp; agents</a>.</p>
+<h2 id="streaming-from-the-pool">Streaming</h2>
+<p>Streaming is available only through the asynchronous API. <code>stream()</code> yields text
+chunks as they arrive. Model selection and fallback behave as they do for a
+regular call:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">AsyncBroker</span><span class="p">()</span> <span class="k">as</span> <span class="n">broker</span><span class="p">:</span>
+    <span class="n">stream</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="s2">"Write a haiku about brokers"</span><span class="p">,</span> <span class="n">operation</span><span class="o">=</span><span class="s2">"write"</span><span class="p">)</span>
+    <span class="k">async</span> <span class="k">for</span> <span class="n">delta</span> <span class="ow">in</span> <span class="n">stream</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">delta</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">""</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="n">stream</span><span class="o">.</span><span class="n">llm_name</span><span class="p">,</span> <span class="n">stream</span><span class="o">.</span><span class="n">usage</span><span class="p">)</span>  <span class="c1"># model name and usage information</span>
+    <span class="k">await</span> <span class="n">stream</span><span class="o">.</span><span class="n">record_quality</span><span class="p">(</span><span class="mf">0.9</span><span class="p">)</span>  <span class="c1"># rate the completed reply</span>
+</code></pre></div>
+<p><code>stream(...)</code> returns an asynchronous iterator. After the reply is complete, its
+fields contain the model name and usage information. The broker owns its streams:
+leaving its context closes unfinished work and waits for journal writes before
+closing the HTTP client and storage. No separate stream context is required.</p>
+<p>Before the first text chunk arrives, the broker can try another model. This
+happens if the provider returns an error, rate-limits the request, or completes a
+reply with neither text nor tool calls. Once a chunk has been returned, switching
+models would require replacing visible text. If the reply is interrupted at that
+point, <code>StreamInterruptedError</code> is raised and the application retains the chunks
+it already received. Behavior with <code>fastest_of &gt; 1</code> is described under
+<a href="#racing-a-stream">Concurrent streaming</a>.</p>
+<h3 id="racing-a-stream">Concurrent streaming</h3>
+<p>With <code>fastest_of &gt; 1</code>, the broker calls multiple models concurrently. Every model
+continues until one produces a <strong>complete</strong> reply. The model that returns the
+first text chunk is not necessarily the one that finishes first, so the broker
+does not cancel the other requests when text first appears.</p>
+<p>Chunks received before one reply completes are provisional. If another model
+finishes first, the iterator raises <code>StreamReplacementError</code>. Its <code>replacement</code>
+field contains the complete final reply. Replace all previously displayed text
+with that reply; chunks from different models are never combined.</p>
+<div class="highlight"><pre><span></span><code><span class="n">stream</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="s2">"Write a haiku"</span><span class="p">,</span> <span class="n">fastest_of</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">stream_selection_window</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+<span class="n">parts</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">for</span> <span class="n">delta</span> <span class="ow">in</span> <span class="n">stream</span><span class="p">:</span>
+        <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">delta</span><span class="p">)</span>
+        <span class="n">show</span><span class="p">(</span><span class="n">delta</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">StreamReplacementError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="n">replace_everything_with</span><span class="p">(</span><span class="n">exc</span><span class="o">.</span><span class="n">replacement</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>  <span class="c1"># replace the provisional text</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="s2">""</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">stream</span><span class="o">.</span><span class="n">llm_name</span><span class="p">)</span>  <span class="c1"># model whose reply became the final result</span>
+<span class="k">await</span> <span class="n">stream</span><span class="o">.</span><span class="n">record_quality</span><span class="p">(</span><span class="mf">0.9</span><span class="p">)</span>  <span class="c1"># rate the final reply</span>
+</code></pre></div>
+<p>Rate a concurrent call through the <code>stream</code> object or <code>exc.replacement</code>. With
+<code>fastest_of</code>, the journal can contain several successful attempts with the same
+<code>trace_id</code>, although the user received only one reply.
+<code>record_quality(..., trace_id=...)</code> cannot determine which reply was shown. Use
+the returned object or save its <code>call_id</code>.</p>
+<p>The iterator is finished after <code>StreamReplacementError</code> and yields no more data.
+The same handle remains open for <code>another()</code>. Catch this exception <strong>before</strong> the
+broader <code>LLMRequestError</code>, or a complete reply will be handled as a failure.</p>
+<p><code>stream_selection_window</code> affects only the text shown first. For this many
+seconds, one second by default, the broker waits for data from the model currently
+first in the selection order. If it does not start responding, data already
+received from another model is shown. If the first model fails, the wait ends
+immediately. A value of <code>0</code> displays the first text received, regardless of model
+order.</p>
+<p>Expiration of <code>stream_selection_window</code> is not an error or a timeout and does not
+change later model selection. The complete reply from the model that finishes
+first is still the final result.</p>
+<p>Each concurrent request consumes provider quota, and completed replies remain in
+memory until requested or the handle closes. This is independent of how quickly
+the application reads chunks. If one model stops generating or does not complete
+within <code>wait</code>, the broker can use another model's complete reply.</p>
+<p>When <code>fastest_of</code> is unset or equals <code>1</code>, the broker stays with the model that
+returns the first chunk, and <code>stream_selection_window</code> has no effect.</p>
+<h3 id="another-answer">Requesting another complete answer</h3>
+<p>Call <code>another()</code> while the broker is open when the application rejects
+a complete answer. The broker first uses retained lanes and then tries pool models
+that this routed request has not attempted:</p>
+<div class="highlight"><pre><span></span><code><span class="n">stream</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">fastest_of</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">wait</span><span class="o">=</span><span class="mi">25</span><span class="p">)</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="s2">""</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="n">delta</span> <span class="k">async</span> <span class="k">for</span> <span class="n">delta</span> <span class="ow">in</span> <span class="n">stream</span><span class="p">])</span>
+    <span class="n">rated</span> <span class="o">=</span> <span class="n">stream</span>
+<span class="k">except</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">StreamReplacementError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="n">text</span><span class="p">,</span> <span class="n">rated</span> <span class="o">=</span> <span class="n">exc</span><span class="o">.</span><span class="n">replacement</span><span class="o">.</span><span class="n">text</span><span class="p">,</span> <span class="n">exc</span><span class="o">.</span><span class="n">replacement</span>
+
+<span class="k">while</span> <span class="ow">not</span> <span class="n">acceptable</span><span class="p">(</span><span class="n">text</span><span class="p">):</span>
+    <span class="k">await</span> <span class="n">rated</span><span class="o">.</span><span class="n">record_quality</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+    <span class="n">answer</span> <span class="o">=</span> <span class="k">await</span> <span class="n">stream</span><span class="o">.</span><span class="n">another</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">answer</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">break</span>
+    <span class="n">text</span><span class="p">,</span> <span class="n">rated</span> <span class="o">=</span> <span class="n">answer</span><span class="o">.</span><span class="n">text</span><span class="p">,</span> <span class="n">answer</span>
+</code></pre></div>
+<p>Each returned result has its own <code>llm_name</code>, <code>call_id</code>, <code>usage</code>, and rating target.
+The original stream keeps the identity of its first authoritative answer. <code>None</code>
+means no further complete answer can be obtained from this call and is returned
+again on later <code>another()</code> calls.</p>
+<p>Keeping the handle open starts no new provider request after the first answer;
+only <code>another()</code> may do that. Lanes already started may continue and retain their
+answers. Closing cancels unfinished lanes and waits for their journal rows and
+capacity releases.</p>
+<h3 id="budget">Time limit for the complete reply</h3>
+<p><code>wait</code> limits the time used to receive the complete reply, not only the first
+chunk. It counts only time spent waiting for provider data:</p>
+<div class="highlight"><pre><span></span><code><span class="n">stream</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="s2">"Write a long answer"</span><span class="p">,</span> <span class="n">wait</span><span class="o">=</span><span class="mf">20.0</span><span class="p">)</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">for</span> <span class="n">delta</span> <span class="ow">in</span> <span class="n">stream</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">delta</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">""</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">LLMTimeoutError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="s2">response timed out: </span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</code></pre></div>
+<p>Time spent by the application processing a chunk does not count. Timing pauses
+when data are handed to the application and resumes when the next chunk is
+requested. The limit still applies when a model starts quickly but generates the
+rest of the reply too slowly.</p>
+<p>The same positive <code>wait</code> covers the initial answer, application validation, and
+all calls to <code>another()</code>. After the first complete answer the clock runs
+continuously. A reply completed before expiry remains available from memory, but
+the broker starts no new candidate after expiry.</p>
+<p>When <code>wait</code> is unset, no user-defined time limit applies. If it expires before the
+first chunk, the call raises <code>NoLLMAvailableError</code>. After the first chunk, it
+raises <code>LLMTimeoutError</code>, and the application retains previously delivered data.</p>
+<p>A model that returned no data within <code>wait</code> is temporarily excluded from
+selection. If the model had already started responding, that temporary exclusion
+does not apply. In both cases, the broker remembers which <code>wait</code> value was too
+short and prefers another model for a similarly short call. An incomplete reply
+cannot be rated; calling <code>record_quality</code> on its object raises an exception.</p>
+<p>Before the first chunk, <code>llm_name</code> and <code>call_id</code> are <code>None</code> because the broker can
+still try another model. <code>usage</code> is populated after the reply is complete.</p>
+<p>A rating can also be recorded only after the reply is complete and the call is in
+the journal. Calling <code>record_quality</code> earlier raises <code>ValueError</code>.</p>
+<p>You can stop reading at any point, but <code>break</code> does not close the stream. The
+broker closes it on exit. In a long-lived broker, use the stream's own context to
+release its resources as soon as this request is finished, including on errors.
+Closing also allows you to rate a partial reply while the broker is still open:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">broker</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="s2">"Write a haiku about brokers"</span><span class="p">)</span> <span class="k">as</span> <span class="n">stream</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">for</span> <span class="n">delta</span> <span class="ow">in</span> <span class="n">stream</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">looks_wrong</span><span class="p">(</span><span class="n">delta</span><span class="p">):</span>
+            <span class="k">break</span>
+
+<span class="k">await</span> <span class="n">stream</span><span class="o">.</span><span class="n">record_quality</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+</code></pre></div>
+<p>When using this optional context, keep validation and <code>another()</code> inside it.
+<code>await stream.aclose()</code> performs the same early release if needed without a context.</p>
+<p>Streaming is also available for one specific model through <code>direct()</code>, without
+pool selection or fallback. See <a href="../direct/#streaming">Direct model calls</a>.</p>
+<h2 id="a-local-database-for-one-process">A local database for one process</h2>
+<p>SQLite stores models, keys, and the journal in one file. This is sufficient for a
+single-process application. The maintained model list is written before the
+first call:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">AsyncBroker</span><span class="p">(</span><span class="s2">"broker.db"</span><span class="p">)</span> <span class="k">as</span> <span class="n">broker</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">((</span><span class="k">await</span> <span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">"Hello"</span><span class="p">))</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+</code></pre></div>
+<p>An empty database is populated automatically before the pool is created, so no
+separate initialization step is required. The list is then updated
+automatically. If the remote catalog is unavailable, the broker logs a warning
+and uses the data in the database. If the database is empty, it uses the copy
+bundled with the installed package.</p>
+<p>If the application uses the same file, account for WAL mode and SQLite file
+locking. See <a href="../server/#sqlite">SQLite: sharing and WAL</a>. For multiple processes
+or hosts, update the database once during deployment instead. See
+<a href="../server/#datasource">Servers &amp; clusters</a>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"search":"../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.88ee1349.min.js"></script>
+      
+    
+  </body>
+</html>

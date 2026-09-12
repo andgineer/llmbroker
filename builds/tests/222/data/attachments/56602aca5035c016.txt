@@ -1,0 +1,5 @@
+INFO     llmbroker.broker:refresher.py:231 sync freetier: applied — 0 -> 0 entries with a key
+  added: gemini
+  removed: groq-old
+  pending key GEMINI — holds back gemini
+      get one at aistudio

@@ -1,0 +1,4 @@
+pool groq-a oss-120b https://api.groq.com/openai/v1 GROQ_API_KEY
+pool google-b gemini-flash https://gen.googleapis.com/v1beta/openai GEMINI_API_KEY
+direct opus anthropic claude-opus-4-8 https://api.anthropic.com/v1 ANTHROPIC_API_KEY
+direct sonnet anthropic claude-sonnet-5 https://api.anthropic.com/v1 ANTHROPIC_API_KEY

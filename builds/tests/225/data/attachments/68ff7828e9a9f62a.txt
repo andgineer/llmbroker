@@ -1,0 +1,18 @@
+ERROR    llmbroker.broker:catalog.py:340 pool degraded, no failover left: 1 of 1 providers usable
+ERROR    llmbroker.broker:broker.py:263 pool rebuild on pool exhaustion failed, continuing on the current pool
+Traceback (most recent call last):
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/broker.py", line 261, in _rebuild_safely
+    await self.rebuild()
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/broker.py", line 251, in rebuild
+    await self._catalog.rebuild(known)
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/catalog.py", line 229, in rebuild
+    stored, declared = await self.entries()
+                       ^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/catalog.py", line 200, in entries
+    check_overlay(configs, declared)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/catalog.py", line 58, in check_overlay
+    raise ValueError(
+    ...<2 lines>...
+    )
+ValueError: direct= declares 'anthropic-claude-opus-4-8', and the registry already carries an entry of that name — drop one of the two declarations
