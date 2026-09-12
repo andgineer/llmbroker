@@ -4,9 +4,15 @@
 
 | # | plan | readiness | what it is |
 |---|---|---|---|
-| 1 | [`architecture-simplification.md`](architecture-simplification.md) | source-bound on `67659c350`; next implementation | consolidate stream ownership and attempt settlement, remove duplicate rebuilds, acknowledge journal writes, simplify deadlines and backend rating storage; retain the alternative-answer contract |
-| 2 | [`load-harness.md`](load-harness.md) | source-bound on v1.7.0; revalidate after row 1 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of one host's private script |
-| 3 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 2 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
+| 1 | [`direct-tools-and-key-help.md`](direct-tools-and-key-help.md) | source-bound on `21a4d2eba`; next implementation | a direct call may carry tools and the shipped loop can drive it; per-key onboarding help reaches a database installation. Two additive fixes a downstream host is waiting on |
+| 2 | [`architecture-simplification.md`](architecture-simplification.md) | source-bound on `67659c350`; revalidate after row 1 | consolidate stream ownership and attempt settlement, remove duplicate rebuilds, acknowledge journal writes, simplify deadlines and backend rating storage; retain the alternative-answer contract |
+| 3 | [`load-harness.md`](load-harness.md) | source-bound on v1.7.0; revalidate after row 2 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of one host's private script |
+| 4 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 3 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
+
+Row 1 comes first because it is additive and small: it changes no signature and no
+schema, so row 2's binding is revalidated against it rather than rewritten. It also
+names direct calls without overlapping row 4 — it gives a direct call tools and
+explicitly journals nothing, row 4 gives it journal rows.
 
 Architecture simplification comes before the harness because its deadline and
 storage changes determine what the harness measures and what caller visibility can

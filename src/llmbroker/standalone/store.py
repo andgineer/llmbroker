@@ -28,13 +28,13 @@ class InMemoryStore:
     def __init__(self) -> None:
         self._disabled: dict[str, bool] = {}
 
-    async def record(self, _call: Call) -> None:
+    async def record(self, call: Call) -> None:  # noqa: ARG002
         return
 
     async def record_quality(
         self,
-        _call_id: str,
-        _score: float,
+        call_id: str,  # noqa: ARG002
+        score: float,  # noqa: ARG002
         *,
         scope: str | None = None,  # noqa: ARG002
     ) -> None:
