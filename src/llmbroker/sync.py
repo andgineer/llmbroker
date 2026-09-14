@@ -162,11 +162,9 @@ class LLMs:
         )
 
     def direct(self, alias: str | None = None, *, name: str | None = None) -> DirectClient:
-        """Return a synchronous direct client (``ask()`` only) for a declared model.
-
-        Streaming is async-only; use the async caller for deltas. Same alias/name
-        keyspaces and errors as the async counterpart.
-        """
+        """Return a synchronous direct client (``ask()`` and ``chat()``) for a declared
+        model. Streaming is async-only; same alias/name keyspaces and errors as the async
+        counterpart."""
         cfg, key = self._run(self._async.resolve_direct(alias, name=name))
         return DirectClient(base_url=cfg.base_url, model=cfg.model, api_key=key)
 

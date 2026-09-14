@@ -299,10 +299,9 @@ model.
 counts, the missing keys with their help text, and the same `degraded`
 predicate. An admin UI needs one call, and the log and the UI cannot diverge.
 
-The help text is read from the registry only when a key is actually missing, so
-a fully-keyed pool adds no registry I/O to a rebuild at all, and `snapshot()`
-never performs any; a registry without key metadata yields empty help but
-correct refs and names.
+The help text is read only when a key is actually missing, so a fully-keyed pool
+adds no I/O to a rebuild at all, and `snapshot()` never performs any. Where the
+help comes from is [`model-list.md`](model-list.md#key-acquisition-help).
 
 `snapshot()` is a view of the *live pool*, so it provisions — unlike a journal
 read, which never does (invariant 6).

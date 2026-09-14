@@ -135,6 +135,13 @@ class PresetSource:
         self._write_cache(name, text)
         return text
 
+    def text_for_help(self, name: str) -> str | None:
+        """The copy on this machine, the wheel's under it, or ``None``. Key help decides
+        nothing an installation runs on, so this read never fetches and never reports
+        the floor — it repeats on every rebuild that finds a key missing."""
+        cached = self._cached(name)
+        return cached if cached is not None else bundled_preset_text(name)
+
     def _local_only(self, name: str, *, floor: bool) -> str:
         """What is on this machine already, for a caller that may not go to the
         network at all."""

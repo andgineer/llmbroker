@@ -10,6 +10,13 @@ field in the [pool state](monitoring.md#pool-health) and the
 [sync report](usage.md#sync). You can use those fields to show which keys are
 required without maintaining a separate provider directory.
 
+The pool state provides these hints with every registry, including SQLite,
+PostgreSQL, and MongoDB. They come from the maintained model list that the broker
+follows, using the copy already on the machine; reading them never accesses the
+network. A registry of your own that provides its own key hints takes precedence.
+With `sync=None` the broker follows no list, so only hints from your registry are
+available.
+
 A model without a key is not used; the remaining models continue to work. This
 rule applies to every source below.
 

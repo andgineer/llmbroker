@@ -11,7 +11,7 @@ from llmbroker.broker.catalog import Catalog
 from llmbroker.broker.keyring import KeyRing
 from llmbroker.broker.pool import LLMPool
 from llmbroker.exceptions import EmptyRegistryError
-from llmbroker.models import LLMConfig
+from llmbroker.models import DeclaredModels, KeyInfo, LLMConfig
 from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.sqlite import Store as SqliteStore
 from llmbroker.standalone.secrets import DictSecrets
@@ -356,3 +356,128 @@ def test_a_rebuild_seeds_and_applies_the_disabled_map(tmp_path):
         assert not pool.is_disabled("p1")
 
     asyncio.run(run())
+
+
+# ── Key help: the registry's own, then the list followed, then the paid catalog ──
+
+
+class _KeyInfoRegistry(_ReadOnlyRegistry):
+    def __init__(self, configs, keys):
+        super().__init__(configs)
+        self._keys = keys
+        self.key_info_reads = 0
+
+    async def key_info(self):
+        self.key_info_reads += 1
+        return dict(self._keys)
+
+
+class _FollowedHelp:
+    def __init__(self, keys):
+        self._keys = keys
+        self.reads = 0
+
+    def __call__(self):
+        self.reads += 1
+        return dict(self._keys)
+
+
+def _ref_cfg(name, ref):
+    return LLMConfig(name=name, base_url="https://x/v1", model="m", api_key_ref=ref)
+
+
+def _help_catalog(registry, followed, secrets=None, overlay=None):
+    secrets = secrets or DictSecrets({})
+    return Catalog(
+        registry,
+        secrets,
+        LLMPool(),
+        KeyRing(secrets),
+        InMemoryStore(),
+        overlay=overlay,
+        followed_key_info=followed,
+    )
+
+
+def _info(ref, text):
+    return KeyInfo(api_key_ref=ref, help=text, extra={})
+
+
+async def test_a_registry_without_key_metadata_reports_the_followed_lists_help():
+    followed = _FollowedHelp({"K": _info("K", "curated help")})
+    catalog = _help_catalog(_ReadOnlyRegistry([_ref_cfg("p1", "K")]), followed)
+    await catalog.rebuild()
+    assert [(k.api_key_ref, k.help) for k in catalog.health.missing_keys] == [("K", "curated help")]
+
+
+async def test_a_registrys_own_help_wins_and_the_followed_list_is_not_read():
+    registry = _KeyInfoRegistry([_ref_cfg("p1", "K")], {"K": _info("K", "host help")})
+    followed = _FollowedHelp({"K": _info("K", "curated help")})
+    catalog = _help_catalog(registry, followed)
+    await catalog.rebuild()
+    assert [k.help for k in catalog.health.missing_keys] == ["host help"]
+    assert followed.reads == 0
+
+
+async def test_a_ref_the_registry_gives_no_help_for_falls_to_the_followed_list():
+    registry = _KeyInfoRegistry(
+        [_ref_cfg("p1", "A"), _ref_cfg("p2", "B")],
+        {"A": _info("A", "host help"), "B": _info("B", "")},
+    )
+    followed = _FollowedHelp({"A": _info("A", "curated A"), "B": _info("B", "curated B")})
+    catalog = _help_catalog(registry, followed)
+    await catalog.rebuild()
+    assert [(k.api_key_ref, k.help) for k in catalog.health.missing_keys] == [
+        ("A", "host help"),
+        ("B", "curated B"),
+    ]
+
+
+async def test_a_fully_keyed_installation_reads_no_help_at_all():
+    registry = _KeyInfoRegistry([_ref_cfg("p1", "K")], {"K": _info("K", "host help")})
+    followed = _FollowedHelp({"K": _info("K", "curated help")})
+    catalog = _help_catalog(registry, followed, secrets=DictSecrets({"K": "key"}))
+    await catalog.rebuild()
+    assert catalog.health.missing_keys == ()
+    assert (registry.key_info_reads, followed.reads) == (0, 0)
+
+
+async def test_the_followed_list_outranks_the_paid_catalog_for_a_declared_models_key():
+    declared = [_ref_cfg("frontier", "PAID")]
+
+    async def overlay():
+        return DeclaredModels(configs=tuple(declared), key_help={"PAID": "paid catalog help"})
+
+    followed = _FollowedHelp({"PAID": _info("PAID", "curated help")})
+    catalog = _help_catalog(
+        _ReadOnlyRegistry([_ref_cfg("p1", "K")]),
+        followed,
+        secrets=DictSecrets({"K": "key"}),
+        overlay=overlay,
+    )
+    await catalog.rebuild()
+    assert [k.help for k in catalog.direct_missing_keys] == ["curated help"]
+    assert followed.reads == 1
+
+
+async def test_a_declared_key_the_followed_list_does_not_carry_keeps_the_paid_catalogs_help():
+    async def overlay():
+        return DeclaredModels(
+            configs=(_ref_cfg("frontier", "PAID"),),
+            key_help={"PAID": "paid catalog help"},
+        )
+
+    catalog = _help_catalog(
+        _ReadOnlyRegistry([_ref_cfg("p1", "K")]),
+        _FollowedHelp({"K": _info("K", "curated help")}),
+        secrets=DictSecrets({"K": "key"}),
+        overlay=overlay,
+    )
+    await catalog.rebuild()
+    assert [k.help for k in catalog.direct_missing_keys] == ["paid catalog help"]
+
+
+async def test_no_followed_list_leaves_a_registry_without_metadata_with_no_help():
+    catalog = _help_catalog(_ReadOnlyRegistry([_ref_cfg("p1", "K")]), None)
+    await catalog.rebuild()
+    assert [(k.api_key_ref, k.help) for k in catalog.health.missing_keys] == [("K", "")]

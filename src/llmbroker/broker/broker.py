@@ -4,8 +4,10 @@ once, and delegates each operation to the collaborator that owns it."""
 import asyncio
 import logging
 import time
+import tomllib
 from collections.abc import Mapping, Sequence
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 
 from llmbroker.broker.aliases import resolve_declared
@@ -36,6 +38,7 @@ from llmbroker.models import (
     AsyncResourceProtocol,
     Call,
     DeclaredModels,
+    KeyInfo,
     LifecyclePhase,
     LLMConfig,
     LLMMetrics,
@@ -51,6 +54,7 @@ from llmbroker.protocols.store import (
     QueryableStoreProtocol,
     StoreProtocol,
 )
+from llmbroker.standalone.registry import parse_model_list
 from llmbroker.standalone.secrets import as_secrets
 
 logger = logging.getLogger("llmbroker.broker")
@@ -88,6 +92,17 @@ def _check_sync_interval(sync_interval: float | None) -> None:
             "sync_interval must be a positive number of seconds, or None to fetch"
             " nothing on this installation's own initiative",
         )
+
+
+def _followed_key_info(presets: PresetSource, source: str) -> dict[str, KeyInfo]:
+    """The key help of the curated list this installation follows, as this machine holds
+    it. Help only documents, so a copy that cannot be read yields none rather than failing
+    the rebuild that asked."""
+    try:
+        text = presets.text_for_help(source)
+        return parse_model_list(tomllib.loads(text)).keys if text is not None else {}
+    except ValueError:
+        return {}
 
 
 def _resolve_sync(sync: str | None | _SyncDefault, registry: object) -> str | None:
@@ -168,6 +183,9 @@ class AsyncBroker:
             overlay=self._resolve_declared if self._declared else None,
             autofill=self._autofetch,
             relearn=self._relearn,
+            followed_key_info=(
+                partial(_followed_key_info, self._presets, source) if source is not None else None
+            ),
         )
 
         self._learner: Learner | None = None

@@ -29,6 +29,7 @@ class DirectResult:
 
     text: str
     usage: Usage | None = None
+    tool_calls: list[dict] | None = None
 
 
 def _messages(prompt: str | None, messages: list[dict] | None) -> list[dict]:
@@ -45,14 +46,14 @@ def _result(resp: httpx.Response, model: str) -> DirectResult:
     and on a 200 that carried no answer."""
     if resp.status_code >= ERROR_FLOOR:
         raise provider_error(resp.status_code, resp.text[:DETAIL_SNIPPET], resp.headers)
-    text, _tool_calls, usage = completion_from_response(resp, model)
-    return DirectResult(text=text, usage=usage)
+    text, tool_calls, usage = completion_from_response(resp, model)
+    return DirectResult(text=text, usage=usage, tool_calls=tool_calls)
 
 
 class AsyncDirectClient:
-    """Async direct client for one named model — ``stream()`` and ``ask()``. Pass an
-    ``httpx.AsyncClient`` to share a connection pool, or let it open and close its
-    own."""
+    """Async direct client for one named model — ``stream()``, ``ask()`` and ``chat()``.
+    Pass an ``httpx.AsyncClient`` to share a connection pool, or let it open and close
+    its own."""
 
     def __init__(
         self,
@@ -77,8 +78,8 @@ class AsyncDirectClient:
 
     def _request(
         self,
-        prompt: str | None,
-        messages: list[dict] | None,
+        messages: list[dict],
+        tools: list[dict] | None = None,
         *,
         stream: bool = False,
         params: Mapping[str, object] | None = None,
@@ -87,7 +88,8 @@ class AsyncDirectClient:
             self._base_url,
             self._model,
             self._api_key,
-            _messages(prompt, messages),
+            messages,
+            tools,
             stream=stream,
             params=params,
         )
@@ -100,7 +102,18 @@ class AsyncDirectClient:
         timeout: float | None = None,
         params: Mapping[str, object] | None = None,
     ) -> DirectResult:
-        url, headers, body = self._request(prompt, messages, params=params)
+        return await self.chat(_messages(prompt, messages), timeout=timeout, params=params)
+
+    async def chat(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        timeout: float | None = None,
+        params: Mapping[str, object] | None = None,
+    ) -> DirectResult:
+        """One complete reply, which may be tool calls and no text."""
+        url, headers, body = self._request(messages, tools, params=params)
         try:
             resp = await self._ensure_http().post(
                 url,
@@ -120,7 +133,11 @@ class AsyncDirectClient:
         timeout: float | None = None,
         params: Mapping[str, object] | None = None,
     ) -> AsyncIterator[str]:
-        url, headers, body = self._request(prompt, messages, stream=True, params=params)
+        url, headers, body = self._request(
+            _messages(prompt, messages),
+            stream=True,
+            params=params,
+        )
         try:
             async with self._ensure_http().stream(
                 "POST",
@@ -156,9 +173,9 @@ class AsyncDirectClient:
 
 
 class DirectClient:
-    """Synchronous direct client for one named model — ``ask()`` only, since it is a
-    single ``POST`` and needs no event loop. Pass an ``httpx.Client`` to share a
-    connection pool, or let it open and close its own."""
+    """Synchronous direct client for one named model — ``ask()`` and ``chat()``, each a
+    single ``POST`` needing no event loop; streaming is async-only. Pass an
+    ``httpx.Client`` to share a connection pool, or let it open and close its own."""
 
     def __init__(
         self,
@@ -189,11 +206,23 @@ class DirectClient:
         timeout: float | None = None,
         params: Mapping[str, object] | None = None,
     ) -> DirectResult:
+        return self.chat(_messages(prompt, messages), timeout=timeout, params=params)
+
+    def chat(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        timeout: float | None = None,
+        params: Mapping[str, object] | None = None,
+    ) -> DirectResult:
+        """One complete reply, which may be tool calls and no text."""
         url, headers, body = build_chat_request(
             self._base_url,
             self._model,
             self._api_key,
-            _messages(prompt, messages),
+            messages,
+            tools,
             params=params,
         )
         try:

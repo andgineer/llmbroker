@@ -51,6 +51,13 @@ never merged, because each silently breaks something the caller cannot see. This
 is a property of naming the model; what a routed request may carry is
 [`call-path.md`](call-path.md)'s.
 
+**A direct call may carry tools, and the tool loop drives it as it drives a routed
+caller.** The loop repeats `chat` over whatever answers it
+([`../mission.md`](../mission.md#what-it-is-not)), so a named model is reached through
+it without a second loop. Every round is still a direct call: it routes over nothing,
+fails over to nothing and journals nothing, and what the loop hands back names no model
+— the caller named it. Tools ride a complete reply only; a direct stream carries none.
+
 ## What the catalog carries
 
 **One line per distinct tier a provider genuinely has, and speed is one of the

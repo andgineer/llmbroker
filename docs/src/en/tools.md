@@ -50,7 +50,7 @@ you want to retain the intermediate result.
 ## Parameters passed to the broker
 
 Additional parameters, including `operation=`, `trace_id=`, and `wait=`, are
-passed to every `chat` call in the loop. Set them as you would for a direct
+passed to every `chat` call in the loop. Set them as you would for a single
 `chat` call. Without `operation=`, every call uses the same general category, so
 [quality ratings](usage.md#quality) cannot distinguish between tasks:
 
@@ -70,6 +70,30 @@ with that ID applies only to the most recent successful call. To rate another
 call in the same loop, keep its `call_id`. See
 [Quality rating](usage.md#quality).
 
+## A specific model {#direct}
+
+The loop also accepts a [direct client](direct.md#tools) in place of the broker.
+Every call then goes to the one model you selected:
+
+```python
+broker = llmbroker.Broker(direct=["opus"])
+reply = llmbroker.run_tool_loop(
+    broker.direct("opus"),
+    [{"role": "user", "content": "What is the weather in Paris?"}],
+    tools=tools,
+    dispatch={"get_weather": get_weather},
+    params={"temperature": 0},
+)
+print(reply.text, reply.usage)
+```
+
+The result is the final `DirectResult`, with `text`, `tool_calls`, and `usage`.
+It has no `llm_name` or `call_id`: you selected the model yourself, and a direct
+call writes no journal row. The loop does not try another model after an error;
+the exception reaches the application. Additional parameters are passed to the
+client's `chat`, so use `timeout=` and `params=` here instead of `operation=`,
+`trace_id=`, or `wait=`.
+
 ## Tool error handling
 
 Exceptions raised by functions in `dispatch` do not propagate to the caller. If
@@ -85,9 +109,9 @@ and return an unambiguous failure to the model, or implement the loop yourself.
 `chat(messages, tools=...)` returns `tool_calls`, after which the application can
 choose what to do.
 
-## Limitation with scoped calls
+## Scoped calls
 
-The function's first argument is the broker itself. In a multi-user application,
-`broker.for_scope(user)` works at runtime but does not match the declared argument
-type, so a static type checker reports an error. The current tool-loop API does
-not explicitly support scopes. See [Multi-user applications](server.md#multiuser).
+The first argument can be any object with a `chat` method that accepts `tools=`:
+a broker, a direct client, or a caller from `broker.for_scope(user)`. With a scoped
+caller, every call in the loop uses that user's keys and is journaled under that
+scope. See [Multi-user applications](server.md#multiuser).

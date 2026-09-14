@@ -20,9 +20,9 @@ and a cold cache would have nothing to start from, which is exactly the case a
 zero-config broker has to survive. It also makes the CLI work offline.
 
 **One object holds that precedence, and a read names its purpose rather than its
-mechanism.** Every read of a curated text goes through it, and only two things
-vary: whether the copy already here is preferred to a fetch, and whether the
-wheel's copy is in the chain at all. Both are decided at the one call site whose
+mechanism.** Every read of a curated text goes through it, and where a read decides
+what an installation runs on only two things vary: whether the copy already here
+is preferred to a fetch, and whether the wheel's copy is in the chain at all. Both are decided at the one call site whose
 decision they belong to, so no branch of the fallback chain is threaded through
 the callers as a flag.
 
@@ -47,6 +47,10 @@ clock overwriting the cache underneath it, not the resolution going to look.
 at warning level, unlike the cached fallback, which serves what this machine
 last saw: a copy frozen at an installed release must not pass for one just
 fetched, since it decides what an installation runs on until the next release.
+The one read that decides nothing an installation runs on — key help,
+[below](#key-acquisition-help) — neither fetches nor reports the floor: it repeats
+on every rebuild that finds a key missing, and a warning there would name a model
+list the installation is not running on.
 
 Presets are curated, multi-provider free-tier pools only. A paid-tier preset
 defeats the point — anyone willing to pay uses one good model directly — and a
@@ -89,10 +93,22 @@ The same data feeds two consumers: the `env` command prints keys in file
 declaration order, each with its help line above its variable; and a host can
 pull the passthrough to render its own setup UI.
 
-Surfacing it is an **optional registry capability**, independent of the broker.
-A registry that has the metadata exposes it; one that does not simply omits the
-capability. Hosts query whichever registry they hold — no coupling between
-obtaining the help and routing.
+**The help follows the list the installation follows, whatever its registry is
+made of.** A database registry stores none and needs none: the help is a pure
+function of the curated list, so what a missing key reports is read from that list
+as this machine holds it — the cached copy, the wheel's under it, never the
+network. Storing it would change every database installation's schema for
+documentation, and keeping what a sync last delivered would leave an installation
+that never syncs with nothing. An installation that follows no list has only what
+its registry carries.
+
+**A registry's own key metadata is an override, not the only source.** Carrying it
+is an optional registry capability, and where it gives a ref help that text wins —
+a host that wrote its own hint means it. The list followed fills in every ref it
+leaves blank, and the key of a model declared in code falls to the paid catalog's
+help last. Help is read only while a key is missing
+([`selection.md`](selection.md#one-measurement-two-consumers)), and a copy that
+cannot be read yields no help rather than failing the rebuild that asked.
 
 An unresolved `api_key_ref` is normal, not an error: the pool routes over
 whatever keys are present, and a config without a resolvable key simply stays

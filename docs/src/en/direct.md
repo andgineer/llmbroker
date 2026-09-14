@@ -163,7 +163,7 @@ described in [Asynchronous calls](async.md#streaming-from-the-pool).
 
 ## Synchronous
 
-Synchronous `Broker` also provides `direct(...)`, but only with `ask()`. Use
+Synchronous `Broker` also provides `direct(...)`, with `ask()` and `chat()`. Use
 `AsyncBroker` for streaming.
 
 ```python
@@ -172,12 +172,29 @@ with llmbroker.Broker(direct=["opus"]) as broker:
     print(result.text)
 ```
 
+## Tools {#tools}
+
+`chat(messages, tools=...)` sends a message list with tool definitions and returns
+the model's full reply. The reply has `text`, `tool_calls`, and `usage`. A reply
+that contains only tool calls is valid: its `text` is empty. `stream()` does not
+accept tools.
+
+```python
+client = broker.direct("opus")
+result = client.chat(messages, tools=tools)
+if result.tool_calls:
+    ...  # run the requested tools and call chat again
+```
+
+`run_tool_loop` and `arun_tool_loop` accept a direct client in place of the broker
+and repeat these calls for you. See [Tools & agents](tools.md#direct).
+
 ## Request parameters {#params}
 
 Direct calls can include any parameter supported by the selected model, such as
 reasoning effort, temperature, a token limit, or `seed`. The `params` mapping is
 added to the request body unchanged. Synchronous and asynchronous clients accept
-it in `ask()`; the asynchronous client also accepts it in `stream()`:
+it in `ask()` and `chat()`; the asynchronous client also accepts it in `stream()`:
 
 ```python
 client = broker.direct("opus")

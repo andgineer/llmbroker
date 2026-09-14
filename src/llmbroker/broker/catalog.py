@@ -3,7 +3,7 @@ the only registry write path; what it writes is decided in ``broker.merge``."""
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 
 from llmbroker.broker.keyring import KeyRing, resolve_ref
 from llmbroker.broker.pool import LLMPool
@@ -140,6 +140,7 @@ class Catalog:
         overlay: "Callable[[], Awaitable[DeclaredModels]] | None" = None,
         autofill: bool = True,
         relearn: "Callable[[], Awaitable[None]] | None" = None,
+        followed_key_info: "Callable[[], Mapping[str, KeyInfo]] | None" = None,
     ) -> None:
         self._registry = registry
         self._secrets = secrets
@@ -149,11 +150,13 @@ class Catalog:
         self._overlay = overlay
         self._autofill = autofill
         self._relearn = relearn
+        self._followed_key_info = followed_key_info
         self._declared: DeclaredModels | None = None
         self._declared_lock = asyncio.Lock()
         self._health = PoolHealth()
         self._direct_missing_keys: tuple[PendingKey, ...] = ()
-        self._key_info: dict[str, KeyInfo] = {}
+        self._key_info: Mapping[str, KeyInfo] = {}
+        self._followed_help: Mapping[str, KeyInfo] = {}
         self._payable: frozenset[str] = frozenset()
         self._scoped_refs: frozenset[str] = frozenset()
         self._empty = False
@@ -178,11 +181,11 @@ class Catalog:
         return self._direct_missing_keys
 
     def key_help(self, ref: str) -> str:
-        """Where this ref's key comes from: the registry's own ``[keys]`` first —
-        a host that wrote its own hint means it — then the paid catalog's."""
-        stored = self._key_info[ref].help if ref in self._key_info else ""
-        if stored:
-            return stored
+        """Where this ref's key comes from: the registry's own ``[keys]`` first — a host
+        that wrote its own hint means it — then the list followed, then the paid catalog."""
+        for known in (self._key_info, self._followed_help):
+            if ref in known and known[ref].help:
+                return known[ref].help
         return self._declared.key_help.get(ref, "") if self._declared is not None else ""
 
     def invalidate_declared(self) -> None:
@@ -285,15 +288,26 @@ class Catalog:
         held_back = {ref: names for ref, names in missing.items() if ref not in usable}
         direct_held = await self._direct_without_keys(direct)
         # Help text is read only for a ref that is missing, so a fully-keyed
-        # installation — the common case — costs no registry read at all.
-        if (held_back or direct_held) and isinstance(self._registry, KeyInfoProtocol):
-            self._key_info = await self._registry.key_info()
+        # installation — the common case — costs no read at all.
+        if held_back or direct_held:
+            await self._read_key_help({*held_back, *direct_held})
         self._health = PoolHealth(
             providers_usable=len(usable),
             providers_total=len(total),
             missing_keys=self._pending(held_back),
         )
         self._direct_missing_keys = self._pending(direct_held)
+
+    async def _read_key_help(self, missing: set[str]) -> None:
+        """The followed list is read only for a ref the registry gave no help for, so a
+        registry carrying its own reads nothing more."""
+        if isinstance(self._registry, KeyInfoProtocol):
+            self._key_info = await self._registry.key_info()
+        stored = self._key_info
+        if self._followed_key_info is not None and any(
+            not (ref in stored and stored[ref].help) for ref in missing
+        ):
+            self._followed_help = self._followed_key_info()
 
     async def _direct_without_keys(self, direct: list[LLMConfig]) -> dict[str, list[str]]:
         """Which refs the host's own entries want and cannot resolve, named by the

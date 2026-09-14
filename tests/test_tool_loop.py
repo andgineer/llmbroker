@@ -1,15 +1,19 @@
 """Tests for the tool loop and the dispatch it runs tools through."""
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
+from llmbroker.broker.broker import AsyncBroker
+from llmbroker.direct import AsyncDirectClient, DirectClient, DirectResult
 from llmbroker.exceptions import ToolLoopLimitError
-from llmbroker.models import Usage
+from llmbroker.models import LLMConfig, Usage
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets
-from llmbroker.standalone.store import InMemoryStore
+from llmbroker.standalone.store import FileStore, InMemoryStore
 from llmbroker.sync import Broker
 from llmbroker.tool_loop import arun_tool_loop, execute_tool_calls, run_tool_loop
 
@@ -166,3 +170,178 @@ def test_run_tool_loop_max_steps_raises_naming_the_limit():
     with pytest.raises(ToolLoopLimitError, match="max_steps=3"):
         run_tool_loop(llms, [], max_steps=3)
     assert llms.chat.call_count == 3
+
+
+# ── A direct client drives the same loop ─────────────────────────────────────
+
+_ADD_TOOL = [{"type": "function", "function": {"name": "add", "parameters": {}}}]
+_ADD_CALL = {
+    "id": "1",
+    "type": "function",
+    "function": {"name": "add", "arguments": '{"a": 1, "b": 2}'},
+}
+
+
+class _Provider:
+    """An OpenAI-compatible endpoint that asks for ``add`` once, then answers."""
+
+    def __init__(self, *, forever: bool = False) -> None:
+        self.bodies: list[dict] = []
+        self._forever = forever
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.bodies.append(json.loads(request.content))
+        if self._forever or len(self.bodies) == 1:
+            message = {"role": "assistant", "content": None, "tool_calls": [_ADD_CALL]}
+        else:
+            message = {"role": "assistant", "content": "3"}
+        return httpx.Response(
+            200, json={"choices": [{"message": message}], "usage": {"total_tokens": 5}}
+        )
+
+
+def _assert_one_tool_round(provider: _Provider, reply) -> None:
+    assert isinstance(reply, DirectResult)
+    assert (reply.text, reply.tool_calls, reply.usage.total_tokens) == ("3", None, 5)
+    assert len(provider.bodies) == 2
+    assert all(b["tools"] == _ADD_TOOL and b["tool_choice"] == "auto" for b in provider.bodies)
+    assert provider.bodies[1]["messages"][1:] == [
+        {"role": "assistant", "content": None, "tool_calls": [_ADD_CALL]},
+        {"role": "tool", "tool_call_id": "1", "content": "3"},
+    ]
+
+
+def test_arun_tool_loop_drives_an_async_direct_client_end_to_end():
+    provider = _Provider()
+
+    async def run():
+        async with AsyncDirectClient(
+            base_url="https://paid/v1",
+            model="big",
+            api_key="k",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(provider)),
+        ) as client:
+            return await arun_tool_loop(
+                client,
+                [{"role": "user", "content": "1 + 2?"}],
+                tools=_ADD_TOOL,
+                dispatch={"add": lambda a, b: a + b},
+                params={"temperature": 0},
+            )
+
+    reply = asyncio.run(run())
+    _assert_one_tool_round(provider, reply)
+    assert all(b["temperature"] == 0 for b in provider.bodies)
+
+
+def test_run_tool_loop_drives_a_sync_direct_client_end_to_end():
+    provider = _Provider()
+    with DirectClient(
+        base_url="https://paid/v1",
+        model="big",
+        api_key="k",
+        client=httpx.Client(transport=httpx.MockTransport(provider)),
+    ) as client:
+        reply = run_tool_loop(
+            client,
+            [{"role": "user", "content": "1 + 2?"}],
+            tools=_ADD_TOOL,
+            dispatch={"add": lambda a, b: a + b},
+        )
+    _assert_one_tool_round(provider, reply)
+
+
+def test_a_direct_client_still_hits_the_step_limit():
+    provider = _Provider(forever=True)
+    with (
+        DirectClient(
+            base_url="https://paid/v1",
+            model="big",
+            api_key="k",
+            client=httpx.Client(transport=httpx.MockTransport(provider)),
+        ) as client,
+        pytest.raises(ToolLoopLimitError, match="max_steps=2"),
+    ):
+        run_tool_loop(
+            client, [], tools=_ADD_TOOL, dispatch={"add": lambda a, b: a + b}, max_steps=2
+        )
+    assert len(provider.bodies) == 2
+
+
+async def test_arun_tool_loop_over_an_async_direct_client_hits_the_step_limit():
+    provider = _Provider(forever=True)
+    async with AsyncDirectClient(
+        base_url="https://paid/v1",
+        model="big",
+        api_key="k",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(provider)),
+    ) as client:
+        with pytest.raises(ToolLoopLimitError, match="max_steps=3"):
+            await arun_tool_loop(client, [], tools=_ADD_TOOL, max_steps=3)
+    assert len(provider.bodies) == 3
+
+
+_POOL = '[[llms]]\nname="p1"\nbase_url="https://pool/v1"\nmodel="m"\napi_key_ref="K"\n'
+_PAID = LLMConfig(
+    name="frontier", alias="opus", base_url="https://paid/v1", model="big", api_key_ref="K"
+)
+
+
+def test_a_tool_loop_over_a_brokers_sync_direct_client_writes_no_journal_row(tmp_path):
+    f = tmp_path / "llms.toml"
+    f.write_text(_POOL)
+    provider = _Provider()
+    with (
+        patch(
+            "llmbroker.direct.httpx.Client",
+            return_value=httpx.Client(transport=httpx.MockTransport(provider)),
+        ),
+        patch(
+            "llmbroker.broker.router.call_provider", new=AsyncMock(return_value=("ok", None, None))
+        ),
+        Broker(
+            registry=Registry(f),
+            secrets=DictSecrets({"K": "k"}),
+            store=FileStore(tmp_path / "store"),
+            sync=None,
+            direct=[_PAID],
+        ) as broker,
+    ):
+        reply = run_tool_loop(
+            broker.direct("opus"),
+            [{"role": "user", "content": "1 + 2?"}],
+            tools=_ADD_TOOL,
+            dispatch={"add": lambda a, b: a + b},
+        )
+        after_loop = broker.calls(limit=10)
+        broker.ask("and a routed call journals")
+        after_routed = broker.calls(limit=10)
+
+    _assert_one_tool_round(provider, reply)
+    assert after_loop == []
+    assert [c.llm_name for c in after_routed] == ["p1"]
+
+
+async def test_a_tool_loop_over_a_brokers_async_direct_client_writes_no_journal_row(tmp_path):
+    f = tmp_path / "llms.toml"
+    f.write_text(_POOL)
+    provider = _Provider()
+    mock = httpx.AsyncClient(transport=httpx.MockTransport(provider))
+    with patch("llmbroker.chat.make_client", return_value=mock):
+        async with AsyncBroker(
+            registry=Registry(f),
+            secrets=DictSecrets({"K": "k"}),
+            store=FileStore(tmp_path / "store"),
+            sync=None,
+            direct=[_PAID],
+        ) as broker:
+            reply = await arun_tool_loop(
+                await broker.direct("opus"),
+                [{"role": "user", "content": "1 + 2?"}],
+                tools=_ADD_TOOL,
+                dispatch={"add": lambda a, b: a + b},
+            )
+            rows = await broker.calls(limit=10)
+
+    _assert_one_tool_round(provider, reply)
+    assert rows == []

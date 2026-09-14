@@ -479,3 +479,128 @@ def test_reserved_param_raises_before_any_request():
     sync.close()
 
     assert calls == []
+
+
+# --------------------------------------------------------------------------- #
+# chat with tools
+# --------------------------------------------------------------------------- #
+
+_TOOLS = [
+    {
+        "type": "function",
+        "function": {"name": "add", "parameters": {"type": "object", "properties": {}}},
+    },
+]
+_TOOL_CALLS = [{"id": "c1", "type": "function", "function": {"name": "add", "arguments": "{}"}}]
+
+
+def _tool_calls_body() -> dict:
+    message = {"role": "assistant", "content": None, "tool_calls": _TOOL_CALLS}
+    return {"choices": [{"message": message}], "usage": {"total_tokens": 4}}
+
+
+def test_async_chat_sends_tools_with_tool_choice_and_returns_tool_calls():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_tool_calls_body())
+
+    async def run():
+        client = _async_client(handler)
+        result = await client.chat([{"role": "user", "content": "1+2?"}], tools=_TOOLS)
+        await client.aclose()
+        return result
+
+    result = asyncio.run(run())
+    assert seen["body"]["tools"] == _TOOLS
+    assert seen["body"]["tool_choice"] == "auto"
+    assert seen["body"]["messages"] == [{"role": "user", "content": "1+2?"}]
+    assert result.tool_calls == _TOOL_CALLS
+    assert result.usage.total_tokens == 4
+
+
+def test_a_tool_calls_only_reply_is_an_answer_not_an_empty_one():
+    """No text and tool calls is a reply the caller acts on — only no text and no
+    tool calls is the empty answer a direct call raises on."""
+    client = _sync_client(lambda request: httpx.Response(200, json=_tool_calls_body()))
+    result = client.chat([{"role": "user", "content": "1+2?"}], tools=_TOOLS)
+    client.close()
+    assert (result.text, result.tool_calls) == ("", _TOOL_CALLS)
+
+
+def test_sync_chat_sends_tools_and_forwards_params_and_timeout():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        seen["timeout"] = request.extensions["timeout"]
+        return httpx.Response(200, json=_ok_body("3"))
+
+    client = _sync_client(handler)
+    result = client.chat(
+        [{"role": "user", "content": "1+2?"}],
+        tools=_TOOLS,
+        timeout=0.5,
+        params={"tool_choice": "required"},
+    )
+    client.close()
+    assert seen["body"]["tools"] == _TOOLS
+    assert seen["body"]["tool_choice"] == "required"
+    assert seen["timeout"]["read"] == 0.5
+    assert (result.text, result.tool_calls) == ("3", None)
+
+
+def test_chat_without_tools_sends_no_tool_keys():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_ok_body())
+
+    async def run():
+        client = _async_client(handler)
+        await client.chat([{"role": "user", "content": "hi"}])
+        await client.aclose()
+
+    asyncio.run(run())
+    assert "tools" not in seen["body"]
+    assert "tool_choice" not in seen["body"]
+
+
+def test_chat_refuses_tools_passed_as_a_param():
+    client = _sync_client(lambda request: httpx.Response(200, json=_ok_body()))
+    with pytest.raises(ValueError, match="'tools'"):
+        client.chat([], params={"tools": _TOOLS})
+    client.close()
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(500, text="boom"),
+        httpx.Response(200, json={"choices": [{"message": {"role": "assistant"}}]}),
+    ],
+    ids=["provider_error", "empty_answer"],
+)
+def test_async_chat_raises_like_ask(response):
+    async def run():
+        client = _async_client(lambda request: response)
+        with pytest.raises(LLMRequestError):
+            await client.chat([{"role": "user", "content": "hi"}], tools=_TOOLS)
+        await client.aclose()
+
+    asyncio.run(run())
+
+
+def test_async_chat_timeout_raises_llm_timeout():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    async def run():
+        client = _async_client(handler)
+        with pytest.raises(LLMTimeoutError):
+            await client.chat([{"role": "user", "content": "hi"}], tools=_TOOLS)
+        await client.aclose()
+
+    asyncio.run(run())

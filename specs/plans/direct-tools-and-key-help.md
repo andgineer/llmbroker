@@ -103,3 +103,65 @@ by the same path.
   carry.
 - No `decisions.md` entries: the alternatives worth naming are the "Do not"
   lines above, next to what they explain.
+
+## Handover
+
+**Done:** section 1 (Do 1–3, tests), section 2 (Do 1–2, tests), "Reference and docs".
+
+**Done differently from the plan, and why**
+
+- **The help read is `PresetSource.text_for_help(name)`, not
+  `text(source, prefer_cache=True, fetch=False)`.** The chain is the same: cache,
+  then the wheel, never the network. The difference is that it logs nothing and
+  returns `None` when neither copy exists. With a cold cache, `text(fetch=False)`
+  logs a WARNING that the installation is falling back to the bundled copy. The
+  help read runs on every rebuild that finds a key missing. That includes the
+  exhaustion trigger, up to once a minute, and it fires exactly when a caller is
+  not fully keyed. So a database installation with `sync_interval=None` on a
+  machine that never fetched would repeat a misleading model-list warning.
+  `model-list.md` now says so: the floor paragraph names the exception, and the
+  "only two things vary" sentence is limited to reads that decide what an
+  installation runs on.
+- **The chat port is one generic `ChatProtocol[R]` plus a `ToolReply` protocol,
+  both in `protocols/chat.py`.** `arun_tool_loop` takes
+  `ChatProtocol[Awaitable[ReplyT]]`, `run_tool_loop` takes `ChatProtocol[ReplyT]`,
+  and both return `ReplyT`. A broker caller keeps `AsyncResult`/`Result` as its
+  return type, with `llm_name`, `call_id` and `record_quality`. A direct client
+  gets `DirectResult`. The gate's pyrefly runs the `basic` preset, which does not
+  check these argument types. Checked by hand with the default preset:
+  `AsyncBroker`, `AsyncLLMs` and `AsyncDirectClient` (async), and `Broker`, `LLMs`
+  and `DirectClient` (sync), all infer the right return type. A sync caller passed
+  to the async loop is rejected, and so is the reverse.
+- **`ask` on both direct clients now delegates to `chat`** instead of keeping a
+  second copy of the POST/timeout/result code. Its signature and behavior are
+  unchanged. `AsyncDirectClient._request` now takes the normalized message list
+  and `tools`.
+- **The followed list is read only when some missing ref has no help from the
+  registry's own metadata.** The plan asked only for the missing-key guard. With
+  this extra condition, a file-backed installation reads exactly what it read
+  before.
+- **The lookup is synchronous**: a small local file plus a TOML parse, at rebuild
+  frequency, like the file Registry's own reads. It is built in `broker.py` as
+  `partial(_followed_key_info, presets, source)`. A copy that is unreadable or
+  malformed (`ValueError`) yields `{}` and never fails a rebuild.
+- **`DirectResult.tool_calls` is added as the last field**, so building one
+  positionally still works.
+
+**Beyond the plan's list**
+
+- `docs/src/{en,ru}/monitoring.md`: the sentence about where `help` comes from
+  would otherwise be wrong.
+- `tools.md`: the "Limitation with scoped calls" section is rewritten. The port
+  means `for_scope(...)` callers now type-check.
+- `rules/selection.md`: the help paragraph now links to `model-list.md` instead of
+  saying a registry without key metadata yields empty help.
+- `protocols/__init__.py`: the docstring now also covers the chat port.
+- `tests/test_presets.py`: tests for the new read.
+
+**Deliberately left out:** everything under both "Do not" lists; exporting
+`ChatProtocol` at the top level (port protocols stay in their module, per
+`CLAUDE.md`); `decisions.md` entries (per the plan). No version bump, no commit.
+
+**Gate:** `invoke pre` all hooks Passed, pyrefly `0 errors (25 suppressed)`.
+`invoke test` `1626 passed` on the first pass and `1138 passed, 488 deselected`
+on the coarse-clock pass. No failures, errors or skips.

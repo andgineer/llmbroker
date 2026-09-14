@@ -1,14 +1,15 @@
-"""The tool loop, async and blocking: drive a broker's ``chat`` until it stops asking
-for tools, running each requested tool through the host's dispatch. It sits above the
-broker, not beside the HTTP primitives it never touches."""
+"""The tool loop, async and blocking: drive a ``chat`` until it stops asking for tools,
+running each requested tool through the host's dispatch. It sits above a caller or a
+direct client, not beside the HTTP primitives it never touches."""
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from typing import TypeVar
 
-from llmbroker.broker.broker import AsyncBroker
-from llmbroker.broker.result import AsyncResult
 from llmbroker.exceptions import ToolLoopLimitError
-from llmbroker.sync import Broker, Result
+from llmbroker.protocols.chat import ChatProtocol, ToolReply
+
+ReplyT = TypeVar("ReplyT", bound=ToolReply)
 
 _TOOL_LOOP_EXHAUSTED = (
     "the model still wanted tools after max_steps={max_steps} rounds —"
@@ -44,7 +45,7 @@ def execute_tool_calls(
 
 def _advance_tool_loop(
     convo: list[dict],
-    result: AsyncResult | Result,
+    result: ToolReply,
     dispatch: Mapping[str, Callable[..., object]],
 ) -> bool:
     """Append the assistant turn and tool results; ``True`` once the reply is final."""
@@ -58,17 +59,17 @@ def _advance_tool_loop(
 
 
 async def arun_tool_loop(
-    llms: AsyncBroker,
+    llms: ChatProtocol[Awaitable[ReplyT]],
     messages: list[dict],
     *,
     tools: list[dict] | None = None,
     dispatch: Mapping[str, Callable[..., object]] | None = None,
     max_steps: int = 8,
     **chat_kwargs,
-) -> AsyncResult:
-    """Drive ``broker.chat`` until a tool-call-free reply; execute tools via dispatch.
-    Returns that last round's result: earlier rounds are routed calls of their own,
-    each with its own journal row, so ``usage`` is the final round's alone."""
+) -> ReplyT:
+    """Drive ``llms.chat`` until a tool-call-free reply; execute tools via dispatch.
+    Returns that last round's result: earlier rounds are calls of their own, so
+    ``usage`` is the final round's alone."""
     convo = list(messages)
     dispatch = dispatch or {}
     for _ in range(max_steps):
@@ -79,19 +80,16 @@ async def arun_tool_loop(
 
 
 def run_tool_loop(
-    llms: Broker,
+    llms: ChatProtocol[ReplyT],
     messages: list[dict],
     *,
     tools: list[dict] | None = None,
     dispatch: Mapping[str, Callable[..., object]] | None = None,
     max_steps: int = 8,
     **chat_kwargs,
-) -> Result:
-    """Synchronous tool loop over a sync ``Broker``, returning the final round's result.
-
-    Mirrors ``arun_tool_loop`` but calls the blocking ``Broker.chat``; it does
-    not use the async engine directly so it is safe to call from any thread.
-    """
+) -> ReplyT:
+    """``arun_tool_loop`` over a blocking ``chat``, returning the final round's result.
+    It never touches the async engine itself, so it is safe to call from any thread."""
     convo = list(messages)
     dispatch = dispatch or {}
     for _ in range(max_steps):

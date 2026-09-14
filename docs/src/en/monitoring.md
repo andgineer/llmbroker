@@ -33,8 +33,9 @@ documented in [`PoolSnapshot`](reference.md#llmbroker.models.PoolSnapshot).
 `direct_missing_keys` is separate from `missing_keys` because models configured
 for direct calls are not pool members. A missing key for a direct model does not
 affect pool health, and the availability of other models cannot replace it. In
-both fields, `help` comes from your `[keys]` section when provided, or from the
-maintained catalog otherwise.
+both fields, `help` comes from your registry's own key hints when provided, then
+from the maintained model list the broker follows, and for a direct model from
+the paid catalog. See [API keys](secrets.md).
 
 Availability is counted by provider (`api_key_ref`), not by model. Models using
 the same key share a quota and failure domain, so they count as one provider.

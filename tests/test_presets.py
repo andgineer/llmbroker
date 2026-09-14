@@ -2,6 +2,7 @@
 copies already on the machine."""
 
 import http.client
+import logging
 import tomllib
 import urllib.error
 
@@ -222,3 +223,33 @@ def test_a_refresh_with_nowhere_to_keep_it_says_so_and_does_not_fetch(monkeypatc
     with pytest.raises(ValueError, match=r"LLMBROKER_HOME") as exc:
         PresetSource().refresh("paid-catalog")
     assert "sync_interval=None" in str(exc.value)
+
+
+# ── The read key help takes ──────────────────────────────────────────────────
+
+
+def _no_fetch(_name: str) -> str:
+    raise AssertionError("key help never goes to the network")
+
+
+def test_text_for_help_takes_the_cached_copy_first(tmp_path, monkeypatch, bundled_presets):
+    monkeypatch.setattr(presets, "fetch_preset_text", _no_fetch)
+    _cached(tmp_path, "freetier", "what this machine last saw")
+    assert PresetSource(tmp_path).text_for_help("freetier") == "what this machine last saw"
+
+
+def test_text_for_help_falls_to_the_wheel_without_a_warning(
+    tmp_path, monkeypatch, bundled_presets, caplog
+):
+    """Help decides nothing an installation runs on, and it is read on every rebuild
+    that finds a key missing — a floor warning there would repeat for nothing."""
+    monkeypatch.setattr(presets, "fetch_preset_text", _no_fetch)
+    with caplog.at_level(logging.DEBUG, logger="llmbroker.broker"):
+        text = PresetSource(tmp_path).text_for_help("freetier")
+    assert text is not None and "[[llms]]" in text
+    assert caplog.records == []
+
+
+def test_text_for_help_is_none_with_no_copy_anywhere(monkeypatch):
+    monkeypatch.setattr(presets, "fetch_preset_text", _no_fetch)
+    assert PresetSource().text_for_help("freetier") is None
