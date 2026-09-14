@@ -51,6 +51,15 @@ never merged, because each silently breaks something the caller cannot see. This
 is a property of naming the model; what a routed request may carry is
 [`call-path.md`](call-path.md)'s.
 
+**A model's own tool parameters ride every request to it that carries tools, and
+only those, whichever path reaches it.** They are what a catalog line states its
+model needs to accept tools on chat completions, or what a fully stated config
+states for itself, and they sit under the caller's parameters, which win key by
+key. They are data about one model, never code keyed by a provider, so the rule
+above still holds: nothing here decides what a provider takes
+([`../decisions.md`](../decisions.md#a-catalog-line-carries-its-tool-parameters)).
+A request without tools carries none of them and keeps the model's own defaults.
+
 **A direct call may carry tools, and the tool loop drives it as it drives a routed
 caller.** The loop repeats `chat` over whatever answers it
 ([`../mission.md`](../mission.md#what-it-is-not)), so a named model is reached through
@@ -69,6 +78,13 @@ which is the failure the catalog exists to prevent
 ([`../decisions.md`](../decisions.md#speed-is-a-catalog-tier)). How that curation
 is carried out is a runbook shipped beside the catalog, not a rule of the
 library.
+
+**A line carries the parameters its model needs for tool calls, measured like its
+id.** They are a fact about the version the alias points at, so they move with the
+alias, and a line states them only from a request that proved them. A malformed
+table, or one naming a request key llmbroker builds itself, makes the catalog
+invalid. A declaration built from a provider for a model id the catalog does not
+list carries none: the catalog vouches only for the lines it lists.
 
 **The curated files are readable by a program, as data**
 ([`../decisions.md`](../decisions.md#the-curated-catalog-is-readable-without-a-broker)):
@@ -115,10 +131,13 @@ model with no sync involved.
 
 **A declared model is re-resolved on the refresh clock, not on every read.**
 `direct()` is a request path, so it reads a resolution already made; what moves
-that resolution is the catalog underneath it being refreshed. The resolution
-reads the copy already on the machine wherever there is one, so provisioning
-does not wait on the network; where nothing is writable there is no refresh to
-move it ([`model-list.md`](model-list.md)), and it stays on what the
+that resolution is the catalog underneath it being refreshed. A `direct()` call
+ticks that clock and provisions nothing: a host that only calls models by name
+makes no other call to carry it, and a pool it never routes over is not built for
+it ([`../decisions.md`](../decisions.md#entering-a-broker-provisions-nothing)).
+The resolution reads the copy already on the machine wherever there is one, so
+provisioning does not wait on the network; where nothing is writable there is no
+refresh to move it ([`model-list.md`](model-list.md)), and it stays on what the
 first read reached. One refresh costs one resolution however many calls are in
 flight when it lands.
 
@@ -153,8 +172,9 @@ where nothing is writable it would otherwise be the only fallback left and would
 move a working alias *backwards*. Only the first resolution has nothing to keep,
 and only it raises.
 
-An alias the catalog does not carry therefore raises at provision and names the
-aliases it does: a typo is the expected failure and the fix is one word. A
+An alias the catalog does not carry therefore raises at the first resolution —
+the first `direct()` or the first provisioning — and names the aliases it does: a
+typo is the expected failure and the fix is one word. A
 declared model whose name or alias is already in the registry raises too, naming
 both sources — that is the one collision the registry's own uniqueness rules
 cannot see. A declared model with no key behaves exactly as a keyless stored

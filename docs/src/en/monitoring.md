@@ -192,8 +192,5 @@ not depend on the machine's local settings.
 
 `calls()` and `stats()` read only the journal and, unlike `snapshot()`, do not
 initialize the pool. A statistics page can therefore work before the registry is
-populated. For this use case, construct `Broker(...)` directly without a context
-manager. Entering `with Broker(...) as broker` initializes the pool immediately:
-an empty registry with automatic downloads disabled raises `EmptyRegistryError`,
-while normal settings may download a model list that journal access does not
-need.
+populated. Entering `with Broker(...) as broker` does not initialize the pool
+either.

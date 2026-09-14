@@ -101,6 +101,7 @@ async def test_explicit_secrets_override_wins_over_sqlite_source(tmp_path):
     override_secrets = DictSecrets({"KEY": "from-override"})
 
     async with AsyncBroker(db_path, secrets=override_secrets) as broker:
+        await broker.ensure_pool()
         assert (
             await broker._shared_ring.resolve(broker._pool.config("llm1").api_key_ref)
             == "from-override"

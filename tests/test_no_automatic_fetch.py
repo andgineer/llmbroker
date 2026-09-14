@@ -287,6 +287,7 @@ async def test_the_default_still_arms_the_clock(tmp_path, fetches):
     schedules the refresh."""
     await _seeded(tmp_path)
     async with _broker(tmp_path, sync_interval=10_000.0) as broker:
+        await broker.ensure_pool()
         await _settle(broker)
         assert fetches.names == ["freetier"]
         broker._refresher._next_refresh = 0.0

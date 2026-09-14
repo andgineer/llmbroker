@@ -94,6 +94,10 @@ the exception reaches the application. Additional parameters are passed to the
 client's `chat`, so use `timeout=` and `params=` here instead of `operation=`,
 `trace_id=`, or `wait=`.
 
+A catalog alias needs no parameters to take part in the loop: parameters that its
+model requires with tools come from the catalog and are sent in every round. Your
+`params` override them. See [Direct model calls](direct.md#tools).
+
 ## Tool error handling
 
 Exceptions raised by functions in `dispatch` do not propagate to the caller. If

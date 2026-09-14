@@ -49,17 +49,17 @@ async def _settle(broker) -> None:
 
 
 async def test_the_knob_populates_a_fresh_registry_before_provisioning(tmp_path, preset):
-    """Without it the same broker cannot even open: provisioning an empty registry
-    raises, and `async with` provisions on entry."""
+    """Without it the same broker cannot serve a call: provisioning an empty registry
+    raises."""
     async with _broker(tmp_path, sync="freetier") as broker:
         assert await broker.count() == 1
         assert broker.last_sync_report.added == ("gemini",)
 
     without = tmp_path / "without"
     without.mkdir()
-    with pytest.raises(EmptyRegistryError):
-        async with _broker(without, sync=None):
-            pass
+    async with _broker(without, sync=None) as broker:
+        with pytest.raises(EmptyRegistryError):
+            await broker.count()
 
 
 async def test_the_knob_runs_for_a_caller_that_never_enters_the_context_manager(tmp_path, preset):
@@ -113,6 +113,7 @@ async def test_a_fetch_failure_keeps_the_existing_config_and_logs(tmp_path, monk
     )
     with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
         async with _broker(tmp_path, sync="freetier") as broker:
+            await broker.ensure_pool()
             await _settle(broker)
             assert await broker.count() == 1
             assert (await broker.get("old")).config.name == "old"
@@ -145,6 +146,7 @@ async def test_a_truncated_response_does_not_stop_the_broker_from_starting(
     )
     with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
         async with _broker(tmp_path, sync="freetier") as broker:
+            await broker.ensure_pool()
             await _settle(broker)
             assert await broker.count() == 1
     assert any("failed reading" in r.message for r in caplog.records)
@@ -163,6 +165,7 @@ async def test_a_refusal_stashes_the_report_and_continues(tmp_path, monkeypatch,
     )
     with caplog.at_level(logging.WARNING, logger="llmbroker.broker"):
         async with _broker(tmp_path, sync="freetier") as broker:
+            await broker.ensure_pool()
             await _settle(broker)
             assert await broker.count() == 1
             assert broker.last_sync_report is refused

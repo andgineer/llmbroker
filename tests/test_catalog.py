@@ -326,6 +326,7 @@ async def test_manual_latch_survives_sync_reseed(tmp_path, served):
     )
     await broker.sync("freetier")
     async with broker:
+        await broker.ensure_pool()
         assert broker._pool.is_disabled("p1")
         assert await SqliteStore(db).get_disabled("p1") is True
 

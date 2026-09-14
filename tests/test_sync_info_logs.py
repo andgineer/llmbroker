@@ -52,8 +52,8 @@ def test_fresh_db_env_set_zero_info_logs(tmp_path, monkeypatch, caplog):
 
     async def run():
         await _seed_db(db)
-        async with _broker(db):
-            pass
+        async with _broker(db) as broker:
+            await broker.ensure_pool()
 
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         asyncio.run(run())
@@ -67,8 +67,8 @@ def test_fresh_db_env_absent_one_info_log(tmp_path, monkeypatch, caplog):
 
     async def run():
         await _seed_db(db)
-        async with _broker(db):
-            pass
+        async with _broker(db) as broker:
+            await broker.ensure_pool()
 
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         asyncio.run(run())
@@ -85,14 +85,14 @@ def test_restart_secret_persisted_zero_info_logs(tmp_path, monkeypatch, caplog):
         await _seed_db(db)
         secrets = SqliteSecrets(db)
         await secrets.set(_KEY_REF, "persisted")
-        async with _broker(db):
-            pass
+        async with _broker(db) as broker:
+            await broker.ensure_pool()
 
     asyncio.run(seed())
 
     async def restart():
-        async with _broker(db):
-            pass
+        async with _broker(db) as broker:
+            await broker.ensure_pool()
 
     caplog.clear()
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
@@ -108,14 +108,14 @@ def test_restart_secret_absent_everywhere_exactly_one_info_log(tmp_path, monkeyp
 
     async def first():
         await _seed_db(db)
-        async with _broker(db):
-            pass
+        async with _broker(db) as broker:
+            await broker.ensure_pool()
 
     asyncio.run(first())
 
     async def restart():
-        async with _broker(db):
-            pass
+        async with _broker(db) as broker:
+            await broker.ensure_pool()
 
     caplog.clear()
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
@@ -132,8 +132,8 @@ def test_restart_env_set_sqlite_missing_zero_info_logs(tmp_path, monkeypatch, ca
 
     async def first():
         await _seed_db(db)
-        async with _broker(db):
-            pass
+        async with _broker(db) as broker:
+            await broker.ensure_pool()
 
     asyncio.run(first())
 

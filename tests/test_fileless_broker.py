@@ -11,9 +11,11 @@ import pytest
 
 from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
+from llmbroker.exceptions import EmptyRegistryError
 from llmbroker.home import HOME_ENV_VAR
 from llmbroker.standalone.registry import Registry as FileRegistry
 from llmbroker.standalone.store import FileStore, InMemoryStore
+from llmbroker.sync import Broker
 
 _PRESET = (
     '[[llms]]\nname = "gemini"\nbase_url = "https://g/v1"\nmodel = "m"\napi_key_ref = "GEMINI"\n'
@@ -96,6 +98,7 @@ async def test_the_journal_is_one_per_home_not_one_per_working_directory(
     llmbroker_home,
 ):
     async with AsyncBroker() as broker:
+        await broker.ensure_pool()
         assert isinstance(broker._store, FileStore)
     assert (llmbroker_home / "store").is_dir()
 
@@ -123,6 +126,7 @@ async def test_keys_come_from_the_environment_and_the_working_directory_env(
     (tmp_path / ".env").write_text("GEMINI=from-file\nGROQ=from-file\n")
     monkeypatch.setenv("GROQ", "from-env")
     async with AsyncBroker(home=tmp_path / "home") as broker:
+        await broker.ensure_pool()
         assert broker._pool.config("gemini").api_key_ref in broker._catalog.payable
         assert (
             await broker._shared_ring.resolve(broker._pool.config("groq").api_key_ref) == "from-env"
@@ -135,6 +139,74 @@ async def test_a_home_override_beats_the_environment_variable(fetches, monkeypat
         await broker.count()
     assert (tmp_path / "explicit" / "model-list.toml").is_file()
     assert not (tmp_path / "env-home").exists()
+
+
+async def test_entering_and_leaving_fetches_nothing_and_raises_nothing(fetches, llmbroker_home):
+    """The fill waits for the first call that needs a pool, so entering and leaving a broker
+    pay no round trip. A ``direct()`` call is not free of one: on the default sync source it
+    syncs the list on the clock, in the background."""
+    async with AsyncBroker():
+        pass
+    with Broker():
+        pass
+    assert fetches.names == []
+    assert not (llmbroker_home / "model-list.toml").exists()
+
+
+_PAID_CATALOG = (
+    '[[provider]]\nid="anthropic"\nbase_url="https://api.anthropic.com/v1"\n'
+    'api_key_ref="ANTHROPIC_API_KEY"\n'
+    '  [[provider.models]]\n  alias="opus"\n  model="claude-opus-4-8"\n'
+)
+
+
+async def test_a_direct_only_host_on_the_default_sync_source_never_provisions_the_pool(
+    caplog,
+    llmbroker_home,
+    monkeypatch,
+    tmp_path,
+):
+    """It follows the free list like any default broker, so a due ``direct()`` syncs the
+    registry in the background; that sync builds no pool, and so logs no health of one."""
+    fetched: list[str] = []
+    bodies = {"freetier": _PRESET, "paid-catalog": _PAID_CATALOG}
+
+    def fetch(name: str) -> str:
+        fetched.append(name)
+        return bodies[name]
+
+    monkeypatch.setattr(presets, "fetch_preset_text", fetch)
+    monkeypatch.chdir(tmp_path)  # no working-directory .env: the free pool stays keyless
+    for ref in ("GEMINI", "GROQ"):
+        monkeypatch.delenv(ref, raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")
+    with caplog.at_level(logging.INFO, logger="llmbroker"):
+        async with AsyncBroker(direct=["opus"]) as broker:
+            assert broker._refresher._task is None
+            await broker.direct("opus")  # no check record yet: the clock is due at once
+            await _settle(broker)
+            assert "freetier" in fetched
+            stored = await FileRegistry(llmbroker_home / "model-list.toml").load()
+            assert {c.name for c in stored} == {"gemini", "groq"}
+            await broker.direct("opus")
+            assert broker._provisioned is False
+            assert broker._pool.configs == {}
+    assert [r.message for r in caplog.records if r.message.startswith("pool ")] == []
+
+
+async def test_an_unfillable_model_list_raises_at_the_first_routed_call(
+    llmbroker_home,
+    monkeypatch,
+):
+    def _fail(name: str) -> str:
+        raise ValueError(f"preset {name!r} not found in catalog")
+
+    monkeypatch.setattr(presets, "fetch_preset_text", _fail)
+    async with AsyncBroker() as broker:
+        with pytest.raises(EmptyRegistryError, match="registry is empty"):
+            await broker.ask("hi", wait=0)
+        with pytest.raises(EmptyRegistryError, match="registry is empty"):
+            await broker.ensure_pool()
 
 
 async def test_a_model_list_that_cannot_be_filled_says_what_to_do(

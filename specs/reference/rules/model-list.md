@@ -97,10 +97,11 @@ pull the passthrough to render its own setup UI.
 made of.** A database registry stores none and needs none: the help is a pure
 function of the curated list, so what a missing key reports is read from that list
 as this machine holds it — the cached copy, the wheel's under it, never the
-network. Storing it would change every database installation's schema for
-documentation, and keeping what a sync last delivered would leave an installation
-that never syncs with nothing. An installation that follows no list has only what
-its registry carries.
+network. Storing it would keep a second copy of the curated list's text in every
+database — one more thing each sync must keep in step, on every backend — and
+keeping what a sync last delivered would leave an installation that never syncs
+with nothing. An installation that follows no list has only what its registry
+carries.
 
 **A registry's own key metadata is an override, not the only source.** Carrying it
 is an optional registry capability, and where it gives a ref help that text wins —
@@ -388,6 +389,16 @@ rebuild happens per process per day, not per request
    and a second key changes nothing until the first stops working — at which point
    the pool exhausts and this trigger fires.
 
+**A registry write that lands while the pool is being provisioned still reaches
+it.** A refresh a `direct()` call fired, or an explicit `sync()`, can write the
+registry after provisioning has read it, so the rebuild that write asks for waits
+out a provisioning in progress and then re-reads the pool provisioning built,
+instead of skipping because no pool is live yet. The wait is on the writer's side only:
+provisioning never waits on a refresh, so no fetch stands in front of the first
+routed call. The start fill is the one write that asks for no rebuild — it runs
+inside provisioning, which reads the registry right after it, and a wait there
+would wait on itself.
+
 **Keys ride the rebuild**, and are never declared to it or polled for
 ([`decisions.md`](../decisions.md#a-key-is-found-not-declared)). One enumeration of the secrets store per rebuild
 answers which refs are held, so a ref nobody has a key for costs no read however
@@ -405,11 +416,11 @@ the missing-key report describe the last rebuild and nothing older
 ### Two gates
 
 - The **time gate** decides whether to go to the network at all. It is a
-  monotonic comparison at the top of the lazy pool initializer, the funnel every
-  public operation already passes through, so an idle process performs no I/O
-  and schedules no wakeups — the library needs no running service of its own. A
-  background timer would have to be owned, cancelled and tested against every
-  embedding, for a process that has no list to keep fresh.
+  monotonic comparison at the top of the lazy pool initializer and of `direct()`,
+  the funnels every public operation already passes through, so an idle process
+  performs no I/O and schedules no wakeups — the library needs no running service
+  of its own. A background timer would have to be owned, cancelled and tested
+  against every embedding, for a process that has no list to keep fresh.
 - The **identity gate** decides whether what arrived changes anything (see
   ["The report"](#the-report) above). It also removes the need for a
   conditional GET, which would save a kilobyte and no round trip while proving

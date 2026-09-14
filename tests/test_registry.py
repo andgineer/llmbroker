@@ -316,6 +316,20 @@ async def test_mutable_registry_parallel_round_trip(mutable_registry):
     assert result["p1"].parallel == 3
 
 
+async def test_mutable_registry_tool_params_round_trip(mutable_registry):
+    """A row survives its store whole: a backend that dropped them would send a tool
+    call its model refuses, and nothing would say why."""
+    cfg = LLMConfig(
+        name="p1",
+        base_url="https://x/v1",
+        model="m",
+        api_key_ref="K",
+        tool_params={"reasoning_effort": "none", "parallel_tool_calls": False},
+    )
+    await mutable_registry.mirror([cfg])
+    assert await mutable_registry.load() == [cfg]
+
+
 async def test_mutable_registry_weight_round_trip(mutable_registry):
     """The defect this weight exists to fix: a registry stores no ordering, so the
     entry's standing in the pool has to be data on the entry. Mirrored in one order,

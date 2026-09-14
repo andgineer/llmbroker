@@ -74,6 +74,25 @@ async def test_a_declared_alias_resolves_from_the_catalog(monkeypatch):
     assert facts == ()  # the first resolution has nothing to compare against
 
 
+async def test_a_declared_alias_resolves_with_its_lines_tool_params(monkeypatch):
+    text = _CATALOG_TEXT + '  tool_params = { reasoning_effort = "none" }\n'
+    resolved, _facts = await resolve_declared(["opus"], _served(text, monkeypatch))
+    (cfg,) = resolved.configs
+    assert cfg.tool_params == {"reasoning_effort": "none"}
+
+
+async def test_a_re_resolution_replaces_tool_params_with_the_lines_current_ones(monkeypatch):
+    """A line that stops needing them stops sending them: the config is replaced whole."""
+    previous = DeclaredModels(configs=(_opus(tool_params={"reasoning_effort": "none"}),))
+    resolved, facts = await resolve_declared(
+        ["opus"],
+        _served(_CATALOG_TEXT, monkeypatch),
+        previous=previous,
+    )
+    assert resolved.configs[0].tool_params == {}
+    assert [fact.change for fact in facts] == [AliasChange.MODEL]
+
+
 async def test_a_re_resolution_reports_the_model_that_moved(monkeypatch):
     previous = DeclaredModels(configs=(_opus(),))
     _resolved, facts = await resolve_declared(

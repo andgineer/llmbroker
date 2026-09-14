@@ -216,8 +216,7 @@ class AsyncBroker:
             home=self._home,
             declared=self._declared,
             target_label=source_label,
-            live=lambda: self._provisioned,
-            rebuild=self.rebuild,
+            rebuild=self._rebuild_after_sync,
         )
 
         self._provisioned = False
@@ -238,6 +237,7 @@ class AsyncBroker:
             store=self._store,
             learner=self._learner,
             ensure_pool=self.ensure_pool,
+            tick=self._tick,
             on_exhausted=self._on_exhausted,
             own_stream=self._own_stream,
             release_stream=self._streams.discard,
@@ -276,6 +276,14 @@ class AsyncBroker:
         for ring in (self._shared_ring, *list(self._rings.values())):
             await ring.refresh(known)
         await self._catalog.rebuild(known)
+
+    async def _rebuild_after_sync(self) -> None:
+        """Rebuild a running pool once a provisioning in progress is done, since it may
+        have read the registry before this write; with no pool there is nothing to rebuild."""
+        async with self._provision_lock:
+            live = self._provisioned
+        if live:
+            await self.rebuild()
 
     async def _relearn(self) -> None:
         if self._learner is not None:
@@ -344,6 +352,13 @@ class AsyncBroker:
         # mid-provision.
         self._refresher.schedule()
 
+    def _tick(self) -> None:
+        """The refresh clock for a call that provisions nothing — ``direct()``, whose
+        declared alias has no other clock. Refuses a closed broker, as provisioning does."""
+        if self._closing is not None:
+            raise RuntimeError("the broker is closed")
+        self._refresher.tick()
+
     @property
     def last_sync_report(self) -> SyncReport | None:
         """What the last sync — explicit or refreshed — did, or ``None`` if none has
@@ -379,7 +394,6 @@ class AsyncBroker:
                 raise result
 
     async def __aenter__(self) -> "AsyncBroker":
-        await self.ensure_pool()
         return self
 
     async def __aexit__(self, *exc: object) -> None:

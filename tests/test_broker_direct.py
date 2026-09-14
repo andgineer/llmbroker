@@ -1,6 +1,7 @@
 """Broker-level direct() access and the pool boundary — mocked httpx, no network."""
 
 import asyncio
+import logging
 from unittest.mock import patch
 
 import httpx
@@ -188,6 +189,101 @@ def test_direct_missing_key_raises(tmp_path):
                 await broker.direct("opus")
 
     asyncio.run(run())
+
+
+def test_direct_on_a_closed_broker_raises(tmp_path):
+    """A closed broker's ports are gone, and a clock ticked there would start a refresh
+    nothing is left to cancel."""
+
+    async def run():
+        broker = _broker(tmp_path)
+        await broker.aclose()
+        with pytest.raises(RuntimeError, match="closed"):
+            await broker.direct("opus")
+        assert broker._refresher._task is None
+
+    asyncio.run(run())
+
+
+# --------------------------------------------------------------------------- #
+# a host that only calls models by name
+# --------------------------------------------------------------------------- #
+
+_KEYLESS_POOL = """
+[[llms]]
+name="keyless-a"
+base_url="https://a/v1"
+model="m"
+api_key_ref="POOL_A"
+
+[[llms]]
+name="keyless-b"
+base_url="https://b/v1"
+model="m"
+api_key_ref="POOL_B"
+"""
+
+_PAID_ONLY = LLMConfig(
+    name="frontier",
+    alias="opus",
+    base_url="https://paid/v1",
+    model="big",
+    api_key_ref="PAID",
+)
+
+
+def _ok(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json={"choices": [{"message": {"content": "by name"}}]})
+
+
+def _pool_health_lines(caplog) -> list[str]:
+    return [r.message for r in caplog.records if r.message.startswith("pool ")]
+
+
+def test_a_direct_only_host_logs_no_pool_health(tmp_path, caplog):
+    """Its registry pools only providers it holds no key for — an outage for a host that
+    routes, and nothing at all for one that never provisions the pool."""
+    f = tmp_path / "llms.toml"
+    f.write_text(_KEYLESS_POOL)
+    mock = httpx.AsyncClient(transport=httpx.MockTransport(_ok), timeout=1.0)
+
+    async def run():
+        with patch("llmbroker.chat.make_client", return_value=mock):
+            async with AsyncBroker(
+                registry=Registry(f),
+                secrets=DictSecrets({"PAID": "k"}),
+                store=FileStore(tmp_path / "store"),
+                sync=None,
+                direct=[_PAID_ONLY],
+            ) as broker:
+                client = await broker.direct("opus")
+                result = await client.ask("hi")
+                assert broker._provisioned is False
+                return result.text
+
+    with caplog.at_level(logging.INFO, logger="llmbroker"):
+        assert asyncio.run(run()) == "by name"
+    assert _pool_health_lines(caplog) == []
+
+
+def test_a_direct_only_host_on_the_sync_broker_logs_no_pool_health(tmp_path, caplog):
+    f = tmp_path / "llms.toml"
+    f.write_text(_KEYLESS_POOL)
+    mock = httpx.Client(transport=httpx.MockTransport(_ok), timeout=1.0)
+    with (
+        caplog.at_level(logging.INFO, logger="llmbroker"),
+        patch("llmbroker.direct.httpx.Client", return_value=mock),
+        Broker(
+            registry=Registry(f),
+            secrets=DictSecrets({"PAID": "k"}),
+            store=FileStore(tmp_path / "store"),
+            sync=None,
+            direct=[_PAID_ONLY],
+        ) as broker,
+    ):
+        assert broker.direct("opus").ask("hi").text == "by name"
+        assert broker._async._provisioned is False
+    assert _pool_health_lines(caplog) == []
 
 
 # --------------------------------------------------------------------------- #

@@ -88,17 +88,12 @@ await registry.mirror([*await registry.load(), mine])
 настраивались в одном месте:
 
 ```python
-broker = build_broker()  # функция создания брокера в приложении
-try:
+async with build_broker() as broker:  # функция создания брокера в приложении
     print(await broker.sync("freetier"))  # имя поддерживаемого набора
-finally:
-    await broker.aclose()
 ```
 
-Не используйте здесь `async with`: вход в контекстный менеджер сначала
-инициализирует пул, а задача должна заполнить ещё пустую базу. Если автоматический
-доступ к сети отключён, `EmptyRegistryError` возникнет до
-вызова `sync()`. См. [Развёртывание без сетевого доступа](#no-fetch).
+Вход в контекстный менеджер не инициализирует пул, поэтому задача работает и с
+пустой базой.
 
 Запускайте код как одноразовую задачу: на этапе выпуска, в Kubernetes Job или в
 контейнере инициализации. После этого отдельная задача обновления не нужна:
@@ -126,13 +121,10 @@ llmbroker.AsyncBroker("postgresql://host/db", sync_interval=None)  # в функ
 ```
 
 ```python
-broker = build_broker()
-try:
+async with build_broker() as broker:
     report = await broker.sync()  # без аргумента: то, чему следует эта установка
     if report is not None:  # при обновлении только платного каталога отчёта нет
         print(llmbroker.format_report(report))
-finally:
-    await broker.aclose()
 ```
 
 `sync_interval=None` отключает все автоматические сетевые запросы к каталогу:
@@ -283,7 +275,8 @@ await broker.sync("freetier")
   реестр остался бы пустым. Реестр не изменён; поле `report` содержит
   запланированные изменения.
 - `EmptyRegistryError` — реестр ещё не заполнен. Нужно выполнить первоначальную
-  настройку или синхронизацию.
+  настройку или синхронизацию. Ошибку вызывает первый вызов, которому нужен пул;
+  чтобы узнать о ней при запуске, вызовите `ensure_pool()`.
 - `SchemaVersionError` — версия схемы хранилища несовместима с текущей версией
   llmbroker. Поля `found` и `expected` содержат обнаруженную и ожидаемую версии.
   См. [Обновление llmbroker](#upgrade).

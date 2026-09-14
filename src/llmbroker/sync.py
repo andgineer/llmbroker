@@ -166,7 +166,12 @@ class LLMs:
         model. Streaming is async-only; same alias/name keyspaces and errors as the async
         counterpart."""
         cfg, key = self._run(self._async.resolve_direct(alias, name=name))
-        return DirectClient(base_url=cfg.base_url, model=cfg.model, api_key=key)
+        return DirectClient(
+            base_url=cfg.base_url,
+            model=cfg.model,
+            api_key=key,
+            tool_params=cfg.tool_params,
+        )
 
     def get(self, name: str) -> LLM:
         return LLM(self._run, self._run(self._async.get(name)))
@@ -258,7 +263,8 @@ class Broker:
         row it journals. Costs no I/O."""
         return LLMs(self._run, self._async.for_scope(scope))
 
-    def _ensure_pool(self) -> None:
+    def ensure_pool(self) -> None:
+        """Provision now rather than on the first call that routes — the eager fail-fast."""
         self._run(self._async.ensure_pool())
 
     # ── The unscoped caller, delegated ──
@@ -376,7 +382,6 @@ class Broker:
         self._finalizer()
 
     def __enter__(self) -> "Broker":
-        self._ensure_pool()
         return self
 
     def __exit__(self, *exc: object) -> None:

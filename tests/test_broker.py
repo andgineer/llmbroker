@@ -230,8 +230,9 @@ def test_chat_500_wait0_raises_no_llm_available(tmp_path):
     asyncio.run(run())
 
 
-def test_chat_empty_pool_wait0_raises_no_llm_available(tmp_path):
-    """An empty registry now fails fast at provision — no LLMs to route to either way."""
+def test_entering_a_broker_over_an_empty_registry_raises_nothing(tmp_path):
+    """Entering provisions nothing: the first routed call is what finds the registry
+    empty, and `ensure_pool()` still finds it eagerly for a host that wants to fail fast."""
 
     async def run():
         f = tmp_path / "empty.toml"
@@ -239,11 +240,24 @@ def test_chat_empty_pool_wait0_raises_no_llm_available(tmp_path):
         async with AsyncBroker(
             registry=FileRegistry(f), store=InMemoryStore(), sync=None
         ) as broker:
-            with pytest.raises(NoLLMAvailableError):
+            assert broker._provisioned is False
+            with pytest.raises(EmptyRegistryError, match="sync"):
                 await broker.chat([{"role": "user", "content": "hi"}], wait=0)
+            with pytest.raises(EmptyRegistryError, match="sync"):
+                await broker.ensure_pool()
 
-    with pytest.raises(EmptyRegistryError, match="sync"):
-        asyncio.run(run())
+    asyncio.run(run())
+
+
+def test_entering_the_sync_broker_over_an_empty_registry_raises_nothing(tmp_path):
+    f = tmp_path / "empty.toml"
+    f.write_text("")
+    with SyncBroker(registry=FileRegistry(f), store=InMemoryStore(), sync=None) as broker:
+        assert broker._async._provisioned is False
+        with pytest.raises(EmptyRegistryError, match="sync"):
+            broker.ask("hi", wait=0)
+        with pytest.raises(EmptyRegistryError, match="sync"):
+            broker.ensure_pool()
 
 
 def test_empty_registry_error_propagates_out_of_host_entry_points(tmp_path):
@@ -1003,3 +1017,39 @@ def test_sync_broker_ask_and_chat_carry_response_format_to_the_provider(tmp_path
     finally:
         broker.close()
     assert _posted_formats(http) == [_SCHEMA] * 4
+
+
+def test_a_stored_entrys_tool_params_ride_a_routed_chat_with_tools_only(tmp_path):
+    """One rule for both paths: a model's tool parameters go with every request to it
+    that carries tools, and a routed caller's own `response_format` still goes on top."""
+    http = _http_ok("yes")
+    tools = [{"type": "function", "function": {"name": "f", "parameters": {}}}]
+
+    async def run():
+        db = str(tmp_path / "b.db")
+        needs = {"reasoning_effort": "none"}
+        await SqliteRegistry(db).mirror(
+            [
+                LLMConfig(
+                    name="p1",
+                    base_url="https://x/v1",
+                    model="m",
+                    api_key_ref="K",
+                    tool_params=needs,
+                )
+            ],
+        )
+        async with AsyncBroker(
+            registry=SqliteRegistry(db), secrets=_secrets(), store=InMemoryStore(), sync=None
+        ) as broker:
+            with patch("llmbroker.chat.httpx.AsyncClient", return_value=http):
+                await broker.chat([{"role": "user", "content": "hi"}], tools=tools)
+                await broker.ask("prompt")
+                await broker.chat(
+                    [{"role": "user", "content": "hi"}], tools=tools, response_format=_SCHEMA
+                )
+
+    asyncio.run(run())
+    bodies = [call.kwargs["json"] for call in http.post.await_args_list]
+    assert [b.get("reasoning_effort") for b in bodies] == ["none", None, "none"]
+    assert "response_format" in bodies[2]

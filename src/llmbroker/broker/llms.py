@@ -55,6 +55,7 @@ class AsyncLLMs:
         store: StoreProtocol,
         learner: Learner | None,
         ensure_pool: Callable[[], Awaitable[None]],
+        tick: Callable[[], None],
         on_exhausted: Callable[[NoLLMAvailableError, KeyRing], Awaitable[bool]],
         own_stream: Callable[[StreamHandle], None],
         release_stream: Callable[[StreamHandle], None],
@@ -66,6 +67,7 @@ class AsyncLLMs:
         self._store = store
         self._learner = learner
         self._ensure_pool = ensure_pool
+        self._tick = tick
         self._on_exhausted = on_exhausted
         self._own_stream = own_stream
         self._release_stream = release_stream
@@ -232,6 +234,7 @@ class AsyncLLMs:
             model=cfg.model,
             api_key=key,
             client=self._http(),
+            tool_params=cfg.tool_params,
         )
 
     async def resolve_direct(
@@ -247,6 +250,7 @@ class AsyncLLMs:
                 "direct() takes exactly one of alias (positional) or name= —"
                 " they are separate keyspaces",
             )
+        self._tick()
         stored, declared = await self._catalog.entries()
         cfg = find_declared(stored, declared, alias, name)
         ref = alias if alias is not None else name

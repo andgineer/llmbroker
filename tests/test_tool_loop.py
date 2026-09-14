@@ -345,3 +345,73 @@ async def test_a_tool_loop_over_a_brokers_async_direct_client_writes_no_journal_
 
     _assert_one_tool_round(provider, reply)
     assert rows == []
+
+
+# ── A catalog alias takes tools with no host parameters ──────────────────────
+
+
+def test_run_tool_loop_over_a_catalog_alias_sends_its_tool_params_every_round(
+    tmp_path,
+    bundled_presets,
+):
+    """The shipped `gpt-fast` line refuses function tools unless reasoning is off; the
+    catalog says so, so the host passes nothing and every round is accepted."""
+    provider = _Provider()
+    with (
+        patch(
+            "llmbroker.direct.httpx.Client",
+            return_value=httpx.Client(transport=httpx.MockTransport(provider)),
+        ),
+        Broker(
+            secrets=DictSecrets({"OPENAI_API_KEY": "k"}),
+            store=InMemoryStore(),
+            home=tmp_path / "home",
+            sync=None,
+            direct=["gpt-fast"],
+        ) as broker,
+    ):
+        reply = run_tool_loop(
+            broker.direct("gpt-fast"),
+            [{"role": "user", "content": "1 + 2?"}],
+            tools=_ADD_TOOL,
+            dispatch={"add": lambda a, b: a + b},
+        )
+        answered = broker.direct("gpt-fast").ask("no tools, the model's own defaults")
+
+    assert answered.text == "3"
+    assert len(provider.bodies) == 3
+    assert [b.get("reasoning_effort") for b in provider.bodies] == ["none", "none", None]
+    assert reply.text == "3"
+
+
+async def test_arun_tool_loop_over_a_catalog_alias_lets_the_host_override_its_tool_params(
+    tmp_path,
+    bundled_presets,
+):
+    provider = _Provider()
+    mock = httpx.AsyncClient(transport=httpx.MockTransport(provider))
+    with patch("llmbroker.chat.make_client", return_value=mock):
+        async with AsyncBroker(
+            secrets=DictSecrets({"OPENAI_API_KEY": "k"}),
+            store=InMemoryStore(),
+            home=tmp_path / "home",
+            sync=None,
+            direct=["gpt-fast"],
+        ) as broker:
+            await arun_tool_loop(
+                await broker.direct("gpt-fast"),
+                [{"role": "user", "content": "1 + 2?"}],
+                tools=_ADD_TOOL,
+                dispatch={"add": lambda a, b: a + b},
+            )
+            await arun_tool_loop(
+                await broker.direct("gpt-fast"),
+                [{"role": "user", "content": "1 + 2?"}],
+                tools=_ADD_TOOL,
+                dispatch={"add": lambda a, b: a + b},
+                params={"reasoning_effort": "low"},
+            )
+
+    efforts = [b["reasoning_effort"] for b in provider.bodies]
+    assert efforts[:2] == ["none", "none"]
+    assert set(efforts[2:]) == {"low"}

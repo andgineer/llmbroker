@@ -26,7 +26,7 @@ logger = logging.getLogger("llmbroker.broker")
 class ModelListRefresher:
     """Merges a model list into the registry, and decides when to go looking for one.
     ``source`` is the preset followed, ``None`` for none; ``interval`` is ``None``
-    where nothing is fetched on its own; ``live`` says whether a pool is running."""
+    where nothing is fetched on its own; ``rebuild`` brings a running pool up to date."""
 
     def __init__(  # noqa: PLR0913 - it assembles a subsystem: the ports plus its clock
         self,
@@ -40,7 +40,6 @@ class ModelListRefresher:
         home: Path | None,
         declared: Sequence[str | LLMConfig] = (),
         target_label: str | None = None,
-        live: Callable[[], bool] = lambda: False,
         rebuild: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._registry = registry
@@ -52,10 +51,11 @@ class ModelListRefresher:
         self._home = home
         self._declared = tuple(declared)
         self._target_label = target_label
-        self._live = live
         self._rebuild = rebuild
 
         self._attempted = False
+        self._armed = False
+        self._filling = False
         # Monotonic deadline for the next check; inf until the first one lands.
         self._next_refresh = float("inf")
         self._task: asyncio.Task[None] | None = None
@@ -78,12 +78,24 @@ class ModelListRefresher:
             return
         if self._source is None:
             if self._follows_an_alias():
-                self._arm(PAID_CATALOG)
+                self._arm()
             return
         if not await self._registry.load():
-            await self._attempt("start")
+            self._armed = True  # the start fill sets the first deadline itself
+            self._filling = True
+            try:
+                await self._attempt("start")
+            finally:
+                self._filling = False
             return
-        self._arm(self._source)
+        self._arm()
+
+    def tick(self) -> None:
+        """The clock as ``direct()`` reaches it: armed on first use where an alias is
+        followed, then any due refresh fired. Never the blocking fill of an empty registry."""
+        if not self._armed and self._follows_an_alias():
+            self._arm()
+        self.schedule()
 
     def schedule(self) -> None:
         """Fire a background refresh when the interval has elapsed. Synchronous by
@@ -100,10 +112,16 @@ class ModelListRefresher:
         self._next_refresh = time.monotonic() + interval
         self._task = asyncio.create_task(self._attempt("refresh"))
 
-    def _arm(self, source: str) -> None:
+    def _arm(self) -> None:
+        """Set the first deadline from the check record, once: arming again after a refresh
+        that failed, and so left no record, would fire it straight back."""
+        if self._armed:
+            return
+        self._armed = True
         interval = self._interval
         if interval is None:
             return
+        source = self._source if self._source is not None else PAID_CATALOG
         age = stamp_age(self._home, self._stamp_key(source))
         self._next_refresh = (
             time.monotonic() + (interval - age) if age is not None and age < interval else 0.0
@@ -238,9 +256,9 @@ class ModelListRefresher:
 
     async def _rebuild_pool(self) -> None:
         """A sync is a rebuild trigger, applied or not: a key it has just bootstrapped
-        is exactly what a caller is waiting for. Skipped before the pool exists —
-        provisioning is its own trigger and runs next."""
-        if self._rebuild is not None and self._live():
+        is exactly what a caller is waiting for. Skipped while the start fill runs —
+        provisioning reads the registry right after it."""
+        if self._rebuild is not None and not self._filling:
             await self._rebuild()
 
     async def _file_target(

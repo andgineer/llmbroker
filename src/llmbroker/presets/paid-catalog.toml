@@ -49,18 +49,21 @@ key_help    = "Create a key at https://platform.openai.com/api-keys (paid)."
   model    = "gpt-5.6-sol"
   label    = "GPT-5.6 Sol — frontier model for complex professional work"
   verified = "https://developers.openai.com/api/docs/models (2026-08-17)"
+  tool_params = { reasoning_effort = "none" }  # tools on chat completions need it (measured 2026-09-14)
 
   [[provider.models]]
   alias    = "gpt-mini"
   model    = "gpt-5.6-terra"
   label    = "GPT-5.6 Terra — balances intelligence and cost"
   verified = "https://developers.openai.com/api/docs/models (2026-08-17)"
+  tool_params = { reasoning_effort = "none" }  # tools on chat completions need it (measured 2026-09-14)
 
   [[provider.models]]
   alias    = "gpt-fast"
   model    = "gpt-5.6-luna"
   label    = "GPT-5.6 Luna — optimized for cost-sensitive workloads"
   verified = "https://developers.openai.com/api/docs/models (2026-08-17)"
+  tool_params = { reasoning_effort = "none" }  # tools on chat completions need it (measured 2026-09-14)
 
 [[provider]]
 id          = "google"

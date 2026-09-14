@@ -20,6 +20,23 @@ _NO_KEY_HELP: Mapping[str, str] = MappingProxyType({})
 # fall back to. It describes the feature, not a tuning knob.
 _MIN_USABLE_PROVIDERS = 2
 
+RESERVED_BODY_KEYS = frozenset({"model", "messages", "stream", "stream_options", "tools"})
+
+
+def check_request_params(params: Mapping[str, object]) -> None:
+    """Refuse a request key llmbroker builds itself: merged, it would silently break the
+    call — a moved model, a flipped streaming switch.
+
+    >>> check_request_params({"model": "other"})
+    Traceback (most recent call last):
+    ValueError: request parameter 'model' is built by llmbroker and cannot be passed
+    """
+    for key in params:
+        if key in RESERVED_BODY_KEYS:
+            raise ValueError(
+                f"request parameter {key!r} is built by llmbroker and cannot be passed",
+            )
+
 
 class LifecyclePhase(Enum):
     """The FSM label for one LLM's lifecycle, always derived from cooldown_until vs now."""
@@ -62,6 +79,21 @@ def _weight_from_metadata(raw: object, name: str) -> float:
     return weight
 
 
+def _tool_params_from_metadata(raw: object, name: str) -> dict[str, object]:
+    """Read stored tool parameters, dropping what no request may carry instead of raising,
+    for the same reason a stored weight is clamped."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        logger.warning("entry %s: ignoring tool_params %r — not a table", name, raw)
+        return {}
+    kept = {str(key): value for key, value in raw.items() if key not in RESERVED_BODY_KEYS}
+    if len(kept) != len(raw):
+        dropped = sorted(set(raw) - set(kept))
+        logger.warning("entry %s: ignoring tool_params %s — built by llmbroker", name, dropped)
+    return kept
+
+
 @dataclass(frozen=True, slots=True)
 class LLMConfig:
     """Pure config for one LLM — no secret, safe to expose. ``from_preset`` says our
@@ -75,6 +107,13 @@ class LLMConfig:
     from_preset: bool = False
     alias: str | None = None
     weight: float = 0.0
+    # What the model needs on a request that carries tools, applied under the caller's
+    # own parameters. Out of the hash: a mapping is not hashable, and identity is the name.
+    tool_params: Mapping[str, object] = field(default_factory=dict, hash=False)
+
+    def __post_init__(self) -> None:
+        check_request_params(self.tool_params)
+        object.__setattr__(self, "tool_params", dict(self.tool_params))
 
     def to_metadata(self) -> dict[str, object]:
         """Structured optional config, serialized for the registry's JSON column.
@@ -91,6 +130,8 @@ class LLMConfig:
         {'from_preset': True}
         >>> LLMConfig(name="g", base_url="u", model="m", api_key_ref="K", weight=0.7).to_metadata()
         {'weight': 0.7}
+        >>> replace(curated, tool_params={"reasoning_effort": "none"}).to_metadata()
+        {'tool_params': {'reasoning_effort': 'none'}}
         """
         metadata: dict[str, object] = {}
         if self.parallel is not None:
@@ -101,6 +142,8 @@ class LLMConfig:
             metadata["alias"] = self.alias
         if self.weight:
             metadata["weight"] = self.weight
+        if self.tool_params:
+            metadata["tool_params"] = dict(self.tool_params)
         return metadata
 
     @classmethod
@@ -130,6 +173,7 @@ class LLMConfig:
             from_preset=from_preset,
             alias=alias,
             weight=_weight_from_metadata(metadata.get("weight"), name),
+            tool_params=_tool_params_from_metadata(metadata.get("tool_params"), name),
         )
 
 

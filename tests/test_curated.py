@@ -98,6 +98,59 @@ def test_a_curated_row_declares_itself_with_its_alias():
     assert models_from(_CATALOG)[1].declare().alias is None
 
 
+def _with_line(**line) -> dict:
+    return {
+        "provider": [
+            {
+                "id": "openai",
+                "base_url": "https://api.openai.com/v1",
+                "api_key_ref": "OPENAI_API_KEY",
+                "models": [{"alias": "gpt-fast", "model": "gpt-5.6-luna", **line}],
+            },
+        ],
+    }
+
+
+def test_a_lines_tool_params_reach_its_row_and_its_declaration():
+    (row,) = models_from(_with_line(tool_params={"reasoning_effort": "none"}))
+    assert row.tool_params == {"reasoning_effort": "none"}
+    assert row.declare().tool_params == {"reasoning_effort": "none"}
+
+
+def test_a_line_without_tool_params_carries_none():
+    assert models_from(_CATALOG)[0].tool_params == {}
+    assert models_from(_CATALOG)[0].declare().tool_params == {}
+
+
+def test_a_provider_declaration_carries_no_tool_params_even_for_a_listed_model():
+    """The catalog vouches for the lines it lists, not for a model id someone typed."""
+    catalog = _with_line(tool_params={"reasoning_effort": "none"})
+    assert providers_from(catalog)[0].declare("gpt-5.6-luna").tool_params == {}
+
+
+@pytest.mark.parametrize(
+    ("tool_params", "message"),
+    [
+        ("none", "not a table"),
+        (["reasoning_effort"], "not a table"),
+        ({"model": "gpt-5"}, "'model' is built by llmbroker"),
+        ({"tools": []}, "'tools' is built by llmbroker"),
+    ],
+)
+def test_a_malformed_tool_params_table_invalidates_the_catalog(tool_params, message):
+    with pytest.raises(ValueError, match=f"paid catalog is invalid .*gpt-5.6-luna.*{message}"):
+        models_from(_with_line(tool_params=tool_params))
+
+
+def test_the_shipped_openai_lines_take_tools_on_chat_completions(llmbroker_home, bundled_presets):
+    needs = {row.alias: row.tool_params for row in curated_paid() if row.provider.id == "openai"}
+    assert needs == {
+        "gpt": {"reasoning_effort": "none"},
+        "gpt-mini": {"reasoning_effort": "none"},
+        "gpt-fast": {"reasoning_effort": "none"},
+    }
+
+
 def test_the_readers_fall_to_the_wheels_copy_when_nothing_is_cached(
     llmbroker_home,
     bundled_presets,

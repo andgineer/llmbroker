@@ -13,7 +13,8 @@ Background reading before you start (do not skip):
 
 - `src/llmbroker/broker/aliases.py` — how a declared alias resolves against this
   file. The catalog's fields must map cleanly onto what a declared model needs:
-  `base_url`, `model`, `api_key_ref`, and a key help blurb.
+  `base_url`, `model`, `api_key_ref`, a key help blurb, and — where measured —
+  the parameters a model needs for tool calls.
 - [`../../../specs/reference/rules/direct-by-name.md`](../../../specs/reference/rules/direct-by-name.md) —
   llmbroker calls **only OpenAI-compatible** `/chat/completions` endpoints. A
   provider without an OpenAI-compatible endpoint cannot be in this catalog.
@@ -48,9 +49,9 @@ config depends on, so it is governed by a permanence contract:
   account, not in any config.
 
 Aliases are what a re-resolution follows: for each alias a deployment declared it
-reads `model`, `name`, `base_url` and `api_key_ref` from this file. That is the
-whole point — so an alias whose target you change here changes the model of every
-deployment following it.
+reads `model`, `name`, `base_url`, `api_key_ref` and `tool_params` from this file.
+That is the whole point — so an alias whose target you change here changes the
+model of every deployment following it.
 
 ## 0. What "verified" means here (read first)
 
@@ -149,6 +150,7 @@ key_help    = "Create a key at https://console.anthropic.com/ (paid)."
   model    = "claude-opus-4-8"                     # exact API id (verbatim from the reference)
   label    = "Claude Opus 4.8 — highest-quality reasoning"
   verified = "https://docs.anthropic.com/en/docs/about-claude/models (YYYY-MM-DD)"
+  # tool_params = { <param> = <value> }            # only where the §4 tools probe measured a need (YYYY-MM-DD)
 ```
 
 Rules:
@@ -162,6 +164,14 @@ Rules:
 - `api_key_ref` is a stable env-var name (reuse the conventional one per
   provider, e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`).
 - Set the top `# refreshed = "YYYY-MM-DD"` to today.
+- `tool_params` is optional: a table of request parameters this model needs on a
+  `/chat/completions` request that carries tools, and only there. llmbroker sends
+  them with tools and never without, and a caller's own `params` override them key
+  by key. Write it only from the tools probe in §4, with a trailing comment naming
+  the date it was measured; never from docs or memory. It may not name a key
+  llmbroker builds itself (`model`, `messages`, `stream`, `stream_options`,
+  `tools`) — the catalog is refused if it does. Carry an existing table over when
+  the alias keeps its model, and re-probe it when the alias moves to a new one.
 
 ## 4. Validate before proposing the change
 
@@ -176,6 +186,15 @@ Rules:
 - Spot-check: for at least one provider whose key you hold, confirm each `model`
   id is accepted (a real request, or the provider's models-list endpoint). This
   is an optional cross-check, not a substitute for §0–§1.
+- **Tools probe, for every line whose key you hold.** Send one `/chat/completions`
+  request with one function tool (a one-parameter `get_weather` is enough) and no
+  other parameters. A tool call or a text answer passes. A 400 that names a
+  parameter — for example "Function tools with reasoning_effort are not supported …
+  set reasoning_effort to 'none'" — means the line needs `tool_params`: retry with
+  the parameter the message names, and if that request passes, write exactly that
+  parameter into the line's `tool_params` with today's date. A line that still
+  cannot take tools is reported in the summary as such, never listed silently.
+  Record which lines were not probed because no key was held.
 - **Report the tier-by-tier decision, not only the diff.** Per provider, list the
   tiers you found on its models page and what you did with each: included (with
   the alias) or skipped (with the reason). A model that falls outside the curation

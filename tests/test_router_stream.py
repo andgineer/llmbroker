@@ -1178,6 +1178,7 @@ def test_the_selection_window_survives_the_post_exhaustion_retry():
             store=_RecordingStore(),
             learner=None,
             ensure_pool=ensure_pool,
+            tick=lambda: None,
             on_exhausted=on_exhausted,
             own_stream=lambda stream: None,
             release_stream=lambda stream: None,

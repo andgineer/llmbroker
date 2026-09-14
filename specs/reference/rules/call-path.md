@@ -77,9 +77,10 @@ it the call the pool needs to learn from.
 **A routed parameter is admitted one at a time, by name, and admitting one means
 measuring what the curated pool does with it**
 ([`../decisions.md`](../decisions.md#the-pool-takes-named-parameters-one-at-a-time)) —
-the pool's members are interchangeable only because each is sent the same
-request, and the arbitrary mapping a model reached by name accepts
-([`direct-by-name.md`](direct-by-name.md)) is therefore not offered here.
+the pool's members are interchangeable only because the caller's request is the
+same for every one of them — a member adds its own tool parameters only to a
+request that carries tools ([`direct-by-name.md`](direct-by-name.md)) — and the
+arbitrary mapping a model reached by name accepts is therefore not offered here.
 
 **A constrained request is one request like any other.** Every candidate is asked
 the same thing, failover included, and what comes back is judged exactly as any

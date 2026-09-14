@@ -18,14 +18,12 @@ from llmbroker.exceptions import (
     RateLimitError,
 )
 from llmbroker.http_status import is_auth_failure, is_rate_limit
-from llmbroker.models import LLMConfig, Usage
+from llmbroker.models import LLMConfig, Usage, check_request_params
 
 _CHAT_PATH = "/chat/completions"
 HTTP_TIMEOUT = 60.0
 _BODY_SNIPPET = 300
 _MAX_INT64 = 2**63 - 1
-
-RESERVED_BODY_KEYS = frozenset({"model", "messages", "stream", "stream_options", "tools"})
 
 
 def retry_after_seconds(headers: Mapping[str, str], default_sec: int) -> int:
@@ -74,11 +72,12 @@ def build_chat_request(  # noqa: PLR0913
     *,
     stream: bool = False,
     params: Mapping[str, object] | None = None,
+    tool_params: Mapping[str, object] | None = None,
 ) -> tuple[str, dict[str, str], dict[str, Any]]:
     """Return (url, headers, json_body) for an OpenAI-compatible chat completion.
 
-    ``params`` is the caller's own provider parameters, merged in last and never
-    inspected; a key this builder owns is refused rather than overwritten.
+    ``tool_params`` (what the model needs with tools) land only when ``tools`` do, and the
+    caller's own ``params`` land last; a key this builder owns is refused in either.
 
     >>> url, headers, body = build_chat_request("https://x/v1", "m", "k", [], stream=True)
     >>> url
@@ -96,12 +95,11 @@ def build_chat_request(  # noqa: PLR0913
     if stream:
         body["stream"] = True
         body["stream_options"] = {"include_usage": True}
-    for key, value in (params or {}).items():
-        if key in RESERVED_BODY_KEYS:
-            raise ValueError(
-                f"request parameter {key!r} is built by llmbroker and cannot be passed",
-            )
-        body[key] = value
+    check_request_params(tool_params or {})
+    check_request_params(params or {})
+    if tools:
+        body.update(tool_params or {})
+    body.update(params or {})
     return (
         f"{base_url}{_CHAT_PATH}",
         {"Authorization": f"Bearer {api_key}"},
@@ -245,6 +243,7 @@ async def call_provider(  # noqa: PLR0913
         messages,
         tools,
         params=params,
+        tool_params=config.tool_params,
     )
     async with _resolve_client(client) as active:
         if timeout is None:

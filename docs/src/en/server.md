@@ -87,17 +87,12 @@ application so the connection string and related secrets are configured in one
 place:
 
 ```python
-broker = build_broker()  # the application's broker factory
-try:
+async with build_broker() as broker:  # the application's broker factory
     print(await broker.sync("freetier"))  # maintained model-list name
-finally:
-    await broker.aclose()
 ```
 
-Do not use `async with` here. Entering the context manager initializes the pool,
-but this job must populate an empty database first. If automatic network access
-is disabled, `EmptyRegistryError` is raised before `sync()` can run. See
-[Deployment without automatic network access](#no-fetch).
+Entering the broker does not initialize the pool, so the job works with an empty
+database.
 
 Run this code as a one-time release task, Kubernetes Job, or init container. No
 separate update job is required afterwards: serving processes check the
@@ -123,13 +118,10 @@ llmbroker.AsyncBroker("postgresql://host/db", sync_interval=None)  # in broker c
 ```
 
 ```python
-broker = build_broker()
-try:
+async with build_broker() as broker:
     report = await broker.sync()  # no argument: whatever this installation follows
     if report is not None:  # paid-catalog-only updates have no report
         print(llmbroker.format_report(report))
-finally:
-    await broker.aclose()
 ```
 
 `sync_interval=None` disables automatic network calls to update both the free
@@ -271,7 +263,8 @@ new deployment.
 Three errors can occur before the first request and require different handling:
 
 - `EmptyRegistryError` — the registry has not been populated. Run the initial
-  setup or synchronization.
+  setup or synchronization. The first call that uses the pool raises it; call
+  `ensure_pool()` at startup to find out earlier.
 - `SyncRefusedError` — `sync()` did not apply an update because it would leave
   the registry empty. The registry is unchanged, and `report` contains the
   planned changes.

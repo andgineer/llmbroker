@@ -203,6 +203,6 @@ async def test_catalog_mutation_persists(stack, monkeypatch):
             assert await broker2.count() == 1
             assert (await broker2.get("llm1")).config.name == "llm1"
     else:
-        with pytest.raises(EmptyRegistryError, match="sync"):
-            async with stack.make_broker():
-                pass
+        async with stack.make_broker() as broker2:
+            with pytest.raises(EmptyRegistryError, match="sync"):
+                await broker2.count()

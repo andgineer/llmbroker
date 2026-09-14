@@ -53,9 +53,9 @@ def _result(resp: httpx.Response, model: str) -> DirectResult:
 class AsyncDirectClient:
     """Async direct client for one named model — ``stream()``, ``ask()`` and ``chat()``.
     Pass an ``httpx.AsyncClient`` to share a connection pool, or let it open and close
-    its own."""
+    its own; ``tool_params`` ride every ``chat`` that carries tools, under ``params``."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - where the model is, and how to reach it
         self,
         *,
         base_url: str,
@@ -63,6 +63,7 @@ class AsyncDirectClient:
         api_key: str,
         timeout: float = _DEFAULT_TIMEOUT,
         client: httpx.AsyncClient | None = None,
+        tool_params: Mapping[str, object] | None = None,
     ) -> None:
         self._base_url = base_url
         self._model = model
@@ -70,6 +71,7 @@ class AsyncDirectClient:
         self._timeout = timeout
         self._http = client
         self._owns_http = client is None
+        self._tool_params = tool_params
 
     def _ensure_http(self) -> httpx.AsyncClient:
         if self._http is None:
@@ -92,6 +94,7 @@ class AsyncDirectClient:
             tools,
             stream=stream,
             params=params,
+            tool_params=self._tool_params,
         )
 
     async def ask(
@@ -174,10 +177,10 @@ class AsyncDirectClient:
 
 class DirectClient:
     """Synchronous direct client for one named model — ``ask()`` and ``chat()``, each a
-    single ``POST`` needing no event loop; streaming is async-only. Pass an
-    ``httpx.Client`` to share a connection pool, or let it open and close its own."""
+    single ``POST`` needing no event loop; streaming is async-only. ``client`` and
+    ``tool_params`` mean what they do on ``AsyncDirectClient``."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - where the model is, and how to reach it
         self,
         *,
         base_url: str,
@@ -185,6 +188,7 @@ class DirectClient:
         api_key: str,
         timeout: float = _DEFAULT_TIMEOUT,
         client: httpx.Client | None = None,
+        tool_params: Mapping[str, object] | None = None,
     ) -> None:
         self._base_url = base_url
         self._model = model
@@ -192,6 +196,7 @@ class DirectClient:
         self._timeout = timeout
         self._http = client
         self._owns_http = client is None
+        self._tool_params = tool_params
 
     def _ensure_http(self) -> httpx.Client:
         if self._http is None:
@@ -224,6 +229,7 @@ class DirectClient:
             messages,
             tools,
             params=params,
+            tool_params=self._tool_params,
         )
         try:
             resp = self._ensure_http().post(

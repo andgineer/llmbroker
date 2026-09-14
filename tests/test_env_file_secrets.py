@@ -107,6 +107,7 @@ def test_quickstart_skeleton_leaves_the_model_inactive(tmp_path, monkeypatch):
 
     async def run():
         async with AsyncBroker(home=tmp_path, sync=None, store=InMemoryStore()) as broker:
+            await broker.ensure_pool()
             assert broker._pool.config("p1").api_key_ref not in broker._catalog.payable
 
     asyncio.run(run())
@@ -151,6 +152,7 @@ def test_the_env_file_is_the_working_directorys_not_the_model_lists_sibling(tmp_
 
     async def run():
         async with AsyncBroker(home=home, sync=None, store=InMemoryStore()) as broker:
+            await broker.ensure_pool()
             assert broker._pool.config("p1").api_key_ref not in broker._catalog.payable
 
     asyncio.run(run())

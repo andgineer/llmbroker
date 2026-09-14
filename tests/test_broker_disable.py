@@ -39,6 +39,7 @@ async def test_persisted_manual_latch_applied_at_provision(tmp_path):
         store=SqliteStore(db),
         sync=None,
     ) as broker:
+        await broker.ensure_pool()
         assert broker._pool.is_disabled("p1")
 
 

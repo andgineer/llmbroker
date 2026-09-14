@@ -106,8 +106,10 @@ public API.
 Pool provisioning is a lazy idempotent initializer with double-checked locking:
 it loads the registry into the pool and raises if it is empty, naming the sync
 that would fill it. Every method that routes or views the live pool calls it
-automatically; no journal read does (invariant 6). Call it explicitly for eager
-fail-fast startup.
+automatically; no journal read does (invariant 6), and neither does `direct()`
+or entering a broker's context
+([`decisions.md`](../decisions.md#entering-a-broker-provisions-nothing)). Call it
+explicitly for eager fail-fast startup.
 
 ## DB schema
 

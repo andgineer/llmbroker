@@ -64,6 +64,7 @@ async def test_sync_bootstraps_the_key_into_the_db_secrets(tmp_path, monkeypatch
     monkeypatch.delenv("ROUNDTRIP_KEY")
 
     async with AsyncBroker(db) as broker:
+        await broker.ensure_pool()
         assert (
             await broker._shared_ring.resolve(broker._pool.config("p1").api_key_ref)
             == "sk-persisted"

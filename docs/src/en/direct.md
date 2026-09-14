@@ -189,6 +189,18 @@ if result.tool_calls:
 `run_tool_loop` and `arun_tool_loop` accept a direct client in place of the broker
 and repeat these calls for you. See [Tools & agents](tools.md#direct).
 
+A catalog alias accepts tools without extra parameters. Some models accept function
+tools on chat completions only with a particular parameter; for example, the OpenAI
+models behind `gpt`, `gpt-mini`, and `gpt-fast` require `reasoning_effort="none"`.
+The catalog line records this, and llmbroker adds those parameters to every `chat`
+that includes `tools`, and only then; a call without tools keeps the model's
+defaults. Values you pass in `params` take precedence, key by key. When the alias
+moves to another version, its parameters move with it.
+
+A configuration created with `declare()` on a catalog provider contains no such
+parameters, because the catalog has not checked that model. If the model needs
+them, pass `tool_params=` to `LLMConfig` or pass `params=` on each call.
+
 ## Request parameters {#params}
 
 Direct calls can include any parameter supported by the selected model, such as
@@ -224,8 +236,8 @@ All direct-call exceptions inherit `LLMRequestError`:
 - `PoolModelError` — the name belongs to a model in the maintained pool. Use
   `ask`, `chat`, or `stream`, or create your own model configuration.
 - `UnknownModelError` — no matching name or alias exists. If the value exists in
-  the other category, the message explains that. The same error is raised at
-  startup when `direct=` contains an alias not found in the paid catalog; the
+  the other category, the message explains that. The same error is raised by the
+  first call when `direct=` contains an alias not found in the paid catalog; the
   message lists available aliases.
 - `MissingKeyError` — the key named by `api_key_ref` was not found. This is an
   error for a direct call; a pool model without a key is simply not used.

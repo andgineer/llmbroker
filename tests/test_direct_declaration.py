@@ -6,13 +6,17 @@ network, and the wheel's own copy stays invisible unless a test asks for it.
 
 import asyncio
 import logging
+import threading
 
 import pytest
 
 from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
+from llmbroker.broker.catalog import Catalog
 from llmbroker.broker.curated import curated_providers
 from llmbroker.broker.presets import PresetSource
+from llmbroker.broker.refresher import ModelListRefresher
+from llmbroker.broker.stamps import write_stamp
 from llmbroker.exceptions import MissingKeyError, UnknownModelError
 from llmbroker.models import LLMConfig
 from llmbroker.sqlite import Registry as SqliteRegistry
@@ -80,6 +84,7 @@ async def test_a_declared_alias_follows_the_catalog_on_the_refresh_clock(tmp_pat
     next resolution follows it — inside the running process, and in the next one."""
     async with _broker(tmp_path, direct=["opus"], sync_interval=0.001) as broker:
         assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
+        await _settle(broker)  # the refresh that direct() fired on the clock
         served["paid-catalog"] = _CATALOG_MOVED
         broker._refresher._next_refresh = 0.0
         await broker.count()
@@ -96,6 +101,7 @@ async def test_a_re_resolution_logs_the_version_it_moved_to(tmp_path, served, ca
     with caplog.at_level(logging.INFO, logger="llmbroker.broker"):
         async with _broker(tmp_path, direct=["opus"], sync_interval=0.001) as broker:
             await _resolved(broker, "opus")
+            await _settle(broker)
             assert [r.message for r in caplog.records if r.message.startswith("direct=:")] == []
             served["paid-catalog"] = _CATALOG_MOVED
             broker._refresher._next_refresh = 0.0
@@ -234,6 +240,7 @@ async def test_an_alias_the_catalog_dropped_keeps_serving_and_does_not_stop_the_
         await broker.ensure_pool()
         await _settle(broker)
         assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
+        await _settle(broker)
 
         served["paid-catalog"] = _CATALOG.replace(
             '  [[provider.models]]\n  alias="opus"\n  model="claude-opus-4-8"\n',
@@ -261,8 +268,10 @@ async def test_the_catalog_is_refreshed_where_no_model_list_is_synced(tmp_path, 
     declared alias resolves through still has to move, so it carries its own clock
     rather than riding on the model list's."""
     async with _broker(tmp_path, direct=["opus"], sync=None, sync_interval=0.001) as broker:
+        await broker.ensure_pool()
         await _settle(broker)
         assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
+        await _settle(broker)  # at this interval, that resolution was due a refresh too
         served["paid-catalog"] = _CATALOG_MOVED
         broker._refresher._next_refresh = 0.0  # the period has elapsed
         await broker.count()  # the clock, armed by the broker itself, is due
@@ -279,6 +288,8 @@ async def test_direct_resolves_on_the_refresh_clock_and_not_per_call(
     and a TOML parse under every call to a declared model."""
     async with _broker(tmp_path, direct=["opus"], sync=None) as broker:
         assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
+        await _settle(broker)  # the catalog refresh that first call fired
+        assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
 
         def _boom(_self, _name, **_kwargs) -> str:
             raise AssertionError("direct() re-read the paid catalog")
@@ -286,6 +297,146 @@ async def test_direct_resolves_on_the_refresh_clock_and_not_per_call(
         monkeypatch.setattr(PresetSource, "text", _boom)
         for _ in range(5):
             assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
+
+
+async def test_direct_calls_alone_move_a_declared_alias_once_the_interval_elapses(
+    tmp_path,
+    served,
+):
+    """A host that only calls models by name has no other call to carry the clock, so
+    without ``direct()`` ticking it an alias would never be re-resolved after start."""
+    async with _broker(tmp_path, direct=["opus"], sync=None, sync_interval=3600) as broker:
+        assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
+        await _settle(broker)
+        served["paid-catalog"] = _CATALOG_MOVED
+        for _ in range(3):  # inside the interval: nothing more is fetched
+            assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
+        assert broker._refresher._task.done()
+
+        broker._refresher._next_refresh = 0.0  # the interval has elapsed
+        await _resolved(broker, "opus")
+        await _settle(broker)
+        assert (await _resolved(broker, "opus")).model == "claude-opus-5"
+        assert broker._provisioned is False
+
+
+async def test_direct_never_fills_an_empty_registry_on_its_own_path(tmp_path, served, monkeypatch):
+    """The blocking fill belongs to provisioning: a ``direct()`` call answers while the
+    model list it does not route over is still being fetched, if it is fetched at all."""
+    release = threading.Event()
+
+    def slow(name: str) -> str:
+        if name == "freetier":
+            release.wait(5)
+        return served[name]
+
+    monkeypatch.setattr(presets, "fetch_preset_text", slow)
+    async with _broker(tmp_path, direct=["opus"]) as broker:
+        try:
+            cfg = await asyncio.wait_for(_resolved(broker, "opus"), 2)
+            assert cfg.model == "claude-opus-4-8"
+            assert await FileRegistry(tmp_path / "llms.toml").load() == []
+            assert broker._refresher._attempted is False
+        finally:
+            release.set()
+        await _settle(broker)
+        assert broker._provisioned is False
+
+
+async def test_a_direct_call_that_armed_the_clock_first_still_lets_provisioning_fill(
+    tmp_path,
+    served,
+):
+    """Arming is not the start decision: a registry left empty after ``direct()`` armed
+    the clock is still filled by the first call that provisions."""
+    broker = _broker(tmp_path, direct=["opus"])
+    # A peer checked this target a moment ago, so the tick arms without firing.
+    write_stamp(broker._home, broker._refresher._stamp_key("freetier"))
+    try:
+        await _resolved(broker, "opus")
+        assert broker._refresher._task is None
+        assert await broker.count() == 1
+    finally:
+        await broker.aclose()
+
+
+async def test_a_refresh_fired_by_direct_rebuilds_no_pool(tmp_path, served, monkeypatch):
+    """No pool exists to rebuild, and building one would report the health of a pool
+    this host never routes over."""
+    rebuilds: list[object] = []
+    real = Catalog.rebuild
+
+    async def counted(self, known=None):
+        rebuilds.append(known)
+        await real(self, known)
+
+    monkeypatch.setattr(Catalog, "rebuild", counted)
+    async with _broker(tmp_path, direct=["opus"]) as broker:
+        await _resolved(broker, "opus")
+        await _settle(broker)
+        # The refresh ran — it synced the list this broker follows — and rebuilt nothing.
+        assert broker.last_sync_report is not None
+        assert rebuilds == []
+        assert broker._pool.configs == {}
+        await broker.count()
+        assert len(rebuilds) == 1
+
+
+_NEWCOMER = (
+    '[[llms]]\nname = "newcomer"\nbase_url = "https://n/v1"\nmodel = "m"\napi_key_ref = "GEMINI"\n'
+)
+
+
+async def test_a_registry_write_landing_mid_provisioning_still_reaches_the_pool(
+    tmp_path,
+    served,
+    monkeypatch,
+):
+    """The interleaving forced here: provisioning reads the registry, a refresh ``direct()``
+    fired writes it and reaches its rebuild step, then provisioning finishes. Once both are
+    done the pool holds what the registry holds."""
+    async with _broker(tmp_path) as seeding:
+        await seeding.sync()
+    served["freetier"] = _PRESET + _NEWCOMER
+
+    fetch_released = threading.Event()
+    refresh_rebuilding = asyncio.Event()
+    provisioning_read: list[bool] = []
+
+    def gated(name: str) -> str:
+        if name == "freetier":
+            fetch_released.wait(5)
+        return served[name]
+
+    real_rebuild = Catalog.rebuild
+
+    async def paused_after_the_first_read(self, known=None):
+        await real_rebuild(self, known)
+        if not provisioning_read:
+            provisioning_read.append(True)
+            fetch_released.set()
+            await asyncio.wait_for(refresh_rebuilding.wait(), 5)
+
+    real_rebuild_pool = ModelListRefresher._rebuild_pool
+
+    async def marked(self):
+        refresh_rebuilding.set()
+        await real_rebuild_pool(self)
+
+    monkeypatch.setattr(presets, "fetch_preset_text", gated)
+    monkeypatch.setattr(Catalog, "rebuild", paused_after_the_first_read)
+    monkeypatch.setattr(ModelListRefresher, "_rebuild_pool", marked)
+    try:
+        async with _broker(tmp_path, direct=["opus"]) as broker:
+            await _resolved(broker, "opus")  # arms the clock on the seeding broker's stamp
+            broker._refresher._next_refresh = 0.0  # the interval has elapsed
+            await _resolved(broker, "opus")  # fires the refresh, held at its fetch
+            await broker.count()
+            await _settle(broker)
+            assert await FileRegistry(tmp_path / "llms.toml").load() != []
+            assert set(broker._pool.configs) == {"gemini", "newcomer"}
+    finally:
+        fetch_released.set()
 
 
 async def test_a_refresh_costs_one_catalog_read_however_many_calls_are_in_flight(
@@ -424,6 +575,17 @@ async def test_resolution_reads_the_cached_catalog_rather_than_the_network(tmp_p
         mp.setattr(presets, "fetch_preset_text", _boom)
         async with _broker(tmp_path, direct=["opus"], sync=None) as second:
             assert (await _resolved(second, "opus")).model == "claude-opus-4-8"
+
+
+async def test_the_shipped_openai_aliases_resolve_with_what_their_tool_calls_need(
+    tmp_path,
+    bundled_presets,
+):
+    aliases = ["gpt", "gpt-mini", "gpt-fast"]
+    secrets = DictSecrets({"OPENAI_API_KEY": "sk-openai"})
+    async with _broker(tmp_path, direct=aliases, sync=None, secrets=secrets) as broker:
+        for alias in aliases:
+            assert (await _resolved(broker, alias)).tool_params == {"reasoning_effort": "none"}
 
 
 async def test_a_curated_provider_declares_a_model_the_catalog_does_not_carry(tmp_path, served):

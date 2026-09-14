@@ -568,6 +568,67 @@ def test_chat_without_tools_sends_no_tool_keys():
     assert "tool_choice" not in seen["body"]
 
 
+_NEEDS = {"reasoning_effort": "none"}
+_SSE_OK = b'data: {"choices": [{"delta": {"content": "ok"}}]}\n\ndata: [DONE]\n\n'
+
+
+def _bodies() -> tuple[list[dict], object]:
+    """A provider that records every request body and answers each in the shape asked."""
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if body.get("stream"):
+            return httpx.Response(
+                200, content=_SSE_OK, headers={"content-type": "text/event-stream"}
+            )
+        return httpx.Response(200, json=_ok_body())
+
+    return bodies, handler
+
+
+def test_async_client_tool_params_ride_a_chat_with_tools_only():
+    bodies, handler = _bodies()
+
+    async def run():
+        client = _async_client(handler, tool_params=_NEEDS)
+        await client.chat([{"role": "user", "content": "1+2?"}], tools=_TOOLS)
+        await client.chat([{"role": "user", "content": "hi"}])
+        await client.ask("hi")
+        assert [delta async for delta in client.stream("hi")] == ["ok"]
+        await client.aclose()
+
+    asyncio.run(run())
+    assert [b.get("reasoning_effort") for b in bodies] == ["none", None, None, None]
+    assert bodies[0]["tools"] == _TOOLS
+
+
+def test_sync_client_tool_params_ride_a_chat_with_tools_only():
+    bodies, handler = _bodies()
+    client = _sync_client(handler, tool_params=_NEEDS)
+    client.chat([{"role": "user", "content": "1+2?"}], tools=_TOOLS)
+    client.chat([{"role": "user", "content": "hi"}])
+    client.ask("hi")
+    client.close()
+    assert [b.get("reasoning_effort") for b in bodies] == ["none", None, None]
+
+
+def test_a_callers_params_win_over_the_clients_tool_params():
+    bodies, handler = _bodies()
+    client = _sync_client(handler, tool_params=_NEEDS)
+    client.chat([], tools=_TOOLS, params={"reasoning_effort": "low"})
+    client.close()
+
+    async def run():
+        async_client = _async_client(handler, tool_params=_NEEDS)
+        await async_client.chat([], tools=_TOOLS, params={"reasoning_effort": "low"})
+        await async_client.aclose()
+
+    asyncio.run(run())
+    assert [b["reasoning_effort"] for b in bodies] == ["low", "low"]
+
+
 def test_chat_refuses_tools_passed_as_a_param():
     client = _sync_client(lambda request: httpx.Response(200, json=_ok_body()))
     with pytest.raises(ValueError, match="'tools'"):

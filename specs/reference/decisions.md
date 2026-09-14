@@ -963,6 +963,19 @@ to, and both are properties of the caller rather than of the installation. Passi
 signature and leave the pool unable to tell whose key it is holding.
 **Accepted cost:** two objects where hosts previously had one.
 
+### entering-a-broker-provisions-nothing
+
+**Blocks:** provisioning the pool when a broker's context is entered.
+**Why:** three hosts need a broker without a pool — a deploy job that fills an empty
+registry, a statistics page reading the journal, and an application that only calls
+models by name — and each opens it with the context manager like any other host. A pool
+built on entry would charge each of them for one it never routes over: where nothing is
+fetched automatically, a raise over the empty registry the job exists to fill; a journal
+read that fails where the registry is unusable (invariant 6); and a pool-health error for
+a host holding no pool key. Eager failure is one explicit `ensure_pool()` away, and a host
+that routes gets the same error from its first call. The refresh clock does not depend on
+provisioning: a `direct()` call ticks it, since a declared alias has no other clock.
+
 ### no-alerts-api
 
 **Blocks:** a pull-drain events/alerts API with debounce maps and realert
@@ -997,8 +1010,22 @@ llmbroker's. The keys the broker builds are refused rather than merged because
 each breaks something the caller cannot see — a moved `model` answers as a model
 nobody named and reports failures under the wrong one, and a flipped streaming
 switch hands the body to the wrong reader. Everything else passes through
-untouched: the broker does not know which parameters a provider has, and finding
-out would be the per-provider translation layer the mission excludes.
+untouched: the code does not know which parameters a provider has, and finding
+out would be the per-provider translation layer the mission excludes. What a
+listed model needs for a tool call is curated data on its catalog line instead
+([`a-catalog-line-carries-its-tool-parameters`](#a-catalog-line-carries-its-tool-parameters)).
+
+### a-catalog-line-carries-its-tool-parameters
+
+**Blocks:** a host passing provider parameters so a catalog alias accepts tools; sending
+such parameters from code keyed by provider; translating to a provider's non-chat API.
+**Why:** whether a model accepts tools on chat completions, and with which parameters, is
+a fact about the version an alias points at, so it must move when the alias moves — in the
+host it would make application code change with the model version, which the alias
+exists to prevent. The code still knows no provider's vocabulary and never touches the
+caller's parameters, which win key by key; the catalog states only what it measured for a
+line it lists, and only for requests that carry tools, so a plain call keeps the model's
+defaults.
 
 ### the-pool-takes-named-parameters-one-at-a-time
 

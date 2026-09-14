@@ -8,7 +8,6 @@ import pytest
 
 from llmbroker.chat import (
     _BODY_SNIPPET,
-    RESERVED_BODY_KEYS,
     _parse_completion,
     build_chat_request,
     message_from_response,
@@ -18,7 +17,7 @@ from llmbroker.chat import (
     retry_after_seconds,
 )
 from llmbroker.exceptions import InvalidProviderResponseError
-from llmbroker.models import LLMConfig
+from llmbroker.models import RESERVED_BODY_KEYS, LLMConfig
 
 _CONFIG = LLMConfig(
     name="p1",
@@ -118,6 +117,72 @@ def test_build_chat_request_tool_choice_is_not_reserved():
     )
     assert body["tool_choice"] == "required"
     assert body["tools"] == tools
+
+
+_NEEDS = {"reasoning_effort": "none", "parallel_tool_calls": False}
+_A_TOOL = [{"type": "function", "function": {"name": "f"}}]
+
+
+def test_tool_params_land_with_tools():
+    _, _, body = build_chat_request(
+        _CONFIG.base_url, _CONFIG.model, "k", [], tools=_A_TOOL, tool_params=_NEEDS
+    )
+    assert body["reasoning_effort"] == "none"
+    assert body["parallel_tool_calls"] is False
+    assert body["tools"] == _A_TOOL
+
+
+@pytest.mark.parametrize("tools", [None, []])
+@pytest.mark.parametrize("stream", [False, True])
+def test_tool_params_stay_out_of_a_request_without_tools(tools, stream):
+    """A plain call keeps the model's own defaults."""
+    plain = build_chat_request(_CONFIG.base_url, _CONFIG.model, "k", [], tools=tools, stream=stream)
+    with_needs = build_chat_request(
+        _CONFIG.base_url, _CONFIG.model, "k", [], tools=tools, stream=stream, tool_params=_NEEDS
+    )
+    assert with_needs == plain
+
+
+def test_caller_params_override_tool_params_key_by_key():
+    _, _, body = build_chat_request(
+        _CONFIG.base_url,
+        _CONFIG.model,
+        "k",
+        [],
+        tools=_A_TOOL,
+        tool_params=_NEEDS,
+        params={"reasoning_effort": "low", "temperature": 0},
+    )
+    assert body["reasoning_effort"] == "low"
+    assert body["parallel_tool_calls"] is False
+    assert body["temperature"] == 0
+
+
+def test_tool_params_may_set_tool_choice_and_the_caller_still_wins():
+    _, _, body = build_chat_request(
+        _CONFIG.base_url, _CONFIG.model, "k", [], tools=_A_TOOL, tool_params={"tool_choice": "none"}
+    )
+    assert body["tool_choice"] == "none"
+    _, _, body = build_chat_request(
+        _CONFIG.base_url,
+        _CONFIG.model,
+        "k",
+        [],
+        tools=_A_TOOL,
+        tool_params={"tool_choice": "none"},
+        params={"tool_choice": "required"},
+    )
+    assert body["tool_choice"] == "required"
+
+
+@pytest.mark.parametrize("key", sorted(RESERVED_BODY_KEYS))
+@pytest.mark.parametrize("tools", [None, _A_TOOL])
+def test_a_reserved_key_in_tool_params_raises_naming_it(key, tools):
+    """Refused with or without tools: a model's parameters are wrong on every call."""
+    with pytest.raises(ValueError, match=f"{key!r} is built by llmbroker"):
+        build_chat_request(
+            _CONFIG.base_url, _CONFIG.model, "k", [], tools=tools, tool_params={key: "x"}
+        )
 
 
 @pytest.mark.parametrize("params", [None, {}])

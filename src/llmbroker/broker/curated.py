@@ -5,12 +5,13 @@ What this read is not — a registry, a source of pool members, a network call �
 """
 
 import tomllib
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from llmbroker.broker.presets import PAID_CATALOG, POOL_PRESET, PresetSource
 from llmbroker.home import home_dir_for_read
-from llmbroker.models import LLMConfig, ModelList
+from llmbroker.models import LLMConfig, ModelList, check_request_params
 from llmbroker.standalone.registry import parse_model_list
 
 
@@ -27,7 +28,8 @@ class CuratedProvider:
 
     def declare(self, model: str) -> LLMConfig:
         """A declaration for any model id this provider serves, curated or not — the
-        config ``direct=`` takes, pinned to that id and following no alias."""
+        config ``direct=`` takes, pinned to that id and following no alias. It carries no
+        tool parameters: the catalog vouches only for the lines it lists."""
         return LLMConfig(
             name=f"{self.id}-{model}",
             base_url=self.base_url,
@@ -45,6 +47,7 @@ class CuratedModel:
     model: str
     alias: str | None = None
     label: str = ""
+    tool_params: Mapping[str, object] = field(default_factory=dict, hash=False)
 
     @property
     def name(self) -> str:
@@ -60,6 +63,7 @@ class CuratedModel:
             model=self.model,
             api_key_ref=self.provider.api_key_ref,
             alias=self.alias,
+            tool_params=self.tool_params,
         )
 
 
@@ -73,6 +77,20 @@ def _provider_from(entry: dict) -> CuratedProvider:
     )
 
 
+def _tool_params_from(row: dict) -> dict[str, object]:
+    """What a line states its model needs on a request with tools. A line that states it
+    wrongly makes the whole catalog invalid, as a duplicate alias does."""
+    raw = row.get("tool_params", {})
+    where = f"paid catalog is invalid — tool_params of model '{row['model']}'"
+    if isinstance(raw, dict):
+        try:
+            check_request_params(raw)
+        except ValueError as exc:
+            raise ValueError(f"{where}: {exc}") from exc
+        return dict(raw)
+    raise ValueError(f"{where} is not a table")
+
+
 def providers_from(catalog: dict) -> tuple[CuratedProvider, ...]:
     """Every provider the parsed paid catalog declares, in file order."""
     return tuple(
@@ -82,7 +100,8 @@ def providers_from(catalog: dict) -> tuple[CuratedProvider, ...]:
 
 def models_from(catalog: dict) -> tuple[CuratedModel, ...]:
     """Every model row of the parsed paid catalog, in file order. A row with no model
-    id is not one; a provider missing a field yields its rows with that field empty."""
+    id is not one; a provider missing a field yields its rows with that field empty.
+    Raises on a row whose ``tool_params`` no request could carry."""
     models: list[CuratedModel] = []
     for entry in catalog.get("provider", []):
         if not isinstance(entry, dict):
@@ -97,6 +116,7 @@ def models_from(catalog: dict) -> tuple[CuratedModel, ...]:
                     model=str(row["model"]),
                     alias=str(row["alias"]) if row.get("alias") else None,
                     label=str(row.get("label") or ""),
+                    tool_params=_tool_params_from(row),
                 ),
             )
     return tuple(models)
