@@ -12,8 +12,8 @@
 | src/llmbroker/backends/ports.py           |      100 |        0 |    100% |           |
 | src/llmbroker/backends/spec.py            |       13 |        0 |    100% |           |
 | src/llmbroker/broker/aliases.py           |       63 |        2 |     97% |    49, 67 |
-| src/llmbroker/broker/broker.py            |      239 |        8 |     97% |77, 241, 279-281, 317, 361, 571 |
-| src/llmbroker/broker/catalog.py           |      217 |        5 |     98% |54, 64, 113, 278, 305 |
+| src/llmbroker/broker/broker.py            |      248 |        8 |     97% |81, 259, 297-299, 335, 379, 589 |
+| src/llmbroker/broker/catalog.py           |      225 |        5 |     98% |54, 64, 113, 281, 319 |
 | src/llmbroker/broker/curated.py           |       45 |        0 |    100% |           |
 | src/llmbroker/broker/keyring.py           |       73 |        1 |     99% |        16 |
 | src/llmbroker/broker/learning.py          |       67 |        0 |    100% |           |
@@ -22,7 +22,7 @@
 | src/llmbroker/broker/model\_list\_file.py |       58 |        1 |     98% |        37 |
 | src/llmbroker/broker/pool.py              |      205 |        0 |    100% |           |
 | src/llmbroker/broker/pool\_view.py        |       24 |        0 |    100% |           |
-| src/llmbroker/broker/presets.py           |      105 |        2 |     98% |   186-187 |
+| src/llmbroker/broker/presets.py           |      108 |        2 |     98% |   193-194 |
 | src/llmbroker/broker/refresher.py         |      147 |        3 |     98% |106, 212-213 |
 | src/llmbroker/broker/report.py            |       19 |        0 |    100% |           |
 | src/llmbroker/broker/result.py            |      135 |        3 |     98% |182, 198, 200 |
@@ -36,7 +36,7 @@
 | src/llmbroker/broker/verdict.py           |       37 |        0 |    100% |           |
 | src/llmbroker/chat.py                     |      147 |        5 |     97% |45, 163-164, 285-286 |
 | src/llmbroker/cli.py                      |       75 |        0 |    100% |           |
-| src/llmbroker/direct.py                   |       96 |        8 |     92% |75, 144, 148-149, 152, 155, 212-213 |
+| src/llmbroker/direct.py                   |      101 |        6 |     94% |76, 161, 165-166, 241-242 |
 | src/llmbroker/exceptions.py               |       50 |        0 |    100% |           |
 | src/llmbroker/home.py                     |       60 |        7 |     88% |24-25, 28-29, 31, 41-42 |
 | src/llmbroker/http\_status.py             |       15 |        0 |    100% |           |
@@ -52,6 +52,7 @@
 | src/llmbroker/postgres/registry.py        |        6 |        0 |    100% |           |
 | src/llmbroker/postgres/secrets.py         |        6 |        0 |    100% |           |
 | src/llmbroker/postgres/store.py           |        8 |        0 |    100% |           |
+| src/llmbroker/protocols/chat.py           |        4 |        0 |    100% |           |
 | src/llmbroker/protocols/registry.py       |        8 |        0 |    100% |           |
 | src/llmbroker/protocols/secrets.py        |        7 |        0 |    100% |           |
 | src/llmbroker/protocols/store.py          |        8 |        0 |    100% |           |
@@ -63,10 +64,10 @@
 | src/llmbroker/standalone/secrets.py       |       74 |        4 |     95% |29, 106, 113, 118 |
 | src/llmbroker/standalone/store.py         |      147 |        5 |     97% |152, 175-176, 208-209 |
 | src/llmbroker/sync.py                     |      130 |        1 |     99% |        96 |
-| src/llmbroker/tool\_loop.py               |       48 |        1 |     98% |        32 |
+| src/llmbroker/tool\_loop.py               |       48 |        1 |     98% |        33 |
 | src/llmbroker/util/atomic.py              |       17 |        3 |     82% |     29-31 |
 | src/llmbroker/vault/secrets.py            |       29 |        3 |     90% | 26, 62-63 |
-| **TOTAL**                                 | **4619** |  **143** | **97%** |           |
+| **TOTAL**                                 | **4648** |  **141** | **97%** |           |
 
 
 ## Setup coverage badge
