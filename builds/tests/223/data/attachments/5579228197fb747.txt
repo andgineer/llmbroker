@@ -1,1 +1,0 @@
-ERROR    llmbroker.broker:catalog.py:338 pool cannot serve any request: no provider has a key — no key for K
