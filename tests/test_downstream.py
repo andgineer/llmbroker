@@ -1,10 +1,15 @@
 """The downstream runner: host list, JUnit and type-check parsing, the verdict, and a host run
 driven through a fake subprocess seam. Nothing here reaches a network or a host checkout."""
 
+import http.client
+import io
 import subprocess
+import sys
+import urllib.error
 from pathlib import Path
 
 import pytest
+import yaml
 from invoke import MockContext, Result
 
 import tasks
@@ -178,6 +183,159 @@ def test_node_ids_match_what_pytest_itself_writes(tmp_path):
     assert list(downstream.read_outcomes(junit, "")) == ["tests/test_x.py::TestC::test_m[a.b]"]
 
 
+def _real_host_run(tmp_path: Path, files: dict[str, str]) -> downstream.HostRun:
+    """A host run whose suite is ``files``, run by this interpreter's real pytest."""
+    run = downstream.HostRun(
+        _host(tests=("-p", "no:cacheprovider", "tests/"), typecheck=(sys.executable, "-c", "pass")),
+        tmp_path,
+    )
+    run.python = Path(sys.executable)
+    (run.checkout / "tests").mkdir(parents=True)
+    (run.checkout / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    for name, text in files.items():
+        (run.checkout / name).write_text(text, encoding="utf-8")
+    return run
+
+
+@pytest.mark.parametrize(
+    ("files", "code", "meaning", "cause"),
+    [
+        ({"tests/test_x.py": "raise KeyboardInterrupt"}, 2, "interrupted", "KeyboardInterrupt"),
+        ({"tests/test_x.py": "pytest.exit('stop')"}, 2, "interrupted", "Exit: stop"),
+        (
+            {
+                "tests/test_x.py": "pass",
+                "tests/conftest.py": (
+                    "def pytest_runtest_logfinish(nodeid, location):\n"
+                    "    if nodeid.endswith('test_stops'):\n"
+                    "        raise RuntimeError('hook boom')\n"
+                ),
+            },
+            3,
+            "internal error",
+            "RuntimeError: hook boom",
+        ),
+    ],
+    ids=["keyboard-interrupt", "pytest-exit", "internal-error"],
+)
+def test_a_real_suite_that_stops_early_fails_the_phase(tmp_path, files, code, meaning, cause):
+    files = {**files}
+    files["tests/test_x.py"] = (
+        "import pytest\n\n"
+        "def test_ran():\n    pass\n\n"
+        f"def test_stops():\n    {files['tests/test_x.py']}\n\n"
+        "def test_never_ran():\n    pass\n"
+    )
+    run = _real_host_run(tmp_path, files)
+
+    with pytest.raises(HostRunError) as caught:
+        run.phase("candidate")
+
+    assert f"candidate: pytest exited {code} ({meaning})" in str(caught.value)
+    assert cause in str(caught.value)
+    assert (tmp_path / "candidate.xml").is_file()
+
+
+@pytest.mark.parametrize(
+    ("code", "meaning"),
+    [
+        (0, ""),
+        (1, ""),
+        (2, "interrupted"),
+        (3, "internal error"),
+        (4, "usage error"),
+        (5, "no tests collected"),
+        (9, "unknown exit status"),
+        (-9, "killed by signal 9"),
+    ],
+)
+def test_only_exit_0_and_1_are_a_verdict_on_the_whole_suite(code, meaning):
+    assert downstream.pytest_stop(code) == meaning
+
+
+_STOPPING_SUITE = """\
+import os
+import pytest
+
+STOPS = os.environ["SIDE"] == {side!r}
+
+
+@pytest.fixture(scope="module")
+def registry():
+    if STOPS and {where!r} == "fixture":
+        pytest.exit("llmbroker could not open the registry", returncode={code})
+
+
+def test_ran():
+    pass
+
+
+def test_stops(registry):
+    if STOPS and {where!r} == "test":
+        pytest.exit("llmbroker could not open the registry", returncode={code})
+
+
+def test_never_ran():
+    pass
+"""
+
+
+@pytest.mark.parametrize(
+    ("side", "where", "code"),
+    [
+        ("candidate", "fixture", 0),
+        ("candidate", "fixture", 1),
+        ("candidate", "test", 0),
+        ("candidate", "test", 1),
+        ("baseline", "test", 0),
+        ("baseline", "test", 1),
+    ],
+)
+def test_a_suite_stopped_with_a_passing_exit_status_is_judged_by_the_tests_it_left_out(
+    tmp_path, side, where, code
+):
+    suite = _STOPPING_SUITE.format(side=side, where=where, code=code)
+    run = _real_host_run(tmp_path, {"tests/test_x.py": suite})
+    report = downstream.HostReport("h", tmp_path)
+    for label in ("baseline", "candidate"):
+        run.env = {**run.env, "SIDE": label}
+        report.phases[label] = run.phase(label)
+    report.verdict = downstream.judge(report.phases["baseline"], report.phases["candidate"])
+
+    assert list(report.phases[side].outcomes) == ["tests/test_x.py::test_ran"]
+    text = downstream.render(report, "HEAD (abc)", keep=False)
+    if side == "candidate":
+        assert report.failed
+        assert report.verdict.absent == [
+            "tests/test_x.py::test_stops",
+            "tests/test_x.py::test_never_ran",
+        ]
+        assert (
+            "tests/test_x.py::test_never_ran [ran on the baseline, absent from the candidate]"
+            in text
+        )
+        assert "Exit: llmbroker could not open the registry" in text
+    else:
+        assert not report.failed
+        assert report.verdict.absent == []
+        assert "== h: ok ==" in text
+
+
+def test_a_nameless_testcase_is_not_a_test(tmp_path):
+    junit = tmp_path / "r.xml"
+    junit.write_text(
+        _junit(
+            '<testcase classname="tests.test_a" name="test_b" file="tests/test_a.py"/>'
+            '<testcase time="0.000"/>'
+        ),
+        encoding="utf-8",
+    )
+    assert list(downstream.read_outcomes(junit, "")) == ["tests/test_a.py::test_b"]
+    junit.write_text(_junit('<testcase time="0.000"/>'), encoding="utf-8")
+    with pytest.raises(HostRunError, match="ran no tests"):
+        downstream.read_outcomes(junit, "")
+
+
 def test_a_missing_junit_report_is_a_problem(tmp_path):
     with pytest.raises(HostRunError, match="no JUnit report"):
         downstream.read_outcomes(tmp_path / "candidate.xml", "Traceback: boom")
@@ -218,6 +376,35 @@ def test_a_failing_test_only_the_candidate_has_is_a_regression():
     assert verdict.regressions == ["new"]
 
 
+@pytest.mark.parametrize(
+    ("before", "absent"),
+    [("passed", True), ("skipped", True), ("xfailed", True), ("failed", False), ("error", False)],
+)
+def test_a_test_that_ran_on_the_baseline_and_is_absent_from_the_candidate_is_a_regression(
+    before, absent
+):
+    verdict = downstream.judge(_phase({"a": "passed", "t": before}), _phase({"a": "passed"}))
+    assert verdict.failed is absent
+    assert (verdict.absent == ["t"]) is absent
+    assert verdict.regressions == []
+    assert verdict.preexisting == []
+
+
+def test_tests_inside_a_candidate_node_that_failed_to_collect_are_that_node_s_regression():
+    verdict = downstream.judge(
+        _phase(
+            {
+                "tests/test_a.py::test_b": "passed",
+                "tests/sub/test_c.py::test_d": "passed",
+                "tests/test_ab.py::test_e": "passed",
+            }
+        ),
+        _phase({"tests/test_a.py": "error", "tests/sub": "error"}),
+    )
+    assert verdict.regressions == ["tests/test_a.py", "tests/sub"]
+    assert verdict.absent == ["tests/test_ab.py::test_e"]
+
+
 def test_type_check_comparison_ignores_moved_lines_and_reports_only_added_ones():
     baseline = (
         "ERROR src/a.py:10:5-12: Object of class `X` has no attribute `y` [missing-attribute]",
@@ -251,6 +438,21 @@ def test_an_accepted_test_regression_does_not_fail_and_carries_its_reason():
     assert verdict.regressions == []
     assert verdict.accepted == [("tests/test_a.py::test_b", entry)]
     assert verdict.stale == []
+    assert not verdict.failed
+
+
+def test_an_accepted_test_entry_covers_a_test_absent_from_the_candidate():
+    entry = Accepted(
+        reason="the host fixture stops on a closed broker", test="tests/test_a.py::test_b"
+    )
+    verdict = downstream.judge(
+        _phase({"tests/test_a.py::test_a": "passed", "tests/test_a.py::test_b": "passed"}),
+        _phase({"tests/test_a.py::test_a": "passed"}),
+        [entry],
+    )
+    assert verdict.accepted == [("tests/test_a.py::test_b", entry)]
+    assert verdict.stale == []
+    assert verdict.absent == []
     assert not verdict.failed
 
 
@@ -528,7 +730,7 @@ def test_a_candidate_run_without_a_junit_report_is_a_setup_failure(monkeypatch, 
 
     def no_candidate_report(command, cwd, env, log):
         if log.name == "candidate-pytest.log":
-            return 2, "INTERNALERROR"
+            return 1, "OSError: [Errno 28] No space left on device"
         return fake(command, cwd, env, log)
 
     repo, baseline = layout
@@ -540,7 +742,31 @@ def test_a_candidate_run_without_a_junit_report_is_a_setup_failure(monkeypatch, 
     report = downstream.check_host(_host(), Options(), repo, baseline)
     assert report.failed
     assert "candidate: pytest wrote no JUnit report" in report.problems[0]
-    assert "INTERNALERROR" in report.problems[0]
+    assert "No space left on device" in report.problems[0]
+
+
+@pytest.mark.parametrize("side", ["baseline", "candidate"])
+def test_a_suite_that_stops_early_on_either_side_fails_the_host(monkeypatch, layout, side):
+    fake = FakeProcesses(_PASSING_B)
+
+    def interrupted(command, cwd, env, log):
+        result = fake(command, cwd, env, log)
+        if log.name == f"{side}-pytest.log":
+            return 2, "tests/test_a.py .\n!!!!!!!!!! KeyboardInterrupt !!!!!!!!!!\n1 passed in 0.1s"
+        return result
+
+    repo, baseline = layout
+    fake.sources = {
+        repo.as_uri(): repo / "src" / "llmbroker",
+        baseline.as_uri(): baseline / "src" / "llmbroker",
+    }
+    monkeypatch.setattr(downstream, "run_command", interrupted)
+    report = downstream.check_host(_host(), Options(), repo, baseline)
+    assert report.failed
+    assert f"{side}: pytest exited 2 (interrupted)" in report.problems[0]
+    text = downstream.render(report, "HEAD", keep=False)
+    assert "== h: FAIL ==" in text
+    assert "KeyboardInterrupt" in text
 
 
 def test_a_type_check_that_crashes_is_a_setup_failure(monkeypatch, layout):
@@ -648,6 +874,15 @@ def test_the_arguments_pick_the_host_and_the_baseline():
     assert options == Options(keep=True, baseline_ref="v1.9.0")
 
 
+def test_the_baseline_ref_defaults_to_head_and_is_exclusive_with_the_published_one():
+    options, _ = downstream.parse_args([], [_host()])
+    assert options == Options(baseline_ref="HEAD", baseline_published=False)
+    options, _ = downstream.parse_args(["--baseline-published"], [_host()])
+    assert options.baseline_published
+    with pytest.raises(SystemExit):
+        downstream.parse_args(["--baseline-ref", "HEAD", "--baseline-published"], [_host()])
+
+
 def test_the_invoke_task_passes_every_option_through():
     c = MockContext(run=Result())
     tasks.downstream(c, host="dinary", source="github", baseline_ref="v1.9.0", keep=True)
@@ -656,9 +891,132 @@ def test_the_invoke_task_passes_every_option_through():
     for part in ("--host dinary", "--source github", "--baseline-ref v1.9.0", "--keep"):
         assert part in command
     assert "--working-copy" not in command
+    assert "--baseline-published" not in command
+
+
+def test_the_invoke_task_leaves_the_baseline_to_the_runner_unless_asked():
+    c = MockContext(run=Result(), repeat=True)
+    tasks.downstream(c)
+    assert "--baseline" not in c.run.call_args.args[0]
+    tasks.downstream(c, baseline_published=True)
+    command = c.run.call_args.args[0]
+    assert "--baseline-published" in command
+    assert "--baseline-ref" not in command
+
+
+# ── the published baseline ───────────────────────────────────────────────────
+
+
+def test_the_published_ref_is_the_v_tag_of_the_published_version():
+    tags = ["v1.10.0", "v1.10.1", "v1.10.2", "1.10.2"]
+    assert downstream.release_ref("1.10.0", tags) == "v1.10.0"
+
+
+@pytest.mark.parametrize("tags", [[], ["1.10.0"], ["v1.10.1", "v1.10.00"]])
+def test_a_published_version_without_its_tag_is_a_problem(tags):
+    with pytest.raises(HostRunError, match="newest release on PyPI, but there is no tag v1.10.0"):
+        downstream.release_ref("1.10.0", tags)
+
+
+def test_the_published_version_is_read_from_pypi(monkeypatch):
+    opened = []
+
+    def fake_urlopen(url, timeout):
+        opened.append(url)
+        return io.BytesIO(b'{"info": {"version": "1.10.0"}, "releases": {}}')
+
+    monkeypatch.setattr(downstream.urllib.request, "urlopen", fake_urlopen)
+    assert downstream.published_version() == "1.10.0"
+    assert opened == ["https://pypi.org/pypi/llmbroker/json"]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [urllib.error.URLError("no route to host"), b"<html>", b'{"info": {}}', b"[]"],
+)
+def test_an_unreadable_pypi_answer_is_a_problem(monkeypatch, answer):
+    def fake_urlopen(url, timeout):
+        if isinstance(answer, Exception):
+            raise answer
+        return io.BytesIO(answer)
+
+    monkeypatch.setattr(downstream.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(HostRunError, match="cannot read the published llmbroker version"):
+        downstream.published_version()
+
+
+class _TruncatedResponse(io.BytesIO):
+    def read(self, *args):
+        raise http.client.IncompleteRead(b'{"info": {"vers', 500)
+
+
+def test_a_truncated_pypi_answer_is_a_problem(monkeypatch):
+    monkeypatch.setattr(
+        downstream.urllib.request, "urlopen", lambda url, timeout: _TruncatedResponse()
+    )
+    with pytest.raises(HostRunError, match="cannot read the published llmbroker version"):
+        downstream.published_version()
+
+
+def _released_repo(root: Path) -> Path:
+    """v1.10.0 is on PyPI; v1.10.1 was tagged but its publish was blocked; HEAD is v1.10.2."""
+    repo = _main_repo(root)
+    (repo / "src" / "llmbroker").mkdir(parents=True)
+    _git(repo, "init", "-q")
+    for version in ("1.10.0", "1.10.1", "1.10.2"):
+        (repo / "src" / "llmbroker" / "__init__.py").write_text(
+            f"release = {version!r}\n", encoding="utf-8"
+        )
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-qm", version)
+        _git(repo, "tag", f"v{version}")
+    _git(repo, "tag", "1.10.2")
+    return repo
+
+
+def test_a_blocked_release_is_not_the_published_baseline(monkeypatch, tmp_path, capsys):
+    repo = _released_repo(tmp_path / "llmbroker")
+    exported = {}
+
+    def fake_check(host, options, repo, baseline):
+        exported["init"] = (baseline / "src" / "llmbroker" / "__init__.py").read_text("utf-8")
+        report = downstream.HostReport(host.name, tmp_path)
+        report.phases = {"baseline": _phase({"t": "passed"}), "candidate": _phase({"t": "passed"})}
+        report.verdict = downstream.judge(report.phases["baseline"], report.phases["candidate"])
+        return report
+
+    monkeypatch.setattr(downstream, "published_version", lambda: "1.10.0")
+    monkeypatch.setattr(downstream, "check_host", fake_check)
+    assert downstream.main(["--baseline-published"], repo=repo) == 0
+    assert exported["init"] == "release = '1.10.0'\n"
+    assert "llmbroker baseline v1.10.0 (" in capsys.readouterr().out
+
+
+def test_a_published_version_with_no_tag_fails_the_run_loudly(monkeypatch, tmp_path, capsys):
+    repo = _released_repo(tmp_path / "llmbroker")
+    monkeypatch.setattr(downstream, "published_version", lambda: "1.10.3")
+    monkeypatch.setattr(downstream, "check_host", lambda *_: pytest.fail("ran without a baseline"))
+    assert downstream.main(["--baseline-published"], repo=repo) == 1
+    assert "there is no tag v1.10.3" in capsys.readouterr().err
+
+
+def test_ci_checks_the_hosts_against_the_published_release_within_a_time_limit():
+    workflow = yaml.safe_load((REPO / ".github" / "workflows" / "ci.yml").read_text("utf-8"))
+    job = workflow["jobs"]["downstream"]
+    (step,) = [s for s in job["steps"] if "invoke downstream" in s.get("run", "")]
+    assert "git tag" not in step["run"]
+    assert "--baseline-ref" not in step["run"]
+    assert "--baseline-published" in step["run"]
+    checkout = next(s for s in job["steps"] if s.get("uses", "").startswith("actions/checkout"))
+    assert checkout["with"]["fetch-depth"] == 0
+    assert 0 < job["timeout-minutes"] <= 60
+
+
+# ── main ─────────────────────────────────────────────────────────────────────
 
 
 def _main_repo(tmp_path: Path) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "downstream.toml").write_text(
         '[[host]]\nname = "h"\ngithub = "o/h"\nlocal = "../h"\nextras = []\nsetup = []\n'
         "tests = []\ntypecheck = []\n",
@@ -700,3 +1058,50 @@ def test_main_fails_when_the_baseline_cannot_be_exported(monkeypatch, tmp_path, 
     monkeypatch.setattr(downstream, "export_baseline", failing_export)
     assert downstream.main(["--baseline-ref", "nope"], repo=_main_repo(tmp_path)) == 1
     assert "cannot export llmbroker at 'nope'" in capsys.readouterr().err
+
+
+def _llmbroker_checkout(root: Path, init: str, pyproject: str = "[project]\n") -> Path:
+    _llmbroker_tree(root, init)
+    (root / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+    return root
+
+
+@pytest.mark.parametrize(
+    ("baseline_init", "baseline_pyproject", "published", "identical"),
+    [
+        ("x = 1\n", "[project]\n", False, True),
+        ("x = 1\n", "[project]\n", True, True),
+        ("x = 2\n", "[project]\n", False, False),
+        ("x = 1\n", '[project]\ndependencies = ["httpx>=1"]\n', False, False),
+    ],
+    ids=["identical", "identical-published", "package-differs", "pyproject-differs"],
+)
+def test_main_says_when_no_llmbroker_change_was_tested(
+    monkeypatch, tmp_path, capsys, baseline_init, baseline_pyproject, published, identical
+):
+    repo = _llmbroker_checkout(_main_repo(tmp_path / "llmbroker"), "x = 1\n")
+
+    def fake_export(repo, ref, workdir):
+        return _llmbroker_checkout(
+            workdir / "llmbroker", baseline_init, baseline_pyproject
+        ), "abc1234"
+
+    def fake_check(host, options, repo, baseline):
+        report = downstream.HostReport(host.name, tmp_path)
+        report.phases = {"baseline": _phase({"t": "passed"}), "candidate": _phase({"t": "passed"})}
+        report.verdict = downstream.judge(report.phases["baseline"], report.phases["candidate"])
+        return report
+
+    monkeypatch.setattr(downstream, "published_baseline", lambda repo, workdir: "v1.10.0")
+    monkeypatch.setattr(downstream, "export_baseline", fake_export)
+    monkeypatch.setattr(downstream, "check_host", fake_check)
+    assert downstream.main(["--baseline-published"] if published else [], repo=repo) == 0
+    out = capsys.readouterr().out
+    assert "nothing was compared" not in out
+    assert (
+        "both runs used the same llmbroker, so no llmbroker change was tested" in out
+    ) is identical
+    assert ("`--baseline-ref HEAD~1`" in out) is (identical and not published)
+    assert ("`--baseline-published`" in out) is (identical and not published)
+    assert ("`--baseline-ref` with the release tag before it" in out) is (identical and published)
+    assert "== h: ok ==" in out

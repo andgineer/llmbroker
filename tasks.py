@@ -130,6 +130,7 @@ def test(c: Context):
         "source": "local: clone the sibling checkout's HEAD (default); github: clone the host from GitHub.",
         "working-copy": "With --source local, copy the sibling checkout's uncommitted files instead.",
         "baseline-ref": "llmbroker before the change, exported with git archive (default: HEAD).",
+        "baseline-published": "Use the newest llmbroker release on PyPI as the baseline, as CI does.",
         "keep": "Keep the temporary directories and print where they are.",
     },
 )
@@ -138,11 +139,16 @@ def downstream(
     host: str = "",
     source: str = "local",
     working_copy: bool = False,
-    baseline_ref: str = "HEAD",
+    baseline_ref: str = "",
+    baseline_published: bool = False,
     keep: bool = False,
 ):
     """Run the downstream hosts' suites and type checks on llmbroker before and after the change."""
-    args = ["python", "scripts/downstream.py", "--source", source, "--baseline-ref", baseline_ref]
+    args = ["python", "scripts/downstream.py", "--source", source]
+    if baseline_ref:
+        args += ["--baseline-ref", baseline_ref]
+    if baseline_published:
+        args.append("--baseline-published")
     if host:
         args += ["--host", host]
     if working_copy:

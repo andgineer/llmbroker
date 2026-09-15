@@ -4,7 +4,7 @@
 
 | # | plan | readiness | what it is |
 |---|---|---|---|
-| 1 | [`downstream-compatibility.md`](downstream-compatibility.md) | source-bound on the current working tree; next implementation | `invoke downstream` runs dinary's and echo-words' suites and type checks against the working tree, baseline vs candidate, and the same job in CI blocks a release on a host regression. Tooling only, no `src/` change |
+| 1 | [`stream-wait-and-declaration-errors.md`](stream-wait-and-declaration-errors.md) | source-bound on `2c6f91f6a`; next implementation | before its first delta a stream waits within `wait` as `ask` does, instead of raising `excluded`; an unresolvable paid alias fails only `direct()` on that alias and shows in `snapshot()`, instead of every call. Two defects a downstream host's contract tests found |
 | 2 | [`architecture-simplification.md`](architecture-simplification.md) | source-bound on `67659c350`; revalidate against the working tree first | consolidate stream ownership and attempt settlement, remove duplicate rebuilds, acknowledge journal writes, simplify deadlines and backend rating storage; retain the alternative-answer contract |
 | 3 | [`load-harness.md`](load-harness.md) | source-bound on v1.7.0; revalidate after row 2 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of one host's private script |
 | 4 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 3 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
@@ -13,10 +13,8 @@ Architecture simplification was bound before two changes landed on its ground �
 tool parameters on direct calls, and a broker whose context provisions nothing while
 `direct()` ticks the refresh clock. Both reshape the refresher, the direct clients and the
 request builder it consolidates, so its binding is revalidated against the current source
-before any batch is handed off.
-
-Downstream compatibility comes first because it is small, touches no library code, and
-guards every change after it — architecture simplification included.
+before any batch is handed off — after row 1 lands, since row 1 changes the stream's
+initial acquisition and declared-model resolution it consolidates.
 
 Architecture simplification comes before the harness because its deadline and
 storage changes determine what the harness measures and what caller visibility can

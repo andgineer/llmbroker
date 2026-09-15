@@ -62,6 +62,8 @@ jobs:
   # The hosts' own suites and type checks, on the last published llmbroker and on this commit.
   downstream:
     runs-on: ubuntu-latest
+    # A hanging host suite must not hold the release until GitHub's six-hour job limit.
+    timeout-minutes: 30
 
     steps:
     - uses: actions/checkout@v4
@@ -80,11 +82,10 @@ jobs:
     - name: Install dependencies
       run: uv sync --frozen --all-extras
 
-    # A release commit carries its own tag, so the baseline is the newest tag not on it.
-    - name: Check the downstream hosts against the last release
-      run: |
-        BASELINE=$(git tag --list 'v[0-9]*' --sort=-v:refname --no-contains HEAD | head -n 1)
-        uv run invoke downstream --source github --baseline-ref "$BASELINE"
+    # The baseline is the release PyPI serves, not the newest tag: a release whose publish this
+    # job blocked keeps its tag, and taking it as baseline would pass off its regression as old.
+    - name: Check the downstream hosts against the last published release
+      run: uv run invoke downstream --source github --baseline-published
 
 # Build with publishing Allure report, coverage report
   primary-build:

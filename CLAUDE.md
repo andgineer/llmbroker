@@ -20,7 +20,7 @@ so the gate reports errors that do not exist. If untouched files suddenly go red
 | Run tests | `invoke test` |
 | Run single test | `pytest -k 'test_name'` |
 | Lint + format + type-check | `invoke pre` |
-| Check the downstream hosts against this change | `invoke downstream` (`--host NAME`, `--working-copy`, `--source github`, `--baseline-ref REF`, `--keep`) |
+| Check the downstream hosts against this change | `invoke downstream` (`--host NAME`, `--working-copy`, `--source github`, `--baseline-ref REF`, `--baseline-published`, `--keep`) |
 | Preview docs (English) | `invoke docs-en` |
 | Bump version | `invoke ver-release` / `invoke ver-bug` / `invoke ver-feature` |
 
@@ -39,10 +39,11 @@ Before claiming anything is done, these must be green:
    `src/`, not for a docs-only or spec-only change. It takes minutes, so it runs once at the
    end of the work rather than after every batch.
 
-`invoke downstream` runs each host listed in `downstream.toml` (dinary, echo-words) twice in a
-throwaway clone and venv: its suite and type check on llmbroker at `--baseline-ref` (default
-`HEAD`), then on the working tree. A host test that passes before the change and fails with it
-is a regression, and every regression is one of three kinds:
+`invoke downstream` checks out each host listed in `downstream.toml` (dinary, echo-words) into a
+throwaway directory with its own venv, and runs the host's suite and type check there twice: on
+llmbroker at `--baseline-ref` (default `HEAD`; CI uses the newest release on PyPI), then on the
+working tree. A host test that passes before the change and fails with it is a regression, and
+every regression is one of three kinds:
 
 - **an llmbroker defect** — fixed before the change is done;
 - **an intended change** — llmbroker keeps no backward compatibility, so the host adopts it
@@ -146,11 +147,10 @@ Any request to implement a plan — "выполни очередной план"
    `## Handover` section, so it outlives the session: which plan sections are done, what was done
    differently from the plan and why (stale plan, code disagreed, a better route), what was
    deliberately left out, decisions taken during implementation that the plan did not make, and
-   the gate results. The `invoke downstream` result is stated per host, and every regression in
-   it is classified as one of the three kinds above. A defect is fixed. For an intended change
-   or a coupled host test, **do not add an accepted entry**: name the host test, why it breaks,
-   and the host-side change, and leave the decision to the maintainer. This is what the
-   reviewer reads first.
+   the gate results. The `invoke downstream` result is stated per host, with every regression in
+   it classified as one of the three kinds above; for an intended change or a coupled host test,
+   name the host test, why it breaks, and the host-side change. This is what the reviewer reads
+   first.
 
 ## Reviewing an implemented plan
 

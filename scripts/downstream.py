@@ -5,6 +5,7 @@ The hosts and their commands are `downstream.toml`; `invoke downstream` is the e
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import shlex
@@ -15,6 +16,7 @@ import tarfile
 import tempfile
 import time
 import tomllib
+import urllib.request
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -26,6 +28,8 @@ HOST_KEYS = ("name", "github", "local", "extras", "setup", "tests", "typecheck")
 STATUSES = ("passed", "failed", "error", "skipped", "xfailed")
 FAILING = frozenset({"failed", "error"})
 PACKAGE_FILES = ("*.py", "*.toml")
+PYPI_JSON = "https://pypi.org/pypi/llmbroker/json"
+PYPI_TIMEOUT = 30
 TAIL_LINES = 30
 DETAIL_LINES = 8
 _LOCATION = re.compile(r"^ERROR (?P<path>.+?):\d+:\d+(?:-\d+(?::\d+)?)?: ")
@@ -33,10 +37,12 @@ _VERSION_QUERY = "import importlib.metadata as m; print(m.version('llmbroker'))"
 _PACKAGE_QUERY = (
     "import importlib.util as u; print(u.find_spec('llmbroker').submodule_search_locations[0])"
 )
+_PYTEST_STOPS = {2: "interrupted", 3: "internal error", 4: "usage error", 5: "no tests collected"}
 
 
 class HostRunError(Exception):
-    """A host run that cannot reach a verdict: fetch, setup, install, or a run with no report."""
+    """A run that cannot reach a verdict: no baseline, or a host fetch, setup or install that
+    failed, or a suite that stopped early or left no report."""
 
 
 @dataclass(frozen=True)
@@ -90,6 +96,7 @@ class Options:
     working_copy: bool = False
     keep: bool = False
     baseline_ref: str = "HEAD"
+    baseline_published: bool = False
 
 
 @dataclass
@@ -147,6 +154,16 @@ def read_outcomes(junit: Path, log_tail: str) -> dict[str, Outcome]:
     if not outcomes:
         raise HostRunError(f"pytest ran no tests\n{log_tail}")
     return outcomes
+
+
+def pytest_stop(code: int) -> str:
+    """Why a pytest exit status is no verdict on the whole suite; empty for 0 and 1, the only
+    statuses after which every collected test has run."""
+    if code in (0, 1):
+        return ""
+    if code < 0:
+        return f"killed by signal {-code}"
+    return _PYTEST_STOPS.get(code, "unknown exit status")
 
 
 def node_id(case: ElementTree.Element) -> str:
@@ -264,6 +281,13 @@ def typecheck_command(python: Path, host: Host) -> list[str]:
     return [*host.typecheck, "--output-format=min-text", f"--python-interpreter-path={python}"]
 
 
+def llmbroker_digest(tree: Path) -> str:
+    """What a host installs from an llmbroker tree: the package and the project metadata."""
+    pyproject = tree / "pyproject.toml"
+    metadata = pyproject.read_bytes() if pyproject.is_file() else b""
+    return package_digest(tree / "src" / "llmbroker") + hashlib.sha256(metadata).hexdigest()
+
+
 def package_digest(root: Path) -> str:
     digest = hashlib.sha256()
     paths = sorted(
@@ -301,6 +325,37 @@ def run_command(
     )
     log.write_text(completed.stdout, encoding="utf-8")
     return completed.returncode, completed.stdout
+
+
+def published_version() -> str:
+    """The newest llmbroker version on PyPI."""
+    try:
+        with urllib.request.urlopen(PYPI_JSON, timeout=PYPI_TIMEOUT) as response:  # noqa: S310
+            return str(json.load(response)["info"]["version"])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise HostRunError(
+            f"cannot read the published llmbroker version from {PYPI_JSON}: {exc!r}",
+        ) from exc
+
+
+def release_ref(version: str, tags: Sequence[str]) -> str:
+    """The `v` tag of a published version. A missing tag is an error, never a nearby tag: the
+    newest tag may be a release whose publish was blocked."""
+    ref = f"v{version}"
+    if ref not in tags:
+        raise HostRunError(
+            f"llmbroker {version} is the newest release on PyPI, but there is no tag {ref}"
+            " in this checkout (CI needs the tags fetched)",
+        )
+    return ref
+
+
+def published_baseline(repo: Path, workdir: Path) -> str:
+    version = published_version()
+    code, output = run_command(["git", "tag", "--list", "v*"], repo, None, workdir / "tags.log")
+    if code:
+        raise HostRunError(f"cannot list llmbroker's tags: {tail(output)}")
+    return release_ref(version, output.split())
 
 
 def export_baseline(repo: Path, ref: str, workdir: Path) -> tuple[Path, str]:
@@ -397,7 +452,12 @@ class HostRun:
 
     def phase(self, label: str) -> Phase:
         junit = self.workdir / f"{label}.xml"
-        _, output = self.run(f"{label}-pytest", pytest_command(self.python, self.host, junit))
+        code, output = self.run(f"{label}-pytest", pytest_command(self.python, self.host, junit))
+        if stop := pytest_stop(code):
+            raise HostRunError(
+                f"{label}: pytest exited {code} ({stop}), not a verdict on the whole suite"
+                f"\n{tail(output)}",
+            )
         try:
             outcomes = read_outcomes(junit, tail(output))
         except HostRunError as problem:
@@ -480,6 +540,15 @@ def _verdict_lines(verdict: Verdict, candidate: Phase) -> list[str]:
     return lines
 
 
+def unchanged_notice(baseline_label: str) -> str:
+    return (
+        f"note: llmbroker at {baseline_label} is identical to the working tree, so both runs used"
+        " the same llmbroker and nothing was compared.\n"
+        "      To check a committed change, pass the commit before it, e.g."
+        " `invoke downstream --baseline-ref HEAD~1`, or a release tag.\n"
+    )
+
+
 def parse_args(argv: Sequence[str] | None, hosts: Sequence[Host]) -> tuple[Options, list[Host]]:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", help="run only this host")
@@ -489,7 +558,13 @@ def parse_args(argv: Sequence[str] | None, hosts: Sequence[Host]) -> tuple[Optio
         action="store_true",
         help="local only: include uncommitted host files",
     )
-    parser.add_argument("--baseline-ref", default="HEAD", help="llmbroker before the change")
+    baseline = parser.add_mutually_exclusive_group()
+    baseline.add_argument("--baseline-ref", help="llmbroker before the change (default: HEAD)")
+    baseline.add_argument(
+        "--baseline-published",
+        action="store_true",
+        help="the newest llmbroker release on PyPI as the baseline, as CI runs it",
+    )
     parser.add_argument("--keep", action="store_true", help="keep the temporary directories")
     args = parser.parse_args(argv)
     if args.working_copy and args.source != "local":
@@ -499,7 +574,13 @@ def parse_args(argv: Sequence[str] | None, hosts: Sequence[Host]) -> tuple[Optio
         parser.error(
             f"unknown host {args.host!r}; downstream.toml names {', '.join(h.name for h in hosts)}",
         )
-    options = Options(args.source, args.working_copy, args.keep, args.baseline_ref)
+    options = Options(
+        args.source,
+        args.working_copy,
+        args.keep,
+        args.baseline_ref or "HEAD",
+        args.baseline_published,
+    )
     return options, chosen
 
 
@@ -507,7 +588,13 @@ def main(argv: Sequence[str] | None = None, repo: Path = REPO) -> int:
     options, hosts = parse_args(argv, load_hosts(repo / "downstream.toml"))
     workdir = Path(tempfile.mkdtemp(prefix="llmbroker-downstream-baseline-"))
     try:
-        baseline, commit = export_baseline(repo, options.baseline_ref, workdir)
+        ref = (
+            published_baseline(repo, workdir)
+            if options.baseline_published
+            else options.baseline_ref
+        )
+        baseline, commit = export_baseline(repo, ref, workdir)
+        unchanged = llmbroker_digest(baseline) == llmbroker_digest(repo)
         reports = [check_host(host, options, repo, baseline) for host in hosts]
     except HostRunError as problem:
         print(f"downstream: {problem}", file=sys.stderr)
@@ -516,9 +603,9 @@ def main(argv: Sequence[str] | None = None, repo: Path = REPO) -> int:
         if not options.keep:
             shutil.rmtree(workdir, ignore_errors=True)
     print()
-    print(
-        "\n\n".join(render(r, f"{options.baseline_ref} ({commit})", options.keep) for r in reports),
-    )
+    if unchanged:
+        print(unchanged_notice(f"{ref} ({commit})"))
+    print("\n\n".join(render(r, f"{ref} ({commit})", options.keep) for r in reports))
     if options.keep:
         print(f"kept: {workdir}")
     return 1 if any(report.failed for report in reports) else 0
