@@ -42,8 +42,8 @@ Before claiming anything is done, these must be green:
 `invoke downstream` checks out each host listed in `downstream.toml` (dinary, echo-words) into a
 throwaway directory with its own venv, and runs the host's suite and type check there twice: on
 llmbroker at `--baseline-ref` (default `HEAD`; CI uses the newest release on PyPI), then on the
-working tree. A host test that passes before the change and fails with it is a regression, and
-every regression is one of three kinds:
+working tree. A host test that passes before the change and, with it, fails or no longer runs at
+all is a regression, and every regression is one of three kinds:
 
 - **an llmbroker defect** — fixed before the change is done;
 - **an intended change** — llmbroker keeps no backward compatibility, so the host adopts it

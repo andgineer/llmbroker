@@ -5,6 +5,7 @@ The hosts and their commands are `downstream.toml`; `invoke downstream` is the e
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -27,6 +28,7 @@ REPO = Path(__file__).resolve().parent.parent
 HOST_KEYS = ("name", "github", "local", "extras", "setup", "tests", "typecheck")
 STATUSES = ("passed", "failed", "error", "skipped", "xfailed")
 FAILING = frozenset({"failed", "error"})
+ABSENT = "ran on the baseline, absent from the candidate"
 PACKAGE_FILES = ("*.py", "*.toml")
 PYPI_JSON = "https://pypi.org/pypi/llmbroker/json"
 PYPI_TIMEOUT = 30
@@ -75,11 +77,13 @@ class Outcome:
 class Phase:
     outcomes: dict[str, Outcome]
     type_errors: list[str]
+    log: str = ""
 
 
 @dataclass
 class Verdict:
     regressions: list[str] = field(default_factory=list)
+    absent: list[str] = field(default_factory=list)
     added_type_errors: list[str] = field(default_factory=list)
     accepted: list[tuple[str, Accepted]] = field(default_factory=list)
     stale: list[Accepted] = field(default_factory=list)
@@ -87,7 +91,7 @@ class Verdict:
 
     @property
     def failed(self) -> bool:
-        return bool(self.regressions or self.added_type_errors)
+        return bool(self.regressions or self.absent or self.added_type_errors)
 
 
 @dataclass(frozen=True)
@@ -143,22 +147,23 @@ def _accepted(item: dict, host: str, path: Path) -> Accepted:
 
 
 def read_outcomes(junit: Path, log_tail: str) -> dict[str, Outcome]:
-    """Every test case in a pytest JUnit report, by node id; a missing or empty report raises."""
+    """Every named test case in a pytest JUnit report, by node id; a missing or empty report
+    raises. A test stopped by `pytest.exit` leaves a nameless case, which is no test."""
     if not junit.is_file():
         raise HostRunError(f"pytest wrote no JUnit report\n{log_tail}")
     try:
         root = ElementTree.parse(junit).getroot()  # noqa: S314 - written by the run just made
     except ElementTree.ParseError as exc:
         raise HostRunError(f"unreadable JUnit report {junit}: {exc}\n{log_tail}") from exc
-    outcomes = {node_id(case): outcome(case) for case in root.iter("testcase")}
+    outcomes = {node_id(case): outcome(case) for case in root.iter("testcase") if case.get("name")}
     if not outcomes:
         raise HostRunError(f"pytest ran no tests\n{log_tail}")
     return outcomes
 
 
 def pytest_stop(code: int) -> str:
-    """Why a pytest exit status is no verdict on the whole suite; empty for 0 and 1, the only
-    statuses after which every collected test has run."""
+    """Why a pytest exit status says the suite stopped early; empty for 0 and 1, which prove
+    nothing about whether every test ran (`pytest.exit` returns either), so `judge` checks."""
     if code in (0, 1):
         return ""
     if code < 0:
@@ -219,22 +224,46 @@ def judge(baseline: Phase, candidate: Phase, accepted: Sequence[Accepted] = ()) 
         before = baseline.outcomes.get(nid)
         if before is not None and before.status in FAILING:
             verdict.preexisting.append(nid)
-        elif entry := next((a for a in accepted if a.test and a.test == nid), None):
+        elif entry := _accepted_test(accepted, nid):
             verdict.accepted.append((nid, entry))
         else:
             verdict.regressions.append(nid)
+    absent = absent_tests(baseline, candidate, failing)
+    for nid in absent:
+        if entry := _accepted_test(accepted, nid):
+            verdict.accepted.append((nid, entry))
+        else:
+            verdict.absent.append(nid)
     for line in added_lines(baseline.type_errors, candidate.type_errors):
         if entry := next((a for a in accepted if a.check and a.check in line), None):
             verdict.accepted.append((line, entry))
         else:
             verdict.added_type_errors.append(line)
-    verdict.stale = [a for a in accepted if not _matches_a_failure(a, failing, candidate)]
+    tests = {*failing, *absent}
+    verdict.stale = [a for a in accepted if not _matches_a_failure(a, tests, candidate)]
     return verdict
 
 
-def _matches_a_failure(entry: Accepted, failing: Sequence[str], candidate: Phase) -> bool:
+def absent_tests(baseline: Phase, candidate: Phase, failing: Sequence[str]) -> list[str]:
+    """Tests that ran on the baseline without failing and are missing from the candidate, less
+    those inside a candidate module or directory whose collection error already counts."""
+    covered = tuple(f"{nid}{separator}" for nid in failing for separator in ("::", "/"))
+    return [
+        nid
+        for nid, result in baseline.outcomes.items()
+        if result.status not in FAILING
+        and nid not in candidate.outcomes
+        and not nid.startswith(covered)
+    ]
+
+
+def _accepted_test(accepted: Sequence[Accepted], nid: str) -> Accepted | None:
+    return next((a for a in accepted if a.test and a.test == nid), None)
+
+
+def _matches_a_failure(entry: Accepted, tests: set[str], candidate: Phase) -> bool:
     if entry.test:
-        return entry.test in failing
+        return entry.test in tests
     return any(entry.check in line for line in candidate.type_errors)
 
 
@@ -332,7 +361,7 @@ def published_version() -> str:
     try:
         with urllib.request.urlopen(PYPI_JSON, timeout=PYPI_TIMEOUT) as response:  # noqa: S310
             return str(json.load(response)["info"]["version"])
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as exc:
         raise HostRunError(
             f"cannot read the published llmbroker version from {PYPI_JSON}: {exc!r}",
         ) from exc
@@ -453,13 +482,13 @@ class HostRun:
     def phase(self, label: str) -> Phase:
         junit = self.workdir / f"{label}.xml"
         code, output = self.run(f"{label}-pytest", pytest_command(self.python, self.host, junit))
+        log = tail(output)
         if stop := pytest_stop(code):
             raise HostRunError(
-                f"{label}: pytest exited {code} ({stop}), not a verdict on the whole suite"
-                f"\n{tail(output)}",
+                f"{label}: pytest exited {code} ({stop}), not a verdict on the whole suite\n{log}",
             )
         try:
-            outcomes = read_outcomes(junit, tail(output))
+            outcomes = read_outcomes(junit, log)
         except HostRunError as problem:
             raise HostRunError(f"{label}: {problem}") from problem
         code, output = self.run(f"{label}-typecheck", typecheck_command(self.python, self.host))
@@ -468,7 +497,7 @@ class HostRun:
             raise HostRunError(
                 f"{label}: type check exited {code} with no error line\n{tail(output)}",
             )
-        return Phase(outcomes, errors)
+        return Phase(outcomes, errors, tail(log, DETAIL_LINES))
 
 
 def check_host(host: Host, options: Options, repo: Path, baseline: Path) -> HostReport:
@@ -519,11 +548,14 @@ def render(report: HostReport, baseline_label: str, keep: bool) -> str:
 
 
 def _verdict_lines(verdict: Verdict, candidate: Phase) -> list[str]:
-    lines = [f"regressions ({len(verdict.regressions)}):"]
+    lines = [f"regressions ({len(verdict.regressions) + len(verdict.absent)}):"]
     for nid in verdict.regressions:
         result = candidate.outcomes[nid]
         lines.append(f"  {nid} [{result.status}]")
         lines += _indented("\n".join([result.message, tail(result.text, DETAIL_LINES)]))
+    lines += [f"  {nid} [{ABSENT}]" for nid in verdict.absent]
+    if verdict.absent:
+        lines += ["    the candidate's pytest output ends:", *_indented(candidate.log)]
     lines.append(f"type-check lines added ({len(verdict.added_type_errors)}):")
     lines += [f"  {line}" for line in verdict.added_type_errors]
     if verdict.accepted:
@@ -540,12 +572,20 @@ def _verdict_lines(verdict: Verdict, candidate: Phase) -> list[str]:
     return lines
 
 
-def unchanged_notice(baseline_label: str) -> str:
+def unchanged_notice(baseline_label: str, published: bool) -> str:
+    if published:
+        advice = (
+            "To test the published release itself, pass `--baseline-ref` with the release tag"
+            " before it."
+        )
+    else:
+        advice = (
+            "To test a committed change, pass the commit before it, e.g. `--baseline-ref HEAD~1`,"
+            " or everything since the last release with `--baseline-published`."
+        )
     return (
-        f"note: llmbroker at {baseline_label} is identical to the working tree, so both runs used"
-        " the same llmbroker and nothing was compared.\n"
-        "      To check a committed change, pass the commit before it, e.g."
-        " `invoke downstream --baseline-ref HEAD~1`, or a release tag.\n"
+        f"note: llmbroker at {baseline_label} is identical to the working tree: both runs used"
+        f" the same llmbroker, so no llmbroker change was tested.\n      {advice}\n"
     )
 
 
@@ -604,7 +644,7 @@ def main(argv: Sequence[str] | None = None, repo: Path = REPO) -> int:
             shutil.rmtree(workdir, ignore_errors=True)
     print()
     if unchanged:
-        print(unchanged_notice(f"{ref} ({commit})"))
+        print(unchanged_notice(f"{ref} ({commit})", options.baseline_published))
     print("\n\n".join(render(r, f"{ref} ({commit})", options.keep) for r in reports))
     if options.keep:
         print(f"kept: {workdir}")
