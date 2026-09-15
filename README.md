@@ -23,7 +23,7 @@
 | src/llmbroker/broker/pool.py              |      205 |        0 |    100% |           |
 | src/llmbroker/broker/pool\_view.py        |       24 |        0 |    100% |           |
 | src/llmbroker/broker/presets.py           |      108 |        2 |     98% |   193-194 |
-| src/llmbroker/broker/refresher.py         |      160 |        3 |     98% |109, 230-231 |
+| src/llmbroker/broker/refresher.py         |      160 |        2 |     99% |  109, 231 |
 | src/llmbroker/broker/report.py            |       19 |        0 |    100% |           |
 | src/llmbroker/broker/result.py            |      135 |        3 |     98% |182, 198, 200 |
 | src/llmbroker/broker/route\_state.py      |       51 |        0 |    100% |           |
@@ -67,7 +67,7 @@
 | src/llmbroker/tool\_loop.py               |       48 |        1 |     98% |        33 |
 | src/llmbroker/util/atomic.py              |       17 |        3 |     82% |     29-31 |
 | src/llmbroker/vault/secrets.py            |       29 |        3 |     90% | 26, 62-63 |
-| **TOTAL**                                 | **4706** |  **140** | **97%** |           |
+| **TOTAL**                                 | **4706** |  **139** | **97%** |           |
 
 
 ## Setup coverage badge
