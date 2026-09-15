@@ -1,0 +1,2 @@
+ERROR    llmbroker.broker:catalog.py:340 pool degraded, no failover left: 1 of 1 providers usable
+WARNING  llmbroker.broker:broker.py:289 direct= could not be re-resolved (direct= names 'opus', which the paid catalog does not carry — available aliases: sonnet) — declared models stay on the resolution already in use

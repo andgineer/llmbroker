@@ -1,0 +1,2 @@
+WARNING  llmbroker.broker:refresher.py:140 sync refresh failed, continuing on the current config: no writable home directory, so a fresh 'paid-catalog' has nowhere to be kept — point $LLMBROKER_HOME (or home=) at a writable directory, or, where this was the automatic refresh, stop it with sync_interval=None and keep to the copy already in use
+WARNING  llmbroker.broker:broker.py:289 direct= could not be re-resolved (offline) — declared models stay on the resolution already in use

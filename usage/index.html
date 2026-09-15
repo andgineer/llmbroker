@@ -1,0 +1,1303 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+        <meta name="author" content="Andrey Sorokin">
+      
+      
+        <link rel="canonical" href="https://andgineer.github.io/llmbroker/usage/">
+      
+      
+        <link rel="prev" href="../installation/">
+      
+      
+        <link rel="next" href="../tools/">
+      
+      
+        
+          <link rel="alternate" href="/llmbroker/" hreflang="en">
+        
+          <link rel="alternate" href="/llmbroker/ru/" hreflang="ru">
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.60">
+    
+    
+      
+        <title>Model pool and calls - llmbroker</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.ce62732f.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#model-pool-and-calls" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="llmbroker" class="md-header__button md-logo" aria-label="llmbroker" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            llmbroker
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Model pool and calls
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-languages" viewBox="0 0 24 24"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="/llmbroker/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="/llmbroker/ru/" hreflang="ru" class="md-select__link">
+              Русский
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/andgineer/llmbroker" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    llmbroker
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="llmbroker" class="md-nav__button md-logo" aria-label="llmbroker" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    llmbroker
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/andgineer/llmbroker" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    llmbroker
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  llmbroker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Model pool and calls
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Model pool and calls
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#model-pool" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Model pool
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Model pool">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#file" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Where the model list is stored
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#weight" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Which model is tried first
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Updating the model list
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#state" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Where llmbroker keeps its own state
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#calling" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Calling the broker
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Calling the broker">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#wait" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        How long to wait for an answer
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parallel" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Calling several models concurrently
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#response-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Asking for JSON that matches a schema
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When nobody can answer
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quality" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Quality rating
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tools &amp; agents
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../async/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Asynchronous calls and streaming
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../direct/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Direct model calls
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API keys
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Servers &amp; clusters
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Monitoring and the journal
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../disable/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Disabling models
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#model-pool" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Model pool
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Model pool">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#file" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Where the model list is stored
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#weight" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Which model is tried first
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Updating the model list
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#state" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Where llmbroker keeps its own state
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#calling" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Calling the broker
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Calling the broker">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#wait" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        How long to wait for an answer
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parallel" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Calling several models concurrently
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#response-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Asking for JSON that matches a schema
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When nobody can answer
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quality" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Quality rating
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="model-pool-and-calls">Model pool and calls</h1>
+<h2 id="model-pool">Model pool</h2>
+<p>The pool is a maintained list of free language models. Create a broker to use it:</p>
+<div class="highlight"><pre><span></span><code><span class="n">broker</span> <span class="o">=</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">()</span>
+</code></pre></div>
+<p>You do not need to assemble or maintain the list. Create a file for provider API
+keys and add the keys you want to use:</p>
+<div class="highlight"><pre><span></span><code>llmbroker<span class="w"> </span>env<span class="w"> </span>freetier<span class="w"> </span>&gt;<span class="w"> </span>.env
+</code></pre></div>
+<p><code>llmbroker env</code> tells you where to obtain each key. See <a href="../cli/#env">CLI</a>. A
+model without a key is simply not used.</p>
+<p>If a provider limits concurrent requests on one key, the <code>parallel</code> setting
+accounts for that limit. Values are already set for models in the maintained
+list. For a model you add yourself, set <code>parallel</code> in its
+<a href="../reference/#llmbroker.models.LLMConfig"><code>LLMConfig</code></a>.</p>
+<p>You can configure a paid model for direct calls with
+<code>Broker(direct=["opus"])</code>, then call it with
+<code>broker.direct("opus").ask(...)</code>. It is not part of the pool. See
+<a href="../direct/">Direct model calls</a>.</p>
+<h3 id="file">Where the model list is stored</h3>
+<p>The broker stores the list in <a href="#state">llmbroker's data directory</a> and updates it
+there. Set <code>LLMBROKER_HOME</code> to use another directory. This is useful in a
+container that cannot write to the system cache directory.</p>
+<p>Each update regenerates the file in full, so do not edit it. The file contains
+only the pool. Models used for direct calls are <a href="../direct/">declared in code</a>.
+You cannot pass an arbitrary model-list file to the broker; select one of the
+maintained lists by name instead.</p>
+<p>See <a href="../server/#datasource">Servers &amp; clusters</a> to store the list in a shared
+database or manage the registry yourself.</p>
+<h3 id="weight">Which model is tried first</h3>
+<p>Row order does not matter. The <code>weight</code> setting determines the initial order:</p>
+<div class="highlight"><pre><span></span><code><span class="k">[[llms]]</span>
+<span class="n">name</span><span class="w">        </span><span class="o">=</span><span class="w"> </span><span class="s2">"google-gemini-3.5-flash-lite"</span>
+<span class="n">base_url</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="s2">"https://generativelanguage.googleapis.com/v1beta/openai"</span>
+<span class="n">model</span><span class="w">       </span><span class="o">=</span><span class="w"> </span><span class="s2">"gemini-3.5-flash-lite"</span>
+<span class="n">api_key_ref</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"GEMINI_API_KEY"</span>
+<span class="n">weight</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="mf">0.75</span>
+</code></pre></div>
+<p><code>weight</code> is the expected answer quality on a scale from 0 to 1. A higher value
+makes the broker try the model earlier. The default is <code>0.0</code>, so models without
+an explicit weight are tried after models with positive weights. Set a weight
+when you <a href="../server/#own-entry">add your own model</a>.</p>
+<p>The weight controls only the initial order. Ratings recorded with
+<a href="#quality"><code>record_quality()</code></a> gradually replace it with measured quality. Once
+there are enough ratings, the original weight is no longer used. Until then, an
+unrated model keeps the position established by its weight.</p>
+<div class="admonition tip">
+<p class="admonition-title">Keys do not have to live in <code>.env</code></p>
+<p>AWS Secrets Manager, Vault, a DB or your own storage — see <a href="../secrets/">API keys</a>.</p>
+</div>
+<h3 id="sync">Updating the model list</h3>
+<p>Available free models change over time. llmbroker tracks these changes and
+normally requires no manual update. To update immediately, call <code>sync</code>; the
+method returns a report:</p>
+<div class="highlight"><pre><span></span><code><span class="n">report</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">sync</span><span class="p">(</span><span class="s2">"freetier"</span><span class="p">)</span>  <span class="c1"># freetier is the model-list name</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">llmbroker</span><span class="o">.</span><span class="n">format_report</span><span class="p">(</span><span class="n">report</span><span class="p">))</span>  <span class="c1"># log the report or send it to an administrator</span>
+</code></pre></div>
+<p>By default, the broker checks for updates about once a day during an ordinary
+call. No scheduled job is required, and an idle process performs no checks.</p>
+<p>If an automatic update fails, the broker logs a warning and continues with the
+existing configuration. An explicit <code>broker.sync(...)</code> reports the failure to
+the caller as an exception.</p>
+<p>If the maintained list has not changed, the local file is not rewritten. Its
+contents and modification time remain unchanged.</p>
+<p>You can disable automatic updates or change the check interval:</p>
+<div class="highlight"><pre><span></span><code><span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">(</span><span class="n">sync</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>  <span class="c1"># do not use a maintained model list</span>
+<span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">(</span><span class="n">sync_interval</span><span class="o">=</span><span class="mi">3600</span><span class="p">)</span>  <span class="c1"># check once an hour</span>
+<span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">(</span><span class="n">sync_interval</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>  <span class="c1"># do not check automatically</span>
+</code></pre></div>
+<p><code>sync_interval=None</code> disables every automatic download, including the initial
+population of an empty registry. In this mode, run updates yourself. See
+<a href="../server/#no-fetch">Servers &amp; clusters</a>.</p>
+<p>The report fields are documented in
+<a href="../reference/#llmbroker.models.SyncReport"><code>SyncReport</code></a>. A report can include
+these states:</p>
+<ul>
+<li><strong>Pending key</strong> — the model has no configured API key. The model is not used,
+  but the rest of the pool remains available. The report tells you where to
+  obtain the key.</li>
+<li><strong>Removed entry</strong> — the model is no longer in the maintained list and is
+  removed from the pool. Its key remains in the secrets store, and its call
+  history remains in the journal. Those data are available if the model returns.</li>
+<li><strong>Unused key</strong> — the secrets store contains a key that no model in the current
+  configuration references. If your own configuration does not need it, you can
+  revoke it at the provider.</li>
+</ul>
+<p>Removing a model affects the number of usable providers. An
+<a href="../monitoring/#alerts">availability alert</a> is emitted when that count reaches one
+or zero.</p>
+<h3 id="state">Where llmbroker keeps its own state</h3>
+<p>llmbroker stores the downloaded model list, the paid-model catalog, and the time
+of the last update check. If no database is configured, the active registry and
+call journal are stored there as well. The directory is selected in this order:</p>
+<ol>
+<li>the <code>home=</code> argument, if set;</li>
+<li><code>$LLMBROKER_HOME</code>, if set;</li>
+<li><code>$XDG_CACHE_HOME/llmbroker</code>, and without that variable the platform cache:
+   <code>~/Library/Caches/llmbroker</code> on macOS, <code>~/.cache/llmbroker</code> on Linux,
+   <code>%LOCALAPPDATA%\llmbroker</code> on Windows;</li>
+<li>a per-user directory inside the system temporary directory.</li>
+</ol>
+<p><code>home=</code> has the highest priority, followed by <code>$LLMBROKER_HOME</code> and then
+<code>$XDG_CACHE_HOME</code>. Use <code>home=</code> or <code>$LLMBROKER_HOME</code> to keep projects on the same
+machine separate.</p>
+<p>This order determines where data is written. Write access is not required for
+reading: if <code>home=</code> points to a read-only directory, such as one mounted into a
+container, the broker uses data from that directory instead of searching for a
+writable alternative.</p>
+<p>If the directory is missing, the broker downloads the data again. If no candidate
+directory is writable, including the temporary directory, data remains in memory
+until the process exits. Even without network access, a first run can use the
+copy bundled with the package.</p>
+<p>The downloaded list can be restored, but <strong>the call journal and accumulated
+quality data cannot</strong>. Without a database, the journal is kept in the same
+directory. Deleting it makes models start again from their initial
+<a href="#weight">weights</a>. Store the journal in a database if the history must persist.
+See <a href="../server/#datasource">Servers &amp; clusters</a>.</p>
+<p>An update requires a writable directory because the downloaded list must be
+saved. If no directory is writable, the update fails. Provide write access or
+disable automatic downloads with <code>sync_interval=None</code>.</p>
+<p>Without a database, llmbroker uses one journal per machine. Processes that share
+environment keys can therefore reuse knowledge about provider limits instead of
+discovering the same limit independently. Pass <code>home=</code> to keep a separate
+journal for one project.</p>
+<p>See <a href="../server/">Servers &amp; clusters</a> to update a database registry from a
+deployment job.</p>
+<h2 id="calling">Calling the broker</h2>
+<div class="highlight"><pre><span></span><code><span class="n">broker</span> <span class="o">=</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">Broker</span><span class="p">()</span>
+
+<span class="n">reply</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">"Translate to French: Hello world"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">reply</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+
+<span class="c1"># Full messages API</span>
+<span class="n">reply</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">chat</span><span class="p">(</span>
+    <span class="p">[</span>
+        <span class="p">{</span><span class="s2">"role"</span><span class="p">:</span> <span class="s2">"system"</span><span class="p">,</span> <span class="s2">"content"</span><span class="p">:</span> <span class="s2">"Answer briefly."</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">"role"</span><span class="p">:</span> <span class="s2">"user"</span><span class="p">,</span> <span class="s2">"content"</span><span class="p">:</span> <span class="s2">"What is Python?"</span><span class="p">},</span>
+    <span class="p">]</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Every call accepts <code>trace_id=</code>, an identifier from your application such as a
+request or job ID. llmbroker stores it unchanged so journal entries can be
+matched to your logs. See <a href="../monitoring/#trace">Finding the entries for one request</a>.</p>
+<p>To receive an answer incrementally, use the asynchronous <code>broker.stream(...)</code>
+method with <code>async for</code>. See <a href="../async/#streaming-from-the-pool">Streaming</a>.</p>
+<p>Ordinary scripts do not need to close the broker. See
+<a href="../server/#closing">Servers &amp; clusters</a> for shutdown in server applications.</p>
+<h3 id="wait">How long to wait for an answer</h3>
+<div class="highlight"><pre><span></span><code><span class="k">try</span><span class="p">:</span>
+    <span class="n">reply</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">"Question"</span><span class="p">,</span> <span class="n">wait</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span>  <span class="c1"># at most 5 seconds, start to finish</span>
+<span class="k">except</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">NoLLMAvailableError</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"No model answered within the requested time"</span><span class="p">)</span>
+</code></pre></div>
+<p><code>wait</code> limits the total duration of the call, including both the wait for an
+available model and the response itself. If a provider returns no data during
+that time, the broker stops the attempt and temporarily avoids that provider for
+requests with the same short limit. This prevents every subsequent call from
+waiting for the same slow provider. Without <code>wait</code>, a single attempt is limited
+only by an internal 60-second maximum.</p>
+<p>A model that misses the requested time also stops being the first choice for
+calls with the same or a smaller <code>wait</code>. It remains available for calls with a
+longer limit and when no other model is available. Its next timely response
+clears this restriction.</p>
+<p><code>wait=0</code> has a special meaning: do not wait for a model to become available. The
+broker considers models that are available immediately but does not set a
+deadline on their responses.</p>
+<h3 id="parallel">Calling several models concurrently</h3>
+<div class="highlight"><pre><span></span><code><span class="n">reply</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">"Question"</span><span class="p">,</span> <span class="n">fastest_of</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>  <span class="c1"># call two models and return the first reply</span>
+</code></pre></div>
+<p><code>fastest_of=N</code> sends the request to at most <code>N</code> different models concurrently and
+returns the first complete reply. Every request consumes provider quota even when
+its reply is discarded. The option is disabled by default and is appropriate
+when latency matters more than request count. If fewer than <code>N</code> models are
+available, the broker uses all available models. <code>wait</code> applies to the whole call
+and is not multiplied by the number of models.</p>
+<p>The broker also makes one additional concurrent request automatically. After an
+error, a model is temporarily excluded from selection. When that period ends,
+the broker checks the model again while also calling another available model.
+The first complete reply is returned, so rechecking the unavailable model does
+not add latency. In other cases, a normal call sends one request to one model.</p>
+<div class="highlight"><pre><span></span><code><span class="n">reply</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">"Question"</span><span class="p">,</span> <span class="n">parallel_recovery</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>  <span class="c1"># do not send the extra request</span>
+</code></pre></div>
+<p>Set <code>parallel_recovery=False</code> when request count matters more than latency. The
+broker then checks the previously unavailable model first and moves to the next
+model only if that attempt also fails.</p>
+<p>When <code>fastest_of</code> is not set, <code>broker.stream(...)</code> uses the first model that
+starts returning text and stays with that model for the rest of the response. To
+call multiple models concurrently, as with <code>ask(..., fastest_of=N)</code>, pass
+<code>fastest_of</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">stream</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="s2">"Question"</span><span class="p">,</span> <span class="n">fastest_of</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">stream_selection_window</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+</code></pre></div>
+<p>With <code>fastest_of &gt; 1</code>, every selected model continues generating a full reply.
+<code>stream_selection_window</code> specifies how many seconds to wait for the broker's
+first-choice model before showing data that another model has already returned.
+The default is <code>1.0</code>; <code>0</code> displays data from the first model to respond. This
+setting controls only which text is shown initially. The final result is still
+the complete reply from the model that finishes first.</p>
+<p>Concurrent streaming uses more memory because the broker keeps each selected
+model's reply until the first one is complete. Text shown before that point is
+provisional. If another model finishes first, the broker raises
+<code>StreamReplacementError</code>, and the application must replace all previously shown
+text. Replies from different models are never combined. See
+<a href="../async/#racing-a-stream">Concurrent streaming</a> for an example.</p>
+<p><code>fastest_of</code> and <code>stream_selection_window</code> apply only to the pool. A direct call
+through <code>direct()</code> uses one specific model, so neither option applies.</p>
+<h3 id="response-format">Asking for JSON that matches a schema</h3>
+<div class="highlight"><pre><span></span><code><span class="n">reply</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span>
+    <span class="s2">"Give me the card for the word 'tenacious'"</span><span class="p">,</span>
+    <span class="n">operation</span><span class="o">=</span><span class="s2">"card"</span><span class="p">,</span>
+    <span class="n">response_format</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">"type"</span><span class="p">:</span> <span class="s2">"json_schema"</span><span class="p">,</span>
+        <span class="s2">"json_schema"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"name"</span><span class="p">:</span> <span class="s2">"card"</span><span class="p">,</span> <span class="s2">"schema"</span><span class="p">:</span> <span class="n">MY_SCHEMA</span><span class="p">,</span> <span class="s2">"strict"</span><span class="p">:</span> <span class="kc">True</span><span class="p">},</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><code>response_format</code> is passed to the selected model unchanged. Synchronous and
+asynchronous clients accept it in <code>ask</code> and <code>chat</code>; the asynchronous client also
+accepts it in <code>stream</code>. The value uses the provider's OpenAI-compatible format.
+llmbroker does not inspect it.</p>
+<p><strong>Schema compliance is not guaranteed.</strong> Some models consistently follow a
+strict schema, while others accept the parameter but return another shape.
+llmbroker does not validate reply content, so the application must validate it
+against the schema.</p>
+<p>You can record the validation result as a <a href="#quality">quality rating</a> and set an
+<code>operation=</code> for the task. Models that often violate the schema will then be
+selected later for that operation. <code>response_format</code> is preferable to requesting
+JSON only in the prompt: models that support the parameter can enforce a strict
+schema, while behavior does not become worse for the others.</p>
+<p>A reply that does not match the schema is still successful from llmbroker's
+perspective. The broker does not temporarily exclude the model or send the same
+request to another model. Results from testing the free model list are recorded
+in <code>specs/reference/freetier-providers.md</code>.</p>
+<p>This limitation applies to the pool. A specific model called through
+<a href="../direct/#params"><code>direct()</code></a> accepts arbitrary request parameters.</p>
+<h3 id="errors">When nobody can answer</h3>
+<p>The broker tries models until it receives a reply. If a provider returns HTTP 200
+but the response contains neither text nor tool calls, the attempt is treated as
+failed and the broker tries the next model. If no model answers, the call raises
+<code>NoLLMAvailableError</code>. Inspect its fields rather than parsing the error message.</p>
+<div class="highlight"><pre><span></span><code><span class="k">try</span><span class="p">:</span>
+    <span class="n">reply</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">"Question"</span><span class="p">,</span> <span class="n">wait</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">NoLLMAvailableError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">exc</span><span class="o">.</span><span class="n">retry_at</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">retry_after</span><span class="p">(</span><span class="n">exc</span><span class="o">.</span><span class="n">retry_at</span><span class="p">)</span>  <span class="c1"># a model will be available by this time</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">alert</span><span class="p">(</span><span class="sa">f</span><span class="s2">"the pool is unavailable: </span><span class="si">{</span><span class="n">exc</span><span class="o">.</span><span class="n">reason</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</code></pre></div>
+<p>The <code>reason</code> field has one of five values:</p>
+<table>
+<thead>
+<tr>
+<th><code>reason</code></th>
+<th>what happened</th>
+<th>what to do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>empty_pool</code></td>
+<td>the registry contains no models</td>
+<td>populate it — see <a href="#sync">Updating the model list</a> and <a href="../server/#sync">Servers &amp; clusters</a></td>
+</tr>
+<tr>
+<td><code>no_keys</code></td>
+<td>models exist, but their API keys are unavailable for this call</td>
+<td>configure keys — see <a href="../secrets/">API keys</a></td>
+</tr>
+<tr>
+<td><code>all_disabled</code></td>
+<td>every model is <a href="../disable/">disabled by hand</a></td>
+<td>enable at least one</td>
+</tr>
+<tr>
+<td><code>timeout</code></td>
+<td><code>wait</code> expired while waiting for an available model or a reply</td>
+<td>increase <code>wait</code> or retry later</td>
+</tr>
+<tr>
+<td><code>excluded</code></td>
+<td>no model can be used for this request; for example, providers rejected every available key</td>
+<td>inspect individual attempts in the call journal</td>
+</tr>
+</tbody>
+</table>
+<p>The first three values indicate a configuration problem, so retrying without a
+configuration change will not help. <code>timeout</code> and <code>excluded</code> apply to one request;
+the next request may succeed.</p>
+<p><code>retry_at</code> is set when no model is currently available but the broker knows when
+one model's temporary exclusion ends. It is not set for <code>empty_pool</code>, <code>no_keys</code>,
+or <code>all_disabled</code>, because waiting cannot resolve those conditions. For
+<code>timeout</code>, it is set only when every model is temporarily unavailable. If a
+model is already free, the request can be retried immediately.</p>
+<p><strong>An invalid request does not produce <code>NoLLMAvailableError</code>.</strong> If every selected
+model rejects the request with a 4xx response other than 401, 403, or 429, the
+broker raises <code>ProviderError</code>. A malformed <code>tools</code> schema is one example. The
+<code>.status</code> field contains the HTTP status and <code>.detail</code> contains part of the
+provider response. <a href="../direct/#errors">Direct model calls</a> use the same exception:</p>
+<div class="highlight"><pre><span></span><code><span class="k">try</span><span class="p">:</span>
+    <span class="n">reply</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">wait</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">NoLLMAvailableError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="o">...</span>  <span class="c1"># no model is currently available</span>
+<span class="k">except</span> <span class="n">llmbroker</span><span class="o">.</span><span class="n">ProviderError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">"Every model rejected the request: HTTP </span><span class="si">%s</span><span class="s2"> — </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">exc</span><span class="o">.</span><span class="n">status</span><span class="p">,</span> <span class="n">exc</span><span class="o">.</span><span class="n">detail</span><span class="p">)</span>
+</code></pre></div>
+<p><code>ProviderError</code> does not exclude any model. A corrected request reaches those
+models in the normal order.</p>
+<h2 id="quality">Quality rating</h2>
+<p>Ratings help the broker select the best models for different tasks:</p>
+<div class="highlight"><pre><span></span><code><span class="n">reply</span> <span class="o">=</span> <span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">"Summarize this contract clause"</span><span class="p">,</span> <span class="n">operation</span><span class="o">=</span><span class="s2">"summarize"</span><span class="p">)</span>
+<span class="n">reply</span><span class="o">.</span><span class="n">record_quality</span><span class="p">(</span><span class="mf">0.9</span><span class="p">)</span>  <span class="c1"># 1.0 — good reply, 0.0 — bad; outside [0, 1] is a ValueError</span>
+</code></pre></div>
+<p>Ratings accumulate separately for each <code>(model, operation)</code> pair. A model with
+low ratings for an operation is selected later but remains available when no
+other model can answer. New positive ratings move it forward again; no separate
+reset is required. As ratings accumulate, they replace the initial
+<a href="#weight">weight</a>. Calls without <code>operation=</code> share one general category.</p>
+<p>You can rate a reply later, after a user has reviewed the result. The rating must
+identify the call it applies to. One option is to pass your own <code>trace_id=</code> when
+making the call and use it when recording the rating:</p>
+<div class="highlight"><pre><span></span><code><span class="n">broker</span><span class="o">.</span><span class="n">ask</span><span class="p">(</span><span class="s2">"Summarize this clause"</span><span class="p">,</span> <span class="n">operation</span><span class="o">=</span><span class="s2">"summarize"</span><span class="p">,</span> <span class="n">trace_id</span><span class="o">=</span><span class="n">document_id</span><span class="p">)</span>
+
+<span class="c1"># ...a day later, when the user's review comes in</span>
+<span class="n">broker</span><span class="o">.</span><span class="n">record_quality</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">trace_id</span><span class="o">=</span><span class="n">document_id</span><span class="p">)</span>
+</code></pre></div>
+<p>Alternatively, save <code>reply.call_id</code> and rate that specific call with
+<code>broker.record_quality(0.0, call_id=saved_call_id)</code>. Provide exactly one of
+<code>trace_id</code> and <code>call_id</code>.</p>
+<p>An identifier is needed when the result object is no longer available. If you
+still have the result, call its own <code>record_quality(...)</code> method without a journal
+lookup. This also applies to the object returned by
+<a href="../async/#streaming-from-the-pool">streaming</a>; its method becomes available after
+the response is complete.</p>
+<p>The model and operation are read from the call record, so they do not need to be
+stored separately. Failed attempts are not rated; the rating applies only to the
+model whose reply was returned.</p>
+<p>Two restrictions apply when rating by identifier:</p>
+<ul>
+<li><strong>One <code>trace_id</code> should identify one call.</strong> llmbroker allows the same
+  <code>trace_id</code> on multiple calls, but a rating is applied to the most recent
+  successful call with that ID. If the journal contains substantially more
+  matching rows than one call normally creates, llmbroker logs a warning. Save a
+  call's <code>call_id</code> when you need to identify it unambiguously.</li>
+</ul>
+<p>With <code>fastest_of</code>, one call can leave several successful journal rows: one for
+  every model that completed before the result was selected. The rows do not
+  indicate which reply the user received. Rate such a call through its returned
+  result object rather than <code>trace_id</code>. For streaming, use the
+  <a href="../async/#racing-a-stream">object returned by the stream</a>.
+- <strong>The lookup covers the last seven days.</strong> Quality calculations use the recent
+  portion of the journal, so older calls are not eligible. <code>UnknownCallError</code> is
+  raised when no record is found, the call is older than seven days, or no attempt
+  completed with a reply.</p>
+<p>These restrictions apply only to lookup by <code>trace_id</code> or <code>call_id</code>. Calling
+<code>record_quality(...)</code> on a <code>reply</code> or stream object performs no journal lookup
+and has no seven-day limit.</p>
+<p>Record the rating through the same object that made the call. Its scope is taken
+from that object rather than from the identifier. For example, rate a call made
+through <code>broker.for_scope(user)</code> with
+<code>broker.for_scope(user).record_quality(...)</code>. Calling the method directly on
+<code>broker</code> records an unscoped rating.</p>
+<p>Thresholds and the rating window are configurable — see
+<a href="../reference/#llmbroker.Optimizer"><code>Optimizer</code></a>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"search":"../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.88ee1349.min.js"></script>
+      
+    
+  </body>
+</html>

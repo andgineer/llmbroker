@@ -1,0 +1,2 @@
+ERROR    llmbroker.broker:catalog.py:338 pool cannot serve any request: no provider has a key — no key for TEST_LLM_SYNC_API_KEY
+ERROR    llmbroker.broker:catalog.py:340 pool degraded, no failover left: 1 of 1 providers usable

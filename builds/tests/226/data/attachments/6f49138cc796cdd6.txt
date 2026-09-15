@@ -1,0 +1,2 @@
+ERROR    llmbroker.broker:catalog.py:338 pool cannot serve any request: no provider has a key — no key for K
+INFO     llmbroker.broker:catalog.py:375 api_key_ref 'K' not resolved — p1 inactive until the env var / secret is set; this is normal, the pool routes over whatever keys are present
