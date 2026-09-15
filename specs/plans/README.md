@@ -5,9 +5,10 @@
 | # | plan | readiness | what it is |
 |---|---|---|---|
 | 1 | [`stream-wait-and-declaration-errors.md`](stream-wait-and-declaration-errors.md) | source-bound on `2c6f91f6a`; next implementation | before its first delta a stream waits within `wait` as `ask` does, instead of raising `excluded`; an unresolvable paid alias fails only `direct()` on that alias and shows in `snapshot()`, instead of every call. Two defects a downstream host's contract tests found |
-| 2 | [`architecture-simplification.md`](architecture-simplification.md) | source-bound on `67659c350`; revalidate against the working tree first | consolidate stream ownership and attempt settlement, remove duplicate rebuilds, acknowledge journal writes, simplify deadlines and backend rating storage; retain the alternative-answer contract |
-| 3 | [`load-harness.md`](load-harness.md) | source-bound on v1.7.0; revalidate after row 2 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of one host's private script |
-| 4 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 3 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
+| 2 | [`downstream-runner-followups.md`](downstream-runner-followups.md) | source-bound on `5dda8c429`; independent of row 1 (tooling and CI only) | module-skip placeholders and fallback ids in the downstream check, a signal kill after a complete report, report order — and the `github-pages` concurrency group that cancelled CI and made the publish gate skip v1.10.2 |
+| 3 | [`architecture-simplification.md`](architecture-simplification.md) | source-bound on `67659c350`; revalidate against the working tree first | consolidate stream ownership and attempt settlement, remove duplicate rebuilds, acknowledge journal writes, simplify deadlines and backend rating storage; retain the alternative-answer contract |
+| 4 | [`load-harness.md`](load-harness.md) | source-bound on v1.7.0; revalidate after row 3 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of one host's private script |
+| 5 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 4 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
 
 Architecture simplification was bound before two changes landed on its ground — tools and
 tool parameters on direct calls, and a broker whose context provisions nothing while

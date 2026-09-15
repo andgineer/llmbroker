@@ -168,8 +168,8 @@ and `snapshot()` shows it — and nothing that does not name it can fail because
 ## Gate
 
 `. ./activate.sh`, `invoke pre`, `invoke test` (both passes), and
-`invoke downstream --source local --working-copy` (both hosts carry uncommitted contract
-tests). Expected: echo-words' contract test that pins "a rate-limited pool on a stream ends
+`invoke downstream --source local` (both hosts' contract tests are committed; do not use
+`--working-copy`, another session edits the dinary working tree). Expected: echo-words' contract test that pins "a rate-limited pool on a stream ends
 with `excluded`" regresses — classify it in the handover (a host test pinning the defect
 this plan fixes) with the host-side change; anything else is to be investigated. No version
 bump, no commit.
