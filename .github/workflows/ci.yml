@@ -59,6 +59,33 @@ jobs:
       if: matrix.platform != env.PRIMARY_PLATFORM || matrix.python-version != env.PRIMARY_PYTHON_VERSION
       run: ${{ env.PYTEST_CMD }} -m "not docker"
 
+  # The hosts' own suites and type checks, on the last published llmbroker and on this commit.
+  downstream:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python ${{ env.PRIMARY_PYTHON_VERSION }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PRIMARY_PYTHON_VERSION }}
+
+
+    - name: Install uv environment
+      uses: andgineer/uv-venv@v3
+
+    - name: Install dependencies
+      run: uv sync --frozen --all-extras
+
+    # A release commit carries its own tag, so the baseline is the newest tag not on it.
+    - name: Check the downstream hosts against the last release
+      run: |
+        BASELINE=$(git tag --list 'v[0-9]*' --sort=-v:refname --no-contains HEAD | head -n 1)
+        uv run invoke downstream --source github --baseline-ref "$BASELINE"
+
 # Build with publishing Allure report, coverage report
   primary-build:
     runs-on: ubuntu-latest

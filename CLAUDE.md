@@ -20,6 +20,7 @@ so the gate reports errors that do not exist. If untouched files suddenly go red
 | Run tests | `invoke test` |
 | Run single test | `pytest -k 'test_name'` |
 | Lint + format + type-check | `invoke pre` |
+| Check the downstream hosts against this change | `invoke downstream` (`--host NAME`, `--working-copy`, `--source github`, `--baseline-ref REF`, `--keep`) |
 | Preview docs (English) | `invoke docs-en` |
 | Bump version | `invoke ver-release` / `invoke ver-bug` / `invoke ver-feature` |
 
@@ -30,10 +31,27 @@ so the gate reports errors that do not exist. If untouched files suddenly go red
 
 ## Non-negotiable done gate
 
-Before claiming anything is done, both must be green:
+Before claiming anything is done, these must be green:
 
 1. `invoke pre` → no errors from ruff or pyrefly
 2. `invoke test` → `N passed` with zero failures or errors, in **both** passes
+3. `invoke downstream` → no unaccepted regression on any host. Required for any change under
+   `src/`, not for a docs-only or spec-only change. It takes minutes, so it runs once at the
+   end of the work rather than after every batch.
+
+`invoke downstream` runs each host listed in `downstream.toml` (dinary, echo-words) twice in a
+throwaway clone and venv: its suite and type check on llmbroker at `--baseline-ref` (default
+`HEAD`), then on the working tree. A host test that passes before the change and fails with it
+is a regression, and every regression is one of three kinds:
+
+- **an llmbroker defect** — fixed before the change is done;
+- **an intended change** — llmbroker keeps no backward compatibility, so the host adopts it
+  after the release;
+- **a host test coupled to llmbroker internals** — the host repo fixes its test.
+
+The last two stay red until the maintainer accepts them with a `[[host.accepted]]` entry in
+`downstream.toml`, carrying the reason and what the host must change. Only the maintainer adds
+one, and the runner never edits a host.
 
 **Never call `pytest` directly for a whole run — always `invoke test`.** It runs the suite
 twice: once on this platform's clock, then again with `-p coarse_clock` (`tests/`), which
@@ -128,7 +146,11 @@ Any request to implement a plan — "выполни очередной план"
    `## Handover` section, so it outlives the session: which plan sections are done, what was done
    differently from the plan and why (stale plan, code disagreed, a better route), what was
    deliberately left out, decisions taken during implementation that the plan did not make, and
-   the gate results. This is what the reviewer reads first.
+   the gate results. The `invoke downstream` result is stated per host, and every regression in
+   it is classified as one of the three kinds above. A defect is fixed. For an intended change
+   or a coupled host test, **do not add an accepted entry**: name the host test, why it breaks,
+   and the host-side change, and leave the decision to the maintainer. This is what the
+   reviewer reads first.
 
 ## Reviewing an implemented plan
 
@@ -142,7 +164,10 @@ Any request to implement a plan — "выполни очередной план"
    A dozen mixed items reads as a failing process even when two are bugs.
 5. Do not re-open what the plan or `specs/reference/` has already settled. Disagree in one
    sentence, then move on.
-6. Confirm the gate (`invoke pre`, `invoke test`) but do not spend the pass on it.
+6. Confirm the gate (`invoke pre`, `invoke test`, and `invoke downstream` for a change under
+   `src/`) but do not spend the pass on it. Do check that each downstream regression's
+   classification holds: a defect passed off as an intended change or a coupled host test is a
+   finding.
 7. Fix nothing unless asked; report in chat.
 8. **The round is done when nothing found changes runtime behavior.** Remarks about docs, naming,
    or comments are not grounds for another round. If a fix batch follows, review that batch too —

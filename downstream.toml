@@ -1,0 +1,27 @@
+# The hosts `invoke downstream` checks a change against. Each command is the host's own:
+# re-read the host's CLAUDE.md and CI when one changes how it sets up, tests or type checks.
+
+[[host]]
+name      = "dinary"
+github    = "andgineer/dinary"
+local     = "../dinary"                 # relative to the llmbroker checkout
+extras    = ["sqlite"]                  # extras the host installs llmbroker with
+setup     = ["bash scripts/setup-test-env.sh"]
+tests     = ["-p", "no:cacheprovider", "tests/"]
+typecheck = ["pyrefly", "check", "--project-excludes=tests"]
+
+[[host]]
+name      = "echo-words"
+github    = "andgineer/echo-words"
+local     = "../echo-words"
+extras    = []
+setup     = ["uv sync --frozen"]
+tests     = ["-p", "no:cacheprovider", "-m", "not e2e", "tests/"]
+typecheck = ["pyrefly", "check", "--project-excludes=tests", "--project-excludes=experiments"]
+
+# An accepted regression: a host test (or type-check line) the current change is known to
+# break on purpose. Only the maintainer adds one; entries leave once the host has adopted.
+# [[host.accepted]]
+# test   = "tests/test_x.py::test_y"        # pytest node id as the report prints it, or
+# check  = "substring of a type-check line"
+# reason = "what changed in llmbroker, and what the host must change"

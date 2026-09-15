@@ -1,4 +1,5 @@
 import os
+import shlex
 import shutil
 import sys
 from contextlib import contextmanager
@@ -121,6 +122,34 @@ def test(c: Context):
         'python -m pytest -p coarse_clock -m "not docker"',
         env={"PYTHONPATH": "tests"},
     )
+
+
+@task(
+    help={
+        "host": "Run only this host from downstream.toml (default: every host).",
+        "source": "local: clone the sibling checkout's HEAD (default); github: clone the host from GitHub.",
+        "working-copy": "With --source local, copy the sibling checkout's uncommitted files instead.",
+        "baseline-ref": "llmbroker before the change, exported with git archive (default: HEAD).",
+        "keep": "Keep the temporary directories and print where they are.",
+    },
+)
+def downstream(
+    c: Context,
+    host: str = "",
+    source: str = "local",
+    working_copy: bool = False,
+    baseline_ref: str = "HEAD",
+    keep: bool = False,
+):
+    """Run the downstream hosts' suites and type checks on llmbroker before and after the change."""
+    args = ["python", "scripts/downstream.py", "--source", source, "--baseline-ref", baseline_ref]
+    if host:
+        args += ["--host", host]
+    if working_copy:
+        args.append("--working-copy")
+    if keep:
+        args.append("--keep")
+    c.run(shlex.join(args))
 
 
 @task

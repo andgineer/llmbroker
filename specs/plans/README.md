@@ -4,20 +4,19 @@
 
 | # | plan | readiness | what it is |
 |---|---|---|---|
-| 1 | [`direct-tools-and-key-help.md`](direct-tools-and-key-help.md) | implemented, released in v1.10.0; the file awaits the maintainer's deletion | a direct call may carry tools and the shipped loop can drive it; per-key onboarding help reaches a database installation. Two additive fixes a downstream host is waiting on |
-| 2 | [`direct-without-pool-and-catalog-tool-params.md`](direct-without-pool-and-catalog-tool-params.md) | source-bound on `badf396a2` (v1.10.0); next implementation | entering a broker provisions nothing and `direct()` ticks the refresh clock; a paid-catalog line carries the parameters its model needs for tool calls. Two fixes a downstream host is working around |
-| 3 | [`architecture-simplification.md`](architecture-simplification.md) | source-bound on `67659c350`; revalidate after rows 1–2 | consolidate stream ownership and attempt settlement, remove duplicate rebuilds, acknowledge journal writes, simplify deadlines and backend rating storage; retain the alternative-answer contract |
-| 4 | [`load-harness.md`](load-harness.md) | source-bound on v1.7.0; revalidate after row 3 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of one host's private script |
-| 5 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 4 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
+| 1 | [`downstream-compatibility.md`](downstream-compatibility.md) | source-bound on the current working tree; next implementation | `invoke downstream` runs dinary's and echo-words' suites and type checks against the working tree, baseline vs candidate, and the same job in CI blocks a release on a host regression. Tooling only, no `src/` change |
+| 2 | [`architecture-simplification.md`](architecture-simplification.md) | source-bound on `67659c350`; revalidate against the working tree first | consolidate stream ownership and attempt settlement, remove duplicate rebuilds, acknowledge journal writes, simplify deadlines and backend rating storage; retain the alternative-answer contract |
+| 3 | [`load-harness.md`](load-harness.md) | source-bound on v1.7.0; revalidate after row 2 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of one host's private script |
+| 4 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 3 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
 
-Row 1 came first because it is additive and small: it changes no signature and no
-schema, so row 3's binding is revalidated against it rather than rewritten. It also
-names direct calls without overlapping row 5 — it gives a direct call tools and
-explicitly journals nothing, row 5 gives it journal rows.
+Architecture simplification was bound before two changes landed on its ground — tools and
+tool parameters on direct calls, and a broker whose context provisions nothing while
+`direct()` ticks the refresh clock. Both reshape the refresher, the direct clients and the
+request builder it consolidates, so its binding is revalidated against the current source
+before any batch is handed off.
 
-Row 2 follows for the same reason: small, no schema change, and a downstream host is
-carrying workarounds until it ships. It touches the refresher, the direct clients and the
-request builder, which row 3 also reshapes, so row 3 is revalidated against it.
+Downstream compatibility comes first because it is small, touches no library code, and
+guards every change after it — architecture simplification included.
 
 Architecture simplification comes before the harness because its deadline and
 storage changes determine what the harness measures and what caller visibility can
