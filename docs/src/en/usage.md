@@ -337,6 +337,11 @@ The first three values indicate a configuration problem, so retrying without a
 configuration change will not help. `timeout` and `excluded` apply to one request;
 the next request may succeed.
 
+A streamed call reports the same five reasons before its first chunk. It differs in
+one thing: it never tries the same model twice, so where `ask` keeps waiting for a
+model to come back, the stream ends at once with `timeout` and `retry_at` naming the
+moment it returns. See [Streaming](async.md#budget).
+
 `retry_at` is set when no model is currently available but the broker knows when
 one model's temporary exclusion ends. It is not set for `empty_pool`, `no_keys`,
 or `all_disabled`, because waiting cannot resolve those conditions. For

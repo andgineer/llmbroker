@@ -650,6 +650,7 @@ class Router:
             configs=lambda: self._pool.configs,
             payable=self._payable,
             acquire=self._acquire,
+            retry_at=self._pool.retry_at,
             produce=self._produce,
             untried=self._untried,
             publish=self._publish,

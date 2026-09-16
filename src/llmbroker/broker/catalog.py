@@ -4,6 +4,7 @@ the only registry write path; what it writes is decided in ``broker.merge``."""
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from types import MappingProxyType
 
 from llmbroker.broker.keyring import KeyRing, resolve_ref
 from llmbroker.broker.pool import LLMPool
@@ -25,6 +26,8 @@ from llmbroker.protocols.store import DisabledMapProtocol, StoreProtocol
 from llmbroker.standalone.secrets import Secrets
 
 logger = logging.getLogger("llmbroker.broker")
+
+_NO_UNRESOLVED: Mapping[str, str] = MappingProxyType({})
 
 # Every provider count that is not degraded is one state. Both sentinels are
 # negative, so a non-negative remembered state is exactly "was degraded".
@@ -78,6 +81,7 @@ _POOL_MODEL_HINT = (
 def find_declared(
     stored: list[LLMConfig],
     declared: list[LLMConfig],
+    unresolved: Mapping[str, str],
     alias: str | None,
     name: str | None,
 ) -> LLMConfig:
@@ -87,19 +91,7 @@ def find_declared(
     those are one typo and one wrong expectation apart at a call site.
     """
     if alias is not None:
-        for cfg in declared:
-            if cfg.alias == alias:
-                return cfg
-        if any(c.name == alias for c in declared):
-            raise UnknownModelError(
-                f"no declared model with alias {alias!r}; a declared model with this name"
-                f" exists — call direct(name={alias!r})",
-            )
-        if any(c.name == alias for c in stored):
-            # The pre-alias call shape: direct() took a name, and a pool name at that.
-            # Sending it to direct(name=...) first would only spend an error saying so.
-            raise PoolModelError(f"{alias!r} is a preset-managed pool model: {_POOL_MODEL_HINT}")
-        raise UnknownModelError(f"no model was declared with alias {alias!r}")
+        return _by_alias(stored, declared, unresolved, alias)
     for cfg in declared:
         if cfg.name == name:
             return cfg
@@ -111,6 +103,31 @@ def find_declared(
     if any(c.name == name for c in stored):
         raise PoolModelError(f"{name!r} is a preset-managed pool model: {_POOL_MODEL_HINT}")
     raise UnknownModelError(f"no model named {name!r} was declared with direct=")
+
+
+def _by_alias(
+    stored: list[LLMConfig],
+    declared: list[LLMConfig],
+    unresolved: Mapping[str, str],
+    alias: str,
+) -> LLMConfig:
+    """The declared model this alias names, or why there is none — a handle the paid
+    catalog could not resolve included, which is the one miss that is not a typo."""
+    for cfg in declared:
+        if cfg.alias == alias:
+            return cfg
+    if alias in unresolved:
+        raise UnknownModelError(unresolved[alias])
+    if any(c.name == alias for c in declared):
+        raise UnknownModelError(
+            f"no declared model with alias {alias!r}; a declared model with this name"
+            f" exists — call direct(name={alias!r})",
+        )
+    if any(c.name == alias for c in stored):
+        # The pre-alias call shape: direct() took a name, and a pool name at that.
+        # Sending it to direct(name=...) first would only spend an error saying so.
+        raise PoolModelError(f"{alias!r} is a preset-managed pool model: {_POOL_MODEL_HINT}")
+    raise UnknownModelError(f"no model was declared with alias {alias!r}")
 
 
 _EMPTY_NO_AUTOFILL = (
@@ -153,6 +170,7 @@ class Catalog:
         self._followed_key_info = followed_key_info
         self._declared: DeclaredModels | None = None
         self._declared_lock = asyncio.Lock()
+        self._reported_unresolved: set[str] = set()
         self._health = PoolHealth()
         self._direct_missing_keys: tuple[PendingKey, ...] = ()
         self._key_info: Mapping[str, KeyInfo] = {}
@@ -179,6 +197,12 @@ class Catalog:
     def direct_missing_keys(self) -> tuple[PendingKey, ...]:
         """Refs the host's own ``direct``-reachable entries want and cannot resolve."""
         return self._direct_missing_keys
+
+    @property
+    def direct_unresolved(self) -> Mapping[str, str]:
+        """Handles ``direct=`` declared that the paid catalog could not resolve, each
+        with why. Only a call naming one fails; nothing else here knows about them."""
+        return self._declared.unresolved if self._declared is not None else _NO_UNRESOLVED
 
     def key_help(self, ref: str) -> str:
         """Where this ref's key comes from: the registry's own ``[keys]`` first — a host
@@ -216,7 +240,17 @@ class Catalog:
                 # declared model is dead wherever secrets are not the environment.
                 await self.seed_secrets(declared.configs)
                 self._declared = declared
+                self._report_unresolved(declared)
             return self._declared if self._declared is not None else DeclaredModels()
+
+    def _report_unresolved(self, declared: DeclaredModels) -> None:
+        """One line the first time a handle cannot be resolved. Deduplicated on the set,
+        like the missing-key lines: nothing else fails, so a handle that stays unresolved
+        would otherwise say so on every refresh."""
+        for handle, message in declared.unresolved.items():
+            if handle not in self._reported_unresolved:
+                logger.error("%s", message)
+        self._reported_unresolved = set(declared.unresolved)
 
     async def rebuild(self, known: frozenset[str] | None = None) -> None:
         """Re-read the registry and re-derive everything learned: pool membership, the
@@ -230,7 +264,9 @@ class Catalog:
             else frozenset()
         )
         stored, declared = await self.entries()
-        self._empty = not stored and not declared
+        # What the host declared, not what resolved: a typo is the one thing the
+        # registry-is-empty message would send a reader to the wrong place over.
+        self._empty = not stored and not declared and not self.direct_unresolved
         await self._reconcile(stored, declared)
         await self._resync_disabled()
         if self._relearn is not None:

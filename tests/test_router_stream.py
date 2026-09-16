@@ -2,11 +2,13 @@
 
 import asyncio
 import json
+import time
 from contextlib import aclosing
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from support import make_ring
+from support import CLOCK_SLACK, make_ring
 
 from llmbroker.broker import verdict as verdict_module
 from llmbroker.broker.broker import AsyncBroker
@@ -241,6 +243,134 @@ def test_wait_does_not_bound_a_slow_consumer():
         return seen
 
     assert asyncio.run(run()) == ["one", "two"]
+
+
+# --------------------------------------------------------------------------- #
+# what a stream reports once it has nothing left to open
+# --------------------------------------------------------------------------- #
+
+
+def _cooling(status: int):
+    """Every host fails and cools down, 'b' for half as long as 'a': what the stream
+    reports must name the moment the pool is back, which is b's."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        after = "30" if request.url.host == "b" else "60"
+        return httpx.Response(status, text="busy", headers={"Retry-After": after})
+
+    return handler
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"fastest_of": 2}], ids=["single", "raced"])
+@pytest.mark.parametrize("status", [429, 503])
+def test_a_cooling_pool_ends_a_stream_in_timeout_naming_when_it_is_back(status, kwargs):
+    """A stream never reopens a model it has tried, so it ends as soon as every one of
+    them has failed — but they come back by themselves, and that is what it reports."""
+
+    async def run():
+        pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
+        router = Router(pool, _RecordingStore())
+        _mount(router, _cooling(status))
+        started = time.monotonic()
+        with pytest.raises(NoLLMAvailableError) as excinfo:
+            await _drain(router, **kwargs)
+        return excinfo.value, time.monotonic() - started
+
+    exc, elapsed = asyncio.run(run())
+    assert exc.reason == "timeout"
+    assert exc.retry_at is not None
+    back_in = exc.retry_at - datetime.now(UTC)
+    assert timedelta(seconds=20) < back_in < timedelta(seconds=40)  # b's return, not a's
+    assert elapsed < 5  # no cooldown was waited out
+
+
+def test_every_candidate_rejecting_the_request_raises_the_provider_error_on_a_stream():
+    """A request every candidate refused is still the caller's own to fix: the provider's
+    error outranks any report about the pool, and nothing was cooled."""
+
+    async def run():
+        pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
+        router = Router(pool, _RecordingStore())
+        _mount(router, lambda _r: httpx.Response(400, text="messages[0].role is invalid"))
+        with pytest.raises(ProviderError) as excinfo:
+            await _drain(router, wait=0.3)
+        return excinfo.value, pool
+
+    err, pool = asyncio.run(run())
+    assert err.status == 400
+    assert pool.state("a").phase is LifecyclePhase.AVAILABLE
+
+
+def test_a_pool_that_cannot_serve_at_all_still_ends_a_stream_in_excluded():
+    """Nothing comes back by itself once every key is dead, so the report stays the one
+    that says so — a caller told to retry later would wait for nothing."""
+
+    async def run():
+        pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
+        router = Router(pool, _RecordingStore())
+        _mount(router, lambda _r: httpx.Response(401, text="invalid api key"))
+        with pytest.raises(NoLLMAvailableError) as excinfo:
+            await _drain(router, wait=0.3)
+        return excinfo.value
+
+    exc = asyncio.run(run())
+    assert exc.reason == "excluded"
+    assert exc.retry_at is None
+
+
+def test_a_budget_spent_before_any_delta_names_when_the_pool_comes_back():
+    """The silence that spent the budget cooled the only candidate, so the caller whose
+    own clock ran out is told when that candidate is back."""
+
+    async def body():
+        await asyncio.sleep(5)
+        yield b'data: {"choices": [{"delta": {"content": "late"}}]}\n\n'
+
+    async def run():
+        pool = await _pool(_cfg("a", "a"))
+        router = Router(pool, _RecordingStore())
+        _mount(
+            router,
+            lambda _r: httpx.Response(
+                200, content=body(), headers={"content-type": "text/event-stream"}
+            ),
+        )
+        with pytest.raises(NoLLMAvailableError) as excinfo:
+            await _drain(router, wait=0.2)
+        return excinfo.value
+
+    exc = asyncio.run(run())
+    assert exc.reason == "timeout"
+    assert exc.retry_at is not None
+    assert exc.retry_at - datetime.now(UTC) > timedelta(seconds=30)
+
+
+def test_ask_and_stream_report_the_same_pool_state_and_only_ask_waits():
+    """One pool state, two surfaces: the same reason and the same moment the pool
+    returns, and the difference is the queuing a stream does not do."""
+
+    async def run(surface):
+        pool = await _pool(_cfg("a", "a"), _cfg("b", "b"))
+        router = Router(pool, _RecordingStore())
+        _mount(router, _cooling(429))
+        started = time.monotonic()
+        with pytest.raises(NoLLMAvailableError) as excinfo:
+            if surface == "ask":
+                await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=0.3)
+            else:
+                await _drain(router, wait=0.3)
+        return excinfo.value, time.monotonic() - started
+
+    async def both():
+        return await run("stream"), await run("ask")
+
+    (streamed, stream_elapsed), (asked, ask_elapsed) = asyncio.run(both())
+    assert (streamed.reason, asked.reason) == ("timeout", "timeout")
+    assert streamed.retry_at is not None
+    assert asked.retry_at is not None
+    assert abs(streamed.retry_at - asked.retry_at) < timedelta(seconds=5)
+    assert ask_elapsed >= 0.3 - CLOCK_SLACK  # the completion queued for the cooldown
+    assert stream_elapsed < 0.3  # the stream did not
 
 
 # --------------------------------------------------------------------------- #

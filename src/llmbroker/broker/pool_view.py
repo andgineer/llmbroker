@@ -1,6 +1,6 @@
 """PoolView: read-only views of the broker's current pool state."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from llmbroker.broker.pool import LLMPool
 from llmbroker.broker.result import AsyncLLM, MetricsSource
@@ -17,14 +17,17 @@ class PoolView:
         self,
         pool: LLMPool,
         metrics_source: MetricsSource,
+        *,
         health: Callable[[], PoolHealth],
         direct_missing_keys: Callable[[], tuple[PendingKey, ...]],
+        direct_unresolved: Callable[[], Mapping[str, str]],
         payable: Callable[[], frozenset[str]],
     ) -> None:
         self._pool = pool
         self._metrics_source = metrics_source
         self._health = health
         self._direct_missing_keys = direct_missing_keys
+        self._direct_unresolved = direct_unresolved
         self._payable = payable
 
     def get(self, name: str) -> AsyncLLM:
@@ -48,4 +51,9 @@ class PoolView:
                 demoted_operations=tuple(self._pool.demoted_operations(name)),
                 metrics=metrics_map.get(name),
             )
-        return PoolSnapshot(result, self._health(), self._direct_missing_keys())
+        return PoolSnapshot(
+            result,
+            self._health(),
+            self._direct_missing_keys(),
+            self._direct_unresolved(),
+        )

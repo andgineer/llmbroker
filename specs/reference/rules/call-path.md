@@ -251,6 +251,17 @@ first delta a mid-stream death cools the model (it misbehaved no less than one
 failing earlier) and raises, carrying the model name and the underlying cause;
 the deltas already yielded stand.
 
+**Before its first delta a stream commits to the models that can answer it now.** A
+model this handle has tried is not reopened and is not waited for, so a stream ends
+where a completion would still be queuing. What it reports there is the pool's state
+and not that boundary: where the candidates it may no longer open are merely cooling,
+it raises the timeout reason carrying `retry_at` — the pair a completion gets for the
+same pool — so a host reading the reason to decide whether to fall back is never told
+that a pool on its way back is a fault
+([`../decisions.md`](../decisions.md#a-stream-reports-what-can-come-back)). `excluded`
+keeps the case it names: nothing in the pool can serve this request at all. A budget
+spent before any delta carries `retry_at` by the same rule.
+
 Each attempt journals one row, as `chat` does. **A consumer that stops pulling
 ends a successful attempt** — the model answered and did nothing wrong, so the
 row is `OK`. Abandoning an iterator must never cost a model a *failure*.

@@ -10,7 +10,7 @@ from datetime import datetime
 from functools import partial
 from pathlib import Path
 
-from llmbroker.broker.aliases import resolve_declared
+from llmbroker.broker.aliases import AliasChange, resolve_declared
 from llmbroker.broker.catalog import Catalog
 from llmbroker.broker.keyring import KeyRing, known_refs
 from llmbroker.broker.learning import TAIL_READ_LIMIT, Learner, metrics_from_calls
@@ -29,10 +29,7 @@ from llmbroker.broker.source import (
     zero_config_ports,
 )
 from llmbroker.direct import AsyncDirectClient
-from llmbroker.exceptions import (
-    NoLLMAvailableError,
-    UnknownModelError,
-)
+from llmbroker.exceptions import NoLLMAvailableError
 from llmbroker.home import home_dir
 from llmbroker.models import (
     AsyncResourceProtocol,
@@ -201,9 +198,10 @@ class AsyncBroker:
         self._pool_view = PoolView(
             pool,
             self._metrics_map,
-            lambda: self._catalog.health,
-            lambda: self._catalog.direct_missing_keys,
-            lambda: self._catalog.payable,
+            health=lambda: self._catalog.health,
+            direct_missing_keys=lambda: self._catalog.direct_missing_keys,
+            direct_unresolved=lambda: self._catalog.direct_unresolved,
+            payable=lambda: self._catalog.payable,
         )
 
         self._refresher = ModelListRefresher(
@@ -307,9 +305,9 @@ class AsyncBroker:
         return {}
 
     async def _resolve_declared(self) -> DeclaredModels:
-        """Re-resolve ``direct=``, keeping the resolution already in use when the
-        catalog cannot be read or no longer carries an alias. Only the first
-        resolution raises — see ``rules/direct-by-name.md``."""
+        """Re-resolve ``direct=``: a catalog that cannot be read keeps the whole
+        resolution in use, an alias it dropped keeps its own entry, and a handle that
+        never resolved is carried unresolved — see ``rules/direct-by-name.md``."""
         previous = self._last_declared
         try:
             resolved, moved = await resolve_declared(
@@ -318,7 +316,7 @@ class AsyncBroker:
                 previous=previous,
                 fetch=self._autofetch,
             )
-        except (UnknownModelError, ValueError, OSError) as exc:
+        except (ValueError, OSError) as exc:
             if previous is None:
                 raise
             logger.warning(
@@ -327,8 +325,9 @@ class AsyncBroker:
                 exc,
             )
             return previous
-        for line in alias_lines(moved):
-            logger.info("direct=: %s", line)
+        for fact, line in zip(moved, alias_lines(moved), strict=True):
+            level = logging.WARNING if fact.change is AliasChange.DROPPED else logging.INFO
+            logger.log(level, "direct=: %s", line)
         self._last_declared = resolved
         return resolved
 

@@ -158,6 +158,14 @@ When `wait` is unset, no user-defined time limit applies. If it expires before t
 first chunk, the call raises `NoLLMAvailableError`. After the first chunk, it
 raises `LLMTimeoutError`, and the application retains previously delivered data.
 
+Before the first chunk a stream never tries the same model twice, so it ends as soon
+as every model it could open has been tried, instead of waiting for one of them to
+come back as `ask` does. When those models are only cooling down, the error is
+`NoLLMAvailableError` with `reason="timeout"` and `retry_at` set to the moment the
+first of them returns, so the application can retry later or fall back to another
+model; `reason="excluded"` still means no model can serve the request at all. See
+[When nobody can answer](usage.md#errors).
+
 A model that returned no data within `wait` is temporarily excluded from
 selection. If the model had already started responding, that temporary exclusion
 does not apply. In both cases, the broker remembers which `wait` value was too

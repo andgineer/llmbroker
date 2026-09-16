@@ -5,6 +5,7 @@ import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from contextlib import AsyncExitStack, aclosing
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, NoReturn, TypeVar, cast
 
 import httpx
@@ -37,6 +38,7 @@ class StreamBackend:
     configs: Callable[[], Iterable[str]]
     payable: Callable[[KeyRing], Awaitable[frozenset[str]]]
     acquire: Callable[..., Awaitable[list[LLMConfig]]]
+    retry_at: Callable[..., datetime | None]
     produce: Callable[[RouteCall, LLMConfig, Outcome], AsyncGenerator[Any, None]]
     untried: Callable[..., Awaitable[list[LLMConfig]]]
     publish: Callable[[CallReceipt | None, Any], None]

@@ -126,3 +126,15 @@ def test_a_moved_key_ref_says_what_to_set():
     assert lines == (
         "opus: api_key_ref ANTHROPIC_KEY -> CLAUDE_KEY — set CLAUDE_KEY before the next call",
     )
+
+
+def test_an_alias_the_catalog_dropped_says_what_it_is_still_answering_from():
+    """Nothing moved and nothing broke: the line has to say why the alias still works
+    while the catalog no longer names it."""
+    lines = alias_lines(
+        [AliasFact(change=AliasChange.DROPPED, alias="opus", was="claude-opus-4-8")],
+    )
+    assert lines == (
+        "opus: the paid catalog no longer carries it"
+        " — answering from claude-opus-4-8, the resolution already in use",
+    )

@@ -252,7 +252,7 @@ class AsyncLLMs:
             )
         self._tick()
         stored, declared = await self._catalog.entries()
-        cfg = find_declared(stored, declared, alias, name)
+        cfg = find_declared(stored, declared, self._catalog.direct_unresolved, alias, name)
         ref = alias if alias is not None else name
         key = await self._ring.resolve(cfg.api_key_ref)
         if key is None:

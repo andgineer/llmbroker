@@ -142,11 +142,86 @@ async def test_a_declared_config_is_never_pooled(tmp_path, served):
         assert set(await broker.snapshot()) == {"gemini"}
 
 
-async def test_a_typo_raises_at_provision_and_lists_the_aliases(tmp_path, served):
-    broker = _broker(tmp_path, direct=["opus-5"])
-    with pytest.raises(UnknownModelError, match="available aliases: opus, sonnet"):
+async def test_a_typo_fails_only_the_direct_call_that_names_it(tmp_path, served, caplog):
+    """One misspelled alias used to fail provisioning, routing and every other handle.
+    It is one handle's error: the pool routes, the good alias answers, the snapshot
+    shows the typo, and only `direct()` on the typo raises — with the same message."""
+    with caplog.at_level(logging.ERROR, logger="llmbroker.broker"):
+        async with _broker(tmp_path, direct=["opus", "opus-5"]) as broker:
+            snapshot = await broker.snapshot()
+            assert set(snapshot) == {"gemini"}  # the pool is provisioned and routable
+            assert snapshot.direct_unresolved == {
+                "opus-5": (
+                    "direct= names 'opus-5', which the paid catalog does not carry"
+                    " — available aliases: opus, sonnet"
+                ),
+            }
+            assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
+            for _ in range(3):
+                with pytest.raises(UnknownModelError, match="available aliases: opus, sonnet"):
+                    await broker.direct("opus-5")
+            await broker.rebuild()
+
+    # One line for the handle, not one per call or per rebuild.
+    assert [r.message for r in caplog.records if "opus-5" in r.message] == [
+        "direct= names 'opus-5', which the paid catalog does not carry"
+        " — available aliases: opus, sonnet",
+    ]
+
+
+async def test_a_direct_only_host_whose_only_declaration_is_a_typo_says_which_typo(
+    tmp_path,
+    served,
+):
+    """An empty pool is not what is wrong with this installation: it declared a model,
+    and the message that names the typo is the one that gets it running."""
+    async with _broker(tmp_path, direct=["opus-5"], sync=None) as broker:
+        assert await broker.count() == 0  # no EmptyRegistryError: something was declared
+        with pytest.raises(UnknownModelError, match="available aliases: opus, sonnet"):
+            await broker.direct("opus-5")
+
+
+async def test_an_unreadable_catalog_leaves_the_pool_and_a_stated_config_working(
+    tmp_path,
+    monkeypatch,
+):
+    """Nothing cached, nothing bundled, nothing fetchable: the aliases have no entry to
+    resolve to, and that is all — the pool answers and a fully stated declaration works."""
+
+    def _offline(name: str) -> str:
+        if name == "paid-catalog":
+            raise ValueError("offline in tests")
+        return _PRESET
+
+    monkeypatch.setattr(presets, "fetch_preset_text", _offline)
+    mine = LLMConfig(name="mine", base_url="https://m/v1", model="m", api_key_ref="GEMINI")
+    async with _broker(tmp_path, direct=["opus", mine]) as broker:
+        assert set(await broker.snapshot()) == {"gemini"}
+        cfg, _key = await broker.llms.resolve_direct(name="mine")
+        assert cfg.model == "m"
+        with pytest.raises(UnknownModelError, match="could not be read: offline in tests"):
+            await broker.direct("opus")
+
+
+async def test_a_refresh_whose_catalog_carries_the_alias_resolves_it(tmp_path, served):
+    """An unresolved handle is not a verdict: the catalog is what moved, and the next
+    refresh that carries the alias makes `direct()` on it work."""
+    served["paid-catalog"] = _CATALOG.replace(
+        '  [[provider.models]]\n  alias="opus"\n  model="claude-opus-4-8"\n',
+        "",
+    )
+    async with _broker(tmp_path, direct=["opus"], sync_interval=0.001) as broker:
         await broker.ensure_pool()
-    await broker.aclose()
+        await _settle(broker)
+        with pytest.raises(UnknownModelError, match="does not carry"):
+            await broker.direct("opus")
+
+        served["paid-catalog"] = _CATALOG
+        broker._refresher._next_refresh = 0.0
+        await broker.count()
+        await _settle(broker)
+        assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
+        assert (await broker.snapshot()).direct_unresolved == {}
 
 
 async def test_a_declared_alias_colliding_with_the_registry_names_both(tmp_path, served):
@@ -260,7 +335,57 @@ async def test_an_alias_the_catalog_dropped_keeps_serving_and_does_not_stop_the_
         # And the declared model still answers, on the last resolution that worked.
         assert (await _resolved(broker, "opus")).model == "claude-opus-4-8"
 
-    assert any("stay on the resolution already in use" in r.message for r in caplog.records)
+    assert any("the paid catalog no longer carries it" in r.message for r in caplog.records)
+
+
+async def test_an_alias_the_catalog_dropped_does_not_freeze_the_handle_beside_it(
+    tmp_path,
+    served,
+):
+    """Keeping what works is one handle's, not the whole resolution's: a typo the
+    catalog has since fixed must resolve on the refresh that drops another alias."""
+    async with _broker(tmp_path, direct=["opus", "sonnet", "opuss"], sync_interval=0.001) as broker:
+        await broker.ensure_pool()
+        await _settle(broker)
+        assert list((await broker.snapshot()).direct_unresolved) == ["opuss"]
+
+        # One refresh drops a resolved alias and carries the one that never resolved.
+        served["paid-catalog"] = _CATALOG.replace(
+            '  [[provider.models]]\n  alias="sonnet"\n  model="claude-sonnet-5"\n',
+            '  [[provider.models]]\n  alias="opuss"\n  model="claude-opuss-9"\n',
+        )
+        broker._refresher._next_refresh = 0.0
+        await broker.count()
+        await _settle(broker)
+
+        assert (await _resolved(broker, "opuss")).model == "claude-opuss-9"
+        # And the alias it dropped keeps answering from the entry it is already on.
+        assert (await _resolved(broker, "sonnet")).model == "claude-sonnet-5"
+        assert (await broker.snapshot()).direct_unresolved == {}
+
+
+async def test_an_alias_the_catalog_dropped_still_says_where_to_get_its_key(tmp_path, served):
+    """The help belongs to the entry that is still answering. A catalog that no longer
+    names its provider says nothing about where its key comes from, and must not cost
+    the caller the one line that tells it what to do about a missing one."""
+    async with _broker(
+        tmp_path,
+        direct=["opus"],
+        secrets=DictSecrets({"GEMINI": "sk"}),
+        sync_interval=0.001,
+    ) as broker:
+        await broker.ensure_pool()
+        await _settle(broker)
+
+        # The provider keeps its help and loses every model, so the read just made has
+        # nothing to say about the entry 'opus' is still answering from.
+        served["paid-catalog"] = _CATALOG.split("  [[provider.models]]")[0]
+        broker._refresher._next_refresh = 0.0
+        await broker.count()
+        await _settle(broker)
+
+        with pytest.raises(MissingKeyError, match="console.anthropic.com"):
+            await broker.direct("opus")
 
 
 async def test_the_catalog_is_refreshed_where_no_model_list_is_synced(tmp_path, served):

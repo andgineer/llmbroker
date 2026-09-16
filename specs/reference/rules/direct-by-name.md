@@ -146,7 +146,8 @@ flight when it lands.
 failing that the wheel's copy, and the alias stays frozen there until an explicit
 sync moves it — the same floor the read already falls to when the network is
 unreachable ([`../decisions.md`](../decisions.md#no-automatic-fetch-means-none-at-start-either)).
-With neither copy present the first resolution raises and names the sync to run.
+With neither copy present nothing follows an alias, and every alias declared is
+left unresolved with the sync to run, by the rule below.
 
 **The paid catalog carries its own refresh clock.** Every sync reads it on the
 way past, and where no model list is synced — a registry a deploy job fills, and a
@@ -163,22 +164,37 @@ lands a declared alias on a different model id, or on a different
 that `direct("opus")` now answers from a different model. The first resolution
 has nothing to compare against and reports none.
 
-**Only the first resolution may fail; every later one keeps what works.** A
-catalog that cannot be read, or that no longer carries an alias someone
-declared, leaves the declared models on the resolution already in use, with a
-warning: a refresh that cannot see upstream has nothing to say about where an
-alias points. The wheel's copy is excluded from a re-resolution outright, since
-where nothing is writable it would otherwise be the only fallback left and would
-move a working alias *backwards*. Only the first resolution has nothing to keep,
-and only it raises.
+**A resolution that works is never lost.** A catalog that cannot be read leaves every
+declared model on the resolution already in use, with a warning: a refresh that cannot
+see upstream has nothing to say about where any alias points. One that was read and no
+longer carries an alias someone declared keeps that one alias answering from the entry
+it is already on — where to get its key included, since a catalog that no longer names
+a provider says nothing about that either — also with a warning, while every other
+declaration follows the catalog just read, so a handle that has never resolved is still
+only ever one refresh away from resolving. The wheel's copy is excluded from a
+re-resolution outright, since where nothing is writable it would otherwise be the only
+fallback left and would move a working alias *backwards*.
 
-An alias the catalog does not carry therefore raises at the first resolution —
-the first `direct()` or the first provisioning — and names the aliases it does: a
-typo is the expected failure and the fix is one word. A
-declared model whose name or alias is already in the registry raises too, naming
-both sources — that is the one collision the registry's own uniqueness rules
-cannot see. A declared model with no key behaves exactly as a keyless stored
-entry: it exists, and `direct()` on it reports the missing key.
+**A declaration that has never resolved is that one handle's failure, and nothing
+else's** ([`../decisions.md`](../decisions.md#a-declaration-error-stays-with-its-handle)).
+An alias the catalog does not carry is carried as an unresolved handle: the call
+naming it raises and names the aliases the catalog does carry, since a typo is the
+expected failure and the fix is one word. Where the catalog itself could not be read
+the first time, every alias declared is unresolved in the same way, and the call naming
+one raises the read's own failure instead — there is no list to offer, and the fix is
+not in the declaration. Nothing that does not name it fails for it: the pool is
+provisioned and routes, the other declarations resolve, and an installation whose only
+declaration is a typo is a configured one, so what it is told is the typo and not that
+its registry is empty. The handle is reported once where it first fails to resolve, and
+is visible in the pool snapshot without making a call. A later refresh whose catalog
+carries the alias resolves it.
+
+A declared model whose name or alias is already in the registry raises for the whole
+installation, naming both sources — that is the one collision the registry's own
+uniqueness rules cannot see, and it is a conflict between two statements the host
+itself made, where dropping either one would be picking for it. A declared model
+with no key behaves exactly as a keyless stored entry: it exists, and `direct()` on
+it reports the missing key.
 
 **A declared model's key is bootstrapped like a stored one.** A key the
 environment holds is copied into a writable secrets backend when the declaration

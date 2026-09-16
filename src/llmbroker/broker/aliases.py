@@ -13,7 +13,6 @@ from types import MappingProxyType
 
 from llmbroker.broker.curated import CuratedModel, models_from
 from llmbroker.broker.presets import PAID_CATALOG, PresetSource
-from llmbroker.exceptions import UnknownModelError
 from llmbroker.models import DeclaredModels, LLMConfig
 
 
@@ -22,6 +21,7 @@ class AliasChange(Enum):
 
     MODEL = "model"
     KEY_REF = "key_ref"
+    DROPPED = "dropped"
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,8 +65,81 @@ async def resolve_declared(
     help is available. ``previous`` marks a re-resolution and is what the facts diff."""
     if not declared:
         return DeclaredModels(), ()
-    targets: Mapping[str, CuratedModel] = _NO_TARGETS
-    if any(isinstance(item, str) for item in declared):
+    targets, unreadable = await _catalog_targets(declared, presets, previous=previous, fetch=fetch)
+    configs, unresolved, dropped = _each_declaration(declared, targets, unreadable, previous)
+    resolved = DeclaredModels(
+        configs=configs,
+        key_help=_key_help(
+            targets,
+            configs,
+            kept={fact.alias for fact in dropped},
+            previous=previous,
+        ),
+        unresolved=MappingProxyType(unresolved),
+    )
+    return resolved, _moved(previous, resolved) + dropped
+
+
+def _each_declaration(
+    declared: Sequence[str | LLMConfig],
+    targets: Mapping[str, CuratedModel],
+    unreadable: str | None,
+    previous: DeclaredModels | None,
+) -> tuple[tuple[LLMConfig, ...], dict[str, str], tuple[AliasFact, ...]]:
+    """Every declaration resolved on its own: the catalog's entry, the entry already in
+    use where the catalog has dropped it, or the reason the call naming it will raise."""
+    configs: list[LLMConfig] = []
+    unresolved: dict[str, str] = {}
+    dropped: list[AliasFact] = []
+    for item in declared:
+        if isinstance(item, LLMConfig):
+            configs.append(item)
+        elif (target := targets.get(item)) is not None:
+            configs.append(replace(target.declare(), alias=item))
+        elif (serving := _serving(previous, item)) is not None:
+            configs.append(serving)
+            dropped.append(AliasFact(change=AliasChange.DROPPED, alias=item, was=serving.model))
+        else:
+            unresolved[item] = _unresolved_message(item, targets, unreadable)
+    return tuple(configs), unresolved, tuple(dropped)
+
+
+def _key_help(
+    targets: Mapping[str, CuratedModel],
+    configs: tuple[LLMConfig, ...],
+    *,
+    kept: set[str],
+    previous: DeclaredModels | None,
+) -> dict[str, str]:
+    """Where a key for these entries comes from. An entry kept because the catalog
+    dropped its alias keeps the help it was resolved with: the read just made no longer
+    names that provider, so it has nothing to say about where its key comes from."""
+    wanted = {cfg.api_key_ref for cfg in configs}
+    help_ = {
+        t.provider.api_key_ref: t.provider.key_help
+        for t in targets.values()
+        if t.provider.key_help and t.provider.api_key_ref in wanted
+    }
+    was = previous.key_help if previous is not None else {}
+    for cfg in configs:
+        if cfg.alias in kept and cfg.api_key_ref not in help_ and cfg.api_key_ref in was:
+            help_[cfg.api_key_ref] = was[cfg.api_key_ref]
+    return help_
+
+
+async def _catalog_targets(
+    declared: Sequence[str | LLMConfig],
+    presets: PresetSource,
+    *,
+    previous: DeclaredModels | None,
+    fetch: bool,
+) -> tuple[Mapping[str, CuratedModel], str | None]:
+    """The catalog's alias targets, and — where it could not be read — why, which is
+    ``None`` when it was read. A re-resolution raises that instead of reporting it: a
+    read that failed says nothing about where an alias points."""
+    if not any(isinstance(item, str) for item in declared):
+        return _NO_TARGETS, None
+    try:
         text = await asyncio.to_thread(
             presets.text,
             PAID_CATALOG,
@@ -74,21 +147,18 @@ async def resolve_declared(
             floor=previous is None,
             fetch=fetch,
         )
-        targets = catalog_alias_targets(tomllib.loads(text))
-    configs = tuple(
-        item if isinstance(item, LLMConfig) else _entry_for_alias(item, targets)
-        for item in declared
-    )
-    wanted = {cfg.api_key_ref for cfg in configs}
-    resolved = DeclaredModels(
-        configs=configs,
-        key_help={
-            t.provider.api_key_ref: t.provider.key_help
-            for t in targets.values()
-            if t.provider.key_help and t.provider.api_key_ref in wanted
-        },
-    )
-    return resolved, _moved(previous, resolved)
+        return catalog_alias_targets(tomllib.loads(text)), None
+    except (ValueError, OSError) as exc:
+        if previous is not None:
+            raise
+        return _NO_TARGETS, str(exc) or type(exc).__name__
+
+
+def _serving(previous: DeclaredModels | None, alias: str) -> LLMConfig | None:
+    """The entry this alias is already answering from, where there is one."""
+    if previous is None:
+        return None
+    return next((cfg for cfg in previous.configs if cfg.alias == alias), None)
 
 
 def _moved(previous: DeclaredModels | None, current: DeclaredModels) -> tuple[AliasFact, ...]:
@@ -106,17 +176,21 @@ def _moved(previous: DeclaredModels | None, current: DeclaredModels) -> tuple[Al
     return tuple(facts)
 
 
-def _entry_for_alias(alias: str, targets: Mapping[str, CuratedModel]) -> LLMConfig:
-    target = targets.get(alias)
-    if target is None:
-        # A typo is the expected failure and the fix is one word, so the message
-        # has to carry the words that would work.
-        have = ", ".join(sorted(targets)) or "none"
-        raise UnknownModelError(
-            f"direct= names {alias!r}, which the paid catalog does not carry"
-            f" — available aliases: {have}",
-        )
-    return replace(target.declare(), alias=alias)
+def _unresolved_message(
+    alias: str,
+    targets: Mapping[str, CuratedModel],
+    unreadable: str | None,
+) -> str:
+    """Why this handle has no entry, as the call naming it reports it. A typo is the
+    expected failure and the fix is one word, so the message carries the words that
+    would work."""
+    if unreadable is not None:
+        return f"direct= names {alias!r}, and the paid catalog could not be read: {unreadable}"
+    have = ", ".join(sorted(targets)) or "none"
+    return (
+        f"direct= names {alias!r}, which the paid catalog does not carry"
+        f" — available aliases: {have}"
+    )
 
 
 def _alias_facts(was: LLMConfig, now: LLMConfig) -> list[AliasFact]:

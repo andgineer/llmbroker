@@ -4,6 +4,7 @@ import asyncio
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import suppress
+from datetime import datetime
 from functools import partial
 from typing import Any, NoReturn, cast
 
@@ -201,6 +202,30 @@ class RoutedStream:
                     continue
                 raise
 
+    async def _reported(self, exc: NoLLMAvailableError) -> NoLLMAvailableError:
+        """What an initial acquisition raises. Where the candidates it may not reopen
+        come back by themselves, that is the pool being busy and not a fault nothing
+        resolves, so it is reported as a routed call reports the same pool state."""
+        if exc.reason != "excluded":
+            return exc
+        retry_at = await self._retry_at()
+        if retry_at is None:
+            return exc
+        return NoLLMAvailableError(
+            "every LLM this stream could use is cooling down",
+            reason="timeout",
+            retry_at=retry_at,
+        )
+
+    async def _retry_at(self) -> datetime | None:
+        """When a model this caller can pay for comes back, or ``None`` where one can
+        serve right now."""
+        payable = await self._backend.payable(self._ring)
+        return self._backend.retry_at(
+            payable,
+            exclude=frozenset(self._current_call.client_failed),
+        )
+
     def _open(
         self,
         configs: list[LLMConfig],
@@ -300,16 +325,11 @@ class RoutedStream:
                 await self._refill_free()
             if not self._current_race.live():
                 if self._current_call.expired:
-                    self._raise_initial_fault(
-                        NoLLMAvailableError(
-                            "the wait budget ran out before any LLM produced a delta",
-                            reason="timeout",
-                        ),
-                    )
+                    await self._raise_expired()
                 try:
                     self._open(await self._acquire(initial=True), hold_first=True, new_wave=True)
                 except NoLLMAvailableError as exc:
-                    self._raise_initial_fault(exc)
+                    self._raise_initial_fault(await self._reported(exc))
             selected = self._first_delta()
             if selected is None:
                 if not self._current_race.live():
@@ -362,16 +382,11 @@ class RoutedStream:
                 )
             if not race.lanes or not race.live():
                 if self._current_call.expired:
-                    self._raise_initial_fault(
-                        NoLLMAvailableError(
-                            "the wait budget ran out before any LLM produced a delta",
-                            reason="timeout",
-                        ),
-                    )
+                    await self._raise_expired()
                 try:
                     self._open(await self._acquire(initial=True), hold_first=False, new_wave=True)
                 except NoLLMAvailableError as exc:
-                    self._raise_initial_fault(exc)
+                    self._raise_initial_fault(await self._reported(exc))
                 race.deadline = time.monotonic() + self._window
                 if self._current_call.answer_deadline is not None:
                     race.deadline = min(race.deadline, self._current_call.answer_deadline)
@@ -494,6 +509,17 @@ class RoutedStream:
             if lane.outcome.crashed is not None
         ]
         return min(crashed, default=(0, None))[1]
+
+    async def _raise_expired(self) -> NoReturn:
+        """The budget ran out before any delta: the timeout a routed call raises there,
+        naming when the pool is back where nothing can serve this caller now."""
+        self._raise_initial_fault(
+            NoLLMAvailableError(
+                "the wait budget ran out before any LLM produced a delta",
+                reason="timeout",
+                retry_at=await self._retry_at(),
+            ),
+        )
 
     def _raise_initial_fault(self, fallback: NoLLMAvailableError) -> NoReturn:
         exposed = self._current_race.exposed

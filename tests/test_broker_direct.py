@@ -177,9 +177,9 @@ def test_direct_by_name_searches_the_declared_models_only():
     through a broker — but the lookup itself must still mean the declared model."""
     managed = LLMConfig(name="dup", base_url="https://pool/v1", model="m", api_key_ref="K")
     mine = LLMConfig(name="dup", base_url="https://paid/v1", model="big", api_key_ref="K")
-    assert find_declared([managed], [mine], None, "dup") is mine
+    assert find_declared([managed], [mine], {}, None, "dup") is mine
     with pytest.raises(PoolModelError):
-        find_declared([managed], [], None, "dup")
+        find_declared([managed], [], {}, None, "dup")
 
 
 def test_direct_missing_key_raises(tmp_path):

@@ -236,9 +236,12 @@ All direct-call exceptions inherit `LLMRequestError`:
 - `PoolModelError` — the name belongs to a model in the maintained pool. Use
   `ask`, `chat`, or `stream`, or create your own model configuration.
 - `UnknownModelError` — no matching name or alias exists. If the value exists in
-  the other category, the message explains that. The same error is raised by the
-  first call when `direct=` contains an alias not found in the paid catalog; the
-  message lists available aliases.
+  the other category, the message explains that. The same error is raised when
+  `direct=` contains an alias the paid catalog does not carry, or the catalog could
+  not be read at all; the message lists available aliases. Only `direct()` on that
+  alias fails: the pool, the other declared models and `snapshot()` are unaffected,
+  and `snapshot().direct_unresolved` maps every such alias to its message, so a
+  status screen shows a typo without making a call.
 - `MissingKeyError` — the key named by `api_key_ref` was not found. This is an
   error for a direct call; a pool model without a key is simply not used.
 - `ProviderError` — the provider returned an error. `.status` and `.detail`

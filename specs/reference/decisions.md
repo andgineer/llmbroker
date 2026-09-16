@@ -351,6 +351,19 @@ reader nor the answer. The model did answer, so cooling it would take it from ev
 other caller over one caller's clock; what it did not do is finish, which is what
 the miss bound already records.
 
+### a-stream-reports-what-can-come-back
+
+**Blocks:** reporting a cooling pool to a stream as `excluded`; and making a stream
+wait on a cooldown and reopen a tried model so that it fails exactly as `ask` does.
+**Why:** a host reads `excluded` as a fault nothing will resolve, so the reason
+decided whether it fell back at all — that is the half worth fixing, and it is one
+call to the pool. The other half, waiting, asks the lane machinery for a waiver of
+at-most-once, a rearmed budget for the one pool re-read, and a boundary for what the
+caller has already been handed; three review rounds found one defect in each. A
+stream's own answer already carries the moment a candidate returns, so a caller that
+wants to wait can, while a caller with a fallback — the case the pool exists beside —
+does not pay for a wait it did not ask for.
+
 ### an-empty-answer-is-a-failure
 
 A 200 carrying a well-formed completion with no text and no tool calls is not an
@@ -730,6 +743,16 @@ states that and where a reader of its configuration sees it
 ([`rules/direct-by-name.md`](rules/direct-by-name.md#the-alias-contract)). A host
 handing over a fully stated config has pinned on purpose; expecting llmbroker to
 move it would be the surprising reading, not the natural one.
+
+### a-declaration-error-stays-with-its-handle
+
+**Blocks:** failing provisioning, routing and every `direct()` because one declared
+alias cannot be resolved.
+**Why:** a typo in one paid alias disabled the free pool and every correct alias, on
+every call, although routing never uses a declared model. The error stays as loud
+where it matters — the `direct()` naming the handle raises the same message, the log
+carries it once, and `snapshot()` shows it — and nothing that does not name it can
+fail because of it.
 
 ### declared-models-are-not-stored
 

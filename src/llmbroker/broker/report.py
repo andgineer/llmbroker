@@ -10,12 +10,21 @@ from llmbroker.models import SyncReport
 def alias_lines(facts: Iterable[AliasFact]) -> tuple[str, ...]:
     """One line per fact — a re-spelled key ref is the one a reader must act on, so
     its line says what to set."""
-    return tuple(
-        f"{fact.alias}: api_key_ref {fact.was} -> {fact.now} — set {fact.now} before the next call"
-        if fact.change is AliasChange.KEY_REF
-        else f"{fact.alias}: {fact.was} -> {fact.now}"
-        for fact in facts
-    )
+    return tuple(_alias_line(fact) for fact in facts)
+
+
+def _alias_line(fact: AliasFact) -> str:
+    if fact.change is AliasChange.KEY_REF:
+        return (
+            f"{fact.alias}: api_key_ref {fact.was} -> {fact.now}"
+            f" — set {fact.now} before the next call"
+        )
+    if fact.change is AliasChange.DROPPED:
+        return (
+            f"{fact.alias}: the paid catalog no longer carries it"
+            f" — answering from {fact.was}, the resolution already in use"
+        )
+    return f"{fact.alias}: {fact.was} -> {fact.now}"
 
 
 def format_report(report: SyncReport) -> str:

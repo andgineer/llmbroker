@@ -11,7 +11,7 @@ import pytest
 
 from llmbroker.broker import presets
 from llmbroker.broker.broker import AsyncBroker
-from llmbroker.exceptions import EmptyRegistryError
+from llmbroker.exceptions import EmptyRegistryError, UnknownModelError
 from llmbroker.models import LLMConfig
 from llmbroker.sqlite import Registry as SqliteRegistry
 from llmbroker.standalone.secrets import DictSecrets
@@ -222,11 +222,15 @@ async def test_a_sync_with_nowhere_to_keep_the_catalog_says_so_instead_of_doing_
 
 
 async def test_nothing_cached_and_nothing_bundled_says_what_to_run(tmp_path, never_fetches):
+    """The catalog a declared alias follows is not on this machine and will not be
+    fetched. The pool is unaffected and routes; the handle that needs it says what to
+    run, from the call that names it."""
     await _seeded(tmp_path)
-    broker = _broker(tmp_path, sync_interval=None, direct=["opus"])
-    with pytest.raises(ValueError, match=r"broker\.sync\(\)") as exc:
+    async with _broker(tmp_path, sync_interval=None, direct=["opus"]) as broker:
         await broker.ensure_pool()
-    await broker.aclose()
+        assert await broker.count() == 1
+        with pytest.raises(UnknownModelError, match=r"broker\.sync\(\)") as exc:
+            await broker.direct("opus")
     assert "paid-catalog" in str(exc.value)
 
 

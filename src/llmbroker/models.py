@@ -14,7 +14,7 @@ from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger("llmbroker.registry")
 
-_NO_KEY_HELP: Mapping[str, str] = MappingProxyType({})
+_EMPTY_MAP: Mapping[str, str] = MappingProxyType({})
 
 # Two providers is what "failover" means: one is a single quota with nothing to
 # fall back to. It describes the feature, not a tuning knob.
@@ -198,7 +198,7 @@ class PendingKey:
 
 @dataclass(frozen=True, slots=True)
 class DeclaredModels:
-    """What ``direct=`` resolved to: the entries, and where to get the keys they want.
+    """What ``direct=`` resolved to, what it could not, and where to get the keys.
 
     The help travels with the entries because nothing stores a declared model —
     there is no registry row for a later read to recover it from.
@@ -207,7 +207,8 @@ class DeclaredModels:
     configs: tuple[LLMConfig, ...] = ()
     # Factory, not a plain default: mappingproxy is unhashable before 3.12, and
     # dataclasses reject an unhashable default outright.
-    key_help: Mapping[str, str] = field(default_factory=lambda: _NO_KEY_HELP)
+    key_help: Mapping[str, str] = field(default_factory=lambda: _EMPTY_MAP)
+    unresolved: Mapping[str, str] = field(default_factory=lambda: _EMPTY_MAP)
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,6 +401,7 @@ class PoolSnapshot(Mapping[str, LLMSnapshot]):
     _llms: Mapping[str, LLMSnapshot]
     _health: PoolHealth
     _direct_missing_keys: tuple[PendingKey, ...] = ()
+    _direct_unresolved: Mapping[str, str] = field(default_factory=lambda: _EMPTY_MAP)
 
     @property
     def providers_usable(self) -> int:
@@ -419,6 +421,12 @@ class PoolSnapshot(Mapping[str, LLMSnapshot]):
         Kept apart from ``missing_keys``, which counts the pool's failover capacity —
         a model that is never routed can neither degrade nor repair it."""
         return self._direct_missing_keys
+
+    @property
+    def direct_unresolved(self) -> Mapping[str, str]:
+        """Handles ``direct=`` declared and could not resolve, each with why. A typo in
+        one alias is visible here without making a call, and fails nothing else."""
+        return self._direct_unresolved
 
     @property
     def degraded(self) -> bool:
