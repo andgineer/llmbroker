@@ -39,10 +39,12 @@ Before claiming anything is done, these must be green:
    `src/`, not for a docs-only or spec-only change. It takes minutes, so it runs once at the
    end of the work rather than after every batch.
 
-`invoke downstream` checks out each host listed in `downstream.toml` (dinary, echo-words) into a
-throwaway directory with its own venv, and runs the host's suite and type check there twice: on
-llmbroker at `--baseline-ref` (default `HEAD`; CI uses the newest release on PyPI), then on the
-working tree. A host test that passes before the change and, with it, fails or no longer runs at
+`invoke downstream` is a local check and runs nowhere else: CI does not gate a release on the
+hosts, because a host pinning behavior this release deliberately changes would then block the
+very release it has to adopt. It checks out each host listed in `downstream.toml` (dinary,
+echo-words) into a throwaway directory with its own venv, and runs the host's suite and type
+check there twice: on llmbroker at `--baseline-ref` (default `HEAD`, or `--baseline-published`
+for the newest release on PyPI), then on the working tree. A host test that passes before the change and, with it, fails or no longer runs at
 all is a regression, and every regression is one of three kinds:
 
 - **an llmbroker defect** — fixed before the change is done;
@@ -50,9 +52,9 @@ all is a regression, and every regression is one of three kinds:
   after the release;
 - **a host test coupled to llmbroker internals** — the host repo fixes its test.
 
-The last two stay red until the maintainer accepts them with a `[[host.accepted]]` entry in
-`downstream.toml`, carrying the reason and what the host must change. Only the maintainer adds
-one, and the runner never edits a host.
+For the last two the handover names the test, the cause and the host-side change, and the host
+adopts it after the release; a `[[host.accepted]]` entry in `downstream.toml` silences one that
+would otherwise be reported on every later run. The runner never edits a host.
 
 **Never call `pytest` directly for a whole run — always `invoke test`.** It runs the suite
 twice: once on this platform's clock, then again with `-p coarse_clock` (`tests/`), which

@@ -9,7 +9,6 @@ import urllib.error
 from pathlib import Path
 
 import pytest
-import yaml
 from invoke import MockContext, Result
 
 import tasks
@@ -998,18 +997,6 @@ def test_a_published_version_with_no_tag_fails_the_run_loudly(monkeypatch, tmp_p
     monkeypatch.setattr(downstream, "check_host", lambda *_: pytest.fail("ran without a baseline"))
     assert downstream.main(["--baseline-published"], repo=repo) == 1
     assert "there is no tag v1.10.3" in capsys.readouterr().err
-
-
-def test_ci_checks_the_hosts_against_the_published_release_within_a_time_limit():
-    workflow = yaml.safe_load((REPO / ".github" / "workflows" / "ci.yml").read_text("utf-8"))
-    job = workflow["jobs"]["downstream"]
-    (step,) = [s for s in job["steps"] if "invoke downstream" in s.get("run", "")]
-    assert "git tag" not in step["run"]
-    assert "--baseline-ref" not in step["run"]
-    assert "--baseline-published" in step["run"]
-    checkout = next(s for s in job["steps"] if s.get("uses", "").startswith("actions/checkout"))
-    assert checkout["with"]["fetch-depth"] == 0
-    assert 0 < job["timeout-minutes"] <= 60
 
 
 # ── main ─────────────────────────────────────────────────────────────────────

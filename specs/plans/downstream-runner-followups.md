@@ -1,7 +1,8 @@
 # Plan — the downstream check and the release gate: what the reviews left open
 
-**Status: source-bound on `5dda8c429` (v1.10.2 tag).** Tooling and CI only; nothing under
-`src/llmbroker/` changes.
+**Status: source-bound on `5dda8c429` (v1.10.2 tag).** The local `invoke downstream` check and
+the release workflows; nothing under `src/llmbroker/` changes. The check itself runs locally
+only — CI no longer gates a release on the hosts.
 
 Every item below was reproduced; repro scripts from the reviews are under
 `/private/tmp/claude-501/-Users-andrei-sorokin2-projects-dinary/348cb93a-0019-47dc-a580-1a67bc50a039/scratchpad/review5/`
@@ -56,8 +57,8 @@ signal. Without a parseable complete report it stays a failure. Positive non-0/1
 `docs.yml` job `deploy` share `concurrency: group: github-pages`. On a push both queue; GitHub
 cancels the older pending job in a concurrency group, so `primary-build` was cancelled one
 second after it started (run `34960328603`, commit `5dda8c429`). The run's conclusion became
-`cancelled` although every test job and `downstream` passed, and `pip_publish.yml` — which now
-requires `workflow_run.conclusion == 'success'` — skipped the v1.10.2 publish.
+`cancelled` although every test job passed, and `pip_publish.yml` — which now requires
+`workflow_run.conclusion == 'success'` — skipped the v1.10.2 publish.
 
 **Do.** Keep serializing writes to `gh-pages`, but never inside a job the release gate's
 conclusion depends on:

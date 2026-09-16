@@ -59,34 +59,6 @@ jobs:
       if: matrix.platform != env.PRIMARY_PLATFORM || matrix.python-version != env.PRIMARY_PYTHON_VERSION
       run: ${{ env.PYTEST_CMD }} -m "not docker"
 
-  # The hosts' own suites and type checks, on the last published llmbroker and on this commit.
-  downstream:
-    runs-on: ubuntu-latest
-    # A hanging host suite must not hold the release until GitHub's six-hour job limit.
-    timeout-minutes: 30
-
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-
-    - name: Set up Python ${{ env.PRIMARY_PYTHON_VERSION }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ env.PRIMARY_PYTHON_VERSION }}
-
-
-    - name: Install uv environment
-      uses: andgineer/uv-venv@v3
-
-    - name: Install dependencies
-      run: uv sync --frozen --all-extras
-
-    # The baseline is the release PyPI serves, not the newest tag: a release whose publish this
-    # job blocked keeps its tag, and taking it as baseline would pass off its regression as old.
-    - name: Check the downstream hosts against the last published release
-      run: uv run invoke downstream --source github --baseline-published
-
 # Build with publishing Allure report, coverage report
   primary-build:
     runs-on: ubuntu-latest
