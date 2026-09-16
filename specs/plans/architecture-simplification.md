@@ -27,6 +27,18 @@ No retention flag, separate advanced-stream API, first-completion cancellation o
 new answer-validation policy is part of this plan. Internal ownership and budget
 work must still support all of those existing shapes.
 
+**One divergence to settle while consolidating stream ownership.** On a stream a budget
+expiry is checked before the acquisition, so the one pre-output exhaustion refresh never
+fires when a lane blows the budget; `ask` runs that refresh one level up and does fire it.
+The two surfaces therefore disagree on the state that refresh exists for — a key landing
+mid-call after a lane has spent the budget. Measured with one keyed model that opens and
+says nothing, `wait=0.3`, and a hook adding a payable model: `ask` answers in 0.31 s,
+having refreshed once and journaled `a ERROR`, `c OK`; the stream raises
+`NoLLMAvailableError(reason="timeout")` in 0.30 s, having refreshed zero times and
+journaled `a ERROR`. It predates this plan and was deliberately left alone by the stream
+reporting change, because fixing it there meant reaching into the machinery this plan
+consolidates.
+
 Keep the three public storage ports, optional extras, synchronous facade, direct
 client behavior, selection formulas, registry ownership and secret isolation.
 No dynamic proxy layer, generic SQL builder, write-behind queue, durable aggregate

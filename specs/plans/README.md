@@ -4,18 +4,17 @@
 
 | # | plan | readiness | what it is |
 |---|---|---|---|
-| 1 | [`stream-wait-and-declaration-errors.md`](stream-wait-and-declaration-errors.md) | source-bound on `ab9cb45a7`; implemented, awaiting review sign-off | a stream reports a pool that can come back as `timeout` with `retry_at` instead of `excluded`, leaving its routing untouched; an unresolvable paid alias fails only `direct()` on that alias and shows in `snapshot()`, instead of every call. Two defects a downstream host's contract tests found |
-| 2 | [`downstream-runner-followups.md`](downstream-runner-followups.md) | source-bound on `5dda8c429`; independent of row 1 (tooling and CI only) | module-skip placeholders and fallback ids in the downstream check, a signal kill after a complete report, report order — and the `github-pages` concurrency group that cancelled CI and made the publish gate skip v1.10.2 |
-| 3 | [`architecture-simplification.md`](architecture-simplification.md) | source-bound on `67659c350`; revalidate against the working tree first | consolidate stream ownership and attempt settlement, remove duplicate rebuilds, acknowledge journal writes, simplify deadlines and backend rating storage; retain the alternative-answer contract |
-| 4 | [`load-harness.md`](load-harness.md) | source-bound on v1.7.0; revalidate after row 3 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of one host's private script |
-| 5 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 4 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
+| 1 | [`downstream-runner-followups.md`](downstream-runner-followups.md) | source-bound on `5dda8c429`; tooling and CI only, independent of the rest | module-skip placeholders and fallback ids in the downstream check, a signal kill after a complete report, report order — and the `github-pages` concurrency group that cancelled CI and made the publish gate skip v1.10.2 |
+| 2 | [`architecture-simplification.md`](architecture-simplification.md) | source-bound on `67659c350`; revalidate against the working tree first | consolidate stream ownership and attempt settlement, remove duplicate rebuilds, acknowledge journal writes, simplify deadlines and backend rating storage; retain the alternative-answer contract |
+| 3 | [`load-harness.md`](load-harness.md) | source-bound on v1.7.0; revalidate after row 2 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of one host's private script |
+| 4 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 3 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
 
-Architecture simplification was bound before two changes landed on its ground — tools and
-tool parameters on direct calls, and a broker whose context provisions nothing while
-`direct()` ticks the refresh clock. Both reshape the refresher, the direct clients and the
-request builder it consolidates, so its binding is revalidated against the current source
-before any batch is handed off — after row 1 lands, since row 1 changes the stream's
-initial acquisition and declared-model resolution it consolidates.
+Architecture simplification was bound before several changes landed on its ground: tools and
+tool parameters on direct calls, a broker whose context provisions nothing while `direct()`
+ticks the refresh clock, per-handle resolution of declared models, and the reason a stream
+reports when no model can serve it. They reshape the refresher, the direct clients, the
+request builder and the stream's error path it consolidates, so its binding is revalidated
+against the current source before any batch is handed off.
 
 Architecture simplification comes before the harness because its deadline and
 storage changes determine what the harness measures and what caller visibility can
