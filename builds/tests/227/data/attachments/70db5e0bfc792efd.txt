@@ -1,0 +1,1 @@
+WARNING  llmbroker.broker:presets.py:128 preset freetier: offline — falling back to the bundled copy, frozen at this llmbroker release and possibly older than the curated one
