@@ -1131,3 +1131,17 @@ Mechanisms weighed and dropped that do not attach to a decision above.
   does exist, and it is already the pool's ordering mechanism.
 - **Sorting models known to accept a schema first** — it rests on the fact above
   and falls with it.
+- **A routing-order accessor** — "which model takes the next call", as a field on
+  the snapshot or a method on the optimizer. The order is not state the pool
+  holds: it is one sort over the entries free at that instant, keyed by the
+  operation called and by what is left of the caller's budget, so an honest
+  answer takes those arguments and is a dry run of the router rather than a
+  reading of it. Under `fastest_of`, recovery cover and a stream's own candidate
+  set there is no single order to report at all. What a screen actually asks —
+  which model serves the traffic — the journal answers as observed fact, since
+  the best available entry takes all of it
+  ([`curated-priority-not-round-robin`](#curated-priority-not-round-robin)), and
+  the part of the ranking that does not move between calls — demotion, quality
+  score, curated weight, registry order — is already on the snapshot and the
+  optimizer for a host that wants to present it
+  ([`no-alerts-api`](#no-alerts-api)).
