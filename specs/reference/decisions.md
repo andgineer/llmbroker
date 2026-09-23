@@ -1015,6 +1015,50 @@ presentation.
 a multi-threaded synchronous host would queue up its parallel LLM calls. A
 background loop gives N threads honest parallelism.
 
+### a-sync-stream-relays-each-pull
+
+A synchronous stream is the async stream read one pull at a time: each delta a thread
+asks for is one pull on the broker's loop, handed back when it arrives.
+
+**Blocks:** a task on the loop reading the async stream ahead into a thread-safe queue
+the thread drains.
+**Why:** relaying each pull keeps the async stream's contract without restating it.
+An ordinary stream stays consumer-driven — its budget pauses while the reader holds a
+delta, and the provider is not read past what was asked for — and every exception
+surfaces at the pull it belongs to, as the very object the async stream raised. A
+read-ahead pump makes the pump the consumer instead: the budget pauses for it rather
+than for the reader, deltas pile up for a reader that has already gone, and closing
+must first stop a second task before the stream itself.
+**Accepted cost:** one hand-off between threads per delta — about 60 µs measured
+in-process, against about 150 µs the async stream spends on the same delta and the
+milliseconds a provider takes between deltas.
+
+### a-sync-stream-keeps-its-broker
+
+A synchronous stream, and a caller `for_scope` returns, hold the broker they came
+from, so the collector never reaches a broker that one of them can still use. Closing
+the broker — its `with` block or `close()` — is the orderly shutdown that settles and
+journals the streams it owns. A broker that is simply dropped is cleaned up as a
+backstop that never blocks and promises no row for an answer still in flight, and
+interpreter exit runs no teardown.
+
+**Blocks:** a stream that holds only the broker's loop and raises the closed-broker
+error once the broker is collected under it; a collector that waits for the
+broker's teardown; a teardown run at interpreter exit.
+**Why:** a broker collected under a live stream stops a loop a reader is still using,
+and every way of telling that reader — raising at its next pull, waking the pull it
+is blocked in, refusing the close it makes on leaving `with` — is one more race
+against the loop stopping. Holding the broker removes the case instead of answering
+it: the collector meets only streams nobody can read, and races no reader. A stream
+from a broker nobody else holds reads to its end. The collector must not wait,
+because it can fire on any thread, including one holding a lock the teardown needs —
+the executor lock that journaling takes is one — and waiting there hangs the
+process; so it only starts the teardown on the loop. At exit the executors are
+already shut, so a teardown could not journal and would only print a traceback.
+**Accepted cost:** a stream left unclosed keeps its broker, the loop thread and the
+HTTP client alive until the stream itself is collected, and a broker dropped rather
+than closed may lose the journal row of an answer still in flight.
+
 ### no-rate-limits
 
 **Blocks:** tracked request/token caps per minute or per day.

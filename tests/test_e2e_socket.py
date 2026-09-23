@@ -1,16 +1,23 @@
-"""End-to-end over a real socket: no patching anywhere. Two in-process HTTP
-servers speak OpenAI-compatible JSON — one rate-limits with ``Retry-After: 1``,
-the other answers — and the broker's own httpx client talks to them.
+"""End-to-end over a real socket: no patching anywhere. In-process HTTP servers speak
+OpenAI-compatible JSON and SSE — one rate-limits with ``Retry-After: 1``, one answers,
+one holds a stream open to see a client hang up — and llmbroker's own httpx clients
+talk to them.
 """
 
 import asyncio
+import gc
 import json
+import socket
+import threading
+import warnings
 
 from llmbroker.broker.broker import AsyncBroker
+from llmbroker.direct import DirectClient
 from llmbroker.models import LifecyclePhase
 from llmbroker.standalone.registry import Registry
 from llmbroker.standalone.secrets import DictSecrets
 from llmbroker.standalone.store import InMemoryStore
+from llmbroker.sync import Broker
 
 _COMPLETION = {"choices": [{"message": {"role": "assistant", "content": "answered"}}]}
 
@@ -119,3 +126,88 @@ async def test_rate_limited_model_fails_over_then_returns_after_its_cooldown(tmp
     finally:
         await server_a.stop()
         await server_b.stop()
+
+
+class _HeldStream:
+    """A loopback provider that sends one SSE delta, holds the response open, and
+    records the moment the client hangs up on it."""
+
+    def __init__(self) -> None:
+        self._listener = socket.create_server(("127.0.0.1", 0))
+        self.port = self._listener.getsockname()[1]
+        self.hung_up = threading.Event()
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def close(self) -> None:
+        self._listener.close()
+        self._thread.join(timeout=5.0)
+
+    def _serve(self) -> None:
+        conn, _ = self._listener.accept()
+        with conn:
+            conn.settimeout(10.0)
+            request = b""
+            while b"\r\n\r\n" not in request:
+                request += conn.recv(65536)
+            head, _, body = request.partition(b"\r\n\r\n")
+            while len(body) < _content_length(head):
+                body += conn.recv(65536)
+            event = b'data: {"choices": [{"delta": {"content": "one"}}]}\n\n'
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+                b"Transfer-Encoding: chunked\r\n\r\n" + b"%x\r\n%s\r\n" % (len(event), event),
+            )
+            try:
+                while conn.recv(1):
+                    pass
+            except ConnectionResetError:
+                pass
+            self.hung_up.set()
+
+
+def test_closing_a_sync_pool_stream_hangs_up_on_the_provider(tmp_path):
+    """The WSGI abort end to end: what closing the sync iterator reaches is the
+    provider's own socket, not only an object in this process — and closing the broker
+    afterwards leaves nothing of that response for a dead loop to finalize."""
+    provider = _HeldStream()
+    f = tmp_path / "llms.toml"
+    f.write_text(
+        f'[[llms]]\nname="a"\nbase_url="http://127.0.0.1:{provider.port}/v1"\n'
+        'model="m"\napi_key_ref="K"\n',
+    )
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with Broker(
+                registry=Registry(f),
+                secrets=DictSecrets({"K": "test"}),
+                store=InMemoryStore(),
+                sync=None,
+            ) as broker:
+                stream = broker.stream("hi")
+                assert next(stream) == "one"
+                assert not provider.hung_up.is_set()
+                stream.close()
+                assert provider.hung_up.wait(timeout=5.0)
+            gc.collect()
+    finally:
+        provider.close()
+    assert [str(w.message) for w in caught if "never awaited" in str(w.message)] == []
+
+
+def test_closing_a_sync_direct_stream_hangs_up_on_the_provider():
+    provider = _HeldStream()
+    try:
+        with DirectClient(
+            base_url=f"http://127.0.0.1:{provider.port}/v1",
+            model="m",
+            api_key="test",
+        ) as client:
+            deltas = client.stream("hi")
+            assert next(deltas) == "one"
+            assert not provider.hung_up.is_set()
+            deltas.close()
+            assert provider.hung_up.wait(timeout=5.0)
+    finally:
+        provider.close()

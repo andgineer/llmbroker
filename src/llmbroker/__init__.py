@@ -51,7 +51,7 @@ from llmbroker.models import (
 from llmbroker.optimizer import Optimizer
 from llmbroker.standalone.secrets import DictSecrets, Secrets
 from llmbroker.standalone.store import FileStore, InMemoryStore
-from llmbroker.sync import LLM, Broker, LLMs, Result
+from llmbroker.sync import LLM, Broker, LLMs, Result, Stream
 from llmbroker.tool_loop import arun_tool_loop, run_tool_loop
 
 __all__ = [
@@ -95,6 +95,7 @@ __all__ = [
     "ProviderError",
     "RateLimitError",
     "SchemaVersionError",
+    "Stream",
     "StreamHandle",
     "StreamInterruptedError",
     "StreamReplacementError",

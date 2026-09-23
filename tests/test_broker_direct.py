@@ -1,6 +1,7 @@
 """Broker-level direct() access and the pool boundary — mocked httpx, no network."""
 
 import asyncio
+import json
 import logging
 from unittest.mock import patch
 
@@ -313,3 +314,45 @@ def test_sync_broker_direct_ask(tmp_path):
             broker.direct(name="managed-a")
 
     assert result.text == "sync-direct"
+
+
+def test_sync_broker_direct_stream(tmp_path):
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, content=_SSE, headers={"content-type": "text/event-stream"})
+
+    mock = httpx.Client(transport=httpx.MockTransport(handler), timeout=1.0)
+
+    with (
+        patch("llmbroker.direct.httpx.Client", return_value=mock),
+        Broker(
+            registry=_registry(tmp_path),
+            secrets=DictSecrets({"K": "test"}),
+            store=FileStore(tmp_path / "store"),
+            sync=None,
+            direct=_DECLARED,
+        ) as broker,
+        broker.for_scope("alice").direct("opus") as client,
+    ):
+        deltas = list(client.stream("hi", params={"reasoning_effort": "none"}))
+
+    assert deltas == ["Hel", "lo"]
+    assert seen["url"] == "https://paid/v1/chat/completions"
+    assert (seen["body"]["model"], seen["body"]["reasoning_effort"]) == ("big", "none")
+
+
+def test_sync_broker_direct_without_a_key_raises_before_any_stream(tmp_path):
+    with (
+        Broker(
+            registry=_registry(tmp_path),
+            secrets=DictSecrets({}),
+            store=FileStore(tmp_path / "store"),
+            sync=None,
+            direct=_DECLARED,
+        ) as broker,
+        pytest.raises(MissingKeyError),
+    ):
+        broker.for_scope("alice").direct("opus")

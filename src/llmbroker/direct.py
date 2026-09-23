@@ -1,8 +1,9 @@
 """Direct single-model client: no pool, no failover, no journal. Reuses the
 request/response primitives in ``chat.py``."""
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping
 from dataclasses import dataclass
+from functools import partial
 
 import httpx
 
@@ -12,6 +13,7 @@ from llmbroker.chat import (
     build_chat_request,
     completion_from_response,
     empty_answer_error,
+    iter_chat_chunks,
     make_client,
     parse_stream_chunk,
     provider_error,
@@ -65,37 +67,22 @@ class AsyncDirectClient:
         client: httpx.AsyncClient | None = None,
         tool_params: Mapping[str, object] | None = None,
     ) -> None:
-        self._base_url = base_url
         self._model = model
-        self._api_key = api_key
         self._timeout = timeout
         self._http = client
         self._owns_http = client is None
-        self._tool_params = tool_params
+        self._request = partial(
+            build_chat_request,
+            base_url,
+            model,
+            api_key,
+            tool_params=tool_params,
+        )
 
     def _ensure_http(self) -> httpx.AsyncClient:
         if self._http is None:
             self._http = make_client(self._timeout)
         return self._http
-
-    def _request(
-        self,
-        messages: list[dict],
-        tools: list[dict] | None = None,
-        *,
-        stream: bool = False,
-        params: Mapping[str, object] | None = None,
-    ) -> tuple[str, dict[str, str], dict]:
-        return build_chat_request(
-            self._base_url,
-            self._model,
-            self._api_key,
-            messages,
-            tools,
-            stream=stream,
-            params=params,
-            tool_params=self._tool_params,
-        )
 
     async def ask(
         self,
@@ -176,9 +163,9 @@ class AsyncDirectClient:
 
 
 class DirectClient:
-    """Synchronous direct client for one named model — ``ask()`` and ``chat()``, each a
-    single ``POST`` needing no event loop; streaming is async-only. ``client`` and
-    ``tool_params`` mean what they do on ``AsyncDirectClient``."""
+    """Synchronous direct client for one named model — ``stream()``, ``ask()`` and
+    ``chat()``, none needing an event loop. ``client`` and ``tool_params`` mean what
+    they do on ``AsyncDirectClient``."""
 
     def __init__(  # noqa: PLR0913 - where the model is, and how to reach it
         self,
@@ -190,13 +177,17 @@ class DirectClient:
         client: httpx.Client | None = None,
         tool_params: Mapping[str, object] | None = None,
     ) -> None:
-        self._base_url = base_url
         self._model = model
-        self._api_key = api_key
         self._timeout = timeout
         self._http = client
         self._owns_http = client is None
-        self._tool_params = tool_params
+        self._request = partial(
+            build_chat_request,
+            base_url,
+            model,
+            api_key,
+            tool_params=tool_params,
+        )
 
     def _ensure_http(self) -> httpx.Client:
         if self._http is None:
@@ -222,15 +213,7 @@ class DirectClient:
         params: Mapping[str, object] | None = None,
     ) -> DirectResult:
         """One complete reply, which may be tool calls and no text."""
-        url, headers, body = build_chat_request(
-            self._base_url,
-            self._model,
-            self._api_key,
-            messages,
-            tools,
-            params=params,
-            tool_params=self._tool_params,
-        )
+        url, headers, body = self._request(messages, tools, params=params)
         try:
             resp = self._ensure_http().post(
                 url,
@@ -241,6 +224,43 @@ class DirectClient:
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError("direct call timed out") from exc
         return _result(resp, self._model)
+
+    def stream(
+        self,
+        prompt: str | None = None,
+        *,
+        messages: list[dict] | None = None,
+        timeout: float | None = None,
+        params: Mapping[str, object] | None = None,
+    ) -> Iterator[str]:
+        """Text deltas as they arrive. Closing the iterator early closes the response,
+        and with it the connection the provider is writing to."""
+        url, headers, body = self._request(
+            _messages(prompt, messages),
+            stream=True,
+            params=params,
+        )
+        try:
+            with self._ensure_http().stream(
+                "POST",
+                url,
+                headers=headers,
+                json=body,
+                timeout=timeout or self._timeout,
+            ) as resp:
+                if resp.status_code >= ERROR_FLOOR:
+                    detail = resp.read().decode(errors="replace")[:DETAIL_SNIPPET]
+                    raise provider_error(resp.status_code, detail, resp.headers)
+                produced = False
+                for chunk in iter_chat_chunks(resp, self._model):
+                    delta, _ = parse_stream_chunk(chunk, self._model)
+                    if delta:
+                        produced = True
+                        yield delta
+                if not produced:
+                    raise empty_answer_error(self._model, NO_DELTA)
+        except httpx.TimeoutException as exc:
+            raise LLMTimeoutError("direct stream timed out") from exc
 
     def close(self) -> None:
         if self._owns_http and self._http is not None:

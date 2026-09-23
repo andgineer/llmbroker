@@ -303,6 +303,12 @@ with llmbroker.Broker("broker.db") as broker:
 
 For `AsyncBroker`, use `async with` or `await broker.aclose()`.
 
+Closing the broker, with the `with` block above or `close()`, waits until its open
+streams are cancelled and recorded in the call journal. Closing stays optional for an
+ordinary script: a synchronous broker that is simply dropped, or still open when the
+process exits, is released without waiting, and an answer still being streamed at
+that moment may be missing from the journal.
+
 ## Call journal {#journal}
 
 Each model attempt records the model name, outcome, usage information, `trace_id`,

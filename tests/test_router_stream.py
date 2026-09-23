@@ -1411,8 +1411,11 @@ def test_broker_closes_unstarted_streams_without_provisioning(tmp_path):
         stream = broker.stream("hi")
         async with stream:
             assert broker._provisioned is False
+            assert not stream.closed
+        assert stream.closed
         pending = broker.for_scope("alice").stream("later")
         await broker.aclose()
+        assert pending.closed
         assert broker._provisioned is False
         assert broker._router._http_client is None
         with pytest.raises(StopAsyncIteration):

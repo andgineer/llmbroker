@@ -163,14 +163,25 @@ described in [Asynchronous calls](async.md#streaming-from-the-pool).
 
 ## Synchronous
 
-Synchronous `Broker` also provides `direct(...)`, with `ask()` and `chat()`. Use
-`AsyncBroker` for streaming.
+Synchronous `Broker` also provides `direct(...)`, with `stream()`, `ask()`, and
+`chat()`. The synchronous client needs no event loop, and each client opens its own
+connections; close it with `with` or `client.close()` when the request is done.
 
 ```python
 with llmbroker.Broker(direct=["opus"]) as broker:
-    result = broker.direct("opus").ask("...")
-    print(result.text)
+    with broker.direct("opus") as client:
+        for delta in client.stream("Write a haiku about brokers"):
+            print(delta, end="", flush=True)
+
+        result = client.ask("Give me the full text")
+        print(result.text)
 ```
+
+Closing the stream early closes the connection the provider is writing to, so
+generation stops. Calling `close()` on the iterator closes it, and so does dropping
+it, which is what breaking out of `for delta in client.stream(...)` does. In a
+synchronous web server, a response body that iterates the stream closes it when the
+server closes the body after the client disconnects.
 
 ## Tools {#tools}
 
@@ -206,7 +217,7 @@ them, pass `tool_params=` to `LLMConfig` or pass `params=` on each call.
 Direct calls can include any parameter supported by the selected model, such as
 reasoning effort, temperature, a token limit, or `seed`. The `params` mapping is
 added to the request body unchanged. Synchronous and asynchronous clients accept
-it in `ask()` and `chat()`; the asynchronous client also accepts it in `stream()`:
+it in `ask()`, `chat()`, and `stream()`:
 
 ```python
 client = broker.direct("opus")

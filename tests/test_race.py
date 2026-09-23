@@ -127,8 +127,10 @@ def test_public_routed_surfaces_expose_parallel_options_and_direct_does_not():
         AsyncLLMs.stream,
         Broker.ask,
         Broker.chat,
+        Broker.stream,
         LLMs.ask,
         LLMs.chat,
+        LLMs.stream,
     )
     for method in routed:
         parameters = inspect.signature(method).parameters
@@ -1950,8 +1952,8 @@ def test_invalid_stream_selection_window_opens_no_provider_request(window):
     assert requested == []
 
 
-def test_the_selection_window_is_on_the_async_routed_stream_only():
-    for method in (AsyncBroker.stream, AsyncLLMs.stream):
+def test_the_selection_window_is_on_the_routed_stream_only():
+    for method in (AsyncBroker.stream, AsyncLLMs.stream, Broker.stream, LLMs.stream):
         parameter = inspect.signature(method).parameters["stream_selection_window"]
         assert parameter.default == 1.0
     absent = (

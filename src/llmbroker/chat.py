@@ -3,7 +3,7 @@ parsing live here once; the resolved key is passed in, never read off the config
 
 import json
 import math
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -266,25 +266,58 @@ _SSE_DATA_PREFIX = "data:"
 _SSE_DONE = "[DONE]"
 
 
-async def aiter_sse_chunks(response: httpx.Response) -> AsyncIterator[dict]:
-    """Yield decoded JSON objects from an OpenAI-compatible SSE stream body.
+def _sse_payload(raw: str) -> str | None:
+    """What one SSE line carries after ``data:``, or ``None`` for any other line.
 
-    ``data: [DONE]`` ends the stream; a payload that does not decode, or decodes to
-    a scalar or array, is skipped — every consumer here may assume an object.
+    >>> _sse_payload(" data: [DONE] "), _sse_payload(": keep-alive")
+    ('[DONE]', None)
     """
+    line = raw.strip()
+    if not line.startswith(_SSE_DATA_PREFIX):
+        return None
+    return line[len(_SSE_DATA_PREFIX) :].strip()
+
+
+def _sse_object(payload: str) -> dict | None:
+    """A payload decoded, or ``None`` where it is not a JSON object — every consumer
+    here may assume an object, so a scalar, an array or garbage is skipped.
+
+    >>> _sse_object('{"a": 1}'), _sse_object("[1]"), _sse_object("{oops")
+    ({'a': 1}, None, None)
+    """
+    try:
+        decoded = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
+def _no_chat_chunks(resp: httpx.Response, model: str) -> InvalidProviderResponseError:
+    return _invalid_stream(
+        model,
+        f"content-type={resp.headers.get('content-type', '')!r}, no chat-completion chunks decoded",
+    )
+
+
+async def aiter_sse_chunks(response: httpx.Response) -> AsyncIterator[dict]:
+    """Yield decoded JSON objects from an OpenAI-compatible SSE stream body;
+    ``data: [DONE]`` ends it."""
     async for raw in response.aiter_lines():
-        line = raw.strip()
-        if not line.startswith(_SSE_DATA_PREFIX):
-            continue
-        payload = line[len(_SSE_DATA_PREFIX) :].strip()
+        payload = _sse_payload(raw)
         if payload == _SSE_DONE:
             return
-        try:
-            decoded = json.loads(payload)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(decoded, dict):
-            yield decoded
+        if payload is not None and (chunk := _sse_object(payload)) is not None:
+            yield chunk
+
+
+def iter_sse_chunks(response: httpx.Response) -> Iterator[dict]:
+    """The synchronous twin of ``aiter_sse_chunks``."""
+    for raw in response.iter_lines():
+        payload = _sse_payload(raw)
+        if payload == _SSE_DONE:
+            return
+        if payload is not None and (chunk := _sse_object(payload)) is not None:
+            yield chunk
 
 
 async def aiter_chat_chunks(resp: httpx.Response, model: str) -> AsyncIterator[dict]:
@@ -296,11 +329,17 @@ async def aiter_chat_chunks(resp: httpx.Response, model: str) -> AsyncIterator[d
         completions += "choices" in chunk
         yield chunk
     if not completions:
-        raise _invalid_stream(
-            model,
-            f"content-type={resp.headers.get('content-type', '')!r},"
-            " no chat-completion chunks decoded",
-        )
+        raise _no_chat_chunks(resp, model)
+
+
+def iter_chat_chunks(resp: httpx.Response, model: str) -> Iterator[dict]:
+    """The synchronous twin of ``aiter_chat_chunks``."""
+    completions = 0
+    for chunk in iter_sse_chunks(resp):
+        completions += "choices" in chunk
+        yield chunk
+    if not completions:
+        raise _no_chat_chunks(resp, model)
 
 
 def _stream_delta(chunk: dict) -> str:

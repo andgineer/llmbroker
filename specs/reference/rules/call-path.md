@@ -214,7 +214,28 @@ healthy call stays on one lane.
 
 The routed pool streams as well as it answers: deltas arrive as the provider
 produces them, over the same routing, failover and journaling as a pooled call.
-It is async-only, like the direct client's streaming.
+
+**The synchronous broker streams over this same path, not a second one.** A thread
+gets the deltas the async stream hands over and the exceptions it raises, each at the
+same point, and nothing is read ahead of what the thread asked for, so an ordinary
+stream stays consumer-driven for a thread as for a coroutine
+([`decisions.md`](../decisions.md#a-sync-stream-relays-each-pull)). Closing it,
+leaving its context, or dropping it unclosed closes the stream it reads, so what a
+reader abandoned is cancelled at the provider rather than read to its end — which is
+what lets a synchronous web server that loses its client stop the answer it was
+paying for. A direct model's synchronous stream keeps the same promise on its own
+connection.
+
+**A synchronous stream and a scoped caller keep their broker alive**
+([`decisions.md`](../decisions.md#a-sync-stream-keeps-its-broker)), so a stream ends
+quietly short of its answer only once it is closed: by its reader, or by closing the
+broker. Closing the broker — leaving its `with` block, the normal way, or calling
+`close()` — is the orderly shutdown: it closes every stream the broker owns, waits
+until each is settled and journaled, and refuses new streams. Closing stays optional
+for an ordinary script. A broker that is simply dropped is still cleaned up, as a
+backstop: the collector only starts that teardown on the broker's own loop and
+returns, so it never blocks the thread it runs on, and it promises no journal row for
+an answer still in flight. Interpreter exit runs no teardown at all.
 
 **A streamed call names what answered it**, like every routed call: what it hands
 back carries the model and the call id its deltas came from, plus the token counts

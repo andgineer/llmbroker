@@ -39,8 +39,8 @@ can answer.
   [`NoLLMAvailableError`](usage.md#errors) explains why.
 - **Chat, tools, and agents** — `ask`, multi-turn `chat`, and a
   [complete tool-call loop](tools.md).
-- **Async calls and streaming** — [an API based on `await`](async.md), with
-  incremental output as the model generates it.
+- **Async calls and streaming** — [an API based on `await`](async.md), and
+  incremental output as the model generates it, from synchronous code as well.
 - **Direct paid-model calls** — [`direct("opus")`](direct.md) calls a model by a
   stable alias, independently of the pool.
 - **Quality-based selection** — [reply ratings](usage.md#quality) affect the

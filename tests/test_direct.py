@@ -337,6 +337,115 @@ def test_sync_ask_timeout_raises_llm_timeout():
 
 
 # --------------------------------------------------------------------------- #
+# sync stream
+# --------------------------------------------------------------------------- #
+
+
+def test_sync_stream_yields_deltas_and_forwards_params():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, content=_SSE, headers={"content-type": "text/event-stream"})
+
+    with _sync_client(handler) as client:
+        deltas = list(client.stream("hi", params={"temperature": 0.5}))
+
+    assert deltas == ["Hel", "lo"]
+    assert seen["body"]["temperature"] == 0.5
+    assert seen["body"]["stream"] is True
+    assert seen["body"]["stream_options"] == {"include_usage": True}
+
+
+@pytest.mark.parametrize(
+    ("status", "headers", "error"),
+    [
+        (401, {}, AuthError),
+        (429, {"Retry-After": "7"}, RateLimitError),
+        (500, {}, ProviderError),
+    ],
+)
+def test_sync_stream_error_status_raises_at_the_first_pull(status, headers, error):
+    """Lazy like the async generator: nothing is sent until the first pull, which is
+    where the status error surfaces — typed as ``ask`` types it."""
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(status, headers=headers, json={"error": "no"})
+
+    with _sync_client(handler) as client:
+        deltas = client.stream("hi")
+        assert sent == []
+        with pytest.raises(error) as exc_info:
+            next(deltas)
+
+    assert type(exc_info.value) is error
+    assert exc_info.value.status == status
+    if isinstance(exc_info.value, RateLimitError):
+        assert exc_info.value.retry_after == 7
+
+
+@pytest.mark.parametrize(
+    ("body", "content_type", "not_a_stream"),
+    [
+        (b"<html><body>502 from your proxy</body></html>", "text/html", True),
+        (
+            b'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}\n\ndata: [DONE]\n\n',
+            "text/event-stream",
+            False,
+        ),
+    ],
+)
+def test_sync_stream_without_an_answer_raises_like_the_async_one(body, content_type, not_a_stream):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body, headers={"content-type": content_type})
+
+    with _sync_client(handler) as client, pytest.raises(InvalidProviderResponseError) as exc_info:
+        list(client.stream("hi"))
+
+    assert exc_info.value.model == "m"
+    assert ("no chat-completion chunks decoded" in (exc_info.value.detail or "")) is not_a_stream
+
+
+def test_sync_stream_timeout_raises_llm_timeout():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    with _sync_client(handler) as client, pytest.raises(LLMTimeoutError):
+        list(client.stream("hi"))
+
+
+def test_closing_a_sync_stream_early_closes_the_response():
+    """What the provider sees of a reader that walked away: its response closed, not
+    read to the end."""
+
+    class _Body(httpx.SyncByteStream):
+        def __init__(self) -> None:
+            self.closed = False
+
+        def __iter__(self):
+            yield b'data: {"choices": [{"delta": {"content": "one"}}]}\n\n'
+            yield b'data: {"choices": [{"delta": {"content": "two"}}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        def close(self) -> None:
+            self.closed = True
+
+    body = _Body()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=body, headers={"content-type": "text/event-stream"})
+
+    with _sync_client(handler) as client:
+        deltas = client.stream("hi")
+        assert next(deltas) == "one"
+        assert not body.closed
+        deltas.close()
+        assert body.closed
+
+
+# --------------------------------------------------------------------------- #
 # input surface + error hierarchy
 # --------------------------------------------------------------------------- #
 

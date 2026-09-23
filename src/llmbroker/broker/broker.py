@@ -459,7 +459,7 @@ class AsyncBroker:
         stream_selection_window: float = 1.0,
     ) -> StreamHandle:
         """Return an owned stream that can supply another complete pool answer.
-        The broker closes it; use ``async with`` for earlier release. Async-only."""
+        The broker closes it; use ``async with`` for earlier release."""
         return self.llms.stream(
             prompt,
             operation=operation,

@@ -185,8 +185,9 @@ Every call accepts `trace_id=`, an identifier from your application such as a
 request or job ID. llmbroker stores it unchanged so journal entries can be
 matched to your logs. See [Finding the entries for one request](monitoring.md#trace).
 
-To receive an answer incrementally, use the asynchronous `broker.stream(...)`
-method with `async for`. See [Streaming](async.md#streaming-from-the-pool).
+To receive an answer incrementally, iterate `broker.stream(...)`: with `for` on
+`Broker`, with `async for` on `AsyncBroker`. See
+[Streaming](async.md#streaming-from-the-pool).
 
 Ordinary scripts do not need to close the broker. See
 [Servers & clusters](server.md#closing) for shutdown in server applications.
@@ -283,8 +284,8 @@ reply = broker.ask(
 ```
 
 `response_format` is passed to the selected model unchanged. Synchronous and
-asynchronous clients accept it in `ask` and `chat`; the asynchronous client also
-accepts it in `stream`. The value uses the provider's OpenAI-compatible format.
+asynchronous clients accept it in `ask`, `chat`, and `stream`. The value uses the
+provider's OpenAI-compatible format.
 llmbroker does not inspect it.
 
 **Schema compliance is not guaranteed.** Some models consistently follow a

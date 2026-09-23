@@ -14,9 +14,8 @@ Use `await llmbroker.arun_tool_loop(...)` for an asynchronous tool loop. See
 
 ## Streaming {#streaming-from-the-pool}
 
-Streaming is available only through the asynchronous API. `stream()` yields text
-chunks as they arrive. Model selection and fallback behave as they do for a
-regular call:
+`stream()` yields text chunks as they arrive. Model selection and fallback behave
+as they do for a regular call:
 
 ```python
 async with llmbroker.AsyncBroker() as broker:
@@ -31,7 +30,9 @@ async with llmbroker.AsyncBroker() as broker:
 `stream(...)` returns an asynchronous iterator. After the reply is complete, its
 fields contain the model name and usage information. The broker owns its streams:
 leaving its context closes unfinished work and waits for journal writes before
-closing the HTTP client and storage. No separate stream context is required.
+closing the HTTP client and storage. No separate stream context is required. The
+synchronous `Broker` streams the same way with a plain `for` loop; see
+[Streaming from synchronous code](#sync-stream).
 
 Before the first text chunk arrives, the broker can try another model. This
 happens if the provider returns an error, rate-limits the request, or completes a
@@ -197,6 +198,48 @@ When using this optional context, keep validation and `another()` inside it.
 
 Streaming is also available for one specific model through `direct()`, without
 pool selection or fallback. See [Direct model calls](direct.md#streaming).
+
+### Streaming from synchronous code {#sync-stream}
+
+The synchronous `Broker`, and the caller returned by its `for_scope(...)`, provide
+the same `stream()` with the same arguments. Iterate it with a plain `for` loop.
+Everything above applies unchanged: chunks, fallback before the first chunk,
+`StreamInterruptedError`, `StreamReplacementError`, `another()`, `wait`, and
+rating:
+
+```python
+with llmbroker.Broker() as broker:
+    with broker.stream("Write a haiku about brokers") as stream:
+        for delta in stream:
+            print(delta, end="", flush=True)
+    stream.record_quality(0.9)
+```
+
+Each exception is raised at the same chunk as in asynchronous code. Nothing is read
+ahead: a chunk is fetched when the loop asks for the next one. Many threads can
+stream through one broker at the same time. A stream, like a caller from
+`for_scope(...)`, keeps its broker running until you finish with it, even when
+nothing else refers to the broker.
+
+Closing the stream cancels the provider request. Leaving the `with` block, calling
+`stream.close()`, and dropping the object all close it. In a synchronous web server,
+this is what stops generation when a client disconnects. Django, for example,
+closes the body of a `StreamingHttpResponse` when the client goes away, and a
+generator that reads the stream inside `with` closes it at that moment:
+
+```python
+def answer_body(llms, prompt):
+    with llms.stream(prompt) as stream:
+        for delta in stream:
+            yield delta
+```
+
+After `StreamReplacementError`, read the complete reply from `exc.replacement` as
+in asynchronous code: `.text`, `.llm_name`, and `.call_id`. Its `record_quality`
+is a coroutine, so rate the final reply from synchronous code through
+`stream.record_quality(...)`, which names the replacement once it has replaced the
+provisional text. `another()` returns a synchronous result with its own
+`record_quality`.
 
 ## A local database for one process
 

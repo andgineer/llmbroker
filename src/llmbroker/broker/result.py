@@ -164,6 +164,11 @@ class StreamHandle(RoutedCall):
         self._cleanup: asyncio.Task[None] | None = None
         self._on_close = on_close
 
+    @property
+    def closed(self) -> bool:
+        """Whether this stream was closed, by its owner or by the broker."""
+        return self._closed
+
     async def __aenter__(self) -> "StreamHandle":
         if self._closed:
             raise RuntimeError("the stream is closed")
