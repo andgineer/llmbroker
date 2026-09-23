@@ -19,6 +19,30 @@ setup     = ["uv sync --frozen"]
 tests     = ["-p", "no:cacheprovider", "-m", "not e2e", "tests/"]
 typecheck = ["pyrefly", "check", "--project-excludes=tests", "--project-excludes=experiments"]
 
+[[host]]
+name      = "lexiflux"
+github    = "andgineer/lexiflux"
+local     = "../lexiflux"
+extras    = []                          # its dev set; only the Koyeb build adds postgres
+setup     = [
+  "uv venv .venv --python 3.12",
+  "uv pip install --python .venv/bin/python -r requirements.dev.txt",
+]
+tests     = [
+  "-p", "no:cacheprovider",
+  "-m", "not selenium and not playwright and not real_llm",
+  "tests/",
+]
+typecheck = [
+  "pyrefly", "check",
+  "--project-excludes=**/tests/**",
+  "--project-excludes=**/experiments/**",
+  "--project-excludes=**/migrations/**",
+  "--project-excludes=**/lexiflux/calibre_plugin/**",
+  "--project-excludes=**/lexiflux/environments/koyeb.py",
+  "--project-excludes=**/.venv/**",
+]
+
 # An accepted regression: a host test (or type-check line) the current change is known to
 # break on purpose. Only the maintainer adds one; entries leave once the host has adopted.
 # [[host.accepted]]

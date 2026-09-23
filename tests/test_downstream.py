@@ -58,9 +58,9 @@ def _git(cwd: Path, *args: str) -> None:
 # ── the host list ────────────────────────────────────────────────────────────
 
 
-def test_downstream_toml_names_both_hosts_with_every_key():
+def test_downstream_toml_names_every_host_with_every_key():
     hosts = downstream.load_hosts(REPO / "downstream.toml")
-    assert [h.name for h in hosts] == ["dinary", "echo-words"]
+    assert [h.name for h in hosts] == ["dinary", "echo-words", "lexiflux"]
     for host in hosts:
         assert all(getattr(host, key) is not None for key in downstream.HOST_KEYS)
         assert host.setup and host.tests and host.typecheck

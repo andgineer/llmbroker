@@ -42,7 +42,7 @@ Before claiming anything is done, these must be green:
 `invoke downstream` is a local check and runs nowhere else: CI does not gate a release on the
 hosts, because a host pinning behavior this release deliberately changes would then block the
 very release it has to adopt. It checks out each host listed in `downstream.toml` (dinary,
-echo-words) into a throwaway directory with its own venv, and runs the host's suite and type
+echo-words, lexiflux) into a throwaway directory with its own venv, and runs the host's suite and type
 check there twice: on llmbroker at `--baseline-ref` (default `HEAD`, or `--baseline-published`
 for the newest release on PyPI), then on the working tree. A host test that passes before the change and, with it, fails or no longer runs at
 all is a regression, and every regression is one of three kinds:

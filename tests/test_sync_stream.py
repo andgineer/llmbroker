@@ -284,20 +284,30 @@ def test_dropping_an_unclosed_stream_cancels_it_and_frees_its_slot(tmp_path):
             assert next(second) == "one"
 
 
-def test_a_consumer_generator_closed_early_cancels_the_provider_request(tmp_path):
+@pytest.mark.parametrize("scoped", [True, False], ids=["with", "bare"])
+def test_a_consumer_generator_closed_early_cancels_the_provider_request(tmp_path, scoped):
     """The WSGI abort: the server closes the response body — a generator wrapping the
-    stream — when the client goes away, and that must reach the provider."""
+    stream — when the client goes away, and that must reach the provider. With ``with``
+    inside the generator, its close is the stream's close, so nothing is left to wait for."""
     provider = _Held()
     with _broker(tmp_path, provider, "a") as broker:
 
         def response_body():
-            for delta in broker.stream("hi"):
-                yield delta.encode()
+            if scoped:
+                with broker.stream("hi") as stream:
+                    for delta in stream:
+                        yield delta.encode()
+            else:
+                for delta in broker.stream("hi"):
+                    yield delta.encode()
 
         body = response_body()
         assert next(body) == b"one"
         body.close()
-        assert provider.bodies[0].closed.wait(timeout=2.0)
+        if scoped:
+            assert provider.bodies[0].closed.is_set()
+        else:
+            assert provider.bodies[0].closed.wait(timeout=2.0)
 
 
 @pytest.mark.parametrize("pulled", [True, False], ids=["started", "unstarted"])

@@ -223,8 +223,8 @@ stream stays consumer-driven for a thread as for a coroutine
 leaving its context, or dropping it unclosed closes the stream it reads, so what a
 reader abandoned is cancelled at the provider rather than read to its end — which is
 what lets a synchronous web server that loses its client stop the answer it was
-paying for. A direct model's synchronous stream keeps the same promise on its own
-connection.
+paying for. A direct model's synchronous stream is a plain generator: closing it or
+dropping it closes its own connection to the provider.
 
 **A synchronous stream and a scoped caller keep their broker alive**
 ([`decisions.md`](../decisions.md#a-sync-stream-keeps-its-broker)), so a stream ends
