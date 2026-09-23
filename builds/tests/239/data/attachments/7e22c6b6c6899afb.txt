@@ -1,0 +1,1 @@
+[h +0s] candidate-pytest: /home/runner/work/llmbroker/llmbroker/.venv/bin/python -m pytest -p no:cacheprovider tests/ --continue-on-collection-errors -o junit_family=xunit1 --junitxml=/tmp/pytest-of-runner/pytest-0/test_a_real_suite_that_stops_e1/candidate.xml

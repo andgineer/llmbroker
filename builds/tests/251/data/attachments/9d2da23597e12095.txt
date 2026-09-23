@@ -1,0 +1,6 @@
+[h +0s] fetch: git clone --quiet --no-hardlinks /tmp/pytest-of-runner/pytest-0/test_a_suite_that_stops_early_0/h /tmp/pytest-of-runner/pytest-0/test_a_suite_that_stops_early_0/temp/llmbroker-downstream-h-v49_d53x/h
+[h +0s] uv sync --frozen
+[h +0s] baseline-install: uv pip install --python /tmp/pytest-of-runner/pytest-0/test_a_suite_that_stops_early_0/temp/llmbroker-downstream-h-v49_d53x/h/.venv/bin/python --reinstall-package llmbroker 'llmbroker[sqlite] @ file:///tmp/pytest-of-runner/pytest-0/test_a_suite_that_stops_early_0/baseline'
+[h +0s] baseline-package: /tmp/pytest-of-runner/pytest-0/test_a_suite_that_stops_early_0/temp/llmbroker-downstream-h-v49_d53x/h/.venv/bin/python -c 'import importlib.util as u; print(u.find_spec('"'"'llmbroker'"'"').submodule_search_locations[0])'
+[h +0s] baseline-version: /tmp/pytest-of-runner/pytest-0/test_a_suite_that_stops_early_0/temp/llmbroker-downstream-h-v49_d53x/h/.venv/bin/python -c 'import importlib.metadata as m; print(m.version('"'"'llmbroker'"'"'))'
+[h +0s] baseline-pytest: /tmp/pytest-of-runner/pytest-0/test_a_suite_that_stops_early_0/temp/llmbroker-downstream-h-v49_d53x/h/.venv/bin/python -m pytest tests/ --continue-on-collection-errors -o junit_family=xunit1 --junitxml=/tmp/pytest-of-runner/pytest-0/test_a_suite_that_stops_early_0/temp/llmbroker-downstream-h-v49_d53x/baseline.xml
