@@ -1,0 +1,1 @@
+WARNING  llmbroker.registry:models.py:88 entry g: ignoring tool_params ['reasoning_effort'] — not a table

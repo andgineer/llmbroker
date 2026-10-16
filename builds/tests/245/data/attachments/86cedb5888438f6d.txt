@@ -1,0 +1,1 @@
+ERROR    llmbroker.broker:learning.py:100 llm1: API key appears dead (HTTP 401) — check api_key_ref 'k'

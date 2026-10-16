@@ -1,0 +1,2 @@
+ERROR    llmbroker.broker:catalog.py:252 direct= names 'opus', and the paid catalog could not be read: preset 'paid-catalog' is not on this machine and this installation fetches nothing on its own — run `await broker.sync()` where it is deployed
+ERROR    llmbroker.broker:catalog.py:390 pool degraded, no failover left: 1 of 1 providers usable

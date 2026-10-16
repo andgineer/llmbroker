@@ -1,0 +1,4 @@
+INFO     llmbroker.broker:refresher.py:231 sync freetier: applied — 0 -> 1 entries with a key
+  added: gemini
+ERROR    llmbroker.broker:catalog.py:340 pool degraded, no failover left: 1 of 1 providers usable
+INFO     llmbroker.broker:catalog.py:384 api_key_ref 'ANTHROPIC_API_KEY' not resolved — opus is reached by name only, so direct() on it fails until the env var / secret is set — console.anthropic.com

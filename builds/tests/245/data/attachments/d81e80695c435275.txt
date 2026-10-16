@@ -1,0 +1,4 @@
+usage: __main__.py [-h] [--host HOST] [--source {local,github}]
+                   [--working-copy] [--baseline-ref BASELINE_REF |
+                   --baseline-published] [--keep]
+__main__.py: error: unknown host 'nope'; downstream.toml names h

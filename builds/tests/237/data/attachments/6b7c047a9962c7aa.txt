@@ -1,0 +1,3 @@
+usage: __main__.py [-h] [--host HOST] [--source {local,github}]
+                   [--working-copy] [--baseline-ref BASELINE_REF] [--keep]
+__main__.py: error: --working-copy needs --source local

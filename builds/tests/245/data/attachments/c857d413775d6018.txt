@@ -1,0 +1,4 @@
+[h +0s] baseline-pytest: /home/runner/work/llmbroker/llmbroker/.venv/bin/python -m pytest -p no:cacheprovider tests/ --continue-on-collection-errors -o junit_family=xunit1 --junitxml=/tmp/pytest-of-runner/pytest-0/test_a_suite_stopped_with_a_pa3/baseline.xml
+[h +0s] baseline-typecheck: /home/runner/work/llmbroker/llmbroker/.venv/bin/python -c pass --output-format=min-text --python-interpreter-path=/home/runner/work/llmbroker/llmbroker/.venv/bin/python
+[h +0s] candidate-pytest: /home/runner/work/llmbroker/llmbroker/.venv/bin/python -m pytest -p no:cacheprovider tests/ --continue-on-collection-errors -o junit_family=xunit1 --junitxml=/tmp/pytest-of-runner/pytest-0/test_a_suite_stopped_with_a_pa3/candidate.xml
+[h +1s] candidate-typecheck: /home/runner/work/llmbroker/llmbroker/.venv/bin/python -c pass --output-format=min-text --python-interpreter-path=/home/runner/work/llmbroker/llmbroker/.venv/bin/python
