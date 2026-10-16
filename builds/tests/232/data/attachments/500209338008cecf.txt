@@ -1,1 +1,0 @@
-WARNING  llmbroker.registry:models.py:57 entry g: ignoring non-numeric weight True — using 0.0

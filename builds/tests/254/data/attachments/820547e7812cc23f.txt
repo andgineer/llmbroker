@@ -1,0 +1,7 @@
+ERROR    llmbroker.broker:sync.py:67 closing a broker nobody closed failed
+Traceback (most recent call last):
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/sync.py", line 59, in _teardown
+    await broker.aclose()
+  File "/home/runner/work/llmbroker/llmbroker/tests/test_sync_stream.py", line 492, in fail
+    raise RuntimeError("store is gone")
+RuntimeError: store is gone
