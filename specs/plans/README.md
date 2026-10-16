@@ -4,22 +4,23 @@
 
 | # | plan | readiness | what it is |
 |---|---|---|---|
-| 1 | [`downstream-runner-followups.md`](downstream-runner-followups.md) | source-bound on `5dda8c429`; tooling and CI only, independent of the rest | module-skip placeholders and fallback ids in the downstream check, a signal kill after a complete report, report order — and the `github-pages` concurrency group that cancelled CI and made the publish gate skip v1.10.2 |
+| 1 | [`release-pipeline.md`](release-pipeline.md) | source-bound on `095c469ff`; CI workflows only, independent of the rest | the `github-pages` concurrency group cancels CI, and the publish gate then skips the release — v1.10.2 and v1.10.4 never reached PyPI |
 | 2 | [`architecture-simplification.md`](architecture-simplification.md) | source-bound on `67659c350`; revalidate against the working tree first | consolidate stream ownership and attempt settlement, remove duplicate rebuilds, acknowledge journal writes, simplify deadlines and backend rating storage; retain the alternative-answer contract |
-| 3 | [`load-harness.md`](load-harness.md) | source-bound on v1.7.0; revalidate after row 2 | the reusable half of a downstream harness, so a controlled pair — one variable moved, everything else held — can be taken here instead of one host's private script |
-| 4 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 3 | what a caller can see of a call it made: usage from a stream, journal rows for direct calls, whether any output reached the reader, and latency in the derived aggregates |
+| 3 | [`caller-visibility.md`](caller-visibility.md) | functional; concretize after row 2 | what a caller can see of a call it made: usage from a streamed direct call, journal rows for direct calls, whether any output reached the reader, and latency plus the learned latency bound in what the broker reports |
 
 Architecture simplification was bound before several changes landed on its ground: tools and
 tool parameters on direct calls, a broker whose context provisions nothing while `direct()`
-ticks the refresh clock, per-handle resolution of declared models, and the reason a stream
-reports when no model can serve it. They reshape the refresher, the direct clients, the
-request builder and the stream's error path it consolidates, so its binding is revalidated
+ticks the refresh clock, per-handle resolution of declared models, the reason a stream
+reports when no model can serve it, and a synchronous stream facade that drives the async
+handle. They reshape the refresher, the direct clients, the request builder, the handle it
+keeps public and the stream's error path it consolidates, so its binding is revalidated
 against the current source before any batch is handed off.
 
-Architecture simplification comes before the harness because its deadline and
-storage changes determine what the harness measures and what caller visibility can
-reuse. Its batches form one implementation and review unit; complete all of them
-before handing off the harness. No existing plan requires a joint release with it.
+Architecture simplification comes before caller visibility because it rewrites the three
+places caller visibility adds to — the stream handle, the journal's call rows and the journal
+read the aggregates derive from — so visibility is designed once, on settled contracts. Its
+batches form one implementation and review unit; complete all of them before concretizing
+caller visibility. No plan requires a joint release with another.
 
 ## Detail horizon
 
@@ -47,50 +48,43 @@ This keeps durable detail now — dependencies, outcome, exclusions and acceptan
 evidence — while postponing volatile detail: private helper names, exact signatures
 and test locations beyond the next implementation boundary.
 
-## Measurements still outstanding
+## Unmeasured
 
-The raced stream shipped on the evidence of one host's uncontrolled runs, and the
-comparison against the semantics it replaced was never run. It needs the controlled
-pair from [`load-harness.md`](load-harness.md), and at minimum it compares completion rate inside the caller's
-budget, which model ends up authoritative, host-rated quality, visible first-delta
-latency, replacement frequency, whole-answer latency and duplicate provider usage.
-Keep per-lane timings this time: the two-lane run behind the shipped behavior retained
-only the winning lane's, so it cannot replay the replacement rate at candidate values
-of the caller's selection interval, which is the one number that would settle its
-default ([`../reference/decisions.md`](../reference/decisions.md#parallelism-is-explicit-or-recovery-owned)).
+An explicitly raced stream settles on the first complete answer rather than the first
+delta. Its only evidence is one host's uncontrolled runs; no controlled comparison of the two
+settlements exists. Settling it takes a controlled pair — the same prompts, one variable
+moved, everything else held — taken by a host's own harness, not here. The pair compares
+completion rate inside the caller's budget, which model ends up authoritative, host-rated
+quality, visible first-delta latency, replacement frequency, whole-answer latency and
+duplicate provider usage. It records every lane's timings, not only the winner's: they replay
+the replacement rate at candidate values of the caller's selection interval, the one number
+that settles that interval's default
+([`../reference/decisions.md`](../reference/decisions.md#parallelism-is-explicit-or-recovery-owned)).
 
-## Rejected proposals
+## Not queued
 
-Separating ordinary streams from streams with alternative answers is rejected in
-[`streamed-alternatives-live-until-close`](../reference/decisions.md#streamed-alternatives-live-until-close).
+Every new plan is checked against one failure mode: a mechanism sized for a problem this
+pool does not have ([`../reference/mission.md`](../reference/mission.md#the-size-of-the-problem)).
+These fail it, or wait on evidence first:
 
-Two other proposals were rejected rather than implemented, and the reasoning is worth keeping
-because both will be re-proposed otherwise. A *reachability check* — a read-only,
-human-run command reporting whether each key reaches its model — was a module, a CLI
-verb and a permanent public function for a one-time onboarding act on a handful of
-providers; what was actually valuable in it was knowledge, and that already lives in
-[`../reference/freetier-providers.md`](../reference/freetier-providers.md). A *routing-worth
-rubric* — measured availability and time-to-answer entering the curated weight — was a
-rule, a recorded decision and a third copy of a rubric, to reorder five rows: the one
-endpoint it was written against now carries the floor weight, stated where the evidence
-for it already was, and the rest of it bought nothing.
-
-Both are the same failure mode, and it is the one to check a new plan against: a
-mechanism sized for a problem this pool does not have
-([`../reference/mission.md`](../reference/mission.md#the-size-of-the-problem)).
-
-The rate-limit streak decay stays weighed and unqueued, and the reason has moved.
-A tight caller budget does drive the backoff exponent — the pair in
-[`../../bench/runs/cooldowns.md`](../../bench/runs/cooldowns.md) shows 60 → 480 s at
-a 25 s budget where 45 s stayed flat, and a host in ordinary interactive use recorded
-59 → 1919 s across one day. But a model leaving the pool for half an hour only empties
-the pool when the models left behind cannot be reached, and that half is answered:
-silence for a whole budget now cools the endpoint that produced it, so the models
-behind it are reached
-([`../reference/decisions.md`](../reference/decisions.md#silence-cools-and-teaches-ordering)).
-What is left is whether a caller still misses answers the pool could have given, and
-that question needs the controlled pair from [`load-harness.md`](load-harness.md). A second mechanism aimed
-at the same symptom before it is the failure mode above.
+- **Separate APIs for ordinary streams and streams with alternative answers** — see
+  [`streamed-alternatives-live-until-close`](../reference/decisions.md#streamed-alternatives-live-until-close).
+- **A reachability check** (a read-only command reporting whether each key reaches its
+  model) — a module, a CLI verb and a permanent public function for a one-time onboarding
+  act on a handful of providers. The knowledge it produces lives in
+  [`../reference/freetier-providers.md`](../reference/freetier-providers.md).
+- **A routing-worth rubric** (measured availability and time-to-answer entering the curated
+  weight) — a rule, a recorded decision and a third copy of a rubric to reorder five rows.
+  The one endpoint it targets carries the floor weight, stated next to its evidence.
+- **A rate-limit streak decay** — waits on evidence. A tight caller budget does drive the
+  backoff exponent: [`../../bench/runs/cooldowns.md`](../../bench/runs/cooldowns.md) shows
+  60 → 480 s at a 25 s budget where 45 s stays flat, and a host in interactive use reaches
+  59 → 1919 s in a day. A model out for half an hour empties the pool only if the models
+  behind it cannot be reached, and they can: silence for a whole budget cools the endpoint
+  that produced it
+  ([`../reference/decisions.md`](../reference/decisions.md#silence-cools-and-teaches-ordering)).
+  The open question is whether a caller still misses answers the pool could have given; it
+  needs a controlled pair before any mechanism is aimed at it.
 
 A queued plan is a row in this file and a file beside it. How one is executed lives in `CLAUDE.md`
 under "Executing a plan", and the rules binding on every plan live in

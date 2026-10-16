@@ -5,12 +5,11 @@ what the evidence for it is. Nothing here is bound to a module, a signature or a
 test yet; that binding is the next step, and until it is done no `src/` line is
 written.
 
-**Queue gate:** concretize only after `load-harness.md` has an implementation
-handover, using the preceding `architecture-simplification.md` handover for the
-final deadline, receipt and storage contracts. The harness's row and summary shapes
-will show which latency and attribution facts still require a public library surface
-instead of merely being convenient in the harness. Do not hand this file to an
-implementation executor in its present state.
+**Queue gate:** concretize only after `architecture-simplification.md` has an
+implementation handover. That plan rewrites the stream handle, the journal's call rows
+and the journal read the aggregates derive from — the three places these items add to —
+so its handover fixes the deadline, receipt and storage contracts they build on. Do not
+hand this file to an implementation executor in its present state.
 
 ## Goal
 

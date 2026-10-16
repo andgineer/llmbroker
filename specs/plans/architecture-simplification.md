@@ -6,10 +6,9 @@ streams is rejected in
 [`streamed-alternatives-live-until-close`](../reference/decisions.md#streamed-alternatives-live-until-close).
 This plans the accepted work; implementation has not started.
 
-**Queue position:** first unimplemented plan, bound to the current streamed
-continuation and broker-ownership implementation. Finish and review this plan
-before revalidating [`load-harness.md`](load-harness.md), then
-concretize [`caller-visibility.md`](caller-visibility.md) after that harness.
+**Queue position:** second, after [`release-pipeline.md`](release-pipeline.md),
+which touches only CI workflows. Finish and review this plan before concretizing
+[`caller-visibility.md`](caller-visibility.md).
 
 ## Outcome and boundary
 
@@ -63,6 +62,13 @@ store, live-provider experiment, version bump or commit is requested.
   consumer-time exclusion. `backends/driver.py`, the three DB drivers and
   `backends/inmemory.py` each implement the appended-rating projection;
   `standalone/store.py` separately implements the file projection.
+
+Spot-checked at `095c469ff` (2026-10-16): the double rebuild (`sync()` and then
+`_attempt()`), the suppressed journal write, `StreamBudget`, `budgeted_await()` and
+the `drain_lane` shim are all present; `StreamBackend` has 22 fields; no
+`broker/attempt.py` and no `set_score` exist. `sync.py` drives `StreamHandle`
+from a synchronous facade, so Batch B keeps that wrapper working. This is not the
+full revalidation the queue requires before Batch A.
 
 Analysis baseline: `invoke pre` passed; `invoke test` reported 1594 passed on the
 platform clock and 1106 passed with 488 Docker cases deselected on the coarse
@@ -311,8 +317,8 @@ is required. Revalidate paths against any intervening changes before editing.
 - Read `mission.md` against the final behavior; edit only changed user
   expectations, not machinery. Remove conflicting restatements and link to the
   single owning rule. Explain the DB schema reset policy in the storage guide.
-- Revalidate the harness against fixed deadlines, retained ownership and final
-  receipts; leave caller visibility functional until its own queue gate.
+- Leave caller visibility functional until its own queue gate; its concretization
+  reads this handover for the final deadline, receipt and storage contracts.
 
 ## Completion and review handover
 

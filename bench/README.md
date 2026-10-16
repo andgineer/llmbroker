@@ -2,18 +2,11 @@
 
 Measurements taken by driving the free pool and the paid direct client with a real
 application's traffic, on real keys. This directory holds the rows, not the code
-that produced them: the harness lives downstream, and
-[`../specs/plans/load-harness.md`](../specs/plans/load-harness.md) is the plan to
-bring the reusable half of it here.
+that produced them: the harness lives downstream.
 
 The prose distilled from earlier runs is
 [`../specs/reference/freetier-providers.md`](../specs/reference/freetier-providers.md#what-one-real-workload-met-measured-2026-08-17);
 this is the data under it and under the runs after it.
-
-This directory holds rows today. The harness module the plan builds lands beside
-them, and the gate reaches it here: `pytest.ini` sets `--doctest-modules`, and
-`bench/` is excluded from neither that nor pyrefly, so it is imported,
-type-checked and its examples executed like anything else.
 
 ## The workload
 
