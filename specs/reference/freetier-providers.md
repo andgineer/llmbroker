@@ -123,13 +123,13 @@ routed pool, so nothing would read one.
 
 ## Curated providers
 
-Last refreshed 2026-08-16.
+Last refreshed 2026-08-16; the OpenRouter entries re-checked 2026-11-03.
 
 | Key (`api_key_ref`) | Best free model | Effort | Value | RPM | RPD | Get a key |
 |---|---|---|---|---|---|---|
 | `GEMINI_API_KEY` | Gemini 3.5 Flash-Lite | `oauth` | `high` | 30 | 1,500 | <https://aistudio.google.com/apikey> |
 | `GROQ_API_KEY` | openai/gpt-oss-120b | `signup` | `good` | 30 | 1,000 | <https://console.groq.com/keys> |
-| `OPENROUTER_API_KEY` | Nemotron 3 Ultra + Laguna S 2.1 `:free` | `signup` | `high` | 20 | 50 / 1,000 | <https://openrouter.ai/keys> |
+| `OPENROUTER_API_KEY` | Nemotron 3 Ultra + Dots3-Note Preview `:free` | `signup` | `high` | 20 | 50 / 1,000 | <https://openrouter.ai/keys> |
 | `ZAI_API_KEY` | GLM-4.7-Flash | `signup` | `good` | not published | not published | <https://z.ai/manage-apikey/apikey-list> |
 
 Per-provider notes:
@@ -162,12 +162,22 @@ Per-provider notes:
   is the strongest survivor — 550B/55B-active hybrid Mamba-Transformer MoE, 1M
   context, Artificial Analysis intelligence index 47.7, the highest of any US
   open-weight model and far above gpt-oss-120b (33.3). The free endpoint requires
-  consenting to NVIDIA's data collection. `poolside/laguna-s-2.1:free` is the
-  second entry, chosen for its upstream as much as its strength: Poolside serves
-  its own model, so its failures are uncorrelated with Nvidia's. It is a
-  118B/8B-active MoE with 1M context, built for agentic coding — SWE-Bench
-  Multilingual 78.5%, SWE-Bench Pro 59.4%, Terminal-Bench 2.1 70.2%, ahead of
-  Nemotron 3 Ultra on that ground while answering general prompts fine.
+  consenting to NVIDIA's data collection. `dots-studio/dots-3-note-preview:free`
+  is the second entry, there for its upstream rather than its strength: AtlasCloud
+  serves it, so its failures are uncorrelated with Nvidia's. It is a
+  280B/16B-active MoE with 512K context, the lightest of the Dots 3 family, and no
+  benchmark for it is published, so its weight rests on calls made while curating
+  it (2026-11-03): idiom explanations for a Russian-speaking learner, answered in
+  6–15 s, three of them under a strict `json_schema` and all three conforming. The
+  English one was right; the German one half right twice ("im Angebot sein" read
+  as "in the range", missing "on sale"); the Serbian one wrong ("nema na čemu"
+  read as "nowhere to", not "you're welcome"). Nemotron 3 Ultra got the German
+  right on the same prompt. Hence 0.4, at the bottom of "usable". Two stronger models on other
+  upstreams were tried and refused: `google/gemma-4-31b-it:free` (Google's model
+  card: MMLU Pro 85.2%, MMMLU 88.4%) answered five calls over twelve minutes with
+  "rate-limited upstream" from Google AI Studio's pool shared by every OpenRouter
+  user, so it would sit at the floor; `thinkingmachines/inkling:free` and
+  `inkling-small:free` answer 403, served only to the agent apps OpenRouter lists.
   The daily cap is 50 RPD with under $10 lifetime credit purchased, rising to
   1,000 RPD once $10+ has been purchased (a one-time, never-expiring top-up).
 - **OpenRouter hosts nothing itself** — every model is routed to an upstream, and
@@ -306,6 +316,11 @@ Z.AI entry answer with field names of their own invention, usually wrapped in a
 markdown code fence, whether the strict shape was asked for or the weaker one. The
 fence is the tell that no server-side constraint was applied at all.
 
+The Poolside entry has since been withdrawn by OpenRouter. Its replacement,
+Dots3-Note Preview, returned the strict schema's own fields on all three calls made
+while curating it (2026-11-03), so the one curated entry left that ignores the
+schema is Z.AI's.
+
 **The weaker shape constrains nothing worth having.** Every model that answered
 under `json_object` produced JSON, and every one of them chose its own field
 names, so it says only "this is JSON" — which the prompt could have asked for.
@@ -314,7 +329,7 @@ names, so it says only "this is JSON" — which the prompt could have asked for.
 from one that honors it without validating the answer against the caller's own
 schema, and only the caller holds its meaning. So there is no error for a router
 to learn from here, and a schema-constrained request routed over this pool lands
-on a model that ignores it two times in five. The signal that does exist is the
+on a model that ignores it one time in five. The signal that does exist is the
 host's: it validates, and a failed validation is exactly the quality rating the
 pool already learns from, per (model, operation).
 

@@ -13,7 +13,7 @@ api_key_ref = "GROQ_API_KEY"
 weight      = 0.55
 
 # Two OpenRouter entries on purpose: they resolve to different upstreams (Nvidia,
-# Poolside), so a key held alone still has somewhere to fail over to.
+# AtlasCloud), so a key held alone still has somewhere to fail over to.
 [[llms]]
 name        = "openrouter-nemotron-3-ultra"
 base_url    = "https://openrouter.ai/api/v1"
@@ -22,11 +22,11 @@ api_key_ref = "OPENROUTER_API_KEY"
 weight      = 0.72
 
 [[llms]]
-name        = "openrouter-laguna-s-2.1"
+name        = "openrouter-dots-3-note-preview"
 base_url    = "https://openrouter.ai/api/v1"
-model       = "poolside/laguna-s-2.1:free"
+model       = "dots-studio/dots-3-note-preview:free"
 api_key_ref = "OPENROUTER_API_KEY"
-weight      = 0.7
+weight      = 0.4
 
 [[llms]]
 name        = "google-gemini-3.5-flash-lite"
