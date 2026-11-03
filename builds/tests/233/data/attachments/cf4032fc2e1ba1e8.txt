@@ -1,0 +1,2 @@
+WARNING  llmbroker.broker:presets.py:128 preset freetier: preset 'freetier' not found in catalog — falling back to the bundled copy, frozen at this llmbroker release and possibly older than the curated one
+ERROR    llmbroker.broker:catalog.py:338 pool cannot serve any request: no provider has a key — no key for GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, ZAI_API_KEY

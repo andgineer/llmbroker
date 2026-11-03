@@ -1,0 +1,4 @@
+ERROR    llmbroker.broker:catalog.py:340 pool degraded, no failover left: 1 of 1 providers usable
+ERROR    llmbroker.broker:catalog.py:340 pool degraded, no failover left: 1 of 1 providers usable
+WARNING  llmbroker.broker:optimizer.py:159 m1: quality-demoted for operation='summarize' (wilson upper 0.278 < floor 0.30)
+WARNING  llmbroker.broker:optimizer.py:159 m1: quality-demoted for operation='summarize' (wilson upper 0.278 < floor 0.30)

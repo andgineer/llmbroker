@@ -1,0 +1,11 @@
+ERROR    llmbroker.broker:keyring.py:122 secrets backend could not read 'A' — treating it as unset
+Traceback (most recent call last):
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/keyring.py", line 120, in _read
+    return await resolve_ref(self._secrets, ref)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/keyring.py", line 18, in resolve_ref
+    value = await secrets.resolve(ref)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/llmbroker/llmbroker/tests/test_keyring.py", line 210, in resolve
+    raise OSError("secrets backend is unreachable")
+OSError: secrets backend is unreachable

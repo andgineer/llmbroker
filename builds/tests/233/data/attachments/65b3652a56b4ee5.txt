@@ -1,0 +1,3 @@
+INFO     llmbroker.broker:refresher.py:231 sync freetier: applied — 1 -> 1 entries with a key
+  added: groq-new
+  removed: groq-old

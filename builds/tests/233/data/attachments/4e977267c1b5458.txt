@@ -1,0 +1,21 @@
+ERROR    llmbroker.broker:catalog.py:340 pool degraded, no failover left: 1 of 1 providers usable
+ERROR    llmbroker.broker:refresher.py:144 sync refresh failed unexpectedly, continuing on the current config
+Traceback (most recent call last):
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/refresher.py", line 133, in _attempt
+    await self.sync(source)
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/refresher.py", line 206, in sync
+    src = await load_sync_source(target, self._presets)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/merge.py", line 48, in load_sync_source
+    text = await asyncio.to_thread(presets.text, source)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.15/x64/lib/python3.13/asyncio/threads.py", line 26, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.15/x64/lib/python3.13/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/home/runner/work/llmbroker/llmbroker/src/llmbroker/broker/presets.py", line 117, in text
+    text = fetch_preset_text(name)
+  File "/home/runner/work/llmbroker/llmbroker/tests/test_preset_autorefresh.py", line 244, in _fail
+    raise Boom
+test_preset_autorefresh.test_a_refresh_that_raises_anything_at_all_keeps_the_broker_and_the_traceback.<locals>.Boom

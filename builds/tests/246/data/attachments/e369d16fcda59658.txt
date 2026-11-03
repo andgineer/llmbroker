@@ -1,0 +1,2 @@
+[h +0s] fetch: git clone --quiet --no-hardlinks /tmp/pytest-of-runner/pytest-0/test_a_failing_setup_fails_the0/h /tmp/pytest-of-runner/pytest-0/test_a_failing_setup_fails_the0/temp/llmbroker-downstream-h-rrpfc54w/h
+[h +0s] uv sync --frozen

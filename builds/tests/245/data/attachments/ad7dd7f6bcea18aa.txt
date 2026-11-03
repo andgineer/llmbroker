@@ -1,0 +1,4 @@
+WARNING  llmbroker.broker:pool.py:448 LLM a cooling for 60s
+WARNING  llmbroker.broker:pool.py:448 LLM b cooling for 30s
+WARNING  llmbroker.broker:pool.py:448 LLM a cooling for 60s
+WARNING  llmbroker.broker:pool.py:448 LLM b cooling for 30s

@@ -1,0 +1,1 @@
+ERROR    llmbroker.broker:catalog.py:390 pool degraded, no failover left: 1 of 2 providers usable — no key for C

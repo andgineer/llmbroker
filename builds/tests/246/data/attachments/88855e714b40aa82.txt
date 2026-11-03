@@ -1,0 +1,2 @@
+ERROR    llmbroker.broker:catalog.py:390 pool degraded, no failover left: 1 of 1 providers usable
+WARNING  llmbroker.broker:broker.py:330 direct=: opus: the paid catalog no longer carries it — answering from claude-opus-4-8, the resolution already in use
