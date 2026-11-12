@@ -1,0 +1,1 @@
+[h +0s] fetch: git ls-files -z -co --exclude-standard
