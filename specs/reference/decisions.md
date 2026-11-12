@@ -263,6 +263,16 @@ cancelled when it answered, and *marking authority on the row*, a second truth s
 beside the answer for one lookup's benefit. Neither is worth it: the call already
 hands back a handle naming the winner, so that is where a race is rated.
 
+**What this rests on is one host's uncontrolled runs.** No controlled comparison of
+settling an explicit stream race on the first complete answer against settling it on
+the first delta exists. The argument that would reopen it is a controlled pair from a
+host's own harness — the same prompts, one variable moved — comparing completion rate
+inside the caller's budget, which model ends up authoritative, host-rated quality,
+visible first-delta latency, replacement frequency, whole-answer latency and duplicate
+provider usage. Recording every lane's timings, not only the winner's, also replays the
+replacement rate at other values of the interval above, which is the one number that
+settles its default.
+
 ### streamed-alternatives-live-until-close
 
 A streamed handle retains already-open alternatives after its first complete
@@ -1189,3 +1199,30 @@ Mechanisms weighed and dropped that do not attach to a decision above.
   score, curated weight, registry order — is already on the snapshot and the
   optimizer for a host that wants to present it
   ([`no-alerts-api`](#no-alerts-api)).
+- **A reachability check** — a read-only command reporting whether each key reaches
+  its model. It is a module, a command and a permanent public function for a one-time
+  onboarding act on a handful of providers; what it would find out is written down
+  once, in [`freetier-providers.md`](freetier-providers.md).
+- **A routing-worth rubric** — measured availability and time-to-answer entering the
+  curated weight by formula. It is a rule and a third copy of a rubric to reorder five
+  rows; the one endpoint it targets carries the floor weight, stated next to its
+  evidence ([`freetier-providers.md`](freetier-providers.md)).
+- **A flag saying whether any output reached the reader**, on the stream handle or on
+  the error. The host is what forwarded the deltas, so it already holds the answer in
+  one line of its own, and a field would restate what its only reader knows.
+- **A per-call list of the models a call may use** — it is *selecting model names at
+  the host* ([`parallelism-is-explicit-or-recovery-owned`](#parallelism-is-explicit-or-recovery-owned))
+  by another door, and it turns a pool into a pin for that call: failover inside the
+  list is failover across fewer quotas. A host that trusts one model for one task
+  rates the others down for that task, which is what a per-operation score is for, or
+  sets their answer aside itself. What would reopen it is a measured wait a reader
+  notices while a set-aside answer is being replaced.
+- **A rate-limit streak decay** — shortening the backoff exponent with time rather
+  than only on a success. A tight caller budget does drive the exponent up
+  ([`../../bench/runs/cooldowns.md`](../../bench/runs/cooldowns.md): 60 → 480 s at a
+  25 s budget where 45 s stays flat, and 59 → 1919 s within a day of interactive use),
+  but a model out for half an hour empties the pool only if the models behind it
+  cannot be reached, and they can
+  ([`silence-cools-and-teaches-ordering`](#silence-cools-and-teaches-ordering)). What
+  would reopen it is a controlled pair showing a caller missing answers the pool could
+  have given.

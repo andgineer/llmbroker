@@ -13,11 +13,10 @@ hand this file to an implementation executor in its present state.
 
 ## Goal
 
-Four values the library already holds and does not hand back. A host that streams
-cannot read what its call spent, cannot ask the journal what a named model did,
-cannot tell from a failure whether the reader has already seen part of an answer,
-and cannot read the latency the library measured on every call — including the
-bound it teaches itself from budget expiries. Each is a value stopping one step
+Three values the library already holds and does not hand back. A host that streams
+cannot read what its call spent, cannot ask the journal what a named model did, and
+cannot read the latency the library measured on every call — including the bound it
+teaches itself from budget expiries. Each is a value stopping one step
 short of the caller.
 
 ## Why this is not the failure mode the queue warns against
@@ -101,54 +100,6 @@ records. The distinction is the feature, not an exception to it.
 membership for a named model. It is journaled because the host asked for it, not
 routed because the broker chose it.
 
-## 4. A failed request says whether anything reached the caller
-
-**What a caller can do after this:** decide, from the failure alone, whether the
-user has already seen part of an answer.
-
-**Why.** For a streaming host that is the difference between two different products,
-and it is measured. Same 120 requests, three languages, only the caller budget
-moved:
-
-| budget | answered | what a miss was |
-|---|---:|---|
-| 25 s | 64 of 120 | **56 of 56** ended before any delta: nothing shown, a clean fallback |
-| 45 s | 110 of 120 | 8 of 10 died with text already delivered: half an answer on the page |
-
-The host sets the tight budget for exactly this reason, and its fallback to a paid
-model, its decision to blank what is on screen, and its rating of the pool call all
-branch on that one bit. Today it is spread over three failure shapes, and a host
-must know all three to read it: a budget that expired with no model answering, a
-budget that expired while an answer was already arriving, and a stream that died
-after deltas. Two of those mean output has reached the reader and one does not, and
-nothing states it — the host derives it from which shape it caught.
-
-**Settled shape: the fact rides the handle, not the failure.** A caller catches
-whatever it catches, then asks the object it already holds what that call produced.
-
-- It is where this library already puts facts about a call
-  ([`decisions.md#identity-rides-the-object-a-call-returns`](../reference/decisions.md)):
-  the handle names the model that answered, the call id and the usage, and how much
-  of the answer left the library is the same kind of fact.
-- Coverage is complete rather than partial. Only a stream can deliver half an
-  answer, and a stream always has a handle; for an awaited call the answer is
-  trivially "nothing", so nothing is needed there.
-- It answers for failure shapes nobody enumerated in advance, including ones a
-  later release adds.
-- The exception hierarchy is untouched. No new class —
-  [`decisions.md#one-error-with-a-reason`](../reference/decisions.md) is right that
-  these causes differ in data rather than in handling — and no field on a base class
-  that half its subtypes could never mean anything by.
-
-The price is that a host must keep the handle in scope in its failure branch. The
-one host that needs this already does.
-
-**Second, smaller asymmetry, same item.** A stream that died names the model that
-died; a request that never found one names nothing. A host reporting "the last call
-for this language failed" therefore cannot say what was tried. Whether the attempt
-chain belongs on the error or only in the journal is for the concretization step to
-settle — the journal may well be the honest place.
-
 ## 5. Latency is derivable, so derive it
 
 **What a caller can do after this:** read per-model, per-operation answer latency
@@ -203,8 +154,7 @@ For each item: the exact surface a caller touches; which existing module owns it
 whether the change is additive to a public type or a new one; and the tests that
 pin the behavior, specifically the negative ones — a discarded value stays
 discarded when the provider sends none, a standalone client still journals
-nothing. Also whether item 4's attempt chain belongs on the error or only in the
-journal, and whether these ship as one release or three.
+nothing. Also whether these ship as one release or three.
 
 ## What moves into the specs
 

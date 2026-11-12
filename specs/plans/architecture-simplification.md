@@ -6,8 +6,10 @@ streams is rejected in
 [`streamed-alternatives-live-until-close`](../reference/decisions.md#streamed-alternatives-live-until-close).
 This plans the accepted work; implementation has not started.
 
-**Queue position:** second, after [`release-pipeline.md`](release-pipeline.md),
-which touches only CI workflows. Finish and review this plan before concretizing
+**Queue position:** fourth, after [`release-pipeline.md`](release-pipeline.md), which
+touches only CI workflows, [`host-gaps.md`](host-gaps.md), which changes what `ask`
+does after an expired budget — re-measure the divergence below against its handover — and
+[`futile-wait.md`](futile-wait.md), which ends a queue wait before its deadline. Finish and review this plan before concretizing
 [`caller-visibility.md`](caller-visibility.md).
 
 ## Outcome and boundary
