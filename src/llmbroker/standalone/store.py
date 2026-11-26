@@ -17,6 +17,7 @@ from llmbroker.journal_policy import (
     quality_row,
 )
 from llmbroker.models import Call, CallStatus, Usage, check_limit, to_utc, with_utc_timestamps
+from llmbroker.util.append import append_bytes
 
 _DISABLED_HEADER = "# llmbroker: admin verdicts; values are yours, names are seeded automatically\n"
 
@@ -103,9 +104,7 @@ class FileStore:
     def _append_line(self, ts: datetime, payload: dict) -> None:
         path = self._day_path(ts)
         path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(payload)
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+        append_bytes(path, (json.dumps(payload) + "\n").encode("utf-8"))
 
     async def record(self, call: Call) -> None:
         stamped = with_utc_timestamps(call)
