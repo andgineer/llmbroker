@@ -275,11 +275,11 @@ def test_a_raced_stub_is_replaced_by_the_other_lanes_whole_answer(tmp_path, fini
     async def run():
         broker = await _broker(tmp_path, handler, "a", "b")
         async with broker:
-            handle = broker.stream("hi", fastest_of=2)
             seen: list[str] = []
-            with pytest.raises(StreamReplacementError) as replaced:
-                async for delta in handle:
-                    seen.append(delta)
+            async with broker.stream("hi", fastest_of=2) as handle:
+                with pytest.raises(StreamReplacementError) as replaced:
+                    async for delta in handle:
+                        seen.append(delta)
             rows = await broker.calls(limit=10)
             return seen, replaced.value, rows
 
@@ -339,8 +339,8 @@ def test_a_raced_lane_cut_at_length_is_the_answer(tmp_path):
     async def run():
         broker = await _broker(tmp_path, handler, "a", "b")
         async with broker:
-            handle = broker.stream("hi", fastest_of=2)
-            seen = [delta async for delta in handle]
+            async with broker.stream("hi", fastest_of=2) as handle:
+                seen = [delta async for delta in handle]
             rows = await broker.calls(limit=10)
             return seen, rows
 
