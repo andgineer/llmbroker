@@ -121,6 +121,11 @@ class InvalidProviderResponseError(LLMRequestError):
         self.detail = detail
 
 
+class AnswerTooLongError(InvalidProviderResponseError):
+    """Every pooled model cut its answer at the provider's own length cap. The request
+    asks for more than a free endpoint will write, so no model was cooled for it."""
+
+
 class StreamInterruptedError(LLMRequestError):
     """A pooled stream died after it had already emitted deltas. Failover is
     impossible once output has reached the caller, so the deltas already yielded

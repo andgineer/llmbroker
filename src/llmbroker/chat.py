@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from llmbroker.exceptions import (
+    AnswerTooLongError,
     AuthError,
     InvalidProviderResponseError,
     ProviderError,
@@ -215,16 +216,19 @@ def finish_reason(data: dict) -> str | None:
 
 def unfinished_answer_error(model: str, reason: str | None) -> InvalidProviderResponseError | None:
     """The failure a pooled answer is when its provider stopped it abnormally, else ``None``.
-    The pool sends no token cap, so ``length`` is the provider's own cut, not the caller's.
+    ``length`` is the one reason the request itself causes, so it has its own type.
 
     >>> unfinished_answer_error("m", "stop"), unfinished_answer_error("m", None)
     (None, None)
     >>> unfinished_answer_error("m", "content_filter").detail
     'finish_reason=content_filter'
+    >>> type(unfinished_answer_error("m", "length")).__name__
+    'AnswerTooLongError'
     """
     if reason is None or reason.lower() in NORMAL_FINISHES:
         return None
-    return InvalidProviderResponseError(
+    error = AnswerTooLongError if reason.lower() == "length" else InvalidProviderResponseError
+    return error(
         f"{model}: the provider ended the answer abnormally (finish_reason={reason})",
         model=model,
         detail=f"finish_reason={reason}"[:_BODY_SNIPPET],

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import httpx
 
 from llmbroker.chat import provider_error, retry_after_seconds
-from llmbroker.exceptions import InvalidProviderResponseError, ProviderError
+from llmbroker.exceptions import AnswerTooLongError, InvalidProviderResponseError, ProviderError
 from llmbroker.http_status import (
     DETAIL_SNIPPET,
     is_auth_failure,
@@ -28,11 +28,11 @@ FAILOVER_ERRORS = (
 class Failed:
     """One candidate is done for this request.
 
-    ``error`` is set only for a genuine client error, so the router can decide
+    ``error`` is set only for a fault the request caused, so the router can decide
     whether to surface it after every candidate is exhausted.
     """
 
-    error: ProviderError | None
+    error: ProviderError | AnswerTooLongError | None
 
 
 @dataclass(frozen=True)
@@ -74,6 +74,8 @@ def classify(exc: Exception, *, budget_bound: bool) -> Verdict:
     """Map a failed attempt onto cooldown, retry, or caller-budget expiry."""
     if isinstance(exc, httpx.HTTPStatusError):
         return classify_status(exc)
+    if isinstance(exc, AnswerTooLongError):
+        return Verdict(CallStatus.ERROR, exc.detail, outcome=Failed(error=exc))
     if isinstance(exc, InvalidProviderResponseError):
         return Verdict(CallStatus.ERROR, exc.detail, cool_base=DEFAULT_RATE_LIMIT_SEC)
     if budget_bound and isinstance(exc, (httpx.TimeoutException, TimeoutError)):

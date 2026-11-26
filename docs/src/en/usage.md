@@ -367,6 +367,12 @@ except llmbroker.ProviderError as exc:
 `ProviderError` does not exclude any model. A corrected request reaches those
 models in the normal order.
 
+**An answer too long for every model raises `AnswerTooLongError`.** When each
+selected model stops its answer at the provider's own length limit, the request
+asks for more than the free models write, and the broker raises
+`AnswerTooLongError` instead of waiting. No model is excluded afterwards, so a
+shorter request is served at once.
+
 ## Quality rating {#quality}
 
 Ratings help the broker select the best models for different tasks:

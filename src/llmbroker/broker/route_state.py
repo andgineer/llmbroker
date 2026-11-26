@@ -8,7 +8,7 @@ from typing import Any
 from llmbroker.broker.keyring import KeyRing
 from llmbroker.broker.result import CallReceipt
 from llmbroker.broker.verdict import BudgetExpired, Failed
-from llmbroker.exceptions import ProviderError
+from llmbroker.exceptions import AnswerTooLongError, ProviderError
 from llmbroker.models import LLMConfig
 
 
@@ -77,7 +77,7 @@ class RouteCall:
     recovery_width: int
     client_failed: set[str] = field(default_factory=set)
     attempted: set[str] = field(default_factory=set)
-    last_client_error: ProviderError | None = None
+    last_client_error: ProviderError | AnswerTooLongError | None = None
     expired: bool = False
     losers: list[asyncio.Task[None]] = field(default_factory=list)
 
