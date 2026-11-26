@@ -193,20 +193,69 @@ def empty_answer_error(model: str, detail: str) -> InvalidProviderResponseError:
     )
 
 
-def _parse_completion(data: Any, model: str) -> tuple[str, list[dict] | None, Usage | None]:
-    """Pull (content, tool_calls, usage) out of a decoded chat-completion body. The
-    caught set is deliberately broad: an escape here reaches the caller raw and skips
-    failover."""
+# Every stop reason the pool's providers document for an answer that ended where the
+# model meant it to; anything else they report means the provider cut it short.
+NORMAL_FINISHES = frozenset({"stop", "tool_calls", "function_call"})
+
+
+def finish_reason(data: dict) -> str | None:
+    """The stop reason a completion body or a stream chunk reports, ``None`` when it has none.
+
+    >>> finish_reason({"choices": [{"delta": {}, "finish_reason": "length"}]})
+    'length'
+    >>> finish_reason({"choices": [], "usage": {}}), finish_reason({"choices": [{}]})
+    (None, None)
+    """
+    choices = data.get("choices") or []
+    if not choices:
+        return None
+    reason = choices[0].get("finish_reason")
+    return reason if isinstance(reason, str) and reason else None
+
+
+def unfinished_answer_error(model: str, reason: str | None) -> InvalidProviderResponseError | None:
+    """The failure a pooled answer is when its provider stopped it abnormally, else ``None``.
+    The pool sends no token cap, so ``length`` is the provider's own cut, not the caller's.
+
+    >>> unfinished_answer_error("m", "stop"), unfinished_answer_error("m", None)
+    (None, None)
+    >>> unfinished_answer_error("m", "content_filter").detail
+    'finish_reason=content_filter'
+    """
+    if reason is None or reason.lower() in NORMAL_FINISHES:
+        return None
+    return InvalidProviderResponseError(
+        f"{model}: the provider ended the answer abnormally (finish_reason={reason})",
+        model=model,
+        detail=f"finish_reason={reason}"[:_BODY_SNIPPET],
+    )
+
+
+def _parse_completion(
+    data: Any,
+    model: str,
+) -> tuple[str, list[dict] | None, Usage | None, str | None]:
+    """Pull (content, tool_calls, usage, finish reason) out of a decoded chat-completion
+    body. The caught set is deliberately broad: an escape here reaches the caller raw and
+    skips failover."""
     try:
         message = message_from_response(data)
         content = str(message.get("content") or "")
         tool_calls = parse_tool_calls(message)
         usage = parse_usage(data)
+        reason = finish_reason(data)
     except (ArithmeticError, AttributeError, KeyError, IndexError, TypeError, ValueError) as exc:
         raise _invalid_body(model, str(data)) from exc
     if not content and not tool_calls:
         raise empty_answer_error(model, f"{_NO_ANSWER}: {data}")
-    return content, tool_calls, usage
+    return content, tool_calls, usage, reason
+
+
+def _decoded_body(resp: httpx.Response, model: str) -> Any:
+    try:
+        return resp.json()
+    except ValueError as exc:
+        raise _invalid_body(model, resp.text) from exc
 
 
 def completion_from_response(
@@ -216,11 +265,8 @@ def completion_from_response(
     """Decode a successful chat-completion response and pull its parts out. Anything
     the schema does not admit raises ``InvalidProviderResponseError``, so no caller of
     a 200 sees a raw decoding error."""
-    try:
-        data = resp.json()
-    except ValueError as exc:
-        raise _invalid_body(model, resp.text) from exc
-    return _parse_completion(data, model)
+    content, tool_calls, usage, _ = _parse_completion(_decoded_body(resp, model), model)
+    return content, tool_calls, usage
 
 
 async def call_provider(  # noqa: PLR0913
@@ -233,9 +279,9 @@ async def call_provider(  # noqa: PLR0913
     timeout: float | None = None,
     params: Mapping[str, object] | None = None,
 ) -> tuple[str, list[dict] | None, Usage | None]:
-    """POST an OpenAI-compatible completion and return (content, tool_calls, usage).
-    A passed ``client`` is reused and never closed here; ``timeout`` bounds this one
-    request, overriding the client's own."""
+    """POST a pooled completion and return (content, tool_calls, usage); an abnormal stop
+    raises like a malformed body. A passed ``client`` is reused and never closed here;
+    ``timeout`` bounds this one request, overriding the client's own."""
     url, headers, body = build_chat_request(
         config.base_url,
         config.model,
@@ -251,7 +297,13 @@ async def call_provider(  # noqa: PLR0913
         else:
             resp = await active.post(url, headers=headers, json=body, timeout=timeout)
         resp.raise_for_status()
-    return completion_from_response(resp, config.name)
+    content, tool_calls, usage, reason = _parse_completion(
+        _decoded_body(resp, config.name),
+        config.name,
+    )
+    if (unfinished := unfinished_answer_error(config.name, reason)) is not None:
+        raise unfinished
+    return content, tool_calls, usage
 
 
 def parse_tool_calls(message: dict) -> list[dict] | None:
@@ -356,10 +408,10 @@ def _stream_delta(chunk: dict) -> str:
     return str(choices[0].get("delta", {}).get("content") or "")
 
 
-def parse_stream_chunk(chunk: dict, model: str) -> tuple[str, Usage | None]:
-    """Pull (delta, usage) out of one stream chunk. The caught set is deliberately
-    broad: an escape here reaches the caller raw and skips failover."""
+def parse_stream_chunk(chunk: dict, model: str) -> tuple[str, Usage | None, str | None]:
+    """Pull (delta, usage, finish reason) out of one stream chunk. The caught set is
+    deliberately broad: an escape here reaches the caller raw and skips failover."""
     try:
-        return _stream_delta(chunk), parse_usage(chunk)
+        return _stream_delta(chunk), parse_usage(chunk), finish_reason(chunk)
     except (ArithmeticError, AttributeError, KeyError, IndexError, TypeError, ValueError) as exc:
         raise _invalid_stream(model, str(chunk)) from exc

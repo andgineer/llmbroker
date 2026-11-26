@@ -48,6 +48,18 @@ fact — a candidate produced nothing usable while others were untried
 an unusable 200 serves both call paths, so the direct client raises on it where
 the pool fails over. A reply carrying tool calls and no prose is an answer.
 
+**So is a pooled reply its provider stopped abnormally.** The stop reason the
+provider reports is read on every routed answer, streamed or not, and anything but
+a normal stop — a content filter, a safety or recitation block, a provider-side
+error, an unspecified reason, a length cut — is the same unusable 200, with the
+reason on the failed row
+([`decisions.md`](../decisions.md#an-abnormal-stop-is-a-failure)). A length cut
+counts because the pool sends no token cap, so the cut is the provider's own and
+never the caller's; admitting a cap as a routed parameter reopens this. A reply
+reporting no reason is taken as finished, since not every provider sends one. A
+model reached by name is not judged: its caller may cap the answer itself and has
+no other model to ask.
+
 An unexpected exception is a bug and does reach the caller; a cancelled call
 propagates untouched.
 
@@ -270,7 +282,9 @@ failover is still open and invariant 18 is untouched: it binds only *past* the
 first delta. After the
 first delta a mid-stream death cools the model (it misbehaved no less than one
 failing earlier) and raises, carrying the model name and the underlying cause;
-the deltas already yielded stand.
+the deltas already yielded stand. An abnormal stop is known only when the provider
+ends the stream, so once text has reached the caller it is such a death — and in a
+raced stream, a held failure that a later complete answer replaces.
 
 **Before its first delta a stream commits to the models that can answer it now.** A
 model this handle has tried is not reopened and is not waited for, so a stream ends

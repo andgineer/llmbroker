@@ -141,7 +141,7 @@ class AsyncDirectClient:
                     raise provider_error(resp.status_code, detail, resp.headers)
                 produced = False
                 async for chunk in aiter_chat_chunks(resp, self._model):
-                    delta, _ = parse_stream_chunk(chunk, self._model)
+                    delta, _, _ = parse_stream_chunk(chunk, self._model)
                     if delta:
                         produced = True
                         yield delta
@@ -253,7 +253,7 @@ class DirectClient:
                     raise provider_error(resp.status_code, detail, resp.headers)
                 produced = False
                 for chunk in iter_chat_chunks(resp, self._model):
-                    delta, _ = parse_stream_chunk(chunk, self._model)
+                    delta, _, _ = parse_stream_chunk(chunk, self._model)
                     if delta:
                         produced = True
                         yield delta

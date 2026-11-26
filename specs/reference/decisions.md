@@ -389,6 +389,23 @@ to one pooled model. Judging *whether there is text* is not judging what the tex
 says, so nothing here wraps the reply or rates it; and an unusable 200 already has
 a surface, which is the one this uses rather than inventing a third.
 
+### an-abnormal-stop-is-a-failure
+
+A pooled reply whose provider reports a stop reason other than a normal one fails
+over like a malformed response; the reason is written on the failed row.
+
+**Blocks:** treating a short reply as cut by its length; a stop-reason column on
+every journal row; judging the stop reason of a model reached by name.
+**Why:** a free-tier endpoint was seen handing back a few tokens of a sentence as a
+finished answer, and the host cannot recover once the call has settled. The
+provider's own stop reason is evidence; a length threshold is a guess that a
+legitimately short answer trips. A normal stop leaves an `OK` row, so the reason
+on failed rows already tells the two apart without a schema change, which would
+cost every database host a dropped store. A direct caller may set its own token
+cap and has no other model to fall back on, so a cut answer is its to keep.
+**Accepted cost:** a stub that arrives with a normal stop reason still passes as
+an answer.
+
 ### identity-rides-the-object-a-call-returns
 
 Every routed call returns an object naming the model that answered; a stream names

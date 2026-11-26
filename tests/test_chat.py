@@ -263,7 +263,7 @@ def test_parse_usage_keeps_the_largest_count_a_column_can_hold():
 
 def test_parse_usage_keeps_a_good_answer_when_only_the_counts_are_junk():
     data = json.loads('{"choices":[{"message":{"content":"hi"}}],"usage":{"cost":1e400}}')
-    content, tool_calls, usage = _parse_completion(data, "m")
+    content, tool_calls, usage, _ = _parse_completion(data, "m")
     assert content == "hi"
     assert tool_calls is None
     assert usage is not None and usage.extra is None
@@ -292,13 +292,13 @@ _MALFORMED_CHUNKS = [
 
 def test_parse_stream_chunk_returns_the_delta_and_the_usage():
     chunk = {"choices": [{"delta": {"content": "Hi"}}], "usage": {"total_tokens": 3}}
-    delta, usage = parse_stream_chunk(chunk, "m")
+    delta, usage, _ = parse_stream_chunk(chunk, "m")
     assert delta == "Hi"
     assert usage is not None and usage.total_tokens == 3
 
 
 def test_parse_stream_chunk_on_a_usage_only_chunk():
-    delta, usage = parse_stream_chunk({"choices": [], "usage": {"total_tokens": 7}}, "m")
+    delta, usage, _ = parse_stream_chunk({"choices": [], "usage": {"total_tokens": 7}}, "m")
     assert delta == ""
     assert usage is not None and usage.total_tokens == 7
 

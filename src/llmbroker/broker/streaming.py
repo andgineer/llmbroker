@@ -22,6 +22,7 @@ from llmbroker.chat import (
     build_chat_request,
     empty_answer_error,
     parse_stream_chunk,
+    unfinished_answer_error,
 )
 from llmbroker.exceptions import LLMTimeoutError, StreamInterruptedError
 from llmbroker.http_status import ERROR_FLOOR
@@ -231,7 +232,7 @@ async def stream_deltas(  # noqa: PLR0913
     progress: StreamProgress,
     budget: StreamBudget | None = None,
 ) -> AsyncGenerator[str, None]:
-    """Open one streaming request and yield its text deltas."""
+    """Open one streaming request and yield its text deltas; an abnormal stop raises at the end."""
     url, headers, body = request
     loop = asyncio.get_running_loop()
     provider_deadline = loop.time() + timeout
@@ -246,13 +247,15 @@ async def stream_deltas(  # noqa: PLR0913
                 await resp.aread()
                 resp.raise_for_status()
             chunks = await opened.enter_async_context(aclosing(aiter_chat_chunks(resp, model)))
+            finish: str | None = None
             while True:
                 try:
                     chunk = await budgeted_await(anext(chunks), provider_deadline, budget)
                 except StopAsyncIteration:
                     break
-                delta, usage = parse_stream_chunk(chunk, model)
+                delta, usage, reason = parse_stream_chunk(chunk, model)
                 progress.usage = usage or progress.usage
+                finish = reason or finish
                 if not delta:
                     continue
                 if not progress.started:
@@ -260,6 +263,8 @@ async def stream_deltas(  # noqa: PLR0913
                 held = loop.time()
                 yield delta
                 provider_deadline += loop.time() - held
+            if (unfinished := unfinished_answer_error(model, finish)) is not None:
+                raise unfinished
     except TimeoutError:
         if progress.started:
             raise BudgetExhaustedError from None
