@@ -4,6 +4,7 @@ unlinking whole expired day files — no rewrite, no race with a concurrent appe
 
 import asyncio
 import json
+import threading
 from dataclasses import asdict, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -17,7 +18,10 @@ from llmbroker.journal_policy import (
     quality_row,
 )
 from llmbroker.models import Call, CallStatus, Usage, check_limit, to_utc, with_utc_timestamps
-from llmbroker.util.append import append_bytes
+
+# The Windows C runtime appends as a seek to the end then a write, so two threads
+# appending at once can land on one offset; every store in the process shares one lock.
+_APPEND_LOCK = threading.Lock()
 
 _DISABLED_HEADER = "# llmbroker: admin verdicts; values are yours, names are seeded automatically\n"
 
@@ -104,7 +108,9 @@ class FileStore:
     def _append_line(self, ts: datetime, payload: dict) -> None:
         path = self._day_path(ts)
         path.parent.mkdir(parents=True, exist_ok=True)
-        append_bytes(path, (json.dumps(payload) + "\n").encode("utf-8"))
+        line = json.dumps(payload) + "\n"
+        with _APPEND_LOCK, path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
 
     async def record(self, call: Call) -> None:
         stamped = with_utc_timestamps(call)
