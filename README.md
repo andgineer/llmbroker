@@ -27,14 +27,14 @@
 | src/llmbroker/broker/report.py            |       25 |        0 |    100% |           |
 | src/llmbroker/broker/result.py            |      138 |        3 |     98% |187, 203, 205 |
 | src/llmbroker/broker/route\_state.py      |       51 |        0 |    100% |           |
-| src/llmbroker/broker/router.py            |      297 |       28 |     91% |119, 203-204, 208, 304-305, 311-314, 349-358, 364-368, 393, 452-453, 582-583, 721-722 |
+| src/llmbroker/broker/router.py            |      297 |       20 |     93% |119, 203-204, 208, 312-314, 356, 364-368, 393, 452-453, 582-583, 721-722 |
 | src/llmbroker/broker/source.py            |       48 |        2 |     96% |     29-30 |
 | src/llmbroker/broker/stamps.py            |       35 |        3 |     91% | 42, 56-57 |
 | src/llmbroker/broker/stats.py             |       15 |        0 |    100% |           |
 | src/llmbroker/broker/stream\_owner.py     |      403 |       11 |     97% |81, 83, 92, 113, 336, 352, 489, 498, 500, 533, 553 |
-| src/llmbroker/broker/streaming.py         |      244 |       14 |     94% |197-198, 271-281, 327-328 |
+| src/llmbroker/broker/streaming.py         |      248 |       14 |     94% |198-199, 276-286, 332-333 |
 | src/llmbroker/broker/verdict.py           |       37 |        0 |    100% |           |
-| src/llmbroker/chat.py                     |      167 |        5 |     97% |43, 161-162, 290-291 |
+| src/llmbroker/chat.py                     |      184 |        5 |     97% |43, 161-162, 345-346 |
 | src/llmbroker/cli.py                      |       75 |        0 |    100% |           |
 | src/llmbroker/direct.py                   |      115 |        4 |     97% |84, 151, 155-156 |
 | src/llmbroker/exceptions.py               |       50 |        0 |    100% |           |
@@ -67,7 +67,7 @@
 | src/llmbroker/tool\_loop.py               |       48 |        1 |     98% |        33 |
 | src/llmbroker/util/atomic.py              |       17 |        3 |     82% |     29-31 |
 | src/llmbroker/vault/secrets.py            |       29 |        3 |     90% | 26, 62-63 |
-| **TOTAL**                                 | **4902** |  **135** | **97%** |           |
+| **TOTAL**                                 | **4923** |  **127** | **97%** |           |
 
 
 ## Setup coverage badge

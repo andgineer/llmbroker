@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for src/llmbroker/broker/router.py: 91%</title>
+    <title>Coverage for src/llmbroker/broker/router.py: 93%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_54cfdca1.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>src<span class="sep">/</span>llmbroker<span class="sep">/</span>broker<span class="sep">/</span>router.py</b>:
-            <span class="pc_cov">91%</span>
+            <span class="pc_cov">93%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">297 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">269<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">28<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">277<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">20<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -64,8 +64,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_87678270539320d3_source_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.2">coverage.py v7.17.2</a>,
-            created at 2026-11-12 15:49 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
+            created at 2026-11-26 13:24 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -383,14 +383,14 @@
     <p class="run"><span class="n"><a id="t301" href="#t301">301</a></span><span class="t">                <span class="key">for</span> <span class="nam">lane</span> <span class="key">in</span> <span class="op">[</span><span class="nam">settled</span> <span class="key">for</span> <span class="nam">settled</span> <span class="key">in</span> <span class="nam">live</span> <span class="key">if</span> <span class="nam">settled</span><span class="op">.</span><span class="nam">done</span><span class="op">(</span><span class="op">)</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t302" href="#t302">302</a></span><span class="t">                    <span class="nam">live</span><span class="op">.</span><span class="nam">remove</span><span class="op">(</span><span class="nam">lane</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t303" href="#t303">303</a></span><span class="t">                    <span class="key">if</span> <span class="key">not</span> <span class="nam">lane</span><span class="op">.</span><span class="nam">opened</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t304" href="#t304">304</a></span><span class="t">                        <span class="nam">call</span><span class="op">.</span><span class="nam">absorb</span><span class="op">(</span><span class="nam">lane</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t305" href="#t305">305</a></span><span class="t">                        <span class="key">await</span> <span class="nam">lane</span><span class="op">.</span><span class="nam">produced</span><span class="op">.</span><span class="nam">aclose</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t304" href="#t304">304</a></span><span class="t">                        <span class="nam">call</span><span class="op">.</span><span class="nam">absorb</span><span class="op">(</span><span class="nam">lane</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t305" href="#t305">305</a></span><span class="t">                        <span class="key">await</span> <span class="nam">lane</span><span class="op">.</span><span class="nam">produced</span><span class="op">.</span><span class="nam">aclose</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t306" href="#t306">306</a></span><span class="t">                    <span class="key">elif</span> <span class="nam">winner</span> <span class="key">is</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t307" href="#t307">307</a></span><span class="t">                        <span class="nam">winner</span> <span class="op">=</span> <span class="nam">lane</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t308" href="#t308">308</a></span><span class="t">                    <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t309" href="#t309">309</a></span><span class="t">                        <span class="nam">self</span><span class="op">.</span><span class="nam">_supersede</span><span class="op">(</span><span class="nam">call</span><span class="op">,</span> <span class="nam">lane</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t310" href="#t310">310</a></span><span class="t">                <span class="key">if</span> <span class="nam">winner</span> <span class="key">is</span> <span class="key">None</span> <span class="key">and</span> <span class="key">not</span> <span class="nam">call</span><span class="op">.</span><span class="nam">expired</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t311" href="#t311">311</a></span><span class="t">                    <span class="nam">live</span><span class="op">.</span><span class="nam">extend</span><span class="op">(</span><span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_refill</span><span class="op">(</span><span class="nam">call</span><span class="op">,</span> <span class="nam">opened</span><span class="op">,</span> <span class="nam">width</span> <span class="op">-</span> <span class="nam">len</span><span class="op">(</span><span class="nam">live</span><span class="op">)</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t311" href="#t311">311</a></span><span class="t">                    <span class="nam">live</span><span class="op">.</span><span class="nam">extend</span><span class="op">(</span><span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_refill</span><span class="op">(</span><span class="nam">call</span><span class="op">,</span> <span class="nam">opened</span><span class="op">,</span> <span class="nam">width</span> <span class="op">-</span> <span class="nam">len</span><span class="op">(</span><span class="nam">live</span><span class="op">)</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t312" href="#t312">312</a></span><span class="t">        <span class="key">except</span> <span class="nam">BaseException</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t313" href="#t313">313</a></span><span class="t">            <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_abandon</span><span class="op">(</span><span class="nam">call</span><span class="op">,</span> <span class="nam">live</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t314" href="#t314">314</a></span><span class="t">            <span class="key">raise</span>&nbsp;</span><span class="r"></span></p>
@@ -428,16 +428,16 @@
     <p class="pln"><span class="n"><a id="t346" href="#t346">346</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t347" href="#t347">347</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">_refill</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">call</span><span class="op">:</span> <span class="nam">_Call</span><span class="op">,</span> <span class="nam">opened</span><span class="op">:</span> <span class="nam">list</span><span class="op">[</span><span class="nam">_Lane</span><span class="op">]</span><span class="op">,</span> <span class="nam">needed</span><span class="op">:</span> <span class="nam">int</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">list</span><span class="op">[</span><span class="nam">_Lane</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t348" href="#t348">348</a></span><span class="t">        <span class="str">&quot;&quot;&quot;Reopen an emptied lane on a model this call has not tried.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t349" href="#t349">349</a></span><span class="t">        <span class="nam">configs</span> <span class="op">=</span> <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_untried</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t350" href="#t350">350</a></span><span class="t">            <span class="nam">call</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t351" href="#t351">351</a></span><span class="t">            <span class="nam">frozenset</span><span class="op">(</span><span class="nam">lane</span><span class="op">.</span><span class="nam">config</span><span class="op">.</span><span class="nam">name</span> <span class="key">for</span> <span class="nam">lane</span> <span class="key">in</span> <span class="nam">opened</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t352" href="#t352">352</a></span><span class="t">            <span class="nam">needed</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t353" href="#t353">353</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t354" href="#t354">354</a></span><span class="t">        <span class="nam">fresh</span> <span class="op">=</span> <span class="op">[</span><span class="nam">self</span><span class="op">.</span><span class="nam">_open</span><span class="op">(</span><span class="nam">call</span><span class="op">,</span> <span class="nam">config</span><span class="op">)</span> <span class="key">for</span> <span class="nam">config</span> <span class="key">in</span> <span class="nam">configs</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t355" href="#t355">355</a></span><span class="t">        <span class="key">for</span> <span class="nam">lane</span> <span class="key">in</span> <span class="nam">fresh</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t349" href="#t349">349</a></span><span class="t">        <span class="nam">configs</span> <span class="op">=</span> <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_untried</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t350" href="#t350">350</a></span><span class="t">            <span class="nam">call</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t351" href="#t351">351</a></span><span class="t">            <span class="nam">frozenset</span><span class="op">(</span><span class="nam">lane</span><span class="op">.</span><span class="nam">config</span><span class="op">.</span><span class="nam">name</span> <span class="key">for</span> <span class="nam">lane</span> <span class="key">in</span> <span class="nam">opened</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t352" href="#t352">352</a></span><span class="t">            <span class="nam">needed</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t353" href="#t353">353</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t354" href="#t354">354</a></span><span class="t">        <span class="nam">fresh</span> <span class="op">=</span> <span class="op">[</span><span class="nam">self</span><span class="op">.</span><span class="nam">_open</span><span class="op">(</span><span class="nam">call</span><span class="op">,</span> <span class="nam">config</span><span class="op">)</span> <span class="key">for</span> <span class="nam">config</span> <span class="key">in</span> <span class="nam">configs</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t355" href="#t355">355</a></span><span class="t">        <span class="key">for</span> <span class="nam">lane</span> <span class="key">in</span> <span class="nam">fresh</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t356" href="#t356">356</a></span><span class="t">            <span class="nam">lane</span><span class="op">.</span><span class="nam">task</span> <span class="op">=</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">create_task</span><span class="op">(</span><span class="nam">lane</span><span class="op">.</span><span class="nam">open</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t357" href="#t357">357</a></span><span class="t">        <span class="nam">opened</span><span class="op">.</span><span class="nam">extend</span><span class="op">(</span><span class="nam">fresh</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t358" href="#t358">358</a></span><span class="t">        <span class="key">return</span> <span class="nam">fresh</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t357" href="#t357">357</a></span><span class="t">        <span class="nam">opened</span><span class="op">.</span><span class="nam">extend</span><span class="op">(</span><span class="nam">fresh</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t358" href="#t358">358</a></span><span class="t">        <span class="key">return</span> <span class="nam">fresh</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t359" href="#t359">359</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t360" href="#t360">360</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">_abandon</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">call</span><span class="op">:</span> <span class="nam">_Call</span><span class="op">,</span> <span class="nam">live</span><span class="op">:</span> <span class="nam">list</span><span class="op">[</span><span class="nam">_Lane</span><span class="op">]</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t361" href="#t361">361</a></span><span class="t">        <span class="str">&quot;&quot;&quot;Nothing answered, so nothing was superseded: every lane is taken off its</span>&nbsp;</span><span class="r"></span></p>
@@ -815,8 +815,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_87678270539320d3_source_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.2">coverage.py v7.17.2</a>,
-            created at 2026-11-12 15:49 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
+            created at 2026-11-26 13:24 +0000
         </p>
     </div>
 </footer>

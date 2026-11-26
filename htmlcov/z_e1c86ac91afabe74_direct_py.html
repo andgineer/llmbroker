@@ -64,8 +64,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_e1c86ac91afabe74_exceptions_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.2">coverage.py v7.17.2</a>,
-            created at 2026-11-12 15:49 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
+            created at 2026-11-26 13:24 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -223,7 +223,7 @@
     <p class="run"><span class="n"><a id="t141" href="#t141">141</a></span><span class="t">                    <span class="key">raise</span> <span class="nam">provider_error</span><span class="op">(</span><span class="nam">resp</span><span class="op">.</span><span class="nam">status_code</span><span class="op">,</span> <span class="nam">detail</span><span class="op">,</span> <span class="nam">resp</span><span class="op">.</span><span class="nam">headers</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t142" href="#t142">142</a></span><span class="t">                <span class="nam">produced</span> <span class="op">=</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t143" href="#t143">143</a></span><span class="t">                <span class="key">async</span> <span class="key">for</span> <span class="nam">chunk</span> <span class="key">in</span> <span class="nam">aiter_chat_chunks</span><span class="op">(</span><span class="nam">resp</span><span class="op">,</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_model</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t">                    <span class="nam">delta</span><span class="op">,</span> <span class="nam">_</span> <span class="op">=</span> <span class="nam">parse_stream_chunk</span><span class="op">(</span><span class="nam">chunk</span><span class="op">,</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_model</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t">                    <span class="nam">delta</span><span class="op">,</span> <span class="nam">_</span><span class="op">,</span> <span class="nam">_</span> <span class="op">=</span> <span class="nam">parse_stream_chunk</span><span class="op">(</span><span class="nam">chunk</span><span class="op">,</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_model</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t145" href="#t145">145</a></span><span class="t">                    <span class="key">if</span> <span class="nam">delta</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t146" href="#t146">146</a></span><span class="t">                        <span class="nam">produced</span> <span class="op">=</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t147" href="#t147">147</a></span><span class="t">                        <span class="key">yield</span> <span class="nam">delta</span>&nbsp;</span><span class="r"></span></p>
@@ -335,7 +335,7 @@
     <p class="run"><span class="n"><a id="t253" href="#t253">253</a></span><span class="t">                    <span class="key">raise</span> <span class="nam">provider_error</span><span class="op">(</span><span class="nam">resp</span><span class="op">.</span><span class="nam">status_code</span><span class="op">,</span> <span class="nam">detail</span><span class="op">,</span> <span class="nam">resp</span><span class="op">.</span><span class="nam">headers</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t254" href="#t254">254</a></span><span class="t">                <span class="nam">produced</span> <span class="op">=</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t255" href="#t255">255</a></span><span class="t">                <span class="key">for</span> <span class="nam">chunk</span> <span class="key">in</span> <span class="nam">iter_chat_chunks</span><span class="op">(</span><span class="nam">resp</span><span class="op">,</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_model</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t256" href="#t256">256</a></span><span class="t">                    <span class="nam">delta</span><span class="op">,</span> <span class="nam">_</span> <span class="op">=</span> <span class="nam">parse_stream_chunk</span><span class="op">(</span><span class="nam">chunk</span><span class="op">,</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_model</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t256" href="#t256">256</a></span><span class="t">                    <span class="nam">delta</span><span class="op">,</span> <span class="nam">_</span><span class="op">,</span> <span class="nam">_</span> <span class="op">=</span> <span class="nam">parse_stream_chunk</span><span class="op">(</span><span class="nam">chunk</span><span class="op">,</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_model</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t257" href="#t257">257</a></span><span class="t">                    <span class="key">if</span> <span class="nam">delta</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t258" href="#t258">258</a></span><span class="t">                        <span class="nam">produced</span> <span class="op">=</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t259" href="#t259">259</a></span><span class="t">                        <span class="key">yield</span> <span class="nam">delta</span>&nbsp;</span><span class="r"></span></p>
@@ -369,8 +369,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_e1c86ac91afabe74_exceptions_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.2">coverage.py v7.17.2</a>,
-            created at 2026-11-12 15:49 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
+            created at 2026-11-26 13:24 +0000
         </p>
     </div>
 </footer>
