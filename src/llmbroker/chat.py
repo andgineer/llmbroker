@@ -12,7 +12,6 @@ from typing import Any
 import httpx
 
 from llmbroker.exceptions import (
-    AnswerTooLongError,
     AuthError,
     InvalidProviderResponseError,
     ProviderError,
@@ -194,9 +193,9 @@ def empty_answer_error(model: str, detail: str) -> InvalidProviderResponseError:
     )
 
 
-# Every stop reason the pool's providers document for an answer that ended where the
-# model meant it to; anything else they report means the provider cut it short.
-NORMAL_FINISHES = frozenset({"stop", "tool_calls", "function_call"})
+# ``length`` is normal: the pool sends no token cap, so a cut is the request outgrowing the
+# provider's own limit, which failover would repeat on every model.
+NORMAL_FINISHES = frozenset({"stop", "tool_calls", "function_call", "length"})
 
 
 def finish_reason(data: dict) -> str | None:
@@ -216,19 +215,17 @@ def finish_reason(data: dict) -> str | None:
 
 def unfinished_answer_error(model: str, reason: str | None) -> InvalidProviderResponseError | None:
     """The failure a pooled answer is when its provider stopped it abnormally, else ``None``.
-    ``length`` is the one reason the request itself causes, so it has its own type.
 
     >>> unfinished_answer_error("m", "stop"), unfinished_answer_error("m", None)
     (None, None)
+    >>> unfinished_answer_error("m", "LENGTH") is None
+    True
     >>> unfinished_answer_error("m", "content_filter").detail
     'finish_reason=content_filter'
-    >>> type(unfinished_answer_error("m", "length")).__name__
-    'AnswerTooLongError'
     """
     if reason is None or reason.lower() in NORMAL_FINISHES:
         return None
-    error = AnswerTooLongError if reason.lower() == "length" else InvalidProviderResponseError
-    return error(
+    return InvalidProviderResponseError(
         f"{model}: the provider ended the answer abnormally (finish_reason={reason})",
         model=model,
         detail=f"finish_reason={reason}"[:_BODY_SNIPPET],

@@ -393,23 +393,24 @@ a surface, which is the one this uses rather than inventing a third.
 
 A pooled reply whose provider reports a stop reason other than a normal one fails
 over like a malformed response; the reason is written on the failed row. A length
-cut fails over like a client request error instead: it excludes the model for that
-call without cooling it, and a call every model cuts ends with its own error.
+cut is a normal stop: the answer is returned as it came.
 
-**Blocks:** treating a short reply as cut by its length; a stop-reason column on
-every journal row; judging the stop reason of a model reached by name.
+**Blocks:** treating a short reply as cut by its length; failing over on a length
+cut; a stop-reason column on every journal row; judging the stop reason of a model
+reached by name.
 **Why:** a free-tier endpoint was seen handing back a few tokens of a sentence as a
 finished answer, and the host cannot recover once the call has settled. The
 provider's own stop reason is evidence; a length threshold is a guess that a
 legitimately short answer trips. A normal stop leaves an `OK` row, so the reason
 on failed rows already tells the two apart without a schema change, which would
-cost every database host a dropped store. A length cut is the request's doing — an
-answer longer than the providers' default cap is cut by every model — so cooling on
-it would empty the pool for unrelated short calls and, with no `wait`, loop forever
-on the one that caused it. A direct caller may set its own token cap and has no
-other model to fall back on, so a cut answer is its to keep.
-**Accepted cost:** a stub that arrives with a normal stop reason still passes as
-an answer.
+cost every database host a dropped store. A length cut is the request's doing: the
+pool sends no token cap, so it is an answer longer than the provider's own limit,
+and one oversized request judged on it would fail over across the whole pool, or
+cool it empty for every unrelated call. The stubs this guards against end with
+other reasons, and the host bounds what it shows. A direct caller may set its own
+token cap and has no other model to fall back on, so a cut answer is its to keep.
+**Accepted cost:** a stub that arrives with a normal stop reason, a length cut
+included, still passes as an answer.
 
 ### identity-rides-the-object-a-call-returns
 

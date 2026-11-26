@@ -15,7 +15,7 @@ from llmbroker.broker.result import CallReceipt
 from llmbroker.broker.router import Router
 from llmbroker.direct import AsyncDirectClient
 from llmbroker.exceptions import (
-    AnswerTooLongError,
+    NoLLMAvailableError,
     StreamInterruptedError,
     StreamReplacementError,
 )
@@ -26,9 +26,10 @@ from llmbroker.standalone.store import FileStore
 
 # What the providers in the curated pool document besides a normal stop, Gemini's
 # native names included in case its compatibility layer passes one through.
-ABNORMAL = ["length", "content_filter", "error", "SAFETY", "recitation", "OTHER", "sensitive"]
-# A length cut is the one the request itself can cause, so it alone cools nothing.
-COOLING = [reason for reason in ABNORMAL if reason != "length"]
+ABNORMAL = ["content_filter", "error", "SAFETY", "recitation", "OTHER", "sensitive"]
+# The pool sends no token cap, so a length cut is an answer outgrowing the provider's
+# own limit: the request's doing, and the answer as it came.
+NORMAL = ["stop", "STOP", "tool_calls", "length", "LENGTH", None]
 
 
 class _RecordingStore:
@@ -102,7 +103,7 @@ async def _drain(router: Router, **kwargs) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("finish", ["stop", "STOP", "tool_calls", None])
+@pytest.mark.parametrize("finish", NORMAL)
 def test_a_normal_stop_is_the_answer(finish):
     store = _RecordingStore()
 
@@ -114,9 +115,10 @@ def test_a_normal_stop_is_the_answer(finish):
     result = asyncio.run(run())
     assert (result.text, result.llm_name) == ("whole", "a")
     assert [(c.llm_name, c.status) for c in store.calls] == [("a", CallStatus.OK)]
+    assert store.calls[0].cooldown_until is None
 
 
-@pytest.mark.parametrize("finish", COOLING)
+@pytest.mark.parametrize("finish", ABNORMAL)
 def test_an_abnormal_stop_fails_over_and_the_row_names_it(finish):
     store = _RecordingStore()
 
@@ -140,77 +142,23 @@ def test_an_abnormal_stop_fails_over_and_the_row_names_it(finish):
     assert store.calls[0].cooldown_until is not None
 
 
-def test_a_length_cut_fails_over_without_cooling_the_model():
-    store = _RecordingStore()
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.host == "a":
-            return httpx.Response(200, json=_completion("Привет! От", "length"))
-        return httpx.Response(200, json=_completion("whole", "stop"))
-
-    async def run():
-        router = await _router(store, "a", "b")
-        _mount(router, handler)
-        return await router.chat(make_ring(), [{"role": "user", "content": "hi"}])
-
-    result = asyncio.run(run())
-    assert (result.text, result.llm_name) == ("whole", "b")
-    assert [(c.llm_name, c.status, c.error_detail) for c in store.calls] == [
-        ("a", CallStatus.ERROR, "finish_reason=length"),
-        ("b", CallStatus.OK, None),
-    ]
-    assert store.calls[0].cooldown_until is None
-
-
-def _oversized(request: httpx.Request) -> httpx.Response:
-    """Every model cuts an answer the request asks to be too long, and answers a short one."""
-    finish = "length" if b"long" in request.content else "stop"
-    return httpx.Response(200, json=_completion("x", finish))
-
-
-@pytest.mark.parametrize("wait", [2.0, None])
-def test_an_answer_every_model_cuts_at_length_fails_the_call_and_cools_nothing(wait):
-    """The request, not the models, is at fault: the call ends instead of cooling the
-    whole pool and waiting on it, and an unrelated call right after is served."""
-    store = _RecordingStore()
-
-    async def run():
-        router = await _router(store, "a", "b")
-        _mount(router, _oversized)
-        with pytest.raises(AnswerTooLongError) as cut:
-            await asyncio.wait_for(
-                router.chat(make_ring(), [{"role": "user", "content": "long"}], wait=wait),
-                timeout=5.0,
-            )
-        short = await router.chat(make_ring(), [{"role": "user", "content": "hi"}], wait=wait)
-        return cut.value, short
-
-    cut, short = asyncio.run(run())
-    assert cut.detail == "finish_reason=length"
-    assert (short.text, short.llm_name) == ("x", "a")
-    assert [(c.llm_name, c.status, c.error_detail) for c in store.calls] == [
-        ("a", CallStatus.ERROR, "finish_reason=length"),
-        ("b", CallStatus.ERROR, "finish_reason=length"),
-        ("a", CallStatus.OK, None),
-    ]
-    assert all(c.cooldown_until is None for c in store.calls)
-
-
 # --------------------------------------------------------------------------- #
 # ordinary streams
 # --------------------------------------------------------------------------- #
 
 
-def test_a_stream_ending_normally_is_the_answer():
+@pytest.mark.parametrize("finish", NORMAL)
+def test_a_stream_ending_normally_is_the_answer(finish):
     store = _RecordingStore()
 
     async def run():
         router = await _router(store, "a", "b")
-        _mount(router, lambda _r: _stream_response(_sse("who", "le")))
+        _mount(router, lambda _r: _stream_response(_sse("who", "le", finish=finish)))
         return await _drain(router)
 
     assert asyncio.run(run()) == ["who", "le"]
     assert [(c.llm_name, c.status) for c in store.calls] == [("a", CallStatus.OK)]
+    assert store.calls[0].cooldown_until is None
 
 
 @pytest.mark.parametrize("finish", ABNORMAL)
@@ -257,37 +205,6 @@ def test_an_abnormal_stop_after_deltas_ends_an_ordinary_stream_without_splicing(
     ]
 
 
-def test_a_stream_every_model_cuts_at_length_before_any_delta_fails_and_cools_nothing():
-    store = _RecordingStore()
-
-    async def run():
-        router = await _router(store, "a", "b")
-        _mount(router, lambda _r: _stream_response(_sse(finish="length")))
-        with pytest.raises(AnswerTooLongError):
-            await asyncio.wait_for(_drain(router), timeout=5.0)
-
-    asyncio.run(run())
-    assert [(c.llm_name, c.error_detail) for c in store.calls] == [
-        ("a", "finish_reason=length"),
-        ("b", "finish_reason=length"),
-    ]
-    assert all(c.cooldown_until is None for c in store.calls)
-
-
-def test_a_length_cut_after_deltas_ends_the_stream_without_cooling_the_model():
-    store = _RecordingStore()
-
-    async def run():
-        router = await _router(store, "a", "b")
-        _mount(router, lambda _r: _stream_response(_sse("Привет! От", finish="length")))
-        with pytest.raises(StreamInterruptedError):
-            await _drain(router)
-
-    asyncio.run(run())
-    assert [(c.llm_name, c.error_detail) for c in store.calls] == [("a", "finish_reason=length")]
-    assert store.calls[0].cooldown_until is None
-
-
 @pytest.mark.parametrize("tail", [USAGE_ONLY, NULL_REASON], ids=["usage-only", "null-reason"])
 def test_a_normal_stop_followed_by_a_chunk_without_a_reason_is_the_answer(tail):
     store = _RecordingStore()
@@ -330,7 +247,7 @@ async def _broker(tmp_path, handler, *names: str) -> AsyncBroker:
     return broker
 
 
-@pytest.mark.parametrize("finish", ["length", "content_filter", "OTHER"])
+@pytest.mark.parametrize("finish", ["content_filter", "OTHER"])
 def test_a_raced_stub_is_replaced_by_the_other_lanes_whole_answer(tmp_path, finish):
     """The observed failure: the preferred lane streams a few tokens and stops. The
     reader is handed the reserve's complete answer, not the stub."""
@@ -395,6 +312,64 @@ def test_a_raced_stub_whose_reason_a_usage_only_chunk_follows_is_still_replaced(
     replaced = asyncio.run(run())
     assert (replaced.streamed_llm_name, replaced.replacement.llm_name) == ("a", "b")
     assert replaced.replacement.text == "the whole answer"
+
+
+def test_a_raced_lane_cut_at_length_is_the_answer(tmp_path):
+    """No replacement, no cooldown: the exposed lane's length cut is what the reader keeps."""
+    never = asyncio.Event()
+
+    async def reserve():
+        await never.wait()
+        yield _sse("unused")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "a":
+            return _stream_response(_sse("long ans", "wer", finish="length"))
+        return _stream_response(reserve())
+
+    async def run():
+        broker = await _broker(tmp_path, handler, "a", "b")
+        async with broker:
+            handle = broker.stream("hi", fastest_of=2)
+            seen = [delta async for delta in handle]
+            rows = await broker.calls(limit=10)
+            return seen, rows
+
+    seen, rows = asyncio.run(run())
+    assert seen == ["long ans", "wer"]
+    row = next(row for row in rows if row.llm_name == "a")
+    assert (row.status, row.error_detail, row.cooldown_until) == (CallStatus.OK, None, None)
+
+
+def _slow_reserve_after(finish: str):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "a":
+            if b'"stream":true' in request.content.replace(b" ", b""):
+                return _stream_response(_sse(finish=finish))
+            return httpx.Response(200, json=_completion("x", finish))
+        await asyncio.sleep(10)
+        return httpx.Response(200, json=_completion("late", "stop"))
+
+    return handler
+
+
+@pytest.mark.parametrize("mode", ["ask", "stream"])
+def test_an_abnormal_stop_then_a_budget_miss_reports_the_timeout(tmp_path, mode):
+    """A host steps up to a paid model on a budget miss, so one model's stub must not
+    mask the timeout the call actually ended on."""
+
+    async def run():
+        broker = await _broker(tmp_path, _slow_reserve_after("content_filter"), "a", "b")
+        async with broker:
+            with pytest.raises(NoLLMAvailableError) as missed:
+                if mode == "ask":
+                    await broker.ask("hi", wait=0.5, fastest_of=2)
+                else:
+                    async for _ in broker.stream("hi", wait=0.5, fastest_of=2):
+                        pass
+            return missed.value
+
+    assert asyncio.run(run()).reason == "timeout"
 
 
 # --------------------------------------------------------------------------- #

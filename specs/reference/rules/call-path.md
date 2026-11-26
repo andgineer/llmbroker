@@ -51,19 +51,14 @@ the pool fails over. A reply carrying tool calls and no prose is an answer.
 **So is a pooled reply its provider stopped abnormally.** The stop reason the
 provider reports is read on every routed answer, streamed or not, and anything but
 a normal stop — a content filter, a safety or recitation block, a provider-side
-error, an unspecified reason, a length cut — is the same unusable 200, with the
-reason on the failed row
-([`decisions.md`](../decisions.md#an-abnormal-stop-is-a-failure)). A length cut is
-the one such stop the request itself causes: the pool sends no token cap, so it
-means the request asked for more than the provider writes by default, and every
-model may cut it. It is therefore handled like a client request error — the next
-model answers, but the one that cut is excluded for that call only, never cooled
-and never counted toward a streak; when every candidate cuts, the call ends with
-`AnswerTooLongError` instead of waiting on a pool it would otherwise have cooled
-whole. A reply reporting no reason is taken as finished, since not every provider
-sends one, and a later chunk without a reason never erases an earlier one. A model
-reached by name is not judged: its caller may cap the answer itself and has no
-other model to ask.
+error, an unspecified reason — is the same unusable 200, with the reason on the
+failed row ([`decisions.md`](../decisions.md#an-abnormal-stop-is-a-failure)). A
+length cut counts as a normal stop and is the answer: the pool sends no token cap,
+so it means the answer outgrew the provider's own limit, which the request causes
+and every model would repeat; bounding what it shows is the host's. A reply
+reporting no reason is taken as finished, since not every provider sends one, and
+a later chunk without a reason never erases an earlier one. A model reached by name
+is not judged: its caller may cap the answer itself and has no other model to ask.
 
 An unexpected exception is a bug and does reach the caller; a cancelled call
 propagates untouched.
