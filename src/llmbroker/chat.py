@@ -193,9 +193,11 @@ def empty_answer_error(model: str, detail: str) -> InvalidProviderResponseError:
     )
 
 
-# ``length`` is normal: the pool sends no token cap, so a cut is the request outgrowing the
-# provider's own limit, which failover would repeat on every model.
-NORMAL_FINISHES = frozenset({"stop", "tool_calls", "function_call", "length"})
+# A length cut is normal, Z.ai's context-window overflow included: the pool sends no token
+# cap, so it is the request outgrowing the provider's own limit, which failover would repeat.
+NORMAL_FINISHES = frozenset(
+    {"stop", "tool_calls", "function_call", "length", "model_context_window_exceeded"},
+)
 
 
 def finish_reason(data: dict) -> str | None:

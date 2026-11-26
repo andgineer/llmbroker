@@ -27,9 +27,18 @@ from llmbroker.standalone.store import FileStore
 # What the providers in the curated pool document besides a normal stop, Gemini's
 # native names included in case its compatibility layer passes one through.
 ABNORMAL = ["content_filter", "error", "SAFETY", "recitation", "OTHER", "sensitive"]
-# The pool sends no token cap, so a length cut is an answer outgrowing the provider's
-# own limit: the request's doing, and the answer as it came.
-NORMAL = ["stop", "STOP", "tool_calls", "length", "LENGTH", None]
+# The pool sends no token cap, so a length cut — Z.ai's context-window overflow too — is an
+# answer outgrowing the provider's own limit: the request's doing, and the answer as it came.
+NORMAL = [
+    "stop",
+    "STOP",
+    "tool_calls",
+    "function_call",
+    "length",
+    "LENGTH",
+    "model_context_window_exceeded",
+    None,
+]
 
 
 class _RecordingStore:
