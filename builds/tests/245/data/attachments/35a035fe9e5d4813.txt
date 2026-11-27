@@ -1,0 +1,4 @@
+INFO     llmbroker.broker:refresher.py:249 sync freetier: applied — 0 -> 0 entries with a key
+  added: gemini, groq
+  pending key GEMINI — holds back gemini
+  pending key GROQ — holds back groq

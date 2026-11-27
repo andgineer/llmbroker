@@ -1,0 +1,3 @@
+WARNING  llmbroker.broker:refresher.py:231 paid catalog unavailable (offline in tests) — declared models stay on the resolution already in use
+ERROR    llmbroker.broker:catalog.py:252 direct= names 'opus', and the paid catalog could not be read: offline in tests
+ERROR    llmbroker.broker:catalog.py:390 pool degraded, no failover left: 1 of 1 providers usable
